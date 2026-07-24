@@ -43,6 +43,11 @@ class MemoryMCPServer:
         sqlite_count = len(self.store.all_ids())
         if not self.vidx.check_consistency(sqlite_count):
             self._rebuild_vector_index()
+        else:
+            self._log(
+                "USearch 与 SQLite 条目数一致，但未进行 ID 级验证。"
+                "如果语义搜索返回错误结果，请删除向量文件（vectors.usearch）强制重建。"
+            )
 
         # 尝试加载 embedding 模型（失败不影响 FTS5 检索）
         try:
@@ -258,17 +263,33 @@ class MemoryMCPServer:
             line = line.strip()
             if not line:
                 continue
+            request = None
             try:
                 request = json.loads(line)
+            except json.JSONDecodeError:
+                self._log(f"无效 JSON: {line[:100]}")
+                continue
+            try:
                 response = self._handle_request(request)
                 if response is not None:
                     sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
                     sys.stdout.flush()
-            except json.JSONDecodeError:
-                self._log(f"无效 JSON: {line[:100]}")
             except Exception:
                 self._log("处理请求异常")
                 traceback.print_exc(file=sys.stderr)
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": request.get("id") if request else None,
+                    "error": {
+                        "code": -32603,
+                        "message": "Internal error",
+                    },
+                }
+                try:
+                    sys.stdout.write(json.dumps(error_response, ensure_ascii=False) + "\n")
+                    sys.stdout.flush()
+                except Exception:
+                    self._log("无法写入错误响应")
 
         self._log("MCP Server 退出")
         self.shutdown()

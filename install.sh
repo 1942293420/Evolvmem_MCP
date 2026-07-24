@@ -57,7 +57,7 @@ fi
 
 # 5. 验证安装
 echo "[5/5] 验证安装..."
-python -c "
+python3 -c "
 import sys
 sys.path.insert(0, '$PLUGIN_DIR')
 from hermes_memory.config import Config
@@ -75,7 +75,7 @@ echo "请将以下内容添加到 Claude Code 的 settings.json:"
 echo ""
 echo '  "mcpServers": {'
 echo '    "hermes-memory": {'
-echo "      \"command\": \"python\","
+echo "      \"command\": \"python3\","
 echo "      \"args\": [\"-m\", \"hermes_memory.mcp_server\"],"
 echo '      "env": {'
 echo "        \"PYTHONPATH\": \"$PLUGIN_DIR\""
@@ -86,7 +86,7 @@ echo '  "hooks": {'
 echo '    "SessionStart": ['
 echo '      {'
 echo '        "matcher": "",'
-echo "        \"hook\": \"python -c \\\"from hermes_memory.hooks import get_session_start_block; print(get_session_start_block())\\\"\","
+echo "        \"hook\": \"python3 -c \\\"from hermes_memory.hooks import get_session_start_block; print(get_session_start_block())\\\"\","
 echo '        "env": {'
 echo "          \"PYTHONPATH\": \"$PLUGIN_DIR\""
 echo '        }'

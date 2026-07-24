@@ -27,8 +27,8 @@ class VectorIndex:
         self._dim = dim
         path = str(self.config.vector_path)
         if Path(path).exists():
-            self._index = Index.restore(path, view=True)
-            self._view_mode = True
+            self._index = Index.restore(path, view=False)
+            self._view_mode = False
         else:
             self._index = Index(
                 ndim=dim,
@@ -43,6 +43,7 @@ class VectorIndex:
         self._view_mode = False
 
     def __enter__(self):
+        self.initialize()
         return self
 
     def __exit__(self, *args):
@@ -119,7 +120,12 @@ class VectorIndex:
         return len(self._index)
 
     def check_consistency(self, expected_count: int) -> bool:
-        """检查 USearch 索引条目数是否与 SQLite 一致。"""
+        """检查 USearch 索引条目数是否与 SQLite 一致。
+
+        注意：仅比较条目数，不验证 ID 是否匹配。
+        若计数一致但 ID 不同（如崩溃后键空间漂移），语义搜索将返回错误结果。
+        调用方应在计数通过后记录警告，提醒用户在搜索结果异常时删除向量文件强制重建。
+        """
         return self.count() == expected_count
 
     def _ensure_initialized(self):
