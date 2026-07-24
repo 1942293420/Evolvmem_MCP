@@ -1,5 +1,6 @@
 """冲突检测——新记忆写入前与已有 active 记忆比对。"""
 
+import re
 from dataclasses import dataclass
 from hermes_memory.memory_store import MemoryStore
 
@@ -85,7 +86,6 @@ class ConflictDetector:
         if len(new_value) >= len(old_value) * 1.5:
             return True
         # 新值包含具体数据（数字、日期、人名等）
-        import re
         specificity_markers = [
             r'\d+',             # 数字
             r'\d{4}-\d{2}',     # 日期

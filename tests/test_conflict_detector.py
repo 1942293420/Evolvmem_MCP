@@ -29,6 +29,8 @@ class TestConflictDetector:
             candidate_value="相同内容",
         )
         assert decision.action == "skip"
+        assert decision.existing_id is not None
+        assert "未变化" in decision.reason
         store.close()
 
     def test_user_override_returns_replace(self, test_config):
@@ -43,6 +45,8 @@ class TestConflictDetector:
             user_override=True,  # 用户明确说放弃旧方案
         )
         assert decision.action == "replace"
+        assert decision.existing_id is not None
+        assert "放弃" in decision.reason
         store.close()
 
     def test_different_value_no_context_returns_conflict(self, test_config):
@@ -56,6 +60,8 @@ class TestConflictDetector:
             candidate_value="规则B",
         )
         assert decision.action == "conflict"
+        assert decision.existing_id is not None
+        assert "无法" in decision.reason
         store.close()
 
     def test_newer_session_more_specific_wins(self, test_config):
@@ -71,4 +77,6 @@ class TestConflictDetector:
         )
         # 更具体（更长） + 来自当前 session → replace
         assert decision.action == "replace"
+        assert decision.existing_id is not None
+        assert "更具体" in decision.reason
         store.close()
