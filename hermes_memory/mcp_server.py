@@ -149,7 +149,20 @@ class MemoryMCPServer:
             }
         elif decision.action == "replace":
             # 冲突检测判定为替换：使用 replace() 标记旧值为 superseded
-            mem_id = self.store.replace(key=key, new_value=value)
+            old_id = decision.existing_id
+            new_id = self.store.replace(key=key, new_value=value)
+
+            # 更新向量索引
+            if self.engine.is_loaded:
+                try:
+                    vec = self.engine.encode(value)
+                    import numpy as np
+                    self.vidx.add(new_id, np.array(vec, dtype=np.float32))
+                    self.vidx.save()
+                except Exception as e:
+                    self._log(f"向量更新失败 (id={new_id}): {e}")
+
+            return {"status": "replaced", "new_id": new_id, "old_id": old_id}
         else:
             # decision.action == "add"：无现有 key，直接新增
             mem_id = self.store.add(
@@ -239,6 +252,7 @@ class MemoryMCPServer:
         except Exception as e:
             self._log(f"初始化失败: {e}")
             traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
 
         for line in sys.stdin:
             line = line.strip()
