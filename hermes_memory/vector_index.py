@@ -18,6 +18,7 @@ class VectorIndex:
         self.config = config
         self._index: Index | None = None
         self._dim: int | None = None
+        self._view_mode: bool = False
 
     # ---- 生命周期 ----
 
@@ -27,16 +28,19 @@ class VectorIndex:
         path = str(self.config.vector_path)
         if Path(path).exists():
             self._index = Index.restore(path, view=True)
+            self._view_mode = True
         else:
             self._index = Index(
                 ndim=dim,
                 metric=MetricKind.Cos,
                 dtype=ScalarKind.F32,
             )
+            self._view_mode = False
 
     def close(self) -> None:
         if self._index is not None:
             self._index = None
+        self._view_mode = False
 
     def __enter__(self):
         return self
@@ -65,7 +69,12 @@ class VectorIndex:
     def rebuild(self, ids: list[int],
                 embeddings: list[np.ndarray]) -> None:
         """全量重建索引（SQLite 为源，崩溃恢复时调用）。"""
-        assert self._dim is not None
+        if self._dim is None:
+            raise RuntimeError("VectorIndex 未初始化，请先调用 initialize()")
+        # 显式释放旧的 mmap 索引，避免资源泄漏
+        if self._index is not None:
+            self._index = None
+        self._view_mode = False
         # 创建全新内存索引（不传入 path，避免加载旧数据导致重复 key 报错）
         self._index = Index(
             ndim=self._dim,
@@ -78,6 +87,10 @@ class VectorIndex:
     def save(self) -> None:
         """持久化到磁盘。"""
         self._ensure_initialized()
+        if self._view_mode:
+            raise RuntimeError(
+                "cannot save a view-mode index; use rebuild() instead"
+            )
         path = str(self.config.vector_path)
         self._index.save(path)
 

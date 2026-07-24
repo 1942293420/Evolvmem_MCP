@@ -65,11 +65,19 @@ class TestVectorIndex:
         idx.add_batch(ids, embeddings)
         idx.save()
 
-        # 模拟重建
+        # 模拟重建：用不同 ID 和不同向量替换全部数据
+        new_ids = [4, 5]
+        new_embeddings = [make_embedding() for _ in range(2)]
         idx2 = VectorIndex(test_config)
         idx2.initialize(dim=512)
-        idx2.rebuild(ids, embeddings)  # 从外部数据全量重建
-        assert idx2.count() == 3
+        idx2.rebuild(new_ids, new_embeddings)  # 全量替换
+        assert idx2.count() == 2
+
+        # 确认旧 ID 不再存在，新 ID 可检索
+        results = idx2.search(new_embeddings[0], k=2)
+        found_ids = [r["id"] for r in results]
+        assert 4 in found_ids and 5 in found_ids
+        assert 1 not in found_ids and 2 not in found_ids and 3 not in found_ids
         idx2.close()
 
     def test_sync_consistency(self, test_config):
