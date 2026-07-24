@@ -25,7 +25,7 @@ class Config:
     # GGUF 模型路径
     @property
     def model_path(self) -> Path:
-        return self.data_dir / "models" / "bge-small-zh-Q5_K_M.gguf"
+        return self.data_dir / "models" / "nomic-embed-text-v1.5.f16.gguf"
 
     # 配置文件路径
     @property
@@ -44,7 +44,7 @@ class Config:
     forget_rate_limit_days: int = 7          # 同一记忆两次降级的最小间隔
 
     # --- embedding 参数 ---
-    embedding_dim: int = 512
+    embedding_dim: int = 768
 
     # --- 安全 ---
     stop_hook_safe: bool = True  # 防止 Stop Hook 无限循环

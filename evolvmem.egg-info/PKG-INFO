@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: evolvmem
+Version: 0.1.0
+Summary: EvolvMem — evolving memory plugin for Claude Code with FTS5/trigram + HNSW vector search
+Requires-Python: >=3.10
+Requires-Dist: usearch>=2.14
+Requires-Dist: llama-cpp-python>=0.3.0
+Requires-Dist: numpy>=1.24
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
