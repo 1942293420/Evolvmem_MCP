@@ -1,46 +1,46 @@
-# Hermes Memory Plugin
+# EvolvMem
 
-Claude Code 完全本地化的三层记忆插件，支持中文 —— FTS5/trigram + HNSW 向量混合检索。
+A fully-local, three-layer memory plugin for Claude Code with Chinese language support — FTS5/trigram + HNSW vector hybrid search.
 
-## 功能
+## Features
 
-- **L0 活跃记忆**：SessionStart 时自动注入 system prompt
-- **L1 完整历史**：SQLite + FTS5/trigram 精确检索，支持中文子串匹配
-- **L2 语义索引**：USearch HNSW 向量检索，发现换了表达方式的相关记忆
-- **自我迭代**：自动提取、冲突检测、访问衰减遗忘
+- **L0 Active Memory**: Auto-injected into system prompt on SessionStart
+- **L1 Full History**: SQLite + FTS5/trigram exact search, supports Chinese substring matching
+- **L2 Semantic Index**: USearch HNSW vector search for finding related memories expressed differently
+- **Self-Iteration**: Auto-extraction, conflict detection, access-decay forgetting
 
-## 快速开始
+## Quick Start
 
 ```bash
 ./install.sh
 ```
 
-脚本会自动完成以下步骤：
-- 创建 `~/.claude/hermes-memory/` 目录和 `models/` 子目录
-- 安装 pip 依赖 usearch 和 llama-cpp-python
-- 下载 bge-small-zh-Q5_K_M.gguf (~50MB，如已存在则跳过)
-- 生成默认 `config.json` 配置文件
-- 验证 Config 模块可正常导入
+The script will automatically:
+- Create `~/.claude/evolvmem/` directory and `models/` subdirectory
+- Install pip dependencies usearch and llama-cpp-python
+- Download bge-small-zh-Q5_K_M.gguf (~50MB, skipped if already present)
+- Generate default `config.json`
+- Verify the Config module can be imported
 
-## 手动配置
+## Manual Configuration
 
-在 `~/.claude/settings.json` 中添加 MCP Server 配置：
+Add the MCP Server config to `~/.claude/settings.json`:
 
 ```json
 {
   "mcpServers": {
-    "hermes-memory": {
+    "evolvmem": {
       "command": "python",
-      "args": ["-m", "hermes_memory.mcp_server"],
+      "args": ["-m", "evolvmem.mcp_server"],
       "env": {
-        "PYTHONPATH": "/path/to/hermes-memory-plugin"
+        "PYTHONPATH": "/path/to/evolvmem-plugin"
       }
     }
   }
 }
 ```
 
-可选：添加 SessionStart hook 用于自动注入活跃记忆：
+Optional: add a SessionStart hook for automatic active memory injection:
 
 ```json
 {
@@ -48,9 +48,9 @@ Claude Code 完全本地化的三层记忆插件，支持中文 —— FTS5/trig
     "SessionStart": [
       {
         "matcher": "",
-        "hook": "python -c \"from hermes_memory.hooks import get_session_start_block; print(get_session_start_block())\"",
+        "hook": "python -c \"from evolvmem.hooks import get_session_start_block; print(get_session_start_block())\"",
         "env": {
-          "PYTHONPATH": "/path/to/hermes-memory-plugin"
+          "PYTHONPATH": "/path/to/evolvmem-plugin"
         }
       }
     ]
@@ -58,47 +58,47 @@ Claude Code 完全本地化的三层记忆插件，支持中文 —— FTS5/trig
 }
 ```
 
-## 工具
+## Tools
 
-| 工具名称 | 说明 |
+| Tool Name | Description |
 |---|---|
-| `memory_search` | FTS5 + HNSW 混合检索，支持中文 |
-| `memory_status` | 查看记忆系统运行状态和统计信息 |
-| `memory_add` | 手动写入一条记忆 |
-| `memory_replace` | 替换记忆（旧值标记为 superseded） |
-| `memory_remove` | 软删除记忆 |
+| `memory_search` | FTS5 + HNSW hybrid search, supports Chinese |
+| `memory_status` | View memory system status and statistics |
+| `memory_add` | Manually write a memory |
+| `memory_replace` | Replace a memory (old value marked as superseded) |
+| `memory_remove` | Soft-delete a memory |
 
-## 数据目录
+## Data Directory
 
-所有数据存储在 `~/.claude/hermes-memory/` 下：
+All data is stored under `~/.claude/evolvmem/`:
 
-| 文件/目录 | 说明 |
+| File/Directory | Description |
 |---|---|
-| `memory.db` | SQLite 数据库，含 FTS5/trigram 索引 |
-| `vectors.usearch` | USearch HNSW 向量索引 |
-| `models/` | BGE-small-zh Q5_K_M GGUF 模型文件 |
-| `config.json` | 检索、遗忘等参数配置 |
+| `memory.db` | SQLite database with FTS5/trigram indexes |
+| `vectors.usearch` | USearch HNSW vector index |
+| `models/` | BGE-small-zh Q5_K_M GGUF model file |
+| `config.json` | Retrieval, forgetting, and other parameters |
 
-## 配置说明
+## Configuration
 
-可通过编辑 `~/.claude/hermes-memory/config.json` 调整以下参数：
+Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 
-- `fts_top_k` / `vector_top_k`：FTS5 和向量检索的召回数量，默认各 20
-- `fts_weight` / `vector_weight`：混合检索的权重分配，默认 0.6 / 0.4
-- `forget_days_threshold`：未访问多少天后可被归档，默认 90 天
-- `forget_access_count_threshold`：访问次数低于此值的记忆可被降级，默认 2
-- `embedding_dim`：向量维度，需与模型匹配，默认 512
+- `fts_top_k` / `vector_top_k`: FTS5 and vector search recall counts, default 20 each
+- `fts_weight` / `vector_weight`: Hybrid search weight allocation, default 0.6 / 0.4
+- `forget_days_threshold`: Days since last access before a memory can be archived, default 90
+- `forget_access_count_threshold`: Max access count below which memories may be downgraded, default 2
+- `embedding_dim`: Vector dimension, must match model, default 512
 
-## 依赖
+## Dependencies
 
-Python 依赖（由 install.sh 自动安装）：
+Python dependencies (auto-installed by install.sh):
 
 ```bash
 pip install usearch llama-cpp-python
 ```
 
-Embedding 模型：BGE-small-zh Q5_K_M GGUF（约 50MB），由 install.sh 自动下载。如需手动下载，请将 `bge-small-zh-Q5_K_M.gguf` 放入 `~/.claude/hermes-memory/models/` 目录。
+Embedding model: BGE-small-zh Q5_K_M GGUF (~50MB), auto-downloaded by install.sh. For manual download, place `bge-small-zh-Q5_K_M.gguf` in `~/.claude/evolvmem/models/`.
 
-## 架构
+## Architecture
 
-三层记忆结构：活跃记忆（L0，SessionStart 注入 system prompt）-> 精确检索（L1，SQLite + FTS5/trigram）-> 语义检索（L2，USearch HNSW）。记忆通过自动提取、冲突检测和访问衰减实现自我迭代。所有数据本地存储，无需外部服务。
+Three-layer memory structure: active memory (L0, SessionStart system prompt injection) -> exact retrieval (L1, SQLite + FTS5/trigram) -> semantic retrieval (L2, USearch HNSW). Memories self-iterate through auto-extraction, conflict detection, and access-decay forgetting. All data is stored locally, no external services required.

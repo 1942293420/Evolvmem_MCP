@@ -3,9 +3,9 @@
 import hashlib
 import pytest
 import numpy as np
-from hermes_memory.memory_store import MemoryStore
-from hermes_memory.vector_index import VectorIndex
-from hermes_memory.retriever import Retriever
+from evolvmem.memory_store import MemoryStore
+from evolvmem.vector_index import VectorIndex
+from evolvmem.retriever import Retriever
 
 
 class FakeEmbeddingEngine:

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from hermes_memory.config import Config
+from evolvmem.config import Config
 
 
 def _now_iso() -> str:

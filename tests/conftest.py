@@ -1,15 +1,15 @@
-"""共享测试夹具。"""
+"""Shared test fixtures."""
 
 import pytest
 import tempfile
 import shutil
 from pathlib import Path
-from hermes_memory.config import Config
+from evolvmem.config import Config
 
 
 @pytest.fixture
 def temp_dir():
-    """创建临时目录，测试后自动清理。"""
+    """Creates a temporary directory, auto-cleaned after test."""
     d = tempfile.mkdtemp()
     yield Path(d)
     shutil.rmtree(d, ignore_errors=True)
@@ -17,5 +17,5 @@ def temp_dir():
 
 @pytest.fixture
 def test_config(temp_dir):
-    """返回指向临时目录的测试配置。"""
+    """Returns test configuration pointing to a temporary directory."""
     return Config(data_dir=temp_dir)

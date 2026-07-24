@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
-name = "hermes-memory"
+name = "evolvmem"
 version = "0.1.0"
-description = "Claude Code local memory plugin with hybrid FTS5/trigram + HNSW vector search"
+description = "EvolvMem — evolving memory plugin for Claude Code with FTS5/trigram + HNSW vector search"
 requires-python = ">=3.10"
 dependencies = [
     "usearch>=2.14",
@@ -19,4 +19,4 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["hermes_memory*"]
+include = ["evolvmem*"]

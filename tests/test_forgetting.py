@@ -1,8 +1,8 @@
 """ForgettingEngine 测试。"""
 
 import pytest
-from hermes_memory.memory_store import MemoryStore
-from hermes_memory.forgetting import ForgettingEngine
+from evolvmem.memory_store import MemoryStore
+from evolvmem.forgetting import ForgettingEngine
 
 
 class TestForgettingEngine:

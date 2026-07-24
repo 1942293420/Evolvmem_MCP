@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from hermes_memory.vector_index import VectorIndex
+from evolvmem.vector_index import VectorIndex
 
 
 def make_embedding(dim=512):

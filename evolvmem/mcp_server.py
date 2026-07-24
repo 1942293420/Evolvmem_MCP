@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
-"""Claude Code 记忆插件 — stdio MCP Server。
+"""EvolvMem memory plugin — stdio MCP Server.
 
-工具:
-  memory_search   — FTS5/trigram + HNSW 混合检索
-  memory_status   — 统计信息
-  memory_add      — 手动写入记忆
-  memory_replace  — 替换记忆（标记旧值为 superseded）
-  memory_remove   — 软删除记忆
+Tools:
+  memory_search   — FTS5/trigram + HNSW hybrid search
+  memory_status   — statistics
+  memory_add      — manually add a memory
+  memory_replace  — replace a memory (mark old as superseded)
+  memory_remove   — soft-delete a memory
 """
 
 import json
 import sys
 import os
 import traceback
-from hermes_memory.config import Config
-from hermes_memory.memory_store import MemoryStore
-from hermes_memory.vector_index import VectorIndex
-from hermes_memory.embedding import EmbeddingEngine
-from hermes_memory.retriever import Retriever
-from hermes_memory.conflict_detector import ConflictDetector
-from hermes_memory.forgetting import ForgettingEngine
+from evolvmem.config import Config
+from evolvmem.memory_store import MemoryStore
+from evolvmem.vector_index import VectorIndex
+from evolvmem.embedding import EmbeddingEngine
+from evolvmem.retriever import Retriever
+from evolvmem.conflict_detector import ConflictDetector
+from evolvmem.forgetting import ForgettingEngine
 
 
 class MemoryMCPServer:
-    """stdio MCP Server — JSON-RPC 协议。"""
+    """stdio MCP Server — JSON-RPC protocol."""
 
     def __init__(self):
         self.config = Config.from_file()
@@ -35,25 +35,25 @@ class MemoryMCPServer:
         self.forgetting = None
 
     def initialize(self):
-        """初始化所有组件。"""
+        """Initialize all components."""
         self.store.initialize()
         self.vidx.initialize(dim=self.config.embedding_dim)
 
-        # 检查 USearch 与 SQLite 一致性
+        # Check USearch vs SQLite consistency
         sqlite_count = len(self.store.all_ids())
         if not self.vidx.check_consistency(sqlite_count):
             self._rebuild_vector_index()
         else:
             self._log(
-                "USearch 与 SQLite 条目数一致，但未进行 ID 级验证。"
-                "如果语义搜索返回错误结果，请删除向量文件（vectors.usearch）强制重建。"
+                "USearch and SQLite entry counts match, but no ID-level validation was performed. "
+                "If semantic search returns wrong results, delete vectors.usearch to force a rebuild."
             )
 
-        # 尝试加载 embedding 模型（失败不影响 FTS5 检索）
+        # Try loading the embedding model (FTS5 search works without it)
         try:
             self.engine.initialize()
         except (FileNotFoundError, ImportError) as e:
-            self._log(f"Embedding 引擎未加载: {e}")
+            self._log(f"Embedding engine not loaded: {e}")
 
         self.retriever = Retriever(
             self.config, self.store, self.vidx, self.engine
@@ -62,7 +62,7 @@ class MemoryMCPServer:
         self.forgetting = ForgettingEngine(self.config, self.store)
 
     def shutdown(self):
-        """清理资源。"""
+        """Clean up resources."""
         try:
             if self.vidx:
                 self.vidx.save()
@@ -80,10 +80,10 @@ class MemoryMCPServer:
         except Exception:
             pass
 
-    # ---- 工具处理 ----
+    # ---- tool handlers ----
 
     def handle_tool_call(self, tool_name: str, args: dict) -> dict:
-        """路由工具调用。"""
+        """Route tool calls."""
         handlers = {
             "memory_search": self._memory_search,
             "memory_status": self._memory_status,
@@ -100,7 +100,7 @@ class MemoryMCPServer:
         query = args.get("query", "")
         top_k = int(args.get("top_k", 10))
         if not query:
-            return {"error": "query 参数不能为空"}
+            return {"error": "query parameter cannot be empty"}
         results = self.retriever.search(query, top_k=top_k)
         return {
             "results": [
@@ -140,9 +140,9 @@ class MemoryMCPServer:
         tags = args.get("tags", [])
 
         if not key or not value:
-            return {"error": "key 和 value 参数不能为空"}
+            return {"error": "key and value parameters cannot be empty"}
 
-        # 冲突检测
+        # Conflict detection
         decision = self.conflict_detector.check(key, value)
         if decision.action == "skip":
             return {"status": "skipped", "reason": decision.reason}
@@ -153,11 +153,11 @@ class MemoryMCPServer:
                 "existing_id": decision.existing_id,
             }
         elif decision.action == "replace":
-            # 冲突检测判定为替换：使用 replace() 标记旧值为 superseded
+            # Conflict detector determined replace: use replace() to mark old as superseded
             old_id = decision.existing_id
             new_id = self.store.replace(key=key, new_value=value)
 
-            # 更新向量索引
+            # Update vector index
             if self.engine.is_loaded:
                 try:
                     vec = self.engine.encode(value)
@@ -165,16 +165,16 @@ class MemoryMCPServer:
                     self.vidx.add(new_id, np.array(vec, dtype=np.float32))
                     self.vidx.save()
                 except Exception as e:
-                    self._log(f"向量更新失败 (id={new_id}): {e}")
+                    self._log(f"Vector update failed (id={new_id}): {e}")
 
             return {"status": "replaced", "new_id": new_id, "old_id": old_id}
         else:
-            # decision.action == "add"：无现有 key，直接新增
+            # decision.action == "add": no existing key, insert directly
             mem_id = self.store.add(
                 key=key, value=value, category=category, tags=tags
             )
 
-        # 更新向量索引
+        # Update vector index
         if self.engine.is_loaded:
             try:
                 vec = self.engine.encode(value)
@@ -182,7 +182,7 @@ class MemoryMCPServer:
                 self.vidx.add(mem_id, np.array(vec, dtype=np.float32))
                 self.vidx.save()
             except Exception as e:
-                self._log(f"向量更新失败 (id={mem_id}): {e}")
+                self._log(f"Vector update failed (id={mem_id}): {e}")
 
         return {"status": "added", "id": mem_id}
 
@@ -191,11 +191,11 @@ class MemoryMCPServer:
         new_value = args.get("value", "")
 
         if not key or not new_value:
-            return {"error": "key 和 value 参数不能为空"}
+            return {"error": "key and value parameters cannot be empty"}
 
         new_id = self.store.replace(key=key, new_value=new_value)
 
-        # 更新向量索引
+        # Update vector index
         if self.engine.is_loaded:
             try:
                 vec = self.engine.encode(new_value)
@@ -203,28 +203,28 @@ class MemoryMCPServer:
                 self.vidx.add(new_id, np.array(vec, dtype=np.float32))
                 self.vidx.save()
             except Exception as e:
-                self._log(f"向量更新失败 (id={new_id}): {e}")
+                self._log(f"Vector update failed (id={new_id}): {e}")
 
         return {"status": "replaced", "new_id": new_id}
 
     def _memory_remove(self, args: dict) -> dict:
         mem_id = int(args.get("id", 0))
         if not mem_id:
-            return {"error": "id 参数不能为空"}
+            return {"error": "id parameter cannot be empty"}
         self.store.remove(mem_id)
         return {"status": "deleted", "id": mem_id}
 
-    # ---- 内部 ----
+    # ---- internals ----
 
     def _rebuild_vector_index(self):
-        """从 SQLite 重建 USearch 索引。"""
-        self._log("检测到 USearch 索引与 SQLite 不一致，正在重建...")
+        """Rebuild USearch index from SQLite."""
+        self._log("Vector index out of sync with SQLite, rebuilding...")
         all_ids = self.store.all_ids()
         if not all_ids:
-            self._log("SQLite 中无记录，跳过重建")
+            self._log("No records in SQLite, skipping rebuild")
             return
         if not self.engine.is_loaded:
-            self._log("Embedding 引擎未加载，无法重建向量索引")
+            self._log("Embedding engine not loaded, cannot rebuild vector index")
             return
 
         records = self.store.get_by_ids(all_ids)
@@ -237,25 +237,25 @@ class MemoryMCPServer:
                 ids.append(r["id"])
                 embeddings.append(np.array(vec, dtype=np.float32))
             except Exception as e:
-                self._log(f"编码失败 (id={r['id']}): {e}")
+                self._log(f"Encoding failed (id={r['id']}): {e}")
 
         if ids:
             self.vidx.rebuild(ids, embeddings)
-            self._log(f"重建完成: {len(ids)} 条向量")
+            self._log(f"Rebuild complete: {len(ids)} vectors")
 
     @staticmethod
     def _log(msg: str):
-        print(f"[hermes-memory] {msg}", file=sys.stderr, flush=True)
+        print(f"[evolvmem] {msg}", file=sys.stderr, flush=True)
 
-    # ---- MCP 协议 ----
+    # ---- MCP protocol ----
 
     def run(self):
-        """stdio MCP 主循环。"""
-        self._log("MCP Server 启动")
+        """stdio MCP main loop."""
+        self._log("MCP Server starting")
         try:
             self.initialize()
         except Exception as e:
-            self._log(f"初始化失败: {e}")
+            self._log(f"Initialization failed: {e}")
             traceback.print_exc(file=sys.stderr)
             sys.exit(1)
 
@@ -267,7 +267,7 @@ class MemoryMCPServer:
             try:
                 request = json.loads(line)
             except json.JSONDecodeError:
-                self._log(f"无效 JSON: {line[:100]}")
+                self._log(f"Invalid JSON: {line[:100]}")
                 continue
             try:
                 response = self._handle_request(request)
@@ -275,7 +275,7 @@ class MemoryMCPServer:
                     sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
                     sys.stdout.flush()
             except Exception:
-                self._log("处理请求异常")
+                self._log("Request handling error")
                 traceback.print_exc(file=sys.stderr)
                 error_response = {
                     "jsonrpc": "2.0",
@@ -289,9 +289,9 @@ class MemoryMCPServer:
                     sys.stdout.write(json.dumps(error_response, ensure_ascii=False) + "\n")
                     sys.stdout.flush()
                 except Exception:
-                    self._log("无法写入错误响应")
+                    self._log("Failed to write error response")
 
-        self._log("MCP Server 退出")
+        self._log("MCP Server exiting")
         self.shutdown()
 
     def _handle_request(self, request: dict) -> dict | None:
@@ -306,7 +306,7 @@ class MemoryMCPServer:
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
                     "serverInfo": {
-                        "name": "hermes-memory",
+                        "name": "evolvmem",
                         "version": "0.1.0",
                     },
                 },
@@ -320,17 +320,17 @@ class MemoryMCPServer:
                     "tools": [
                         {
                             "name": "memory_search",
-                            "description": "混合检索记忆：FTS5/trigram 精确匹配 + HNSW 向量语义搜索。支持中文子串匹配和语义相似度。",
+                            "description": "Hybrid memory search: FTS5/trigram exact match + HNSW vector semantic search. Supports Chinese substring matching and semantic similarity.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "query": {
                                         "type": "string",
-                                        "description": "搜索查询",
+                                        "description": "Search query",
                                     },
                                     "top_k": {
                                         "type": "integer",
-                                        "description": "返回结果数，默认 10",
+                                        "description": "Number of results to return, default 10",
                                         "default": 10,
                                     },
                                 },
@@ -339,7 +339,7 @@ class MemoryMCPServer:
                         },
                         {
                             "name": "memory_status",
-                            "description": "查看记忆系统状态：活跃记忆数、总记录数、向量索引状态。",
+                            "description": "View memory system status: active count, total records, vector index status.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {},
@@ -347,27 +347,27 @@ class MemoryMCPServer:
                         },
                         {
                             "name": "memory_add",
-                            "description": "手动添加一条记忆。自动检测冲突。",
+                            "description": "Manually add a memory. Performs automatic conflict detection.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "key": {
                                         "type": "string",
-                                        "description": "稳定 key，格式: project:domain:type:topic",
+                                        "description": "Stable key, format: project:domain:type:topic",
                                     },
                                     "value": {
                                         "type": "string",
-                                        "description": "记忆内容",
+                                        "description": "Memory content",
                                     },
                                     "category": {
                                         "type": "string",
-                                        "description": "分类: decision|preference|fact|constraint|user_profile",
+                                        "description": "Category: decision|preference|fact|constraint|user_profile",
                                         "default": "fact",
                                     },
                                     "tags": {
                                         "type": "array",
                                         "items": {"type": "string"},
-                                        "description": "标签列表",
+                                        "description": "List of tags",
                                     },
                                 },
                                 "required": ["key", "value"],
@@ -375,17 +375,17 @@ class MemoryMCPServer:
                         },
                         {
                             "name": "memory_replace",
-                            "description": "替换一条记忆。旧值标记为 superseded，新值设为 active。保留完整历史。",
+                            "description": "Replace a memory. Old value marked as superseded, new value set to active. Full history preserved.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "key": {
                                         "type": "string",
-                                        "description": "要替换的记忆的稳定 key",
+                                        "description": "Stable key of the memory to replace",
                                     },
                                     "value": {
                                         "type": "string",
-                                        "description": "新的记忆内容",
+                                        "description": "New memory content",
                                     },
                                 },
                                 "required": ["key", "value"],
@@ -393,13 +393,13 @@ class MemoryMCPServer:
                         },
                         {
                             "name": "memory_remove",
-                            "description": "软删除一条记忆（状态标记为 deleted，数据保留）。",
+                            "description": "Soft-delete a memory (status marked as deleted, data retained).",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "id": {
                                         "type": "integer",
-                                        "description": "记忆 ID",
+                                        "description": "Memory ID",
                                     },
                                 },
                                 "required": ["id"],
@@ -428,7 +428,7 @@ class MemoryMCPServer:
             }
 
         elif method == "notifications/initialized":
-            return None  # 无需回复
+            return None  # no reply needed
 
         else:
             return {

@@ -1,27 +1,27 @@
-"""冲突检测——新记忆写入前与已有 active 记忆比对。"""
+"""Conflict detection — compares new memories against existing active ones before writing."""
 
 import re
 from dataclasses import dataclass
-from hermes_memory.memory_store import MemoryStore
+from evolvmem.memory_store import MemoryStore
 
 
 @dataclass
 class ConflictDecision:
-    """冲突检测结果。"""
+    """Conflict detection result."""
     action: str   # "add" | "skip" | "replace" | "conflict"
     reason: str
     existing_id: int | None = None
 
 
 class ConflictDetector:
-    """候选记忆写入前的冲突检测器。
+    """Conflict detector for candidate memories before writing.
 
-    决策树:
-    1. key 不存在 → add
-    2. value 相同 → skip（重复）
-    3. 用户明确说放弃旧方案 → replace
-    4. 新信息更具体（来自当前 session 且明显更详细）→ replace
-    5. 无法判断 → conflict（不写，保留旧值）
+    Decision tree:
+    1. key doesn't exist → add
+    2. value is identical → skip (duplicate)
+    3. user explicitly says abandon old approach → replace
+    4. new info is more specific (from current session and significantly more detailed) → replace
+    5. cannot determine → conflict (don't write, keep old value)
     """
 
     def __init__(self, memory_store: MemoryStore):
@@ -29,47 +29,47 @@ class ConflictDetector:
 
     def check(self, candidate_key: str, candidate_value: str,
               user_override: bool = False) -> ConflictDecision:
-        """检测候选记忆与已有记忆的冲突。"""
+        """Check the candidate memory against existing memories for conflicts."""
         existing = self._get_active(candidate_key)
 
-        # 1. key 不存在 → 直接新增
+        # 1. key doesn't exist → add directly
         if existing is None:
             return ConflictDecision(
                 action="add",
-                reason=f"新 key '{candidate_key}'，直接新增",
+                reason=f"New key '{candidate_key}', adding directly",
             )
 
-        # 2. value 相同 → 跳过
+        # 2. value is identical → skip
         if existing["value"].strip() == candidate_value.strip():
             return ConflictDecision(
                 action="skip",
-                reason=f"key '{candidate_key}' 的 value 未变化",
+                reason=f"Value for key '{candidate_key}' unchanged",
                 existing_id=existing["id"],
             )
 
-        # 3. 用户明确覆盖 → 替换
+        # 3. user explicitly overrides → replace
         if user_override:
             return ConflictDecision(
                 action="replace",
-                reason="用户明确指示放弃旧方案",
+                reason="User explicitly indicated to abandon old approach",
                 existing_id=existing["id"],
             )
 
-        # 4. 新信息明显更具体 → 替换
+        # 4. new info is significantly more specific → replace
         if self._is_significantly_more_specific(
             existing["value"], candidate_value
         ):
             return ConflictDecision(
                 action="replace",
-                reason="新信息明显更具体详细，替换旧值",
+                reason="New info is significantly more specific, replacing old value",
                 existing_id=existing["id"],
             )
 
-        # 5. 无法判断 → 冲突
+        # 5. cannot determine → conflict
         return ConflictDecision(
             action="conflict",
-            reason=f"key '{candidate_key}' 已存在不同值，"
-                   f"无法自动判断哪个更可信",
+            reason=f"Key '{candidate_key}' already exists with a different value, "
+                   f"cannot automatically determine which is more trustworthy",
             existing_id=existing["id"],
         )
 
@@ -82,15 +82,15 @@ class ConflictDetector:
 
     def _is_significantly_more_specific(self, old_value: str,
                                         new_value: str) -> bool:
-        """判断新值是否明显比旧值更具体。"""
+        """Determine if new value is significantly more specific than old value."""
         if len(new_value) >= len(old_value) * 1.5:
             return True
-        # 新值包含具体数据（数字、日期、人名等）
+        # New value contains specific data (numbers, dates, names, etc.)
         specificity_markers = [
-            r'\d+',             # 数字
-            r'\d{4}-\d{2}',     # 日期
-            r'http|https|\.com', # 链接
-            r'具体|明确|确认',    # 中文确定性标记
+            r'\d+',             # numbers
+            r'\d{4}-\d{2}',     # dates
+            r'http|https|\.com', # links
+            r'具体|明确|确认',    # Chinese certainty markers
         ]
         old_specificity = sum(
             1 for p in specificity_markers

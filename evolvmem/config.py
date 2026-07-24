@@ -1,4 +1,4 @@
-"""配置管理：数据目录、模型路径、检索和遗忘阈值。"""
+"""Configuration management: data directory, model path, retrieval and forgetting thresholds."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,10 +7,10 @@ import json
 
 @dataclass
 class Config:
-    """全局配置，可从 config.json 加载或使用默认值。"""
+    """Global configuration, loaded from config.json or using defaults."""
 
-    # 数据目录
-    data_dir: Path = Path.home() / ".claude" / "hermes-memory"
+    # Data directory
+    data_dir: Path = Path.home() / ".claude" / "evolvmem"
 
     # SQLite 数据库路径
     @property
@@ -50,13 +50,13 @@ class Config:
     stop_hook_safe: bool = True  # 防止 Stop Hook 无限循环
 
     def ensure_dirs(self) -> None:
-        """确保数据目录和模型目录存在。"""
+        """Ensure data directory and model directory exist."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         (self.data_dir / "models").mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def from_file(cls, path: Path | None = None) -> "Config":
-        """从 config.json 加载配置，不存在的字段使用默认值。"""
+        """Load config from config.json; missing fields use defaults."""
         config = cls()
         config.ensure_dirs()
         load_path = path or config.config_path
@@ -69,7 +69,7 @@ class Config:
         return config
 
     def save(self) -> None:
-        """保存配置到 config.json。"""
+        """Save configuration to config.json."""
         self.ensure_dirs()
         data = {
             "fts_top_k": self.fts_top_k,

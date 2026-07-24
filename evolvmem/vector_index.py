@@ -1,17 +1,17 @@
-"""USearch HNSW 向量索引——只存 (id, embedding)，作为 SQLite 的读缓存。"""
+"""USearch HNSW vector index — stores only (id, embedding), acts as a read cache for SQLite."""
 
 import numpy as np
 from pathlib import Path
 from usearch.index import Index, MetricKind, ScalarKind
 
-from hermes_memory.config import Config
+from evolvmem.config import Config
 
 
 class VectorIndex:
-    """USearch HNSW 向量索引包装。
+    """USearch HNSW vector index wrapper.
 
-    只存储 (id, embedding) 对。id 对应 MemoryStore 中 memories 表的 rowid。
-    索引文件通过 mmap 加载，启动零拷贝。
+    Stores only (id, embedding) pairs. id maps to the rowid in MemoryStore's memories table.
+    Index file is loaded via mmap for zero-copy startup.
     """
 
     def __init__(self, config: Config):
@@ -20,10 +20,10 @@ class VectorIndex:
         self._dim: int | None = None
         self._view_mode: bool = False
 
-    # ---- 生命周期 ----
+    # ---- lifecycle ----
 
     def initialize(self, dim: int = 512) -> None:
-        """创建或加载索引。如果已有文件则 mmap 加载，否则新建。"""
+        """Create or load index. Uses mmap if file exists, creates new otherwise."""
         self._dim = dim
         path = str(self.config.vector_path)
         if Path(path).exists():
@@ -49,34 +49,34 @@ class VectorIndex:
     def __exit__(self, *args):
         self.close()
 
-    # ---- 写入 ----
+    # ---- write ----
 
     def add(self, mem_id: int, embedding: np.ndarray) -> None:
-        """添加单个向量。"""
+        """Add a single vector."""
         self._ensure_initialized()
         vec = embedding.astype(np.float32)
         if vec.ndim != 1 or len(vec) != self._dim:
             raise ValueError(
-                f"期望 {self._dim} 维向量，收到 shape={vec.shape}"
+                f"Expected {self._dim}-dim vector, got shape={vec.shape}"
             )
         self._index.add(mem_id, vec)
 
     def add_batch(self, ids: list[int],
                   embeddings: list[np.ndarray]) -> None:
-        """批量添加向量。"""
+        """Batch add vectors."""
         for mid, emb in zip(ids, embeddings):
             self.add(mid, emb)
 
     def rebuild(self, ids: list[int],
                 embeddings: list[np.ndarray]) -> None:
-        """全量重建索引（SQLite 为源，崩溃恢复时调用）。"""
+        """Full index rebuild (SQLite as source, for crash recovery)."""
         if self._dim is None:
-            raise RuntimeError("VectorIndex 未初始化，请先调用 initialize()")
-        # 显式释放旧的 mmap 索引，避免资源泄漏
+            raise RuntimeError("VectorIndex not initialized, call initialize() first")
+        # Explicitly release old mmap index to avoid resource leak
         if self._index is not None:
             self._index = None
         self._view_mode = False
-        # 创建全新内存索引（不传入 path，避免加载旧数据导致重复 key 报错）
+        # Create a fresh in-memory index (no path to avoid loading old data with duplicate keys)
         self._index = Index(
             ndim=self._dim,
             metric=MetricKind.Cos,
@@ -86,7 +86,7 @@ class VectorIndex:
         self.save()
 
     def save(self) -> None:
-        """持久化到磁盘。"""
+        """Persist to disk."""
         self._ensure_initialized()
         if self._view_mode:
             raise RuntimeError(
@@ -95,17 +95,17 @@ class VectorIndex:
         path = str(self.config.vector_path)
         self._index.save(path)
 
-    # ---- 查询 ----
+    # ---- query ----
 
     def search(self, embedding: np.ndarray, k: int = 20) -> list[dict]:
-        """HNSW 近似最近邻搜索。返回 [{id, distance}, ...]，按距离升序。"""
+        """HNSW approximate nearest neighbor search. Returns [{id, distance}, ...] by distance ascending."""
         self._ensure_initialized()
         if self.count() == 0:
             return []
         vec = embedding.astype(np.float32)
         if vec.ndim != 1 or len(vec) != self._dim:
             raise ValueError(
-                f"期望 {self._dim} 维向量，收到 shape={vec.shape}"
+                f"Expected {self._dim}-dim vector, got shape={vec.shape}"
             )
         results = self._index.search(vec, min(k, self.count()))
         return [
@@ -113,21 +113,23 @@ class VectorIndex:
             for match in results
         ]
 
-    # ---- 状态 ----
+    # ---- status ----
 
     def count(self) -> int:
         self._ensure_initialized()
         return len(self._index)
 
     def check_consistency(self, expected_count: int) -> bool:
-        """检查 USearch 索引条目数是否与 SQLite 一致。
+        """Check if USearch index entry count matches SQLite.
 
-        注意：仅比较条目数，不验证 ID 是否匹配。
-        若计数一致但 ID 不同（如崩溃后键空间漂移），语义搜索将返回错误结果。
-        调用方应在计数通过后记录警告，提醒用户在搜索结果异常时删除向量文件强制重建。
+        Note: only compares counts, does not verify ID match.
+        If counts match but IDs differ (e.g., after crash recovery key drift),
+        semantic search will return wrong results.
+        The caller should log a warning after the count check passes, advising
+        users to delete vectors.usearch and force a rebuild if results are wrong.
         """
         return self.count() == expected_count
 
     def _ensure_initialized(self):
         if self._index is None:
-            raise RuntimeError("VectorIndex 未初始化，请先调用 initialize()")
+            raise RuntimeError("VectorIndex not initialized, call initialize() first")

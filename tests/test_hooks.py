@@ -1,7 +1,7 @@
-"""hooks 模块测试。"""
+"""hooks module tests."""
 
-from hermes_memory.hooks import get_session_start_block, get_stop_prompt
-from hermes_memory.memory_store import MemoryStore
+from evolvmem.hooks import get_session_start_block, get_stop_prompt
+from evolvmem.memory_store import MemoryStore
 
 
 class TestSessionStartHook:
@@ -11,28 +11,28 @@ class TestSessionStartHook:
 
     def test_active_memories_formatted_in_block(self, test_config):
         with MemoryStore(test_config) as store:
-            store.add(key="user:pref:language", value="中文", tags=["偏好"])
+            store.add(key="user:pref:language", value="Chinese", tags=["preference"])
             store.add(
                 key="project:arch:db",
-                value="使用PostgreSQL",
-                tags=["架构", "数据库"],
+                value="PostgreSQL",
+                tags=["architecture", "database"],
             )
 
         result = get_session_start_block(config=test_config)
 
-        assert "持久记忆" in result
-        assert "hermes-memory" in result
+        assert "Persistent Memory" in result
+        assert "EvolvMem" in result
         assert "user:pref:language" in result
-        assert "中文" in result
-        assert "[偏好]" in result
+        assert "Chinese" in result
+        assert "[preference]" in result
         assert "project:arch:db" in result
-        assert "使用PostgreSQL" in result
-        assert "[架构,数据库]" in result
+        assert "PostgreSQL" in result
+        assert "[architecture,database]" in result
 
 
 class TestStopHook:
     def test_stop_prompt_includes_conversation(self):
-        prompt = get_stop_prompt("用户: 我们决定使用 Redis 做缓存\n助手: 好的，已记录")
+        prompt = get_stop_prompt("user: We decided to use Redis for caching\nassistant: OK, noted")
 
         assert "Redis" in prompt
-        assert "保留" in prompt or "提取" in prompt
+        assert "Retention" in prompt or "extract" in prompt

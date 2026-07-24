@@ -1,17 +1,17 @@
-"""访问衰减遗忘引擎——长期未访问的低活跃记忆自动归档。"""
+"""Access-decay forgetting engine — auto-archives long-unaccessed low-activity memories."""
 
-from hermes_memory.config import Config
-from hermes_memory.memory_store import MemoryStore
+from evolvmem.config import Config
+from evolvmem.memory_store import MemoryStore
 
 
 class ForgettingEngine:
-    """基于访问频率的遗忘引擎。
+    """Access-frequency-based forgetting engine.
 
-    规则:
-    - last_accessed 距今超过 forget_days_threshold 天
-    - access_count ≤ forget_access_count_threshold
-    - 同时满足 → 降级为 archived
-    - 同一记忆 forget_rate_limit_days 天内最多降级一次
+    Rules:
+    - last_accessed older than forget_days_threshold days
+    - access_count <= forget_access_count_threshold
+    - both conditions met → downgrade to archived
+    - same memory downgraded at most once per forget_rate_limit_days
     """
 
     def __init__(self, config: Config, memory_store: MemoryStore):
@@ -19,7 +19,7 @@ class ForgettingEngine:
         self.store = memory_store
 
     def find_candidates(self) -> list[dict]:
-        """查找可降级的候选记忆。"""
+        """Find candidate memories eligible for downgrade."""
         return self.store.get_forgetting_candidates(
             days_threshold=self.config.forget_days_threshold,
             access_threshold=self.config.forget_access_count_threshold,
@@ -27,11 +27,11 @@ class ForgettingEngine:
         )
 
     def archive(self, mem_id: int) -> None:
-        """将指定记忆降级为 archived。"""
+        """Downgrade the specified memory to archived."""
         self.store.archive(mem_id)
 
     def run(self) -> int:
-        """执行一次遗忘检查，返回被降级的记忆数量。"""
+        """Run one forgetting check, return number of archived memories."""
         candidates = self.find_candidates()
         for c in candidates:
             self.archive(c["id"])

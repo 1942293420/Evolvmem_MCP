@@ -3,13 +3,13 @@
 import hashlib
 import pytest
 import numpy as np
-from hermes_memory.config import Config
-from hermes_memory.memory_store import MemoryStore
-from hermes_memory.vector_index import VectorIndex
-from hermes_memory.retriever import Retriever
-from hermes_memory.conflict_detector import ConflictDetector
-from hermes_memory.forgetting import ForgettingEngine
-from hermes_memory.auto_extractor import AutoExtractor
+from evolvmem.config import Config
+from evolvmem.memory_store import MemoryStore
+from evolvmem.vector_index import VectorIndex
+from evolvmem.retriever import Retriever
+from evolvmem.conflict_detector import ConflictDetector
+from evolvmem.forgetting import ForgettingEngine
+from evolvmem.auto_extractor import AutoExtractor
 
 
 class FakeEmbeddingEngine:
@@ -183,7 +183,7 @@ class TestIntegration:
 
     def test_mcp_tool_schemas_match_design(self):
         """验证 MCP Server 注册了全部 5 个工具。"""
-        from hermes_memory.mcp_server import MemoryMCPServer
+        from evolvmem.mcp_server import MemoryMCPServer
         server = MemoryMCPServer()
         # 伪造 initialize request 后直接查询工具列表
         response = server._handle_request({

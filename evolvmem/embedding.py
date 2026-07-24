@@ -1,14 +1,14 @@
-"""GGUF 本地 Embedding 引擎——通过 llama-cpp-python 加载量化模型。"""
+"""GGUF local embedding engine — loads quantized models via llama-cpp-python."""
 
 from pathlib import Path
-from hermes_memory.config import Config
+from evolvmem.config import Config
 
 
 class EmbeddingEngine:
-    """本地 Embedding 引擎。
+    """Local embedding engine.
 
-    使用 llama-cpp-python 加载 GGUF 格式的 embedding 模型（如 bge-small-zh）。
-    启动时加载一次，进程常驻内存。
+    Uses llama-cpp-python to load GGUF-format embedding models (e.g., bge-small-zh).
+    Loads once at startup, stays resident in process memory.
     """
 
     def __init__(self, config: Config):
@@ -16,26 +16,26 @@ class EmbeddingEngine:
         self._model = None
         self._dim: int | None = None
 
-    # ---- 生命周期 ----
+    # ---- lifecycle ----
 
     def initialize(self) -> None:
-        """加载 GGUF embedding 模型。"""
+        """Load the GGUF embedding model."""
         model_path = self.config.model_path
         if not model_path.exists():
             raise FileNotFoundError(
-                f"模型文件不存在: {model_path}\n"
-                f"请将 GGUF embedding 模型放置到 "
-                f"{self.config.data_dir / 'models'}/ 目录"
+                f"Model file not found: {model_path}\n"
+                f"Place the GGUF embedding model in "
+                f"{self.config.data_dir / 'models'}/ directory"
             )
 
-        # 延迟导入，避免 llama-cpp-python 未安装时整个模块崩溃
+        # Lazy import to avoid crashing the whole module if llama-cpp-python is not installed
         from llama_cpp import Llama
 
         self._model = Llama(
             model_path=str(model_path),
             embedding=True,
-            n_ctx=512,          # embedding 不需要长上下文
-            n_batch=32,         # 批量处理
+            n_ctx=512,          # embedding doesn't need long context
+            n_batch=32,         # batch processing
             verbose=False,
         )
         self._dim = self.config.embedding_dim
@@ -59,16 +59,16 @@ class EmbeddingEngine:
     @property
     def dim(self) -> int:
         if self._dim is None:
-            raise RuntimeError("EmbeddingEngine 未初始化")
+            raise RuntimeError("EmbeddingEngine not initialized")
         return self._dim
 
-    # ---- 编码 ----
+    # ---- encoding ----
 
     def encode(self, text: str) -> list[float]:
-        """将单条文本编码为 embedding 向量。"""
+        """Encode a single text to an embedding vector."""
         self._ensure_loaded()
         result = self._model.embed(text)
-        # llama-cpp-python 返回 embedding 列表的列表，取第一个
+        # llama-cpp-python returns embeddings as list of lists, take the first
         if isinstance(result, list) and len(result) > 0:
             if isinstance(result[0], list):
                 return result[0]
@@ -76,7 +76,7 @@ class EmbeddingEngine:
         return result
 
     def encode_batch(self, texts: list[str]) -> list[list[float]]:
-        """批量编码多条文本。"""
+        """Batch encode multiple texts."""
         self._ensure_loaded()
         embeddings = []
         for text in texts:
@@ -86,5 +86,5 @@ class EmbeddingEngine:
     def _ensure_loaded(self):
         if self._model is None:
             raise RuntimeError(
-                "EmbeddingEngine 未初始化，请先调用 initialize()"
+                "EmbeddingEngine not initialized, call initialize() first"
             )

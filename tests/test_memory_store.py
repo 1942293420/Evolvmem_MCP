@@ -1,7 +1,7 @@
 """MemoryStore tests."""
 
 import pytest
-from hermes_memory.memory_store import MemoryStore
+from evolvmem.memory_store import MemoryStore
 
 
 class TestMemoryStore:

@@ -1,41 +1,41 @@
-"""AutoExtractor 测试。"""
+"""AutoExtractor tests."""
 
 import pytest
-from hermes_memory.auto_extractor import AutoExtractor, CandidateMemory
+from evolvmem.auto_extractor import AutoExtractor, CandidateMemory
 
 
 class TestAutoExtractor:
     def test_format_extraction_prompt_includes_rules(self):
         extractor = AutoExtractor()
         prompt = extractor.build_extraction_prompt(
-            messages=[{"role": "user", "content": "我们用 PostgreSQL 吧"}],
+            messages=[{"role": "user", "content": "Let's use PostgreSQL"}],
         )
         assert "PostgreSQL" in prompt
-        assert "保留" in prompt or "提取" in prompt
-        assert "稳定 key" in prompt or "key" in prompt
+        assert "Retention" in prompt or "extract" in prompt
+        assert "Stable Key" in prompt or "key" in prompt
 
     def test_parse_empty_response(self):
         extractor = AutoExtractor()
-        candidates = extractor.parse_response("本次对话无需要持久化的信息。")
+        candidates = extractor.parse_response("Nothing worth persisting in this conversation.")
         assert candidates == []
 
     def test_parse_single_candidate(self):
         extractor = AutoExtractor()
         response = """```json
-[{"key": "project:db:decision:engine", "value": "使用 PostgreSQL 作为主数据库", "category": "decision", "tags": ["数据库", "PostgreSQL"], "confidence": 0.95}]
+[{"key": "project:db:decision:engine", "value": "Use PostgreSQL as primary database", "category": "decision", "tags": ["database", "PostgreSQL"], "confidence": 0.95}]
 ```"""
         candidates = extractor.parse_response(response)
         assert len(candidates) == 1
         assert candidates[0].key == "project:db:decision:engine"
-        assert candidates[0].value == "使用 PostgreSQL 作为主数据库"
+        assert candidates[0].value == "Use PostgreSQL as primary database"
 
     def test_should_persist_decision(self):
         extractor = AutoExtractor()
         c = CandidateMemory(
             key="p:x:decision:y",
-            value="选择了方案A",
+            value="Chose plan A",
             category="decision",
-            tags=["架构"],
+            tags=["architecture"],
             confidence=0.9,
         )
         assert extractor.should_persist(c) is True
@@ -44,9 +44,9 @@ class TestAutoExtractor:
         extractor = AutoExtractor()
         c = CandidateMemory(
             key="chat:greeting",
-            value="用户说你好",
+            value="User said hello",
             category="chat",
-            tags=["闲聊"],
+            tags=["small_talk"],
             confidence=0.1,
         )
         assert extractor.should_persist(c) is False
@@ -55,9 +55,9 @@ class TestAutoExtractor:
         extractor = AutoExtractor()
         key = extractor.build_key(
             project="my-shop",
-            domain="售后",
+            domain="aftersales",
             category="decision",
-            topic="退款规则",
+            topic="refund_rules",
         )
         assert key.startswith("my-shop:")
         assert " " not in key

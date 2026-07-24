@@ -1,8 +1,8 @@
-"""ConflictDetector 测试。"""
+"""ConflictDetector tests."""
 
 import pytest
-from hermes_memory.memory_store import MemoryStore
-from hermes_memory.conflict_detector import ConflictDetector, ConflictDecision
+from evolvmem.memory_store import MemoryStore
+from evolvmem.conflict_detector import ConflictDetector, ConflictDecision
 
 
 class TestConflictDetector:
@@ -13,7 +13,7 @@ class TestConflictDetector:
 
         decision = detector.check(
             candidate_key="project:new:fact:x",
-            candidate_value="新信息",
+            candidate_value="new info",
         )
         assert decision.action == "add"
         store.close()
@@ -21,62 +21,62 @@ class TestConflictDetector:
     def test_same_value_returns_skip(self, test_config):
         store = MemoryStore(test_config)
         store.initialize()
-        store.add(key="project:existing:fact", value="相同内容")
+        store.add(key="project:existing:fact", value="same content")
         detector = ConflictDetector(store)
 
         decision = detector.check(
             candidate_key="project:existing:fact",
-            candidate_value="相同内容",
+            candidate_value="same content",
         )
         assert decision.action == "skip"
         assert decision.existing_id is not None
-        assert "未变化" in decision.reason
+        assert "unchanged" in decision.reason
         store.close()
 
     def test_user_override_returns_replace(self, test_config):
         store = MemoryStore(test_config)
         store.initialize()
-        store.add(key="project:existing:decision", value="旧方案")
+        store.add(key="project:existing:decision", value="old approach")
         detector = ConflictDetector(store)
 
         decision = detector.check(
             candidate_key="project:existing:decision",
-            candidate_value="新方案，放弃旧方案",
-            user_override=True,  # 用户明确说放弃旧方案
+            candidate_value="new approach, abandon old",
+            user_override=True,  # user explicitly says to abandon old approach
         )
         assert decision.action == "replace"
         assert decision.existing_id is not None
-        assert "放弃" in decision.reason
+        assert "abandon" in decision.reason
         store.close()
 
     def test_different_value_no_context_returns_conflict(self, test_config):
         store = MemoryStore(test_config)
         store.initialize()
-        store.add(key="project:existing:rule", value="规则A")
+        store.add(key="project:existing:rule", value="rule A")
         detector = ConflictDetector(store)
 
         decision = detector.check(
             candidate_key="project:existing:rule",
-            candidate_value="规则B",
+            candidate_value="rule B",
         )
         assert decision.action == "conflict"
         assert decision.existing_id is not None
-        assert "无法" in decision.reason
+        assert "cannot" in decision.reason
         store.close()
 
     def test_newer_session_more_specific_wins(self, test_config):
         store = MemoryStore(test_config)
         store.initialize()
-        store.add(key="project:existing:rule", value="默认策略")
+        store.add(key="project:existing:rule", value="default strategy")
         detector = ConflictDetector(store)
 
-        # 来自当前 session 的更具体信息应 wins
+        # more specific info from current session should win
         decision = detector.check(
             candidate_key="project:existing:rule",
-            candidate_value="默认策略已改为针对VIP客户的特殊策略",
+            candidate_value="default strategy changed to VIP-only special strategy",
         )
-        # 更具体（更长） + 来自当前 session → replace
+        # more specific (longer) + from current session → replace
         assert decision.action == "replace"
         assert decision.existing_id is not None
-        assert "更具体" in decision.reason
+        assert "more specific" in decision.reason
         store.close()
