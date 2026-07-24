@@ -10,7 +10,8 @@ from hermes_memory.config import Config
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    """Return UTC now in SQLite-compatible datetime format for correct comparison."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class MemoryStore:
@@ -330,12 +331,19 @@ class MemoryStore:
     def get_forgetting_candidates(self, days_threshold: int,
                                   access_threshold: int,
                                   rate_limit_days: int) -> list[dict]:
-        """Return candidates eligible for archival (downgrade)."""
+        """Return candidates eligible for archival (downgrade).
+
+        A record is a candidate when:
+        - last_accessed is either NULL (never accessed) or older than days_threshold
+        - access_count is at or below access_threshold
+        - updated_at is either NULL or at least rate_limit_days ago (<= so same-second
+          updates when threshold is 0 also qualify)
+        """
         rows = self._execute(
             "SELECT * FROM memories WHERE status='active' "
-            "AND (last_accessed IS NULL OR last_accessed < datetime('now', ?)) "
+            "AND (last_accessed IS NULL OR last_accessed <= datetime('now', ?)) "
             "AND access_count <= ? "
-            "AND (updated_at IS NULL OR updated_at < datetime('now', ?))",
+            "AND (updated_at IS NULL OR updated_at <= datetime('now', ?))",
             (f"-{days_threshold} days", access_threshold,
              f"-{rate_limit_days} days"),
         )
