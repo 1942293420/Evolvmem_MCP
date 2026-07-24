@@ -1,9 +1,8 @@
 """配置管理：数据目录、模型路径、检索和遗忘阈值。"""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 import json
-import os
 
 
 @dataclass
@@ -62,7 +61,7 @@ class Config:
         config.ensure_dirs()
         load_path = path or config.config_path
         if load_path.exists():
-            with open(load_path) as f:
+            with open(load_path, encoding="utf-8") as f:
                 data = json.load(f)
             for key, value in data.items():
                 if hasattr(config, key):
@@ -83,5 +82,5 @@ class Config:
             "embedding_dim": self.embedding_dim,
             "stop_hook_safe": self.stop_hook_safe,
         }
-        with open(self.config_path, "w") as f:
+        with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
