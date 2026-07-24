@@ -67,23 +67,25 @@ class TestMemoryStore:
     def test_fts_search_finds_chinese(self, test_config):
         store = MemoryStore(test_config)
         store.initialize()
-        store.add(key="p:a:fact:1", value="damaged goods get direct refund, no resend", tags=["aftersales"])
-        store.add(key="p:a:fact:2", value="user prefers dark theme interface", tags=["preference"])
-        store.add(key="p:a:fact:3", value="Python version requires 3.10 or higher", tags=["tech"])
+        assert store._has_cjk("退款") is True
 
-        results = store.search_fts("refund")
+        store.add(key="p:a:fact:1", value="破损商品直接退款，不再补发", tags=["售后"])
+        store.add(key="p:a:fact:2", value="用户偏好暗色主题界面", tags=["偏好"])
+        store.add(key="p:a:fact:3", value="Python 版本需要 3.10 以上", tags=["技术"])
+
+        results = store.search_fts("退款")
         assert len(results) == 1
-        assert "damaged goods" in results[0]["value"]
+        assert "破损商品" in results[0]["value"]
         store.close()
 
     def test_trigram_search_finds_chinese_substring(self, test_config):
         store = MemoryStore(test_config)
         store.initialize()
-        store.add(key="p:a:fact:1", value="damaged goods get direct refund, no resend", tags=["aftersales"])
+        store.add(key="p:a:fact:1", value="破损商品直接退款，不再补发", tags=["售后"])
 
-        results = store.search_fts("damaged")         # trigram can match
+        results = store.search_fts("破损")         # trigram can match
         assert len(results) == 1
-        results2 = store.search_fts("direct refund")     # phrase substring
+        results2 = store.search_fts("直接退款")     # phrase substring
         assert len(results2) == 1
         store.close()
 
@@ -91,11 +93,26 @@ class TestMemoryStore:
         """When trigram tokenizer is unavailable, fall back to LIKE search."""
         store = MemoryStore(test_config)
         store.initialize()
-        store.add(key="p:a:fact:1", value="damaged goods direct refund", tags=["test"])
+        store.add(key="p:a:fact:1", value="破损商品直接退款，不再补发", tags=["test"])
+
+        # Verify CJK detection works
+        assert store._has_cjk("退款") is True
 
         # Simulate trigram unavailable: force LIKE path directly
-        results = store._search_like("refund")
+        results = store._search_like("退款")
         assert len(results) == 1
+        assert "破损商品" in results[0]["value"]
+        store.close()
+
+    def test_search_like_excludes_deleted(self, test_config):
+        """_search_like should not return soft-deleted records."""
+        store = MemoryStore(test_config)
+        store.initialize()
+        mem_id = store.add(key="p:del:test", value="破损商品直接退款", tags=["test"])
+        store.remove(mem_id)
+        # Deleted record should not appear in LIKE results
+        results = store._search_like("退款")
+        assert len(results) == 0
         store.close()
 
     def test_duplicate_key_skip(self, test_config):

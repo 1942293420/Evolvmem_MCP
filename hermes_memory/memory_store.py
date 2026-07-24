@@ -137,9 +137,11 @@ class MemoryStore:
         pattern = f"%{query}%"
         rows = self._execute(
             "SELECT *, rank FROM ("
-            "  SELECT m.*, 1.0 as rank FROM memories m WHERE m.value LIKE ?"
+            "  SELECT m.*, 1.0 as rank FROM memories m "
+            "  WHERE m.value LIKE ? AND m.status != 'deleted'"
             "  UNION ALL"
-            "  SELECT m.*, 0.5 as rank FROM memories m WHERE m.tags LIKE ?"
+            "  SELECT m.*, 0.5 as rank FROM memories m "
+            "  WHERE m.tags LIKE ? AND m.status != 'deleted'"
             ") ORDER BY rank DESC LIMIT ?",
             (pattern, pattern, top_k),
         )
@@ -147,12 +149,10 @@ class MemoryStore:
 
     # ---- write ----
 
-    def add(self, key: str, value: str, category: str = "",
-            tags: list[str] | None = None,
-            source_session: str = "",
-            supersedes: int | None = None) -> int:
-        """Insert a new active memory. Returns the new record id."""
-        tag_str = ",".join(tags) if tags else ""
+    def _insert_row(self, key: str, value: str, category: str,
+                    tag_str: str, source_session: str,
+                    supersedes: int | None) -> int:
+        """Insert a row into memories and return its id. Does NOT commit."""
         now = _now_iso()
         cur = self._conn.execute(
             "INSERT INTO memories (key, value, status, category, tags, "
@@ -160,8 +160,18 @@ class MemoryStore:
             "VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?)",
             (key, value, category, tag_str, source_session, supersedes, now, now),
         )
-        self._conn.commit()
         return cur.lastrowid
+
+    def add(self, key: str, value: str, category: str = "",
+            tags: list[str] | None = None,
+            source_session: str = "",
+            supersedes: int | None = None) -> int:
+        """Insert a new active memory. Returns the new record id."""
+        tag_str = ",".join(tags) if tags else ""
+        new_id = self._insert_row(key, value, category, tag_str,
+                                  source_session, supersedes)
+        self._conn.commit()
+        return new_id
 
     def add_if_changed(self, key: str, value: str, **kwargs) -> int | None:
         """Only insert if value differs from current active. Returns None if skipped."""
@@ -171,21 +181,37 @@ class MemoryStore:
         return self.add(key=key, value=value, **kwargs)
 
     def replace(self, key: str, new_value: str, **kwargs) -> int:
-        """Replace old active with new value. Old marked as superseded, new as active."""
+        """Replace old active with new value. Old marked as superseded, new as active.
+
+        Wrapped in a single explicit transaction so no dual-active window exists:
+        at no point can two records with the same key both be 'active'.
+        """
         old = self._get_active_by_key(key)
         if old is None:
             return self.add(key=key, value=new_value, **kwargs)
 
         old_id = old["id"]
-        new_id = self.add(key=key, value=new_value,
-                          supersedes=old_id, **kwargs)
-        now = _now_iso()
-        self._conn.execute(
-            "UPDATE memories SET status='superseded', superseded_by=?, "
-            "updated_at=? WHERE id=?",
-            (new_id, now, old_id),
-        )
-        self._conn.commit()
+        tag_str = ",".join(kwargs.pop("tags", [])) if "tags" in kwargs else ""
+
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            new_id = self._insert_row(
+                key, new_value,
+                kwargs.pop("category", ""),
+                tag_str,
+                kwargs.pop("source_session", ""),
+                old_id,
+            )
+            now = _now_iso()
+            self._conn.execute(
+                "UPDATE memories SET status='superseded', superseded_by=?, "
+                "updated_at=? WHERE id=?",
+                (new_id, now, old_id),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
         return new_id
 
     def remove(self, mem_id: int) -> None:
@@ -248,19 +274,24 @@ class MemoryStore:
     # ---- full-text search ----
 
     def search_fts(self, query: str, top_k: int = 20) -> list[dict]:
-        """FTS5 full-text search, auto-selects trigram or unicode61 index."""
+        """FTS5 full-text search, auto-selects trigram or unicode61 index.
+
+        Always supplements with LIKE for CJK queries since short Chinese
+        substrings (e.g. 2-char "退款") may not produce valid trigrams.
+        """
         if self._has_trigram and self._has_cjk(query):
-            return self._search_fts5("memories_fts_trigram", query, top_k)
+            results = self._search_fts5("memories_fts_trigram", query, top_k)
         else:
             results = self._search_fts5("memories_fts", query, top_k)
-            # FTS5 unicode61 is poor for CJK, supplement with LIKE
-            if self._has_cjk(query):
-                like_results = self._search_like(query, top_k)
-                seen = {r["id"] for r in results}
-                for r in like_results:
-                    if r["id"] not in seen:
-                        results.append(r)
-            return results
+
+        # Supplement with LIKE for CJK queries regardless of tokenizer
+        if self._has_cjk(query):
+            like_results = self._search_like(query, top_k)
+            seen = {r["id"] for r in results}
+            for r in like_results:
+                if r["id"] not in seen:
+                    results.append(r)
+        return results
 
     def _search_fts5(self, table: str, query: str, top_k: int) -> list[dict]:
         safe_query = self._sanitize_fts5_query(query)
