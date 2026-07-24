@@ -15,7 +15,7 @@ def get_session_start_block(config: Config | None = None) -> str:
         格式化的系统提示字符串；如果没有 active 记忆则返回空字符串。
     """
     if config is None:
-        config = Config()
+        config = Config.from_file()
 
     with MemoryStore(config) as store:
         memories = store.get_active()
@@ -45,14 +45,16 @@ def get_session_start_block(config: Config | None = None) -> str:
     return "\n".join(lines)
 
 
-def get_stop_prompt(messages_summary: list[dict[str, str]]) -> str:
+def get_stop_prompt(messages_summary: str) -> str:
     """构建 Stop Hook 的提取提示词。
 
     Args:
-        messages_summary: 对话消息列表，每条包含 role 和 content。
+        messages_summary: 对话摘要字符串（来自 hook 系统）。
 
     Returns:
         提取提示词字符串，可传给 Claude 进行分析。
     """
     extractor = AutoExtractor()
-    return extractor.build_extraction_prompt(messages=messages_summary)
+    return extractor.build_extraction_prompt(
+        messages=[{"role": "user", "content": messages_summary}],
+    )

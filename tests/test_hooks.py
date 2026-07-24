@@ -32,11 +32,7 @@ class TestSessionStartHook:
 
 class TestStopHook:
     def test_stop_prompt_includes_conversation(self):
-        messages = [
-            {"role": "user", "content": "我们决定使用 Redis 做缓存"},
-            {"role": "assistant", "content": "好的，已记录"},
-        ]
-        prompt = get_stop_prompt(messages)
+        prompt = get_stop_prompt("用户: 我们决定使用 Redis 做缓存\n助手: 好的，已记录")
 
         assert "Redis" in prompt
         assert "保留" in prompt or "提取" in prompt
