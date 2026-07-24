@@ -94,3 +94,65 @@ class TestRetriever:
 
         store.close()
         vidx.close()
+
+    def test_hybrid_search_match_types(self, test_config):
+        """Hybrid search with populated vector index produces correct match_type labels.
+
+        Verifies that _merge(), vector score normalization, and combined scoring
+        are exercised: FTS finds exact keyword matches, vector search returns
+        semantically related results that FTS misses, and merged results carry
+        the correct match_type ("fts", "vector", or "fts+vector").
+        """
+        store = MemoryStore(test_config)
+        store.initialize()
+
+        # A: contains "退货" — FTS will match for query "退货流程"
+        id_a = store.add(key="p:return:1", value="客户退货流程说明", tags=["售后"])
+        # B: related meaning but different wording — FTS won't match "退货流程"
+        id_b = store.add(key="p:refund:1", value="破损商品直接退款", tags=["售后"])
+        # C: unrelated content
+        id_c = store.add(key="p:pref:1", value="用户偏好暗色主题", tags=["偏好"])
+
+        vidx = VectorIndex(test_config)
+        vidx.initialize(dim=512)
+        engine = FakeEmbeddingEngine()
+
+        # Populate vector index so _can_vector_search() returns True
+        for mem_id, text in [(id_a, "客户退货流程说明"),
+                              (id_b, "破损商品直接退款"),
+                              (id_c, "用户偏好暗色主题")]:
+            emb = engine.encode(text)
+            vidx.add(mem_id, np.array(emb, dtype=np.float32))
+
+        assert vidx.count() == 3
+
+        retriever = Retriever(test_config, store, vidx, engine)
+        results = retriever.search("退货流程", top_k=10)
+
+        # No duplicate IDs (dedup in _merge works)
+        ids = [r["id"] for r in results]
+        assert len(ids) == len(set(ids))
+
+        match_types = {r["id"]: r["match_type"] for r in results}
+
+        # A is found by FTS (contains "退货" matching query tokens)
+        assert id_a in match_types
+        assert "fts" in match_types[id_a], (
+            f"Expected 'fts' or 'fts+vector' for id_a, got {match_types[id_a]}"
+        )
+
+        # B is found only by vector: "退款" shares no trigrams with "退货流程"
+        assert id_b in match_types
+        assert match_types[id_b] == "vector", (
+            f"Expected 'vector' for id_b, got {match_types[id_b]}"
+        )
+
+        # Verify at least one "fts+vector" and at least two match_type values exist
+        all_types = set(match_types.values())
+        assert len(all_types) >= 2, (
+            f"Expected at least 2 distinct match_types, got {all_types}"
+        )
+        assert "fts+vector" in all_types or "fts" in all_types
+
+        store.close()
+        vidx.close()

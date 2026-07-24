@@ -12,9 +12,10 @@ class Retriever:
     查询流程:
     1. FTS5/trigram 精确搜索
     2. 向量语义搜索（embedding 引擎可用时）
-    3. 去重、加权合并、排序
-    4. 回 SQLite 取完整记录
-    5. 更新 access_count
+    3. 去重、加权合并
+    4. 回 SQLite 取完整记录（全部合并结果）
+    5. 按 status 过滤 → 按 score 排序 → 截断 top_k
+    6. 更新 access_count
     """
 
     def __init__(self, config: Config, memory_store: MemoryStore,
@@ -46,17 +47,14 @@ class Retriever:
         # 3. 去重 + 加权合并
         merged = self._merge(fts_results, vector_results)
 
-        # 4. 按 score 排序，截断
-        merged.sort(key=lambda x: x["score"], reverse=True)
-        merged = merged[:top_k]
-
-        # 5. 回 SQLite 取完整记录 + 过滤状态
+        # 4. 回 SQLite 取完整记录（所有合并结果，不截断）
         ids = [m["id"] for m in merged]
         if not ids:
             return []
         records = self.store.get_by_ids(ids)
         record_map = {r["id"]: r for r in records}
 
+        # 5. 过滤状态 → 按 score 排序 → 截断 top_k
         results = []
         for m in merged:
             record = record_map.get(m["id"])
@@ -64,6 +62,9 @@ class Retriever:
                 record["score"] = m["score"]
                 record["match_type"] = m["match_type"]
                 results.append(record)
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        results = results[:top_k]
 
         # 6. 更新 access_count
         for r in results:
