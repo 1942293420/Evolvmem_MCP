@@ -45,6 +45,23 @@ class Config:
 
     # --- embedding 参数 ---
     embedding_dim: int = 768
+    # nomic-embed-text-v1.5 任务前缀；置空字符串可关闭
+    embedding_query_prefix: str = "search_query: "
+    embedding_doc_prefix: str = "search_document: "
+
+    # --- SessionStart 注入限额 ---
+    inject_max_count: int = 50     # 最多注入的记忆条数
+    inject_max_chars: int = 8000   # 注入内容总字符预算（约 3-4k tokens）
+
+    # --- 注入评分权重（三因子） ---
+    inject_w_importance: float = 0.5   # importance/10 的权重
+    inject_w_recency: float = 0.3      # exp(-age/tau) 的权重
+    inject_w_frequency: float = 0.2    # log1p(access_count) 的权重
+    inject_recency_tau_days: float = 14.0  # recency 衰减时间常数（天）
+    inject_freq_norm_cap: int = 20     # 访问次数归一化上限
+
+    # --- 自动遗忘 ---
+    forget_auto_run_hours: int = 24  # SessionStart 自动遗忘的最小间隔（小时）
 
     # --- 安全 ---
     stop_hook_safe: bool = True  # 防止 Stop Hook 无限循环
@@ -80,6 +97,16 @@ class Config:
             "forget_access_count_threshold": self.forget_access_count_threshold,
             "forget_rate_limit_days": self.forget_rate_limit_days,
             "embedding_dim": self.embedding_dim,
+            "embedding_query_prefix": self.embedding_query_prefix,
+            "embedding_doc_prefix": self.embedding_doc_prefix,
+            "inject_max_count": self.inject_max_count,
+            "inject_max_chars": self.inject_max_chars,
+            "inject_w_importance": self.inject_w_importance,
+            "inject_w_recency": self.inject_w_recency,
+            "inject_w_frequency": self.inject_w_frequency,
+            "inject_recency_tau_days": self.inject_recency_tau_days,
+            "inject_freq_norm_cap": self.inject_freq_norm_cap,
+            "forget_auto_run_hours": self.forget_auto_run_hours,
             "stop_hook_safe": self.stop_hook_safe,
         }
         with open(self.config_path, "w", encoding="utf-8") as f:
