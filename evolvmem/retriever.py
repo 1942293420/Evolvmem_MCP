@@ -36,7 +36,7 @@ class Retriever:
         vector_results = []
         if self._can_vector_search():
             try:
-                vec = self.engine.encode(query)
+                vec = self.engine.encode_query(query)
                 vector_results = self.vidx.search(
                     np.array(vec, dtype=np.float32),
                     self.config.vector_top_k,
@@ -82,11 +82,22 @@ class Retriever:
         """Merge FTS5 and vector results, compute weighted composite score."""
         scores: dict[int, dict] = {}
 
-        # Normalize FTS5 results
+        # Normalize FTS5 results.
+        # FTS5 bm25 rank is negative (more negative = better match), while the
+        # LIKE fallback produces positive ranks (larger = better). Normalize
+        # each kind against its own best value so the top hit scores 1.0.
         if fts_results:
-            max_rank = max(r.get("rank", 0) for r in fts_results) or 1.0
+            ranks = [r.get("rank", 0) for r in fts_results]
+            best_neg = min(ranks)
+            max_pos = max(ranks)
             for r in fts_results:
-                normalized = r.get("rank", 0) / max_rank
+                rank = r.get("rank", 0)
+                if rank < 0 and best_neg < 0:
+                    normalized = rank / best_neg
+                elif rank > 0 and max_pos > 0:
+                    normalized = rank / max_pos
+                else:
+                    normalized = 0.0
                 scores[r["id"]] = {
                     "id": r["id"],
                     "score": normalized * self.config.fts_weight,

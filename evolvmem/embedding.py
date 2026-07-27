@@ -75,6 +75,14 @@ class EmbeddingEngine:
             return result
         return result
 
+    def encode_query(self, text: str) -> list[float]:
+        """Encode a search query, applying the configured query task prefix."""
+        return self.encode(self.config.embedding_query_prefix + text)
+
+    def encode_document(self, text: str) -> list[float]:
+        """Encode a document for indexing, applying the configured document prefix."""
+        return self.encode(self.config.embedding_doc_prefix + text)
+
     def encode_batch(self, texts: list[str]) -> list[list[float]]:
         """Batch encode multiple texts."""
         self._ensure_loaded()

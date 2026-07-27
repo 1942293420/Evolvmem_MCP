@@ -39,6 +39,24 @@ class TestVectorIndex:
         assert ids[0] == 1  # v1 最接近自己
         idx.close()
 
+    def test_remove_keeps_count_in_sync(self, test_config):
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+        v = np.ones(512, dtype=np.float32) / np.sqrt(512)
+
+        idx.add(1, v)
+        idx.add(2, v)
+        assert idx.count() == 2
+
+        assert idx.remove(1) is True
+        assert idx.remove(999) is False  # 不存在的 id 不抛异常
+        idx.save()
+
+        assert idx.count() == 1
+        results = idx.search(v, k=2)
+        assert [r["id"] for r in results] == [2]
+        idx.close()
+
     def test_persistence_survives_reopen(self, test_config):
         idx = VectorIndex(test_config)
         idx.initialize(dim=512)

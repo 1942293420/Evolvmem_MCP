@@ -67,6 +67,17 @@ class VectorIndex:
         for mid, emb in zip(ids, embeddings):
             self.add(mid, emb)
 
+    def remove(self, mem_id: int) -> bool:
+        """Remove a single vector. Returns True if removed, False if absent."""
+        self._ensure_initialized()
+        try:
+            if mem_id not in self._index:
+                return False
+            self._index.remove(mem_id)
+            return True
+        except Exception:
+            return False
+
     def rebuild(self, ids: list[int],
                 embeddings: list[np.ndarray]) -> None:
         """Full index rebuild (SQLite as source, for crash recovery)."""

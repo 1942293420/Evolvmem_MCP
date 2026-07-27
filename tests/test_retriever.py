@@ -34,6 +34,12 @@ class FakeEmbeddingEngine:
     def encode_batch(self, texts):
         return [self.encode(t) for t in texts]
 
+    def encode_query(self, text):
+        return self.encode(text)
+
+    def encode_document(self, text):
+        return self.encode(text)
+
 
 class TestRetriever:
     def test_fts_only_when_no_vectors(self, test_config):
@@ -54,6 +60,32 @@ class TestRetriever:
 
         store.close()
         vidx.close()
+
+    def test_merge_normalizes_negative_fts_ranks(self, test_config):
+        """FTS5 bm25 rank 为负数（越负越好）：最佳命中归一化到 fts_weight。"""
+        retriever = Retriever(test_config, None, None, None)
+        fts_results = [
+            {"id": 1, "rank": -5.0},   # best match
+            {"id": 2, "rank": -1.0},   # worse match
+        ]
+
+        merged = {m["id"]: m for m in retriever._merge(fts_results, [])}
+
+        assert merged[1]["score"] == pytest.approx(test_config.fts_weight)
+        assert 0 < merged[2]["score"] < merged[1]["score"]
+
+    def test_merge_normalizes_positive_like_ranks(self, test_config):
+        """LIKE 兜底的正 rank（越大越好）：最大值归一化到 fts_weight。"""
+        retriever = Retriever(test_config, None, None, None)
+        fts_results = [
+            {"id": 1, "rank": 1.0},
+            {"id": 2, "rank": 0.5},
+        ]
+
+        merged = {m["id"]: m for m in retriever._merge(fts_results, [])}
+
+        assert merged[1]["score"] == pytest.approx(test_config.fts_weight)
+        assert merged[2]["score"] == pytest.approx(0.5 * test_config.fts_weight)
 
     def test_hybrid_search_merges_results(self, test_config):
         """FTS5 + 向量结果去重合并。"""
