@@ -4,7 +4,7 @@ A fully-local, three-layer memory plugin for Claude Code with Chinese language s
 
 ## Features
 
-- **L0 Active Memory**: Auto-injected into system prompt on SessionStart
+- **L0 Active Memory**: Three-layer SessionStart injection — pinned memories always injected, normal memories ranked by importance+recency+frequency score, the rest listed as a searchable index (progressive disclosure)
 - **L1 Full History**: SQLite + FTS5/trigram exact search, supports Chinese substring matching
 - **L2 Semantic Index**: USearch HNSW vector search for finding related memories expressed differently
 - **Self-Iteration**: Auto-extraction, conflict detection, access-decay forgetting
@@ -64,7 +64,7 @@ Optional: add a SessionStart hook for automatic active memory injection:
 |---|---|
 | `memory_search` | FTS5 + HNSW hybrid search, supports Chinese |
 | `memory_status` | View memory system status and statistics |
-| `memory_add` | Manually write a memory |
+| `memory_add` | Manually write a memory (optional `importance` 1-10 and `tier` pinned/normal parameters) |
 | `memory_replace` | Replace a memory (old value marked as superseded) |
 | `memory_remove` | Soft-delete a memory |
 
@@ -87,7 +87,11 @@ Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 - `fts_weight` / `vector_weight`: Hybrid search weight allocation, default 0.6 / 0.4
 - `forget_days_threshold`: Days since last access before a memory can be archived, default 90
 - `forget_access_count_threshold`: Max access count below which memories may be downgraded, default 2
-- `embedding_dim`: Vector dimension, must match model, default 512
+- `embedding_dim`: Vector dimension, must match model, default 768
+- `embedding_query_prefix` / `embedding_doc_prefix`: Task prefixes applied when embedding queries/documents (nomic defaults `search_query: ` / `search_document: `, set to `""` to disable)
+- `inject_max_count`: Max memories injected on SessionStart, default 50
+- `inject_max_chars`: Total character budget for SessionStart injection, default 8000
+- `forget_auto_run_hours`: Minimum interval between auto-forgetting runs at SessionStart, default 24
 
 ## Dependencies
 
