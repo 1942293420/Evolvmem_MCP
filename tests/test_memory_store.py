@@ -134,3 +134,42 @@ class TestMemoryStore:
         assert record["access_count"] == 1
         assert record["last_accessed"] is not None
         store.close()
+
+    def test_schema_has_importance_and_tier(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        cols = {r[1] for r in store._execute("PRAGMA table_info(memories)")}
+        assert "importance" in cols
+        assert "tier" in cols
+        store.close()
+
+    def test_backfill_importance_by_category(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        cid = store.add(key="p:t:constraint:x", value="硬约束", category="constraint")
+        did = store.add(key="p:t:decision:x", value="架构决策", category="decision")
+        pid = store.add(key="p:t:preference:x", value="用户偏好", category="preference")
+        fid = store.add(key="p:t:fact:x", value="普通事实", category="fact")
+
+        store._backfill_importance_tier()
+
+        assert store.get_by_id(cid)["importance"] == 8.0
+        assert store.get_by_id(did)["importance"] == 7.0
+        assert store.get_by_id(pid)["importance"] == 6.0
+        assert store.get_by_id(fid)["importance"] == 5.0
+        assert store.get_by_id(cid)["tier"] == "pinned"
+        assert store.get_by_id(pid)["tier"] == "pinned"
+        assert store.get_by_id(did)["tier"] == "normal"
+        store.close()
+
+    def test_migration_idempotent_on_reinitialize(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        store.close()
+        # 二次、三次 initialize 不报错
+        store2 = MemoryStore(test_config)
+        store2.initialize()
+        store2.close()
+        store3 = MemoryStore(test_config)
+        store3.initialize()
+        store3.close()

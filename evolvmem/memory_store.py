@@ -76,6 +76,46 @@ class MemoryStore:
             ON memories(key, status);
         """)
 
+        # --- 幂等迁移：importance / tier 两列（2026-07-28 tiered injection）---
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(memories)")}
+        migrated = False
+        if "importance" not in cols:
+            self._conn.execute(
+                "ALTER TABLE memories ADD COLUMN importance REAL NOT NULL DEFAULT 5.0"
+            )
+            migrated = True
+        if "tier" not in cols:
+            self._conn.execute(
+                "ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'normal'"
+            )
+            migrated = True
+        if migrated:
+            self._backfill_importance_tier()
+
+    # category → 默认 importance（1-10）；pinned 类别集合
+    _IMPORTANCE_BY_CATEGORY = {
+        "constraint": 8.0,
+        "decision": 7.0,
+        "preference": 6.0,
+        "user_profile": 6.0,
+    }
+    _PINNED_CATEGORIES = ("constraint", "preference", "user_profile")
+
+    def _backfill_importance_tier(self) -> None:
+        """按 category 规则回填 importance/tier。仅在迁移（新增列）时调用一次。"""
+        self._conn.execute(
+            "UPDATE memories SET importance = CASE category "
+            "WHEN 'constraint' THEN 8.0 "
+            "WHEN 'decision' THEN 7.0 "
+            "WHEN 'preference' THEN 6.0 "
+            "WHEN 'user_profile' THEN 6.0 "
+            "ELSE 5.0 END"
+        )
+        self._conn.execute(
+            "UPDATE memories SET tier = 'pinned' "
+            "WHERE category IN ('constraint', 'preference', 'user_profile')"
+        )
+
     def _create_fts_indexes(self) -> None:
         # Check if trigram tokenizer is available
         try:
