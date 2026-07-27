@@ -12,6 +12,19 @@ from evolvmem.forgetting import ForgettingEngine
 from evolvmem.auto_extractor import AutoExtractor
 
 
+@pytest.fixture
+def server(test_config):
+    """MemoryMCPServer wired to a temp-dir store (embedding engine stays unloaded)."""
+    from evolvmem.mcp_server import MemoryMCPServer
+    srv = MemoryMCPServer()
+    srv.config = test_config
+    srv.store = MemoryStore(test_config)
+    srv.store.initialize()
+    srv.conflict_detector = ConflictDetector(srv.store)
+    yield srv
+    srv.store.close()
+
+
 class FakeEmbeddingEngine:
     """假 embedding 引擎，返回确定性向量（同文本 → 同向量）。"""
 
@@ -37,6 +50,12 @@ class FakeEmbeddingEngine:
 
     def encode_batch(self, texts):
         return [self.encode(t) for t in texts]
+
+    def encode_query(self, text):
+        return self.encode(text)
+
+    def encode_document(self, text):
+        return self.encode(text)
 
 
 class TestIntegration:
@@ -135,6 +154,19 @@ class TestIntegration:
         store.close()
         vidx.close()
 
+    def test_memory_add_with_importance_tier(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:constraint:db",
+            "value": "禁止直接操作生产库",
+            "category": "constraint",
+            "importance": 9.0,
+            "tier": "pinned",
+        })
+        assert result["status"] == "added"
+        rec = server.store.get_by_id(result["id"])
+        assert rec["importance"] == 9.0
+        assert rec["tier"] == "pinned"
+
     def test_auto_extractor_realistic_conversation(self):
         """从真实对话中提取记忆。"""
         extractor = AutoExtractor()
@@ -196,6 +228,42 @@ class TestIntegration:
             "memory_replace", "memory_remove",
         }
         assert tool_names == expected
+
+    def test_mcp_notifications_get_no_response(self):
+        """JSON-RPC notification（无 id）不应产生响应。"""
+        from evolvmem.mcp_server import MemoryMCPServer
+        server = MemoryMCPServer()
+        assert server._handle_request({
+            "method": "notifications/initialized", "jsonrpc": "2.0",
+        }) is None
+
+    def test_mcp_ping(self):
+        from evolvmem.mcp_server import MemoryMCPServer
+        server = MemoryMCPServer()
+        resp = server._handle_request({
+            "method": "ping", "id": 1, "jsonrpc": "2.0",
+        })
+        assert resp["id"] == 1
+        assert resp["result"] == {}
+
+    def test_mcp_initialize_echoes_protocol_version(self):
+        from evolvmem.mcp_server import MemoryMCPServer
+        server = MemoryMCPServer()
+        resp = server._handle_request({
+            "method": "initialize", "id": 1, "jsonrpc": "2.0",
+            "params": {"protocolVersion": "2025-03-26"},
+        })
+        assert resp["result"]["protocolVersion"] == "2025-03-26"
+
+    def test_mcp_tool_error_sets_is_error(self):
+        """工具调用返回 error 时应置 isError: true。"""
+        from evolvmem.mcp_server import MemoryMCPServer
+        server = MemoryMCPServer()
+        resp = server._handle_request({
+            "method": "tools/call", "id": 2, "jsonrpc": "2.0",
+            "params": {"name": "no_such_tool", "arguments": {}},
+        })
+        assert resp["result"]["isError"] is True
 
     def test_usearch_rebuild_from_sqlite(self, test_config):
         """向量索引崩溃后从 SQLite 重建。"""

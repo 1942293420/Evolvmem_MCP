@@ -43,11 +43,6 @@ class MemoryMCPServer:
         sqlite_count = len(self.store.all_ids())
         if not self.vidx.check_consistency(sqlite_count):
             self._rebuild_vector_index()
-        else:
-            self._log(
-                "USearch and SQLite entry counts match, but no ID-level validation was performed. "
-                "If semantic search returns wrong results, delete vectors.usearch to force a rebuild."
-            )
 
         # Try loading the embedding model (FTS5 search works without it)
         try:
@@ -142,6 +137,18 @@ class MemoryMCPServer:
         if not key or not value:
             return {"error": "key and value parameters cannot be empty"}
 
+        importance = args.get("importance")
+        if importance is not None:
+            importance = max(1.0, min(10.0, float(importance)))
+        tier = args.get("tier")
+        if tier not in ("pinned", "normal"):
+            tier = None
+        extra = {}
+        if importance is not None:
+            extra["importance"] = importance
+        if tier is not None:
+            extra["tier"] = tier
+
         # Conflict detection
         decision = self.conflict_detector.check(key, value)
         if decision.action == "skip":
@@ -155,12 +162,12 @@ class MemoryMCPServer:
         elif decision.action == "replace":
             # Conflict detector determined replace: use replace() to mark old as superseded
             old_id = decision.existing_id
-            new_id = self.store.replace(key=key, new_value=value)
+            new_id = self.store.replace(key=key, new_value=value, **extra)
 
             # Update vector index
             if self.engine.is_loaded:
                 try:
-                    vec = self.engine.encode(value)
+                    vec = self.engine.encode_document(value)
                     import numpy as np
                     self.vidx.add(new_id, np.array(vec, dtype=np.float32))
                     self.vidx.save()
@@ -171,13 +178,13 @@ class MemoryMCPServer:
         else:
             # decision.action == "add": no existing key, insert directly
             mem_id = self.store.add(
-                key=key, value=value, category=category, tags=tags
+                key=key, value=value, category=category, tags=tags, **extra
             )
 
         # Update vector index
         if self.engine.is_loaded:
             try:
-                vec = self.engine.encode(value)
+                vec = self.engine.encode_document(value)
                 import numpy as np
                 self.vidx.add(mem_id, np.array(vec, dtype=np.float32))
                 self.vidx.save()
@@ -198,7 +205,7 @@ class MemoryMCPServer:
         # Update vector index
         if self.engine.is_loaded:
             try:
-                vec = self.engine.encode(new_value)
+                vec = self.engine.encode_document(new_value)
                 import numpy as np
                 self.vidx.add(new_id, np.array(vec, dtype=np.float32))
                 self.vidx.save()
@@ -212,6 +219,13 @@ class MemoryMCPServer:
         if not mem_id:
             return {"error": "id parameter cannot be empty"}
         self.store.remove(mem_id)
+        # Keep the vector index in sync so counts stay consistent with SQLite
+        if self.vidx is not None:
+            try:
+                self.vidx.remove(mem_id)
+                self.vidx.save()
+            except Exception as e:
+                self._log(f"Vector removal failed (id={mem_id}): {e}")
         return {"status": "deleted", "id": mem_id}
 
     # ---- internals ----
@@ -232,7 +246,7 @@ class MemoryMCPServer:
         embeddings = []
         for r in records:
             try:
-                vec = self.engine.encode(r["value"])
+                vec = self.engine.encode_document(r["value"])
                 import numpy as np
                 ids.append(r["id"])
                 embeddings.append(np.array(vec, dtype=np.float32))
@@ -298,18 +312,31 @@ class MemoryMCPServer:
         method = request.get("method", "")
         req_id = request.get("id")
 
+        # JSON-RPC notifications (no id) must not be answered
+        if req_id is None:
+            return None
+
         if method == "initialize":
+            params = request.get("params") or {}
+            protocol_version = params.get("protocolVersion", "2024-11-05")
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "result": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": protocol_version,
                     "capabilities": {"tools": {}},
                     "serverInfo": {
                         "name": "evolvmem",
                         "version": "0.1.0",
                     },
                 },
+            }
+
+        elif method == "ping":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {},
             }
 
         elif method == "tools/list":
@@ -369,6 +396,15 @@ class MemoryMCPServer:
                                         "items": {"type": "string"},
                                         "description": "List of tags",
                                     },
+                                    "importance": {
+                                        "type": "number",
+                                        "description": "Importance 1-10 (default 5). 9-10 hard constraints, 7-8 key decisions, 5-6 ordinary facts",
+                                    },
+                                    "tier": {
+                                        "type": "string",
+                                        "enum": ["pinned", "normal"],
+                                        "description": "pinned = injected every session; normal = scored competition",
+                                    },
                                 },
                                 "required": ["key", "value"],
                             },
@@ -414,21 +450,21 @@ class MemoryMCPServer:
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
             result = self.handle_tool_call(tool_name, tool_args)
+            response_result = {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(result, ensure_ascii=False),
+                    }
+                ]
+            }
+            if isinstance(result, dict) and "error" in result:
+                response_result["isError"] = True
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(result, ensure_ascii=False),
-                        }
-                    ]
-                },
+                "result": response_result,
             }
-
-        elif method == "notifications/initialized":
-            return None  # no reply needed
 
         else:
             return {
