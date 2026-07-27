@@ -14,6 +14,8 @@ class CandidateMemory:
     category: str = "fact"
     tags: list[str] = field(default_factory=list)
     confidence: float = 0.5
+    importance: float = 5.0
+    tier: str = "normal"
 
 
 class AutoExtractor:
@@ -51,10 +53,12 @@ Examples:
 ## Output Format
 Return a JSON array, each entry containing:
 - key: stable identifier
-- value: memory content (one sentence, clearly described)
+- value: memory content — MUST be a single sentence, at most 200 characters. Longer content must be split or condensed.
 - category: decision | preference | fact | constraint | user_profile
 - tags: list of relevant tags
 - confidence: 0.0-1.0 confidence score
+- importance: integer 1-10. Guide: 9-10 = hard constraints / make-or-break decisions; 7-8 = important architecture or business decisions; 5-6 = ordinary preferences and facts; 3-4 = marginal reference material
+- tier: "pinned" if this memory must be visible in EVERY session (constraints, durable user preferences, user profile); otherwise "normal"
 
 If nothing is worth persisting, return an empty array `[]`.
 
@@ -101,12 +105,22 @@ Only return the JSON array, no other content:"""
             value = item.get("value", "")
             if not key or not value:
                 continue
+            try:
+                importance = float(item.get("importance", 5.0))
+            except (TypeError, ValueError):
+                importance = 5.0
+            importance = max(1.0, min(10.0, importance))
+            tier = item.get("tier", "normal")
+            if tier not in ("pinned", "normal"):
+                tier = "normal"
             candidates.append(CandidateMemory(
                 key=key,
                 value=value,
                 category=item.get("category", "fact"),
                 tags=item.get("tags", []),
                 confidence=float(item.get("confidence", 0.5)),
+                importance=importance,
+                tier=tier,
             ))
         return candidates
 
@@ -114,6 +128,9 @@ Only return the JSON array, no other content:"""
         """Check whether a candidate memory is worth persisting."""
         # Confidence too low → skip
         if candidate.confidence < 0.3:
+            return False
+        # Value too long → skip (extraction prompt requires <= 200 chars; hard cap 500)
+        if len(candidate.value) > 500:
             return False
         # Casual chat type → skip
         if candidate.category in ("chat", "greeting", "small_talk"):
