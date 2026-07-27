@@ -29,6 +29,134 @@ class TestSessionStartHook:
         assert "PostgreSQL" in result
         assert "[architecture,database]" in result
 
+    def test_inject_max_count_limits_entries(self, test_config):
+        test_config.inject_max_count = 3
+        with MemoryStore(test_config) as store:
+            for i in range(5):
+                store.add(key=f"p:t:{i}", value=f"value {i}")
+
+        result = get_session_start_block(config=test_config)
+
+        bullets = [l for l in result.splitlines() if l.startswith("- **")]
+        assert len(bullets) == 3
+        # 落选者由索引区（或计数行）覆盖
+        index_lines = [l for l in result.splitlines()
+                       if l.startswith("- p:t:") and not l.startswith("- **")]
+        assert len(index_lines) == 2
+        assert "memory_search" in result
+
+    def test_inject_max_chars_budget(self, test_config):
+        test_config.inject_max_chars = 200
+        test_config.inject_index_max_chars = 0  # 关闭索引层，退化为纯截断
+        with MemoryStore(test_config) as store:
+            for i in range(5):
+                store.add(key=f"p:t:{i}", value="x" * 150)
+
+        result = get_session_start_block(config=test_config)
+
+        bullets = [l for l in result.splitlines() if l.startswith("- **")]
+        assert len(bullets) == 1
+        assert "4 more memories not injected" in result
+
+    def test_no_omission_note_when_all_fit(self, test_config):
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:0", value="small value")
+
+        result = get_session_start_block(config=test_config)
+
+        assert "not injected" not in result
+
+    def test_pinned_always_injected_regardless_of_recency(self, test_config):
+        with MemoryStore(test_config) as store:
+            # pinned 但很老
+            store.add(key="user:constraint:no-prod", value="禁止直接操作生产库",
+                      category="constraint", importance=8.0, tier="pinned")
+            # normal 但更新（updated_at 更晚）
+            for i in range(5):
+                store.add(key=f"p:t:fact:{i}", value=f"fact {i}",
+                          category="fact", importance=3.0)
+
+        result = get_session_start_block(config=test_config)
+
+        assert "## 常驻记忆" in result
+        assert "禁止直接操作生产库" in result
+
+    def test_normal_memories_ranked_by_importance(self, test_config):
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:trivial", value="无关紧要的小事",
+                      category="fact", importance=2.0)
+            store.add(key="p:t:decision:arch", value="核心架构决策",
+                      category="decision", importance=9.0)
+
+        result = get_session_start_block(config=test_config)
+
+        arch_pos = result.index("核心架构决策")
+        trivial_pos = result.index("无关紧要的小事")
+        assert arch_pos < trivial_pos
+
+    def test_pinned_budget_separate_from_normal(self, test_config):
+        test_config.inject_pinned_max_chars = 100
+        test_config.inject_max_chars = 400
+        with MemoryStore(test_config) as store:
+            for i in range(5):
+                store.add(key=f"u:constraint:{i}", value="x" * 90,
+                          category="constraint", importance=8.0, tier="pinned")
+            store.add(key="p:t:fact:0", value="普通事实", importance=5.0)
+
+        result = get_session_start_block(config=test_config)
+
+        # pinned 预算只容纳 1 条，其余 4 条 pinned 落入索引层
+        assert "普通事实" in result  # normal 层不被 pinned 挤占
+        assert result.count("- **u:constraint:") == 1
+
+    def test_key_prefix_quota_prevents_domination(self, test_config):
+        test_config.inject_key_prefix_quota = 2
+        with MemoryStore(test_config) as store:
+            for i in range(5):
+                store.add(key=f"project:purchase:fact:{i}", value=f"采购记忆 {i}",
+                          importance=9.0)
+            store.add(key="project:other:fact:0", value="其他项目记忆",
+                      importance=5.0)
+
+        result = get_session_start_block(config=test_config)
+
+        bullets = [l for l in result.splitlines() if l.startswith("- **project:purchase")]
+        assert len(bullets) == 2
+        assert "其他项目记忆" in result
+
+    def test_omitted_memories_appear_as_index_lines(self, test_config):
+        test_config.inject_max_chars = 200
+        test_config.inject_index_max_chars = 500
+        with MemoryStore(test_config) as store:
+            for i in range(4):
+                store.add(key=f"p:t:fact:{i}", value="x" * 150,
+                          tags=["t"], importance=5.0)
+
+        result = get_session_start_block(config=test_config)
+
+        assert "## 记忆索引" in result
+        assert "- p:t:fact:" in result  # 索引行（无 ** 加粗）
+        assert "memory_search" in result
+
+    def test_index_budget_overflow_shows_count_only(self, test_config):
+        test_config.inject_max_chars = 200
+        test_config.inject_index_max_chars = 60
+        with MemoryStore(test_config) as store:
+            for i in range(6):
+                store.add(key=f"p:t:fact:{i}", value="x" * 150, importance=5.0)
+
+        result = get_session_start_block(config=test_config)
+
+        assert "more memories not injected" in result
+
+    def test_session_start_creates_forgetting_marker(self, test_config):
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:0", value="some value")
+
+        get_session_start_block(config=test_config)
+
+        assert (test_config.data_dir / ".last_forget").exists()
+
 
 class TestStopHook:
     def test_stop_prompt_includes_conversation(self):

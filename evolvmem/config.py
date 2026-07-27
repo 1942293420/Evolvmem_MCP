@@ -53,6 +53,12 @@ class Config:
     inject_max_count: int = 50     # 最多注入的记忆条数
     inject_max_chars: int = 8000   # 注入内容总字符预算（约 3-4k tokens）
 
+    # --- 分层注入预算 ---
+    inject_pinned_max_count: int = 10    # pinned 层最多条数
+    inject_pinned_max_chars: int = 2000  # pinned 层字符预算
+    inject_index_max_chars: int = 1000   # 索引层字符预算（0 = 关闭索引层）
+    inject_key_prefix_quota: int = 3     # 同一 key 前缀（前两段）最多注入条数
+
     # --- 注入评分权重（三因子） ---
     inject_w_importance: float = 0.5   # importance/10 的权重
     inject_w_recency: float = 0.3      # exp(-age/tau) 的权重
@@ -101,6 +107,10 @@ class Config:
             "embedding_doc_prefix": self.embedding_doc_prefix,
             "inject_max_count": self.inject_max_count,
             "inject_max_chars": self.inject_max_chars,
+            "inject_pinned_max_count": self.inject_pinned_max_count,
+            "inject_pinned_max_chars": self.inject_pinned_max_chars,
+            "inject_index_max_chars": self.inject_index_max_chars,
+            "inject_key_prefix_quota": self.inject_key_prefix_quota,
             "inject_w_importance": self.inject_w_importance,
             "inject_w_recency": self.inject_w_recency,
             "inject_w_frequency": self.inject_w_frequency,
