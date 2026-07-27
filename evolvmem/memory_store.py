@@ -192,25 +192,29 @@ class MemoryStore:
 
     def _insert_row(self, key: str, value: str, category: str,
                     tag_str: str, source_session: str,
-                    supersedes: int | None) -> int:
+                    supersedes: int | None,
+                    importance: float = 5.0, tier: str = "normal") -> int:
         """Insert a row into memories and return its id. Does NOT commit."""
         now = _now_iso()
         cur = self._conn.execute(
             "INSERT INTO memories (key, value, status, category, tags, "
-            "source_session, supersedes, created_at, updated_at) "
-            "VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?)",
-            (key, value, category, tag_str, source_session, supersedes, now, now),
+            "source_session, supersedes, importance, tier, created_at, updated_at) "
+            "VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)",
+            (key, value, category, tag_str, source_session, supersedes,
+             importance, tier, now, now),
         )
         return cur.lastrowid
 
     def add(self, key: str, value: str, category: str = "",
             tags: list[str] | None = None,
             source_session: str = "",
-            supersedes: int | None = None) -> int:
+            supersedes: int | None = None,
+            importance: float = 5.0, tier: str = "normal") -> int:
         """Insert a new active memory. Returns the new record id."""
         tag_str = ",".join(tags) if tags else ""
         new_id = self._insert_row(key, value, category, tag_str,
-                                  source_session, supersedes)
+                                  source_session, supersedes,
+                                  importance=importance, tier=tier)
         self._conn.commit()
         return new_id
 
@@ -233,6 +237,12 @@ class MemoryStore:
 
         old_id = old["id"]
         tag_str = ",".join(kwargs.pop("tags", [])) if "tags" in kwargs else ""
+        importance = kwargs.pop("importance", None)
+        if importance is None:
+            importance = old["importance"]
+        tier = kwargs.pop("tier", None)
+        if tier is None:
+            tier = old["tier"]
 
         try:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -242,6 +252,7 @@ class MemoryStore:
                 tag_str,
                 kwargs.pop("source_session", ""),
                 old_id,
+                importance=importance, tier=tier,
             )
             now = _now_iso()
             self._conn.execute(
@@ -304,11 +315,14 @@ class MemoryStore:
         return [dict(r) for r in rows]
 
     def update_access(self, mem_id: int) -> None:
-        """Increment access_count and update last_accessed (called on retrieval hit)."""
+        """Increment access_count and update last_accessed (called on retrieval hit).
+
+        Does NOT touch updated_at — recency ordering must reflect writes, not reads.
+        """
         self._conn.execute(
             "UPDATE memories SET access_count = access_count + 1, "
-            "last_accessed = ?, updated_at = ? WHERE id = ?",
-            (_now_iso(), _now_iso(), mem_id),
+            "last_accessed = ? WHERE id = ?",
+            (_now_iso(), mem_id),
         )
         self._conn.commit()
 

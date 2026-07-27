@@ -173,3 +173,37 @@ class TestMemoryStore:
         store3 = MemoryStore(test_config)
         store3.initialize()
         store3.close()
+
+    def test_add_with_importance_and_tier(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        mid = store.add(key="p:t:decision:db", value="用 PostgreSQL",
+                        category="decision", importance=9.0, tier="pinned")
+        rec = store.get_by_id(mid)
+        assert rec["importance"] == 9.0
+        assert rec["tier"] == "pinned"
+        store.close()
+
+    def test_replace_inherits_importance_tier(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        store.add(key="p:t:decision:db", value="用 MySQL",
+                  category="decision", importance=9.0, tier="pinned")
+        new_id = store.replace(key="p:t:decision:db", new_value="改用 PostgreSQL")
+        rec = store.get_by_id(new_id)
+        assert rec["importance"] == 9.0
+        assert rec["tier"] == "pinned"
+        store.close()
+
+    def test_update_access_does_not_touch_updated_at(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        mid = store.add(key="p:acc:test2", value="access test")
+        before = store.get_by_id(mid)["updated_at"]
+        import time
+        time.sleep(1.1)  # updated_at 精度为秒
+        store.update_access(mid)
+        after = store.get_by_id(mid)
+        assert after["access_count"] == 1
+        assert after["updated_at"] == before
+        store.close()
