@@ -91,6 +91,12 @@ Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 - `embedding_query_prefix` / `embedding_doc_prefix`: Task prefixes applied when embedding queries/documents (nomic defaults `search_query: ` / `search_document: `, set to `""` to disable)
 - `inject_max_count`: Max memories injected on SessionStart, default 50
 - `inject_max_chars`: Total character budget for SessionStart injection, default 8000
+- `inject_pinned_max_count` / `inject_pinned_max_chars`: Max count and character budget for the pinned layer, default 10 / 2000
+- `inject_index_max_chars`: Character budget for the index layer, default 1000 (0 disables the index layer)
+- `inject_key_prefix_quota`: Max injected memories sharing the same key prefix (first two segments), default 3
+- `inject_w_importance` / `inject_w_recency` / `inject_w_frequency`: Scoring weights for importance/10, recency decay, and log1p(access_count), default 0.5 / 0.3 / 0.2
+- `inject_recency_tau_days`: Recency decay time constant in days, default 14.0
+- `inject_freq_norm_cap`: Access-count normalization cap for frequency scoring, default 20
 - `forget_auto_run_hours`: Minimum interval between auto-forgetting runs at SessionStart, default 24
 
 ## Dependencies

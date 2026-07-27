@@ -167,6 +167,17 @@ class TestIntegration:
         assert rec["importance"] == 9.0
         assert rec["tier"] == "pinned"
 
+    def test_memory_add_nan_importance_uses_default(self, server):
+        """min(10.0, nan) 返回 10.0 —— NaN importance 必须走默认值路径落库为 5.0。"""
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:nan",
+            "value": "nan importance 测试",
+            "importance": float("nan"),
+        })
+        assert result["status"] == "added"
+        rec = server.store.get_by_id(result["id"])
+        assert rec["importance"] == 5.0
+
     def test_auto_extractor_realistic_conversation(self):
         """从真实对话中提取记忆。"""
         extractor = AutoExtractor()

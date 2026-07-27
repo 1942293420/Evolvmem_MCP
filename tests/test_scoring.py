@@ -1,6 +1,6 @@
 """scoring module tests."""
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from evolvmem.scoring import compute_score
 
 

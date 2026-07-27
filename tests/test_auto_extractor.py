@@ -89,6 +89,14 @@ class TestAutoExtractor:
         assert candidates[0].importance == 5.0
         assert candidates[0].tier == "normal"
 
+    def test_parse_nan_importance_falls_back_to_default(self):
+        """json.loads 接受 NaN 字面量；min(10.0, nan) 会返回 10.0，必须回退默认 5.0。"""
+        extractor = AutoExtractor()
+        response = '[{"key": "p:t:fact:nan", "value": "x", "importance": NaN}]'
+        candidates = extractor.parse_response(response)
+        assert len(candidates) == 1
+        assert candidates[0].importance == 5.0
+
     def test_should_persist_rejects_overlong_value(self):
         extractor = AutoExtractor()
         c = CandidateMemory(key="p:t:fact:x", value="x" * 501, importance=8.0)

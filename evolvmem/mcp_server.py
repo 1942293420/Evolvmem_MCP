@@ -10,6 +10,7 @@ Tools:
 """
 
 import json
+import math
 import sys
 import os
 import traceback
@@ -139,7 +140,11 @@ class MemoryMCPServer:
 
         importance = args.get("importance")
         if importance is not None:
-            importance = max(1.0, min(10.0, float(importance)))
+            importance = float(importance)
+            if math.isnan(importance):  # min(10.0, nan) 返回 10.0，置 None 走默认路径
+                importance = None
+        if importance is not None:
+            importance = max(1.0, min(10.0, importance))
         tier = args.get("tier")
         if tier not in ("pinned", "normal"):
             tier = None

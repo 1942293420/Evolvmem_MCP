@@ -1,6 +1,7 @@
 """Auto memory extraction — analyzes conversations, extracts candidate memories worth persisting."""
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -108,6 +109,8 @@ Only return the JSON array, no other content:"""
             try:
                 importance = float(item.get("importance", 5.0))
             except (TypeError, ValueError):
+                importance = 5.0
+            if math.isnan(importance):  # min(10.0, nan) 返回 10.0，必须先拦截
                 importance = 5.0
             importance = max(1.0, min(10.0, importance))
             tier = item.get("tier", "normal")
