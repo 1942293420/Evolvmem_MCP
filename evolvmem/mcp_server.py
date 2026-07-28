@@ -25,6 +25,18 @@ from evolvmem.forgetting import ForgettingEngine
 from evolvmem.consolidator import Consolidator
 
 
+# 低信息过渡语：自动摘要里常见的"零价值"句式（命中即拒收）
+_LOW_INFO_PATTERNS = (
+    "等待用户", "会话继续", "等待下一步", "等待用户确认",
+    "等待用户后续", "no action required",
+)
+
+
+def _is_low_info(value: str) -> bool:
+    v = value.strip()
+    return any(p in v for p in _LOW_INFO_PATTERNS)
+
+
 class MemoryMCPServer:
     """stdio MCP Server — JSON-RPC protocol."""
 
@@ -148,6 +160,13 @@ class MemoryMCPServer:
         if len(value) > self.config.value_max_chars:
             return {"error": f"value too long ({len(value)} > {self.config.value_max_chars} chars); "
                              "split or summarize before adding"}
+
+        if len(value.strip()) < self.config.value_min_chars:
+            return {"error": f"value too short ({len(value.strip())} < {self.config.value_min_chars} chars); "
+                             "no information content"}
+        if _is_low_info(value):
+            return {"error": "value looks like a low-information placeholder "
+                             "(transitional/chatter); not persisting"}
 
         importance = args.get("importance")
         if importance is not None:

@@ -157,7 +157,7 @@ class TestIntegration:
     def test_memory_add_with_importance_tier(self, server):
         result = server.handle_tool_call("memory_add", {
             "key": "p:t:constraint:db",
-            "value": "禁止直接操作生产库",
+            "value": "禁止直接操作生产数据库",
             "attribute": "constraint",
             "importance": 9.0,
             "tier": "pinned",
@@ -192,8 +192,27 @@ class TestIntegration:
         })
         assert result["status"] == "added"
 
+    def test_memory_add_rejects_trivial_value(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:trivial", "value": "等待用户指令。",
+        })
+        assert "error" in result
+        assert server.store.count_active() == 0
+
+    def test_memory_add_rejects_too_short(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:short", "value": "短",
+        })
+        assert "error" in result
+
+    def test_memory_add_accepts_normal_value(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:ok", "value": "供应商合同必须双人复核后归档",
+        })
+        assert result["status"] == "added"
+
     def test_memory_replace_rejects_overlong_value(self, server):
-        server.handle_tool_call("memory_add", {"key": "p:t:fact:r", "value": "short"})
+        server.handle_tool_call("memory_add", {"key": "p:t:fact:r", "value": "待替换的初始值内容"})
         result = server.handle_tool_call("memory_replace", {
             "key": "p:t:fact:r", "value": "y" * 501,
         })

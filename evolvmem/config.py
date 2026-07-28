@@ -81,6 +81,7 @@ class Config:
     # --- 安全 ---
     stop_hook_safe: bool = True  # 防止 Stop Hook 无限循环
     value_max_chars: int = 500  # memory_add/replace 的 value 长度硬上限
+    value_min_chars: int = 10  # memory_add 的 value 长度下限（低于视为无信息）
 
     def ensure_dirs(self) -> None:
         """Ensure data directory and model directory exist."""
@@ -132,6 +133,7 @@ class Config:
             "consolidate_similarity_threshold": self.consolidate_similarity_threshold,
             "stop_hook_safe": self.stop_hook_safe,
             "value_max_chars": self.value_max_chars,
+            "value_min_chars": self.value_min_chars,
         }
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
