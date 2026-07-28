@@ -439,9 +439,12 @@ class MemoryStore:
         - access_count is at or below access_threshold
         - updated_at is either NULL or at least rate_limit_days ago (<= so same-second
           updates when threshold is 0 also qualify)
+        - tier is not 'pinned' — pinned memories are durable rules/preferences
+          and must never be auto-archived regardless of usage
         """
         rows = self._execute(
             "SELECT * FROM memories WHERE status='active' "
+            "AND tier != 'pinned' "
             "AND (last_accessed IS NULL OR last_accessed <= datetime('now', ?)) "
             "AND access_count <= ? "
             "AND (updated_at IS NULL OR updated_at <= datetime('now', ?))",

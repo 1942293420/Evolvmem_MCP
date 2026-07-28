@@ -31,6 +31,22 @@ class TestForgettingEngine:
         assert len(candidates) == 1
         store.close()
 
+    def test_pinned_never_candidate(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        store.add(key="p:f:pinned", value="常驻规则", tier="pinned")
+        store.add(key="p:f:normal", value="普通记忆")
+
+        engine = ForgettingEngine(test_config, store)
+        engine.config.forget_days_threshold = 0
+        engine.config.forget_access_count_threshold = 2
+        engine.config.forget_rate_limit_days = 0
+        candidates = engine.find_candidates()
+        # pinned 永不归档，只剩 normal 一条候选
+        assert len(candidates) == 1
+        assert candidates[0]["key"] == "p:f:normal"
+        store.close()
+
     def test_archive_moves_to_archived_status(self, test_config):
         store = MemoryStore(test_config)
         store.initialize()
