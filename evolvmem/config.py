@@ -71,6 +71,7 @@ class Config:
 
     # --- 安全 ---
     stop_hook_safe: bool = True  # 防止 Stop Hook 无限循环
+    value_max_chars: int = 500  # memory_add/replace 的 value 长度硬上限
 
     def ensure_dirs(self) -> None:
         """Ensure data directory and model directory exist."""
@@ -118,6 +119,7 @@ class Config:
             "inject_freq_norm_cap": self.inject_freq_norm_cap,
             "forget_auto_run_hours": self.forget_auto_run_hours,
             "stop_hook_safe": self.stop_hook_safe,
+            "value_max_chars": self.value_max_chars,
         }
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)

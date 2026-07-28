@@ -138,6 +138,10 @@ class MemoryMCPServer:
         if not key or not value:
             return {"error": "key and value parameters cannot be empty"}
 
+        if len(value) > self.config.value_max_chars:
+            return {"error": f"value too long ({len(value)} > {self.config.value_max_chars} chars); "
+                             "split or summarize before adding"}
+
         importance = args.get("importance")
         if importance is not None:
             importance = float(importance)
@@ -204,6 +208,10 @@ class MemoryMCPServer:
 
         if not key or not new_value:
             return {"error": "key and value parameters cannot be empty"}
+
+        if len(new_value) > self.config.value_max_chars:
+            return {"error": f"value too long ({len(new_value)} > {self.config.value_max_chars} chars); "
+                             "split or summarize before adding"}
 
         new_id = self.store.replace(key=key, new_value=new_value)
 

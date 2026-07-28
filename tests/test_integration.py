@@ -178,6 +178,27 @@ class TestIntegration:
         rec = server.store.get_by_id(result["id"])
         assert rec["importance"] == 5.0
 
+    def test_memory_add_rejects_overlong_value(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:long", "value": "x" * 501,
+        })
+        assert "error" in result
+        assert "too long" in result["error"]
+        assert server.store.count_active() == 0
+
+    def test_memory_add_accepts_value_at_limit(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:ok", "value": "x" * 500,
+        })
+        assert result["status"] == "added"
+
+    def test_memory_replace_rejects_overlong_value(self, server):
+        server.handle_tool_call("memory_add", {"key": "p:t:fact:r", "value": "short"})
+        result = server.handle_tool_call("memory_replace", {
+            "key": "p:t:fact:r", "value": "y" * 501,
+        })
+        assert "error" in result
+
     def test_auto_extractor_realistic_conversation(self):
         """从真实对话中提取记忆。"""
         extractor = AutoExtractor()
