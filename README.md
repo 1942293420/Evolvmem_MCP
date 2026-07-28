@@ -11,6 +11,7 @@ A fully-local, three-layer memory plugin for Claude Code with Chinese language s
 - **Consolidation**: `memory_consolidate` finds and merges near-duplicate memories via vector similarity (dry-run by default)
 - **Expiry**: Memories can carry an `expires_at` date; expired memories stop being injected/searched and are archived automatically
 - **Project Relevance**: SessionStart scoring boosts memories whose key matches the current project directory (configurable aliases)
+- **Quality Gate**: `memory_add`/`memory_replace` reject values shorter than `value_min_chars` (default 10) and low-information placeholder phrases (e.g. "等待用户确认", "no action required"), keeping trivial auto-summary noise out of the store
 
 ## Quick Start
 
@@ -72,6 +73,14 @@ Optional: add a SessionStart hook for automatic active memory injection:
 | `memory_remove` | Soft-delete a memory |
 | `memory_consolidate` | Find and merge near-duplicate memories by vector similarity; `dry_run=true` (default) only reports candidates |
 
+Deletion is two-staged: `memory_remove` soft-deletes (recoverable via restore), while the Web Console's `POST /api/memory/<id>/hard_delete` permanently removes the row — irreversible, intended for confirmed junk. The quality gate above applies to every live `memory_add`/`memory_replace` call, so rejected values never enter the store in the first place.
+
+## Web Console
+
+`python -m evolvmem.web_server --host 0.0.0.0 --port 9377` serves a local console for browsing, filtering, editing and deleting memories (`/api/stats`, `/api/memories`, `/api/memory/<id>/<action>` with actions `update|archive|restore|delete|hard_delete`).
+
+The stats "hot list" (`top_accessed`) ranks by composite heat — `importance × (access_count + 1)` — instead of raw hit count, so a high-importance memory with few hits outranks a trivial one that was matched often; each entry carries both `access_count` and `importance` so the two signals stay visible. Raw `access_count` still counts every retrieval hit and remains available as a pure frequency signal elsewhere in the console.
+
 ## Data Directory
 
 All data is stored under `~/.claude/evolvmem/`:
@@ -109,6 +118,7 @@ Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 - `forget_rate_limit_days`: Minimum interval between two downgrades of the same memory, default 7
 - `stop_hook_safe`: Prevent Stop Hook infinite loops, default true
 - `value_max_chars`: Hard length cap on `memory_add`/`memory_replace` values, default 500
+- `value_min_chars`: Minimum length for `memory_add`/`memory_replace` values — shorter values are rejected as having no information content, default 10
 
 ## Dependencies
 
