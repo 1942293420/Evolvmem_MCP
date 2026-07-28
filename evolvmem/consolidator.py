@@ -61,6 +61,8 @@ class Consolidator:
                 other = self.store.get_by_id(other_id)
                 if not other or other["status"] != "active":
                     continue
+                if other.get("tier") == "reference":
+                    continue
                 keep, drop = self._order(m, other)
                 pairs.append({"keep": keep, "drop": drop,
                               "similarity": round(similarity, 4)})
