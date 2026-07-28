@@ -223,6 +223,18 @@
   </div>
 </div>
 
+<!-- 全量数据弹窗（原始 JSON） -->
+<div class="modal-mask" id="raw-mask">
+  <div class="modal detail">
+    <h3 id="r-key"></h3>
+    <pre class="detail-value" id="r-json" style="max-height:64vh;"></pre>
+    <div class="btns" style="display:flex;justify-content:flex-end;gap:8px;">
+      <button class="ghost" id="r-copy">复制</button>
+      <button class="ghost" id="r-close">关闭</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -332,6 +344,7 @@
       const skill = r.access_count >= 3
         ? '<span class="badge badge-skill">高频，可考虑生成 skill</span>' : "";
       const ops = [];
+      ops.push(`<button class="ghost small" data-act="raw" data-id="${r.id}">全量</button>`);
       ops.push(`<button class="ghost small" data-act="edit" data-id="${r.id}">编辑</button>`);
       if (r.status === "active") {
         ops.push(`<button class="ghost small" data-act="archive" data-id="${r.id}">软删除</button>`);
@@ -392,6 +405,24 @@
     if (e.target === $("detail-mask")) $("detail-mask").classList.remove("open");
   });
 
+  // ---- 全量数据（原始 JSON 视图） ----
+  function openRaw(r) {
+    if (!r) return;
+    $("r-key").textContent = `#${r.id}  ${r.key} — 数据库完整原始记录`;
+    $("r-json").textContent = JSON.stringify(r, null, 2);
+    $("raw-mask").classList.add("open");
+  }
+  $("r-close").onclick = () => $("raw-mask").classList.remove("open");
+  $("raw-mask").addEventListener("click", (e) => {
+    if (e.target === $("raw-mask")) $("raw-mask").classList.remove("open");
+  });
+  $("r-copy").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($("r-json").textContent);
+      toast("已复制到剪贴板");
+    } catch (e) { toast("复制失败: " + e.message); }
+  };
+
   $("tbody").addEventListener("click", async (e) => {
     const prev = e.target.closest(".val-preview");
     if (prev) {
@@ -403,7 +434,8 @@
     if (!btn) return;
     const id = Number(btn.dataset.id), act = btn.dataset.act;
     try {
-      if (act === "edit") openModal(listCache[id]);
+      if (act === "raw") openRaw(listCache[id]);
+      else if (act === "edit") openModal(listCache[id]);
       else if (act === "archive") { await post(id, "archive"); toast("已软删除"); refresh(); }
       else if (act === "restore") { await post(id, "restore"); toast("已恢复"); refresh(); }
       else if (act === "delete") {
