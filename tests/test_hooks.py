@@ -181,8 +181,15 @@ class TestSessionStartHook:
     def test_cwd_project_boosts_matching_memories(self, test_config, monkeypatch):
         monkeypatch.chdir(test_config.data_dir)  # basename = 临时目录名，不含 'purchase'
         with MemoryStore(test_config) as store:
-            store.add(key="project:purchase:fact:a", value="采购记忆", importance=5.0)
+            # 不匹配的先插入：无 relevance 接线时基线序为「其他记忆」在前，
+            # 只有 relevance 加分能把「采购记忆」翻到前面
             store.add(key="project:other:fact:b", value="其他记忆", importance=5.0)
+            store.add(key="project:purchase:fact:a", value="采购记忆", importance=5.0)
+            # 冻结 recency：两条 updated_at 强制相同，排除跨秒墙钟微差
+            # （无公开 API 写时间戳，直接走连接；'now' 为 UTC 当前秒，不触发自动遗忘）
+            store._conn.execute(
+                "UPDATE memories SET updated_at=strftime('%Y-%m-%d %H:%M:%S','now')")
+            store._conn.commit()
         # 别名让任意目录都匹配 purchase
         test_config.inject_project_aliases = {
             test_config.data_dir.name: "purchase"}

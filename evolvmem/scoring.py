@@ -1,7 +1,9 @@
-"""Three-factor memory scoring: importance + recency decay + access frequency.
+"""Memory scoring: importance + recency decay + access frequency + project relevance.
 
 Modelled on the Generative Agents retrieval score (recency/importance/relevance).
-SessionStart injection has no query, so relevance is replaced by usage frequency.
+SessionStart injection has no query, so usage frequency stands in for query
+relevance; the relevance factor instead matches the session's working-directory
+name (or its configured alias) against memory keys.
 """
 
 import math
