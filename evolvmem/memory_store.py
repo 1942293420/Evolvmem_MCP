@@ -421,8 +421,11 @@ class MemoryStore:
         return [r["id"] for r in rows]
 
     def count_active(self) -> int:
+        """Count status='active' and unexpired memories (same scope as get_active)."""
         rows = self._execute(
-            "SELECT COUNT(*) as cnt FROM memories WHERE status='active'"
+            "SELECT COUNT(*) as cnt FROM memories WHERE status='active' "
+            "AND (expires_at IS NULL OR expires_at > ?)",
+            (_now_iso(),),
         )
         return rows[0]["cnt"]
 

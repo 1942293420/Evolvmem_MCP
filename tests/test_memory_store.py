@@ -252,3 +252,12 @@ class TestMemoryStore:
         assert len(actives) == 1
         assert actives[0]["key"] == "p:t:fact:durable"
         store.close()
+
+    def test_count_active_excludes_expired(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        store.add(key="p:t:fact:temp", value="临时事实",
+                  expires_at="2020-01-01 00:00:00")
+        store.add(key="p:t:fact:durable", value="长期事实")
+        assert store.count_active() == 1
+        store.close()

@@ -188,3 +188,28 @@ class TestRetriever:
 
         store.close()
         vidx.close()
+
+    def test_expired_memory_not_returned(self, test_config):
+        """过期未归档记忆（status 仍 active）不应被 search 返回；未过期/无 expires_at 正常返回。"""
+        store = MemoryStore(test_config)
+        store.initialize()
+        store.add(key="p:t:fact:expired", value="过期的退款规则",
+                  expires_at="2020-01-01 00:00:00")
+        store.add(key="p:t:fact:fresh", value="现行的退款规则",
+                  expires_at="2099-01-01 00:00:00")
+        store.add(key="p:t:fact:noexp", value="长期退款规则")
+
+        vidx = VectorIndex(test_config)
+        vidx.initialize(dim=512)
+
+        engine = FakeEmbeddingEngine()
+        retriever = Retriever(test_config, store, vidx, engine)
+
+        results = retriever.search("退款", top_k=10)
+        keys = {r["key"] for r in results}
+        assert "p:t:fact:expired" not in keys
+        assert "p:t:fact:fresh" in keys
+        assert "p:t:fact:noexp" in keys
+
+        store.close()
+        vidx.close()

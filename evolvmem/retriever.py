@@ -2,7 +2,7 @@
 
 import numpy as np
 from evolvmem.config import Config
-from evolvmem.memory_store import MemoryStore
+from evolvmem.memory_store import MemoryStore, _now_iso
 from evolvmem.vector_index import VectorIndex
 
 
@@ -14,7 +14,7 @@ class Retriever:
     2. Vector semantic search (when embedding engine is available)
     3. Deduplicate, weighted merge
     4. Fetch full records from SQLite (all merged results)
-    5. Filter by status → sort by score → truncate to top_k
+    5. Filter by status + expiry → sort by score → truncate to top_k
     6. Update access_count
     """
 
@@ -54,11 +54,18 @@ class Retriever:
         records = self.store.get_by_ids(ids)
         record_map = {r["id"]: r for r in records}
 
-        # 5. Filter status → sort by score → truncate top_k
+        # 5. Filter status + expiry → sort by score → truncate top_k
+        # Expiry check mirrors MemoryStore.get_active: an expired memory keeps
+        # status='active' until the forgetting engine archives it, but must not
+        # be retrievable in the meantime.
+        now = _now_iso()
         results = []
         for m in merged:
             record = record_map.get(m["id"])
             if record and record.get("status") == status_filter:
+                expires_at = record.get("expires_at")
+                if expires_at is not None and expires_at <= now:
+                    continue
                 record["score"] = m["score"]
                 record["match_type"] = m["match_type"]
                 results.append(record)
