@@ -154,9 +154,9 @@
       <option value="normal">rank评分</option>
       <option value="reference">地下书库</option>
     </select>
+    <label>属性</label>
+    <select id="f-attribute"><option value="">全部</option></select>
     <label>分类</label>
-    <select id="f-category"><option value="">全部</option></select>
-    <label>项目</label>
     <select id="f-project"><option value="">全部</option></select>
     <label>排序</label>
     <select id="f-sort">
@@ -179,7 +179,7 @@
     <table>
       <thead>
         <tr>
-          <th>ID</th><th>Key</th><th>Value</th><th>层级</th><th>分类</th>
+          <th>ID</th><th>Key</th><th>Value</th><th>层级</th><th>属性</th>
           <th>重要性</th><th style="min-width:130px;">调用次数</th><th>最近访问</th><th>操作</th>
         </tr>
       </thead>
@@ -202,7 +202,7 @@
         <option value="reference">地下书库 (reference)</option>
       </select>
     </div>
-    <div class="row"><label>分类</label><input type="text" id="m-category"></div>
+    <div class="row"><label>属性</label><input type="text" id="m-attribute"></div>
     <div class="row"><label>标签（逗号分隔）</label><input type="text" id="m-tags"></div>
     <div class="btns">
       <button class="ghost" id="m-cancel">取消</button>
@@ -282,14 +282,14 @@
       </div>`
     ).join("") : '<div class="empty">暂无数据</div>';
 
-    // 分类下拉（保留当前选择）
-    const sel = $("f-category"), cur = sel.value;
-    sel.innerHTML = '<option value="">全部</option>' + Object.keys(s.by_category)
+    // 属性下拉（保留当前选择）
+    const sel = $("f-attribute"), cur = sel.value;
+    sel.innerHTML = '<option value="">全部</option>' + Object.keys(s.by_attribute)
       .filter(c => c && c !== "(未分类)").sort()
-      .map(c => `<option value="${esc(c)}">${esc(c)} (${s.by_category[c]})</option>`).join("");
+      .map(c => `<option value="${esc(c)}">${esc(c)} (${s.by_attribute[c]})</option>`).join("");
     sel.value = cur;
 
-    // 项目下拉（保留当前选择）
+    // 分类下拉（保留当前选择）
     const psel = $("f-project"), pcur = psel.value;
     const projects = Object.keys(s.by_project || {}).sort();
     psel.innerHTML = '<option value="">全部</option>' + projects
@@ -312,7 +312,7 @@
     return new URLSearchParams({
       status: $("f-status").value,
       tier: $("f-tier").value,
-      category: $("f-category").value,
+      attribute: $("f-attribute").value,
       project: $("f-project").value,
       q: $("f-q").value.trim(),
       sort: $("f-sort").value,
@@ -346,7 +346,7 @@
         <td class="key" title="${val}">${esc(r.key)}${skill}</td>
         <td class="val"><span class="val-preview">${short}</span></td>
         <td><span class="badge badge-${esc(r.tier)}" title="${esc(r.tier)}">${tierCN(r.tier)}</span></td>
-        <td>${r.category ? `<span class="badge badge-cat">${esc(r.category)}</span>` : ""}</td>
+        <td>${r.attribute ? `<span class="badge badge-cat">${esc(r.attribute)}</span>` : ""}</td>
         <td>${Number(r.importance).toFixed(1)}</td>
         <td><div class="freq">
           <span class="n">${r.access_count}</span>
@@ -372,7 +372,7 @@
     $("d-key").textContent = `#${r.id}  ${r.key}`;
     const meta = [
       ["层级", `${tierCN(r.tier)} (${r.tier})`],
-      ["分类", r.category || "—"],
+      ["属性", r.attribute || "—"],
       ["标签", r.tags || "—"],
       ["重要性", Number(r.importance).toFixed(1)],
       ["调用次数", r.access_count],
@@ -422,7 +422,7 @@
     $("m-key").textContent = `#${r.id}  ${r.key}`;
     $("m-importance").value = r.importance;
     $("m-tier").value = r.tier;
-    $("m-category").value = r.category || "";
+    $("m-attribute").value = r.attribute || "";
     $("m-tags").value = r.tags || "";
     $("modal-mask").classList.add("open");
   }
@@ -434,7 +434,7 @@
     const body = {
       importance: parseFloat($("m-importance").value),
       tier: $("m-tier").value,
-      category: $("m-category").value.trim(),
+      attribute: $("m-attribute").value.trim(),
       tags: $("m-tags").value.split(",").map(s => s.trim()).filter(Boolean),
     };
     if (isNaN(body.importance)) { toast("重要性必须是数字"); return; }
@@ -447,7 +447,7 @@
   };
 
   // ---- 过滤器事件 ----
-  ["f-status", "f-tier", "f-category", "f-project", "f-sort", "f-order", "f-skill"]
+  ["f-status", "f-tier", "f-attribute", "f-project", "f-sort", "f-order", "f-skill"]
     .forEach(id => $(id).addEventListener("change", loadList));
   let debounce;
   $("f-q").addEventListener("input", () => {

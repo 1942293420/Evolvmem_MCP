@@ -19,7 +19,7 @@ class TestMemoryStore:
         mem_id = store.add(
             key="project:test:fact:sample",
             value="test memory content",
-            category="fact",
+            attribute="fact",
             tags=["test", "example"],
             source_session="sess_001",
         )
@@ -34,7 +34,7 @@ class TestMemoryStore:
     def test_replace_supersedes_old(self, test_config):
         store = MemoryStore(test_config)
         store.initialize()
-        old_id = store.add(key="project:test:decision:x", value="plan A", category="decision")
+        old_id = store.add(key="project:test:decision:x", value="plan A", attribute="decision")
         new_id = store.replace(key="project:test:decision:x", new_value="plan B, abandoned plan A")
 
         # Old record is superseded
@@ -143,13 +143,13 @@ class TestMemoryStore:
         assert "tier" in cols
         store.close()
 
-    def test_backfill_importance_by_category(self, test_config):
+    def test_backfill_importance_by_attribute(self, test_config):
         store = MemoryStore(test_config)
         store.initialize()
-        cid = store.add(key="p:t:constraint:x", value="硬约束", category="constraint")
-        did = store.add(key="p:t:decision:x", value="架构决策", category="decision")
-        pid = store.add(key="p:t:preference:x", value="用户偏好", category="preference")
-        fid = store.add(key="p:t:fact:x", value="普通事实", category="fact")
+        cid = store.add(key="p:t:constraint:x", value="硬约束", attribute="constraint")
+        did = store.add(key="p:t:decision:x", value="架构决策", attribute="decision")
+        pid = store.add(key="p:t:preference:x", value="用户偏好", attribute="preference")
+        fid = store.add(key="p:t:fact:x", value="普通事实", attribute="fact")
 
         store._backfill_importance_tier()
 
@@ -178,7 +178,7 @@ class TestMemoryStore:
         store = MemoryStore(test_config)
         store.initialize()
         mid = store.add(key="p:t:decision:db", value="用 PostgreSQL",
-                        category="decision", importance=9.0, tier="pinned")
+                        attribute="decision", importance=9.0, tier="pinned")
         rec = store.get_by_id(mid)
         assert rec["importance"] == 9.0
         assert rec["tier"] == "pinned"
@@ -188,7 +188,7 @@ class TestMemoryStore:
         store = MemoryStore(test_config)
         store.initialize()
         store.add(key="p:t:decision:db", value="用 MySQL",
-                  category="decision", importance=9.0, tier="pinned")
+                  attribute="decision", importance=9.0, tier="pinned")
         new_id = store.replace(key="p:t:decision:db", new_value="改用 PostgreSQL")
         rec = store.get_by_id(new_id)
         assert rec["importance"] == 9.0
@@ -208,15 +208,15 @@ class TestMemoryStore:
         assert after["updated_at"] == before
         store.close()
 
-    def test_replace_inherits_tags_and_category(self, test_config):
+    def test_replace_inherits_tags_and_attribute(self, test_config):
         store = MemoryStore(test_config)
         store.initialize()
         store.add(key="p:t:decision:db", value="用 MySQL",
-                  category="decision", tags=["db", "arch"],
+                  attribute="decision", tags=["db", "arch"],
                   importance=9.0, tier="pinned")
         new_id = store.replace(key="p:t:decision:db", new_value="改用 PostgreSQL")
         rec = store.get_by_id(new_id)
-        assert rec["category"] == "decision"
+        assert rec["attribute"] == "decision"
         assert rec["tags"] == "db,arch"
         store.close()
 

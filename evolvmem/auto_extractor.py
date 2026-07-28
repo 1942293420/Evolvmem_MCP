@@ -12,7 +12,7 @@ class CandidateMemory:
     """Candidate memory — information extracted from conversation that may be persisted."""
     key: str
     value: str
-    category: str = "fact"
+    attribute: str = "fact"
     tags: list[str] = field(default_factory=list)
     confidence: float = 0.5
     importance: float = 5.0
@@ -55,7 +55,7 @@ Examples:
 Return a JSON array, each entry containing:
 - key: stable identifier
 - value: memory content — MUST be a single sentence, at most 200 characters. Longer content must be split or condensed.
-- category: decision | preference | fact | constraint | user_profile
+- attribute: decision | preference | fact | constraint | user_profile
 - tags: list of relevant tags
 - confidence: 0.0-1.0 confidence score
 - importance: integer 1-10. Guide: 9-10 = hard constraints / make-or-break decisions; 7-8 = important architecture or business decisions; 5-6 = ordinary preferences and facts; 3-4 = marginal reference material
@@ -119,7 +119,7 @@ Only return the JSON array, no other content:"""
             candidates.append(CandidateMemory(
                 key=key,
                 value=value,
-                category=item.get("category", "fact"),
+                attribute=item.get("attribute", "fact"),
                 tags=item.get("tags", []),
                 confidence=float(item.get("confidence", 0.5)),
                 importance=importance,
@@ -136,17 +136,17 @@ Only return the JSON array, no other content:"""
         if len(candidate.value) > 500:
             return False
         # Casual chat type → skip
-        if candidate.category in ("chat", "greeting", "small_talk"):
+        if candidate.attribute in ("chat", "greeting", "small_talk"):
             return False
         # Key or value too short → skip
         if len(candidate.key) < 5 or len(candidate.value) < 5:
             return False
         return True
 
-    def build_key(self, project: str, domain: str, category: str,
+    def build_key(self, project: str, domain: str, attribute: str,
                   topic: str) -> str:
         """Build a standards-compliant stable key."""
-        parts = [project, domain, category, topic]
+        parts = [project, domain, attribute, topic]
         # Lowercase, replace spaces with underscores, keep only alphanumeric and underscores
         sanitized = []
         for p in parts:

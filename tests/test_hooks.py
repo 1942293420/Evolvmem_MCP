@@ -70,11 +70,11 @@ class TestSessionStartHook:
         with MemoryStore(test_config) as store:
             # pinned 但很老
             store.add(key="user:constraint:no-prod", value="禁止直接操作生产库",
-                      category="constraint", importance=8.0, tier="pinned")
+                      attribute="constraint", importance=8.0, tier="pinned")
             # normal 但更新（updated_at 更晚）
             for i in range(5):
                 store.add(key=f"p:t:fact:{i}", value=f"fact {i}",
-                          category="fact", importance=3.0)
+                          attribute="fact", importance=3.0)
 
         result = get_session_start_block(config=test_config)
 
@@ -84,9 +84,9 @@ class TestSessionStartHook:
     def test_normal_memories_ranked_by_importance(self, test_config):
         with MemoryStore(test_config) as store:
             store.add(key="p:t:fact:trivial", value="无关紧要的小事",
-                      category="fact", importance=2.0)
+                      attribute="fact", importance=2.0)
             store.add(key="p:t:decision:arch", value="核心架构决策",
-                      category="decision", importance=9.0)
+                      attribute="decision", importance=9.0)
 
         result = get_session_start_block(config=test_config)
 
@@ -100,7 +100,7 @@ class TestSessionStartHook:
         with MemoryStore(test_config) as store:
             for i in range(5):
                 store.add(key=f"u:constraint:{i}", value="x" * 90,
-                          category="constraint", importance=8.0, tier="pinned")
+                          attribute="constraint", importance=8.0, tier="pinned")
             store.add(key="p:t:fact:0", value="普通事实", importance=5.0)
 
         result = get_session_start_block(config=test_config)

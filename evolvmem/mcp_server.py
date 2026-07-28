@@ -112,7 +112,7 @@ class MemoryMCPServer:
                     "key": r["key"],
                     "value": r["value"],
                     "status": r["status"],
-                    "category": r["category"],
+                    "attribute": r["attribute"],
                     "tags": r["tags"],
                     "score": r.get("score"),
                     "match_type": r.get("match_type"),
@@ -139,7 +139,7 @@ class MemoryMCPServer:
     def _memory_add(self, args: dict) -> dict:
         key = args.get("key", "")
         value = args.get("value", "")
-        category = args.get("category", "fact")
+        attribute = args.get("attribute", "fact")
         tags = args.get("tags", [])
 
         if not key or not value:
@@ -197,7 +197,7 @@ class MemoryMCPServer:
         else:
             # decision.action == "add": no existing key, insert directly
             mem_id = self.store.add(
-                key=key, value=value, category=category, tags=tags, **extra
+                key=key, value=value, attribute=attribute, tags=tags, **extra
             )
 
         # Update vector index
@@ -427,7 +427,7 @@ class MemoryMCPServer:
                                         "type": "string",
                                         "description": "Memory content",
                                     },
-                                    "category": {
+                                    "attribute": {
                                         "type": "string",
                                         "description": "Category: decision|preference|fact|constraint|user_profile",
                                         "default": "fact",

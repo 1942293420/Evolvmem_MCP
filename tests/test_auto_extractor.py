@@ -22,7 +22,7 @@ class TestAutoExtractor:
     def test_parse_single_candidate(self):
         extractor = AutoExtractor()
         response = """```json
-[{"key": "project:db:decision:engine", "value": "Use PostgreSQL as primary database", "category": "decision", "tags": ["database", "PostgreSQL"], "confidence": 0.95}]
+[{"key": "project:db:decision:engine", "value": "Use PostgreSQL as primary database", "attribute": "decision", "tags": ["database", "PostgreSQL"], "confidence": 0.95}]
 ```"""
         candidates = extractor.parse_response(response)
         assert len(candidates) == 1
@@ -34,7 +34,7 @@ class TestAutoExtractor:
         c = CandidateMemory(
             key="p:x:decision:y",
             value="Chose plan A",
-            category="decision",
+            attribute="decision",
             tags=["architecture"],
             confidence=0.9,
         )
@@ -45,7 +45,7 @@ class TestAutoExtractor:
         c = CandidateMemory(
             key="chat:greeting",
             value="User said hello",
-            category="chat",
+            attribute="chat",
             tags=["small_talk"],
             confidence=0.1,
         )
@@ -56,7 +56,7 @@ class TestAutoExtractor:
         key = extractor.build_key(
             project="my-shop",
             domain="aftersales",
-            category="decision",
+            attribute="decision",
             topic="refund_rules",
         )
         assert key.startswith("my-shop:")
@@ -64,7 +64,7 @@ class TestAutoExtractor:
 
     def test_parse_importance_and_tier(self):
         extractor = AutoExtractor()
-        response = '[{"key": "p:t:decision:x", "value": "用 PostgreSQL", "category": "decision", "importance": 9, "tier": "pinned"}]'
+        response = '[{"key": "p:t:decision:x", "value": "用 PostgreSQL", "attribute": "decision", "importance": 9, "tier": "pinned"}]'
         candidates = extractor.parse_response(response)
         assert len(candidates) == 1
         assert candidates[0].importance == 9.0

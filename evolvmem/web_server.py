@@ -48,27 +48,27 @@ def api_stats(store: MemoryStore) -> dict:
     for t in _VALID_TIERS:
         by_tier.setdefault(t, 0)
 
-    by_category: dict[str, int] = {}
+    by_attribute: dict[str, int] = {}
     for r in store._execute(
-        "SELECT COALESCE(NULLIF(category, ''), '(未分类)') AS cat, "
+        "SELECT COALESCE(NULLIF(attribute, ''), '(未分类)') AS cat, "
         "COUNT(*) AS cnt FROM memories WHERE status='active' GROUP BY cat"
     ):
-        by_category[r["cat"]] = r["cnt"]
+        by_attribute[r["cat"]] = r["cnt"]
 
     never_accessed = store._execute(
         "SELECT COUNT(*) AS cnt FROM memories "
         "WHERE status='active' AND access_count = 0"
     )[0]["cnt"]
 
-    # 项目分布：tags 里以 "项目:" 开头的标签
+    # 分类分布：tags 里以 "分类:" 开头的标签
     by_project: dict[str, int] = {}
     for r in store._execute(
         "SELECT tags FROM memories WHERE status='active' "
-        "AND tags LIKE '%项目:%'"
+        "AND tags LIKE '%分类:%'"
     ):
         for t in (r["tags"] or "").split(","):
             t = t.strip()
-            if t.startswith("项目:"):
+            if t.startswith("分类:"):
                 by_project[t] = by_project.get(t, 0) + 1
 
     top_accessed = [
@@ -82,7 +82,7 @@ def api_stats(store: MemoryStore) -> dict:
     return {
         "total_active": total_active,
         "by_tier": by_tier,
-        "by_category": by_category,
+        "by_attribute": by_attribute,
         "by_project": by_project,
         "never_accessed": never_accessed,
         "top_accessed": top_accessed,
@@ -92,11 +92,11 @@ def api_stats(store: MemoryStore) -> dict:
 def api_memories(store: MemoryStore, params: dict) -> list[dict]:
     """List memories with filtering and sorting.
 
-    params keys (from query string): status, tier, category, project, q, sort, order.
+    params keys (from query string): status, tier, attribute, project, q, sort, order.
     """
     status = params.get("status", "active")
     tier = params.get("tier", "")
-    category = params.get("category", "")
+    attribute = params.get("attribute", "")
     project = params.get("project", "").strip()
     q = params.get("q", "").strip()
     sort = _SORT_COLUMNS.get(params.get("sort", "access_count"),
@@ -112,9 +112,9 @@ def api_memories(store: MemoryStore, params: dict) -> list[dict]:
     if tier in _VALID_TIERS:
         where.append("tier = ?")
         args.append(tier)
-    if category:
-        where.append("category = ?")
-        args.append(category)
+    if attribute:
+        where.append("attribute = ?")
+        args.append(attribute)
     if project:
         # tags 是逗号拼接串，用 ",tags," 形式精确匹配单个标签
         where.append("(',' || tags || ',') LIKE ? ESCAPE '\\'")
@@ -129,7 +129,7 @@ def api_memories(store: MemoryStore, params: dict) -> list[dict]:
     order_sql = f"ORDER BY {sort} IS NULL, {sort} {order}, id {order}"
 
     rows = store._execute(
-        "SELECT id, key, value, category, tags, tier, importance, "
+        "SELECT id, key, value, attribute, tags, tier, importance, "
         "access_count, last_accessed, created_at, updated_at, expires_at, "
         "status FROM memories "
         f"{where_sql} {order_sql} LIMIT 500",
@@ -139,7 +139,7 @@ def api_memories(store: MemoryStore, params: dict) -> list[dict]:
 
 
 def api_update(store: MemoryStore, mem_id: int, body: dict) -> dict:
-    """Update importance/tier via update_metadata; category/tags via SQL."""
+    """Update importance/tier via update_metadata; attribute/tags via SQL."""
     if store.get_by_id(mem_id) is None:
         return {"ok": False, "error": "not found"}
 
@@ -155,9 +155,9 @@ def api_update(store: MemoryStore, mem_id: int, body: dict) -> dict:
         store.update_metadata(mem_id, importance=importance, tier=tier)
 
     sets, args = [], []
-    if "category" in body:
-        sets.append("category = ?")
-        args.append(str(body["category"]))
+    if "attribute" in body:
+        sets.append("attribute = ?")
+        args.append(str(body["attribute"]))
     if "tags" in body:
         tags = body["tags"]
         if isinstance(tags, list):

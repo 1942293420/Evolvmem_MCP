@@ -29,11 +29,11 @@ def store(test_config):
     s = MemoryStore(test_config)
     s.initialize()
     # seed: 高频 decision / 低频 preference / 零访问
-    a = s.add("proj:decision:db", "使用 SQLite 作为存储", category="decision",
+    a = s.add("proj:decision:db", "使用 SQLite 作为存储", attribute="decision",
               tags=["db"], importance=7.0, tier="pinned")
-    b = s.add("user:pref:color", "喜欢柔和紫色界面", category="preference",
+    b = s.add("user:pref:color", "喜欢柔和紫色界面", attribute="preference",
               tags=["ui"], importance=6.0, tier="normal")
-    c = s.add("proj:fact:idle", "从未被调用过的记忆", category="fact")
+    c = s.add("proj:fact:idle", "从未被调用过的记忆", attribute="fact")
     for _ in range(5):
         s.update_access(a)
     s.update_access(b)
@@ -51,8 +51,8 @@ def test_stats_counts(store):
     assert st["by_tier"]["pinned"] == 1
     assert st["by_tier"]["normal"] == 1
     assert st["by_tier"]["reference"] == 0
-    assert st["by_category"]["decision"] == 1
-    assert st["by_category"]["preference"] == 1
+    assert st["by_attribute"]["decision"] == 1
+    assert st["by_attribute"]["preference"] == 1
     assert st["never_accessed"] == 0  # 两个 active 都被访问过
     assert st["top_accessed"][0] == {
         "id": ids["hot"], "key": "proj:decision:db", "access_count": 5,
@@ -62,7 +62,7 @@ def test_stats_counts(store):
 
 def test_stats_never_accessed(store):
     s, _ = store
-    s.add("proj:fact:never", "零访问记忆", category="fact")
+    s.add("proj:fact:never", "零访问记忆", attribute="fact")
     st = api_stats(s)
     assert st["never_accessed"] == 1
     assert st["total_active"] == 3
@@ -76,7 +76,7 @@ def test_memories_default_sort_by_access_desc(store):
     assert [r["id"] for r in rows] == [ids["hot"], ids["warm"]]
     assert rows[0]["access_count"] == 5
     # 字段完整
-    for field in ("id", "key", "value", "category", "tags", "tier",
+    for field in ("id", "key", "value", "attribute", "tags", "tier",
                   "importance", "access_count", "last_accessed",
                   "created_at", "updated_at", "expires_at"):
         assert field in rows[0]
@@ -103,8 +103,8 @@ def test_memories_filters(store):
     # tier
     rows = api_memories(s, {"tier": "pinned"})
     assert [r["id"] for r in rows] == [ids["hot"]]
-    # category
-    rows = api_memories(s, {"category": "preference"})
+    # attribute
+    rows = api_memories(s, {"attribute": "preference"})
     assert [r["id"] for r in rows] == [ids["warm"]]
     # q 命中 value
     rows = api_memories(s, {"q": "紫色"})
@@ -122,13 +122,13 @@ def test_update_metadata_fields(store):
     s, ids = store
     res = api_update(s, ids["warm"], {
         "importance": 9.0, "tier": "pinned",
-        "category": "user_profile", "tags": ["ui", "color"],
+        "attribute": "user_profile", "tags": ["ui", "color"],
     })
     assert res["ok"]
     m = s.get_by_id(ids["warm"])
     assert m["importance"] == 9.0
     assert m["tier"] == "pinned"
-    assert m["category"] == "user_profile"
+    assert m["attribute"] == "user_profile"
     assert m["tags"] == "ui,color"
 
 

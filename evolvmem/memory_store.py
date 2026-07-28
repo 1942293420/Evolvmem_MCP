@@ -60,7 +60,7 @@ class MemoryStore:
             key             TEXT NOT NULL,
             value           TEXT NOT NULL,
             status          TEXT NOT NULL DEFAULT 'active',
-            category        TEXT DEFAULT '',
+            attribute        TEXT DEFAULT '',
             tags            TEXT DEFAULT '',
             source_session  TEXT DEFAULT '',
             access_count    INTEGER DEFAULT 0,
@@ -76,8 +76,16 @@ class MemoryStore:
             ON memories(key, status);
         """)
 
-        # --- 幂等迁移：importance / tier 两列（2026-07-28 tiered injection）---
+        # --- 幂等迁移：category 列改名 attribute（2026-07-28 属性/分类重命名）---
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(memories)")}
+        if "attribute" not in cols and "category" in cols:
+            self._conn.execute(
+                "ALTER TABLE memories RENAME COLUMN category TO attribute"
+            )
+            cols.discard("category")
+            cols.add("attribute")
+
+        # --- 幂等迁移：importance / tier 两列（2026-07-28 tiered injection）---
         migrated = False
         if "importance" not in cols:
             self._conn.execute(
@@ -97,8 +105,8 @@ class MemoryStore:
         if migrated:
             self._backfill_importance_tier()
 
-    # category → 默认 importance（1-10）；pinned 类别集合
-    _IMPORTANCE_BY_CATEGORY = {
+    # attribute → 默认 importance（1-10）；pinned 类别集合
+    _IMPORTANCE_BY_ATTRIBUTE = {
         "constraint": 8.0,
         "decision": 7.0,
         "preference": 6.0,
@@ -107,9 +115,9 @@ class MemoryStore:
     _PINNED_CATEGORIES = ("constraint", "preference", "user_profile")
 
     def _backfill_importance_tier(self) -> None:
-        """按 category 规则回填 importance/tier。仅在迁移（新增列）时调用一次。"""
+        """按 attribute 规则回填 importance/tier。仅在迁移（新增列）时调用一次。"""
         self._conn.execute(
-            "UPDATE memories SET importance = CASE category "
+            "UPDATE memories SET importance = CASE attribute "
             "WHEN 'constraint' THEN 8.0 "
             "WHEN 'decision' THEN 7.0 "
             "WHEN 'preference' THEN 6.0 "
@@ -118,7 +126,7 @@ class MemoryStore:
         )
         self._conn.execute(
             "UPDATE memories SET tier = 'pinned' "
-            "WHERE category IN ('constraint', 'preference', 'user_profile')"
+            "WHERE attribute IN ('constraint', 'preference', 'user_profile')"
         )
 
     def _create_fts_indexes(self) -> None:
@@ -195,7 +203,7 @@ class MemoryStore:
 
     # ---- write ----
 
-    def _insert_row(self, key: str, value: str, category: str,
+    def _insert_row(self, key: str, value: str, attribute: str,
                     tag_str: str, source_session: str,
                     supersedes: int | None,
                     importance: float = 5.0, tier: str = "normal",
@@ -203,16 +211,16 @@ class MemoryStore:
         """Insert a row into memories and return its id. Does NOT commit."""
         now = _now_iso()
         cur = self._conn.execute(
-            "INSERT INTO memories (key, value, status, category, tags, "
+            "INSERT INTO memories (key, value, status, attribute, tags, "
             "source_session, supersedes, importance, tier, expires_at, "
             "created_at, updated_at) "
             "VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (key, value, category, tag_str, source_session, supersedes,
+            (key, value, attribute, tag_str, source_session, supersedes,
              importance, tier, expires_at, now, now),
         )
         return cur.lastrowid
 
-    def add(self, key: str, value: str, category: str = "",
+    def add(self, key: str, value: str, attribute: str = "",
             tags: list[str] | None = None,
             source_session: str = "",
             supersedes: int | None = None,
@@ -222,7 +230,7 @@ class MemoryStore:
         if expires_at and len(expires_at) == 10:
             expires_at += " 00:00:00"
         tag_str = ",".join(tags) if tags else ""
-        new_id = self._insert_row(key, value, category, tag_str,
+        new_id = self._insert_row(key, value, attribute, tag_str,
                                   source_session, supersedes,
                                   importance=importance, tier=tier,
                                   expires_at=expires_at)
@@ -247,9 +255,9 @@ class MemoryStore:
             return self.add(key=key, value=new_value, **kwargs)
 
         old_id = old["id"]
-        category = kwargs.pop("category", None)
-        if category is None:
-            category = old["category"]
+        attribute = kwargs.pop("attribute", None)
+        if attribute is None:
+            attribute = old["attribute"]
         if "tags" in kwargs:
             tag_str = ",".join(kwargs.pop("tags"))
         else:
@@ -270,7 +278,7 @@ class MemoryStore:
             self._conn.execute("BEGIN IMMEDIATE")
             new_id = self._insert_row(
                 key, new_value,
-                category,
+                attribute,
                 tag_str,
                 kwargs.pop("source_session", ""),
                 old_id,

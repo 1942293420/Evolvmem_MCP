@@ -76,19 +76,19 @@ class TestIntegration:
         mem1_id = store.add(
             key="project:shop:decision:after_sales",
             value="破损商品直接退款，不再补发",
-            category="decision",
+            attribute="decision",
             tags=["售后", "退款"],
         )
         mem2_id = store.add(
             key="user:preference:theme",
             value="偏好暗色主题界面",
-            category="preference",
+            attribute="preference",
             tags=["UI"],
         )
         mem3_id = store.add(
             key="project:db:fact:version",
             value="PostgreSQL 版本需 15 以上",
-            category="fact",
+            attribute="fact",
             tags=["数据库"],
         )
 
@@ -158,7 +158,7 @@ class TestIntegration:
         result = server.handle_tool_call("memory_add", {
             "key": "p:t:constraint:db",
             "value": "禁止直接操作生产库",
-            "category": "constraint",
+            "attribute": "constraint",
             "importance": 9.0,
             "tier": "pinned",
         })
@@ -216,7 +216,7 @@ class TestIntegration:
   {
     "key": "project:db:decision:engine",
     "value": "数据库选用 PostgreSQL，替代 MySQL",
-    "category": "decision",
+    "attribute": "decision",
     "tags": ["数据库", "PostgreSQL", "架构"],
     "confidence": 0.95
   }
