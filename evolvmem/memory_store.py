@@ -236,7 +236,13 @@ class MemoryStore:
             return self.add(key=key, value=new_value, **kwargs)
 
         old_id = old["id"]
-        tag_str = ",".join(kwargs.pop("tags", [])) if "tags" in kwargs else ""
+        category = kwargs.pop("category", None)
+        if category is None:
+            category = old["category"]
+        if "tags" in kwargs:
+            tag_str = ",".join(kwargs.pop("tags"))
+        else:
+            tag_str = old["tags"]
         importance = kwargs.pop("importance", None)
         if importance is None:
             importance = old["importance"]
@@ -248,7 +254,7 @@ class MemoryStore:
             self._conn.execute("BEGIN IMMEDIATE")
             new_id = self._insert_row(
                 key, new_value,
-                kwargs.pop("category", ""),
+                category,
                 tag_str,
                 kwargs.pop("source_session", ""),
                 old_id,
@@ -272,6 +278,21 @@ class MemoryStore:
             "UPDATE memories SET status='deleted', updated_at=? WHERE id=?",
             (_now_iso(), mem_id),
         )
+        self._conn.commit()
+
+    def update_metadata(self, mem_id: int, importance: float | None = None,
+                        tier: str | None = None) -> None:
+        """Update importance/tier in place (used by batch rescoring)."""
+        if importance is not None:
+            self._conn.execute(
+                "UPDATE memories SET importance=?, updated_at=? WHERE id=?",
+                (importance, _now_iso(), mem_id),
+            )
+        if tier is not None:
+            self._conn.execute(
+                "UPDATE memories SET tier=?, updated_at=? WHERE id=?",
+                (tier, _now_iso(), mem_id),
+            )
         self._conn.commit()
 
     # ---- queries ----

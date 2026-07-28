@@ -207,3 +207,37 @@ class TestMemoryStore:
         assert after["access_count"] == 1
         assert after["updated_at"] == before
         store.close()
+
+    def test_replace_inherits_tags_and_category(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        store.add(key="p:t:decision:db", value="用 MySQL",
+                  category="decision", tags=["db", "arch"],
+                  importance=9.0, tier="pinned")
+        new_id = store.replace(key="p:t:decision:db", new_value="改用 PostgreSQL")
+        rec = store.get_by_id(new_id)
+        assert rec["category"] == "decision"
+        assert rec["tags"] == "db,arch"
+        store.close()
+
+    def test_replace_explicit_tags_override(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        store.add(key="p:t:fact:x", value="v1", tags=["old"])
+        new_id = store.replace(key="p:t:fact:x", new_value="v2", tags=["new"])
+        assert store.get_by_id(new_id)["tags"] == "new"
+        store.close()
+
+    def test_update_metadata(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        mid = store.add(key="p:t:fact:m", value="v")
+        store.update_metadata(mid, importance=8.5, tier="pinned")
+        rec = store.get_by_id(mid)
+        assert rec["importance"] == 8.5
+        assert rec["tier"] == "pinned"
+        store.update_metadata(mid, importance=3.0)
+        rec2 = store.get_by_id(mid)
+        assert rec2["importance"] == 3.0
+        assert rec2["tier"] == "pinned"  # 未指定的字段不变
+        store.close()

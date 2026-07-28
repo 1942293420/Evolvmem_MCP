@@ -48,7 +48,20 @@ if [ ! -f "$CONFIG_FILE" ]; then
     "forget_access_count_threshold": 2,
     "forget_rate_limit_days": 7,
     "embedding_dim": 512,
-    "stop_hook_safe": true
+    "inject_max_count": 50,
+    "inject_max_chars": 8000,
+    "inject_pinned_max_count": 10,
+    "inject_pinned_max_chars": 2000,
+    "inject_index_max_chars": 1000,
+    "inject_key_prefix_quota": 3,
+    "inject_w_importance": 0.5,
+    "inject_w_recency": 0.3,
+    "inject_w_frequency": 0.2,
+    "inject_recency_tau_days": 14.0,
+    "inject_freq_norm_cap": 20,
+    "forget_auto_run_hours": 24,
+    "stop_hook_safe": true,
+    "value_max_chars": 500
 }
 EOF
 else

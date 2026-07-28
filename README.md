@@ -98,6 +98,9 @@ Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 - `inject_recency_tau_days`: Recency decay time constant in days, default 14.0
 - `inject_freq_norm_cap`: Access-count normalization cap for frequency scoring, default 20
 - `forget_auto_run_hours`: Minimum interval between auto-forgetting runs at SessionStart, default 24
+- `forget_rate_limit_days`: Minimum interval between two downgrades of the same memory, default 7
+- `stop_hook_safe`: Prevent Stop Hook infinite loops, default true
+- `value_max_chars`: Hard length cap on `memory_add`/`memory_replace` values, default 500
 
 ## Dependencies
 
