@@ -352,6 +352,7 @@
         ops.push(`<button class="ghost small" data-act="restore" data-id="${r.id}">恢复</button>`);
       }
       ops.push(`<button class="danger small" data-act="delete" data-id="${r.id}">删除</button>`);
+      ops.push(`<button class="danger small" data-act="hard_delete" data-id="${r.id}">彻底删除</button>`);
       const val = esc(r.value);
       const short = r.value.length > 80 ? esc(r.value.slice(0, 80)) + "…" : val;
       return `<tr data-id="${r.id}">
@@ -441,6 +442,11 @@
       else if (act === "delete") {
         if (confirm(`确认删除 #${id}？（软删除，status → deleted）`)) {
           await post(id, "delete"); toast("已删除"); refresh();
+        }
+      }
+      else if (act === "hard_delete") {
+        if (confirm(`确认彻底删除 #${id}？\n物理删除数据库行，不可恢复！`)) {
+          await post(id, "hard_delete"); toast("已彻底删除"); refresh();
         }
       }
     } catch (err) { toast("操作失败: " + err.message); }

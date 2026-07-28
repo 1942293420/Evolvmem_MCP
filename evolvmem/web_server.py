@@ -72,10 +72,12 @@ def api_stats(store: MemoryStore) -> dict:
                 by_project[t] = by_project.get(t, 0) + 1
 
     top_accessed = [
-        {"id": r["id"], "key": r["key"], "access_count": r["access_count"]}
+        {"id": r["id"], "key": r["key"], "access_count": r["access_count"],
+         "importance": r["importance"]}
         for r in store._execute(
-            "SELECT id, key, access_count FROM memories "
-            "WHERE status='active' ORDER BY access_count DESC, id ASC LIMIT 10"
+            "SELECT id, key, access_count, importance FROM memories "
+            "WHERE status='active' "
+            "ORDER BY (importance * (access_count + 1)) DESC, id ASC LIMIT 10"
         )
     ]
 
@@ -204,9 +206,19 @@ def api_delete(store: MemoryStore, mem_id: int) -> dict:
     return {"ok": True}
 
 
+def api_hard_delete(store: MemoryStore, mem_id: int) -> dict:
+    """Physically remove the row — irreversible. FTS triggers sync automatically;
+    the stale vector entry is dropped on the next index consistency rebuild."""
+    if store.get_by_id(mem_id) is None:
+        return {"ok": False, "error": "not found"}
+    store._execute("DELETE FROM memories WHERE id = ?", (mem_id,))
+    store._conn.commit()
+    return {"ok": True}
+
+
 # ---- HTTP layer ----
 
-_MEM_ACTION_RE = re.compile(r"^/api/memory/(\d+)/(update|archive|restore|delete)$")
+_MEM_ACTION_RE = re.compile(r"^/api/memory/(\d+)/(update|archive|restore|delete|hard_delete)$")
 
 
 def make_handler(store: MemoryStore):
@@ -285,6 +297,8 @@ def make_handler(store: MemoryStore):
                     result = api_archive(store, mem_id)
                 elif action == "restore":
                     result = api_restore(store, mem_id)
+                elif action == "hard_delete":
+                    result = api_hard_delete(store, mem_id)
                 else:
                     result = api_delete(store, mem_id)
             except Exception as exc:  # surface store errors as JSON

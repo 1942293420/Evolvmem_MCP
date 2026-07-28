@@ -56,6 +56,7 @@ def test_stats_counts(store):
     assert st["never_accessed"] == 0  # 两个 active 都被访问过
     assert st["top_accessed"][0] == {
         "id": ids["hot"], "key": "proj:decision:db", "access_count": 5,
+        "importance": 7.0,
     }
     assert len(st["top_accessed"]) <= 10
 
@@ -159,6 +160,25 @@ def test_archive_restore_delete_flow(store):
     assert not api_archive(s, 9999)["ok"]
     assert not api_restore(s, 9999)["ok"]
     assert not api_delete(s, 9999)["ok"]
+
+
+# ---- api_hard_delete ----
+
+def test_hard_delete_removes_row_permanently(test_config):
+    from evolvmem.web_server import api_hard_delete
+    s = MemoryStore(test_config); s.initialize()
+    mid = s.add(key="p:t:temp", value="临时记忆")
+    result = api_hard_delete(s, mid)
+    assert result["ok"] is True
+    assert s.get_by_id(mid) is None  # 物理消失，不是 status 标记
+    s.close()
+
+
+def test_hard_delete_not_found(test_config):
+    from evolvmem.web_server import api_hard_delete
+    s = MemoryStore(test_config); s.initialize()
+    assert api_hard_delete(s, 999)["ok"] is False
+    s.close()
 
 
 # ---- HTTP 端到端 ----
