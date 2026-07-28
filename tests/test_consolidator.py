@@ -67,6 +67,17 @@ class TestFindCandidates:
         assert c.find_candidates() == []
         vidx.close(); store.close()
 
+    def test_reference_tier_never_merged(self, setup):
+        store, vidx, engine, c = setup
+        _add_with_vector(store, vidx, engine, "a:x", "相同内容",
+                         tier="reference")
+        _add_with_vector(store, vidx, engine, "b:y", "相同内容",
+                         tier="reference")
+        _add_with_vector(store, vidx, engine, "c:z", "相同内容")
+        # 两条 reference 不参与合并；normal 的 c:z 也没有可配对对象
+        assert c.find_candidates() == []
+        assert store.count_active() == 3
+
 
 class TestConsolidate:
     def test_dry_run_changes_nothing(self, setup):

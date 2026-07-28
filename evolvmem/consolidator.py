@@ -35,6 +35,9 @@ class Consolidator:
             return []
 
         actives = self.store.get_active()
+        # reference-tier memories (long documents) are intentionally full-text;
+        # they must never be merged away.
+        actives = [m for m in actives if m.get("tier") != "reference"]
         seen: set[frozenset] = set()
         pairs: list[dict] = []
         for m in actives:
