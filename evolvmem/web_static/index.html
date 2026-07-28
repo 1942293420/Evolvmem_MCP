@@ -110,6 +110,17 @@
   .modal .row label { font-size: 12px; color: #8b8b9e; }
   .modal .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
   .modal .m-key { font-size: 12px; color: #8b8b9e; word-break: break-all; }
+
+  /* 详情弹窗（二级页面） */
+  .modal.detail { width: min(880px, 94vw); max-height: 88vh; overflow-y: auto; }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 16px; font-size: 13px; }
+  .detail-grid .k { color: #8b8b9e; font-size: 12px; }
+  .detail-value {
+    background: #faf9ff; border-radius: 8px; padding: 14px 16px;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 52vh; overflow-y: auto;
+    font-size: 13px; line-height: 1.7; color: #1a1a2e;
+  }
 </style>
 </head>
 <body>
@@ -139,12 +150,14 @@
     <label>层级</label>
     <select id="f-tier">
       <option value="">全部</option>
-      <option value="pinned">pinned</option>
-      <option value="normal">normal</option>
-      <option value="reference">reference</option>
+      <option value="pinned">注入</option>
+      <option value="normal">rank评分</option>
+      <option value="reference">地下书库</option>
     </select>
     <label>分类</label>
     <select id="f-category"><option value="">全部</option></select>
+    <label>项目</label>
+    <select id="f-project"><option value="">全部</option></select>
     <label>排序</label>
     <select id="f-sort">
       <option value="access_count" selected>调用频率</option>
@@ -184,9 +197,9 @@
     <div class="row"><label>重要性 (0-10)</label><input type="number" id="m-importance" min="0" max="10" step="0.5"></div>
     <div class="row"><label>层级</label>
       <select id="m-tier">
-        <option value="pinned">pinned</option>
-        <option value="normal">normal</option>
-        <option value="reference">reference</option>
+        <option value="pinned">注入 (pinned)</option>
+        <option value="normal">rank评分 (normal)</option>
+        <option value="reference">地下书库 (reference)</option>
       </select>
     </div>
     <div class="row"><label>分类</label><input type="text" id="m-category"></div>
@@ -194,6 +207,18 @@
     <div class="btns">
       <button class="ghost" id="m-cancel">取消</button>
       <button id="m-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 详情弹窗（二级页面） -->
+<div class="modal-mask" id="detail-mask">
+  <div class="modal detail">
+    <h3 id="d-key"></h3>
+    <div class="detail-grid" id="d-meta"></div>
+    <div class="detail-value" id="d-value"></div>
+    <div class="btns" style="display:flex;justify-content:flex-end;">
+      <button class="ghost" id="d-close">关闭</button>
     </div>
   </div>
 </div>
@@ -207,6 +232,9 @@
   const esc = (s) => String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  const TIER_CN = { pinned: "注入", normal: "rank评分", reference: "地下书库" };
+  const tierCN = (t) => TIER_CN[t] || t;
 
   function toast(msg) {
     const t = $("toast");
@@ -235,9 +263,9 @@
     const s = await api("/api/stats");
     const cards = [
       [s.total_active, "总记忆数 (active)", ""],
-      [s.by_tier.pinned || 0, "pinned", ""],
-      [s.by_tier.normal || 0, "normal", "muted"],
-      [s.by_tier.reference || 0, "reference", "muted"],
+      [s.by_tier.pinned || 0, "注入 (pinned)", ""],
+      [s.by_tier.normal || 0, "rank评分 (normal)", "muted"],
+      [s.by_tier.reference || 0, "地下书库 (reference)", "muted"],
       [s.never_accessed, "从未被调用", "gray"],
     ];
     $("stats").innerHTML = cards.map(c =>
@@ -260,6 +288,13 @@
       .filter(c => c && c !== "(未分类)").sort()
       .map(c => `<option value="${esc(c)}">${esc(c)} (${s.by_category[c]})</option>`).join("");
     sel.value = cur;
+
+    // 项目下拉（保留当前选择）
+    const psel = $("f-project"), pcur = psel.value;
+    const projects = Object.keys(s.by_project || {}).sort();
+    psel.innerHTML = '<option value="">全部</option>' + projects
+      .map(p => `<option value="${esc(p)}">${esc(p)} (${s.by_project[p]})</option>`).join("");
+    psel.value = pcur;
   }
 
   // ---- 列表 ----
@@ -278,6 +313,7 @@
       status: $("f-status").value,
       tier: $("f-tier").value,
       category: $("f-category").value,
+      project: $("f-project").value,
       q: $("f-q").value.trim(),
       sort: $("f-sort").value,
       order: $("f-order").value,
@@ -309,7 +345,7 @@
         <td>${r.id}</td>
         <td class="key" title="${val}">${esc(r.key)}${skill}</td>
         <td class="val"><span class="val-preview">${short}</span></td>
-        <td><span class="badge badge-${esc(r.tier)}">${esc(r.tier)}</span></td>
+        <td><span class="badge badge-${esc(r.tier)}" title="${esc(r.tier)}">${tierCN(r.tier)}</span></td>
         <td>${r.category ? `<span class="badge badge-cat">${esc(r.category)}</span>` : ""}</td>
         <td>${Number(r.importance).toFixed(1)}</td>
         <td><div class="freq">
@@ -330,19 +366,37 @@
     }
   }
 
-  // ---- 表格交互：展开全文 / 操作 ----
+  // ---- 表格交互：详情弹窗 / 操作 ----
+  function openDetail(r) {
+    if (!r) return;
+    $("d-key").textContent = `#${r.id}  ${r.key}`;
+    const meta = [
+      ["层级", `${tierCN(r.tier)} (${r.tier})`],
+      ["分类", r.category || "—"],
+      ["标签", r.tags || "—"],
+      ["重要性", Number(r.importance).toFixed(1)],
+      ["调用次数", r.access_count],
+      ["最近访问", r.last_accessed || "—"],
+      ["创建时间", r.created_at || "—"],
+      ["更新时间", r.updated_at || "—"],
+      ["过期时间", r.expires_at || "—"],
+      ["状态", r.status],
+    ];
+    $("d-meta").innerHTML = meta.map(([k, v]) =>
+      `<div><div class="k">${esc(k)}</div><div>${esc(v)}</div></div>`).join("");
+    $("d-value").textContent = r.value;
+    $("detail-mask").classList.add("open");
+  }
+  $("d-close").onclick = () => $("detail-mask").classList.remove("open");
+  $("detail-mask").addEventListener("click", (e) => {
+    if (e.target === $("detail-mask")) $("detail-mask").classList.remove("open");
+  });
+
   $("tbody").addEventListener("click", async (e) => {
-    const prev = e.target.closest(".val-preview, .val-full");
+    const prev = e.target.closest(".val-preview");
     if (prev) {
       const tr = prev.closest("tr");
-      const r = listCache[tr.dataset.id];
-      if (!r) return;
-      if (prev.classList.contains("val-preview")) {
-        prev.outerHTML = `<span class="val-full">${esc(r.value)}</span>`;
-      } else {
-        const short = r.value.length > 80 ? esc(r.value.slice(0, 80)) + "…" : esc(r.value);
-        prev.outerHTML = `<span class="val-preview">${short}</span>`;
-      }
+      openDetail(listCache[tr.dataset.id]);
       return;
     }
     const btn = e.target.closest("button[data-act]");
@@ -393,7 +447,7 @@
   };
 
   // ---- 过滤器事件 ----
-  ["f-status", "f-tier", "f-category", "f-sort", "f-order", "f-skill"]
+  ["f-status", "f-tier", "f-category", "f-project", "f-sort", "f-order", "f-skill"]
     .forEach(id => $(id).addEventListener("change", loadList));
   let debounce;
   $("f-q").addEventListener("input", () => {

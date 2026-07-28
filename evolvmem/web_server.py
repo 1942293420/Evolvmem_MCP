@@ -60,6 +60,17 @@ def api_stats(store: MemoryStore) -> dict:
         "WHERE status='active' AND access_count = 0"
     )[0]["cnt"]
 
+    # 项目分布：tags 里以 "项目:" 开头的标签
+    by_project: dict[str, int] = {}
+    for r in store._execute(
+        "SELECT tags FROM memories WHERE status='active' "
+        "AND tags LIKE '%项目:%'"
+    ):
+        for t in (r["tags"] or "").split(","):
+            t = t.strip()
+            if t.startswith("项目:"):
+                by_project[t] = by_project.get(t, 0) + 1
+
     top_accessed = [
         {"id": r["id"], "key": r["key"], "access_count": r["access_count"]}
         for r in store._execute(
@@ -72,6 +83,7 @@ def api_stats(store: MemoryStore) -> dict:
         "total_active": total_active,
         "by_tier": by_tier,
         "by_category": by_category,
+        "by_project": by_project,
         "never_accessed": never_accessed,
         "top_accessed": top_accessed,
     }
@@ -80,11 +92,12 @@ def api_stats(store: MemoryStore) -> dict:
 def api_memories(store: MemoryStore, params: dict) -> list[dict]:
     """List memories with filtering and sorting.
 
-    params keys (from query string): status, tier, category, q, sort, order.
+    params keys (from query string): status, tier, category, project, q, sort, order.
     """
     status = params.get("status", "active")
     tier = params.get("tier", "")
     category = params.get("category", "")
+    project = params.get("project", "").strip()
     q = params.get("q", "").strip()
     sort = _SORT_COLUMNS.get(params.get("sort", "access_count"),
                              "access_count")
@@ -102,6 +115,10 @@ def api_memories(store: MemoryStore, params: dict) -> list[dict]:
     if category:
         where.append("category = ?")
         args.append(category)
+    if project:
+        # tags 是逗号拼接串，用 ",tags," 形式精确匹配单个标签
+        where.append("(',' || tags || ',') LIKE ? ESCAPE '\\'")
+        args.append(f"%,{_escape_like(project)},%")
     if q:
         pattern = f"%{_escape_like(q)}%"
         where.append("(key LIKE ? ESCAPE '\\' OR value LIKE ? ESCAPE '\\')")
