@@ -108,6 +108,8 @@ def get_session_start_block(config: Config | None = None) -> str:
        for the remaining inject_max_chars budget, with a per-key-prefix quota.
     3. Index layer — omitted memories listed as one-line indexes so the
        agent knows they exist and can fetch them via memory_search.
+       tier='reference' memories (long documents) always land here and are
+       never injected in full.
 
     Args:
         config: Configuration object, uses defaults when None.
@@ -128,7 +130,9 @@ def get_session_start_block(config: Config | None = None) -> str:
     context = _session_context()
 
     pinned = [m for m in memories if m.get("tier") == "pinned"]
-    normal = [m for m in memories if m.get("tier") != "pinned"]
+    reference = [m for m in memories if m.get("tier") == "reference"]
+    normal = [m for m in memories
+              if m.get("tier") not in ("pinned", "reference")]
 
     # Layer 1: pinned, own budget, importance desc
     pinned.sort(key=lambda m: m.get("importance") or 5.0, reverse=True)
@@ -146,8 +150,10 @@ def get_session_start_block(config: Config | None = None) -> str:
         max(0, config.inject_max_count - len(pinned_sel)),
         max(0, config.inject_max_chars - pinned_chars))
 
-    # Layer 3: index lines for everything omitted
-    omitted = pinned_omit + normal_omit + quota_overflow
+    # Layer 3: index lines for everything omitted — reference-tier memories
+    # (long documents) always land here: never injected in full, only
+    # advertised for on-demand memory_search retrieval.
+    omitted = pinned_omit + normal_omit + quota_overflow + reference
     omitted.sort(key=lambda m: compute_score(m, config, context=context),
                  reverse=True)
     index_sel, index_omit = ([], omitted)

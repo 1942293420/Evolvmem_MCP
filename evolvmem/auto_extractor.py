@@ -59,7 +59,7 @@ Return a JSON array, each entry containing:
 - tags: list of relevant tags
 - confidence: 0.0-1.0 confidence score
 - importance: integer 1-10. Guide: 9-10 = hard constraints / make-or-break decisions; 7-8 = important architecture or business decisions; 5-6 = ordinary preferences and facts; 3-4 = marginal reference material
-- tier: "pinned" if this memory must be visible in EVERY session (constraints, durable user preferences, user profile); otherwise "normal"
+- tier: "pinned" if this memory must be visible in EVERY session (constraints, durable user preferences, user profile); "reference" if it is a long reference document that should only be fetched via memory_search when relevant (never injected); otherwise "normal"
 
 If nothing is worth persisting, return an empty array `[]`.
 
@@ -114,7 +114,7 @@ Only return the JSON array, no other content:"""
                 importance = 5.0
             importance = max(1.0, min(10.0, importance))
             tier = item.get("tier", "normal")
-            if tier not in ("pinned", "normal"):
+            if tier not in ("pinned", "normal", "reference"):
                 tier = "normal"
             candidates.append(CandidateMemory(
                 key=key,

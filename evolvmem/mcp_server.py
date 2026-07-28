@@ -157,7 +157,7 @@ class MemoryMCPServer:
         if importance is not None:
             importance = max(1.0, min(10.0, importance))
         tier = args.get("tier")
-        if tier not in ("pinned", "normal"):
+        if tier not in ("pinned", "normal", "reference"):
             tier = None
         extra = {}
         if importance is not None:
@@ -443,8 +443,8 @@ class MemoryMCPServer:
                                     },
                                     "tier": {
                                         "type": "string",
-                                        "enum": ["pinned", "normal"],
-                                        "description": "pinned = injected every session; normal = scored competition",
+                                        "enum": ["pinned", "normal", "reference"],
+                                        "description": "pinned = injected every session; normal = scored competition; reference = never injected, only searchable (for long documents)",
                                     },
                                     "expires_at": {
                                         "type": "string",

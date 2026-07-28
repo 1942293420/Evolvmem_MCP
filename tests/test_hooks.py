@@ -124,6 +124,23 @@ class TestSessionStartHook:
         assert len(bullets) == 2
         assert "其他项目记忆" in result
 
+    def test_reference_tier_never_injected_in_full(self, test_config):
+        with MemoryStore(test_config) as store:
+            store.add(key="project:tech:arch:big-doc",
+                      value="很长的参考文档 " + "x" * 300,
+                      importance=9.0, tier="reference")
+            store.add(key="p:t:fact:small", value="普通事实",
+                      importance=5.0)
+
+        result = get_session_start_block(config=test_config)
+
+        # reference 不进全文层（即使 importance 很高），只出现在索引行
+        assert "- **project:tech:arch:big-doc**" not in result
+        assert "很长的参考文档" not in result
+        assert "- project:tech:arch:big-doc" in result
+        # normal 记忆照常注入
+        assert "普通事实" in result
+
     def test_omitted_memories_appear_as_index_lines(self, test_config):
         test_config.inject_max_chars = 200
         test_config.inject_index_max_chars = 500
