@@ -1,5 +1,6 @@
 """SessionStart and Stop Hook integration — memory formatting and extraction triggering."""
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -89,14 +90,22 @@ def _apply_prefix_quota(items: list[dict], quota: int) -> tuple[list[dict], list
     return kept, overflow
 
 
+def _session_context() -> dict:
+    """Weak query signal for relevance: the session's working directory name."""
+    try:
+        return {"project": os.path.basename(os.getcwd())}
+    except Exception:
+        return {}
+
+
 def get_session_start_block(config: Config | None = None) -> str:
     """Build the SessionStart injection block with three layers:
 
     1. Pinned layer — tier='pinned' memories always injected (own budget),
        sorted by importance desc.
     2. Scored layer — normal memories ranked by compute_score()
-       (importance + recency + frequency), competing for the remaining
-       inject_max_chars budget, with a per-key-prefix quota.
+       (importance + recency + frequency + project relevance), competing
+       for the remaining inject_max_chars budget, with a per-key-prefix quota.
     3. Index layer — omitted memories listed as one-line indexes so the
        agent knows they exist and can fetch them via memory_search.
 
@@ -116,6 +125,8 @@ def get_session_start_block(config: Config | None = None) -> str:
     if not memories:
         return ""
 
+    context = _session_context()
+
     pinned = [m for m in memories if m.get("tier") == "pinned"]
     normal = [m for m in memories if m.get("tier") != "pinned"]
 
@@ -125,7 +136,8 @@ def get_session_start_block(config: Config | None = None) -> str:
         pinned, config.inject_pinned_max_count, config.inject_pinned_max_chars)
 
     # Layer 2: normal, scored, prefix quota, remaining budget
-    normal.sort(key=lambda m: compute_score(m, config), reverse=True)
+    normal.sort(key=lambda m: compute_score(m, config, context=context),
+                reverse=True)
     normal_quota, quota_overflow = _apply_prefix_quota(
         normal, config.inject_key_prefix_quota)
     pinned_chars = sum(len(_format_full_line(m)) for m in pinned_sel)
@@ -136,7 +148,8 @@ def get_session_start_block(config: Config | None = None) -> str:
 
     # Layer 3: index lines for everything omitted
     omitted = pinned_omit + normal_omit + quota_overflow
-    omitted.sort(key=lambda m: compute_score(m, config), reverse=True)
+    omitted.sort(key=lambda m: compute_score(m, config, context=context),
+                 reverse=True)
     index_sel, index_omit = ([], omitted)
     if config.inject_index_max_chars > 0 and omitted:
         index_sel, index_omit = _take_budget(

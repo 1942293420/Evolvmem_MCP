@@ -178,6 +178,17 @@ class TestSessionStartHook:
 
         assert (test_config.data_dir / ".last_forget").exists()
 
+    def test_cwd_project_boosts_matching_memories(self, test_config, monkeypatch):
+        monkeypatch.chdir(test_config.data_dir)  # basename = 临时目录名，不含 'purchase'
+        with MemoryStore(test_config) as store:
+            store.add(key="project:purchase:fact:a", value="采购记忆", importance=5.0)
+            store.add(key="project:other:fact:b", value="其他记忆", importance=5.0)
+        # 别名让任意目录都匹配 purchase
+        test_config.inject_project_aliases = {
+            test_config.data_dir.name: "purchase"}
+        result = get_session_start_block(config=test_config)
+        assert result.index("采购记忆") < result.index("其他记忆")
+
 
 class TestStopHook:
     def test_stop_prompt_includes_conversation(self):

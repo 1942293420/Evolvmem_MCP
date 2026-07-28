@@ -60,3 +60,31 @@ class TestComputeScore:
         recent = _mem(last_accessed="2026-07-27 00:00:00")
         assert compute_score(m, test_config, now=NOW) == \
                compute_score(recent, test_config, now=NOW)
+
+
+class TestRelevance:
+    def test_project_match_boosts_score(self, test_config):
+        m = dict(_mem(), key="project:purchase:fact:x")
+        no_ctx = compute_score(m, test_config, now=NOW)
+        with_ctx = compute_score(m, test_config, now=NOW,
+                                 context={"project": "purchase"})
+        assert with_ctx > no_ctx
+
+    def test_no_context_relevance_is_zero(self, test_config):
+        m = dict(_mem(), key="project:purchase:fact:x")
+        assert compute_score(m, test_config, now=NOW) == \
+               compute_score(m, test_config, now=NOW, context=None)
+
+    def test_alias_mapping(self, test_config):
+        test_config.inject_project_aliases = {"hermes": "purchase"}
+        m = dict(_mem(), key="project:purchase:fact:x")
+        boosted = compute_score(m, test_config, now=NOW,
+                                context={"project": "hermes"})
+        plain = compute_score(m, test_config, now=NOW)
+        assert boosted > plain
+
+    def test_non_matching_project_no_boost(self, test_config):
+        m = dict(_mem(), key="project:purchase:fact:x")
+        assert compute_score(m, test_config, now=NOW,
+                             context={"project": "other"}) == \
+               compute_score(m, test_config, now=NOW)

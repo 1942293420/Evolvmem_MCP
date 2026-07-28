@@ -1,6 +1,6 @@
 """Configuration management: data directory, model path, retrieval and forgetting thresholds."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import json
 
@@ -66,6 +66,10 @@ class Config:
     inject_recency_tau_days: float = 14.0  # recency 衰减时间常数（天）
     inject_freq_norm_cap: int = 20     # 访问次数归一化上限
 
+    # --- 注入评分第四因子：relevance ---
+    inject_w_relevance: float = 0.3   # cwd 项目匹配加分权重
+    inject_project_aliases: dict = field(default_factory=dict)  # 目录名 → key 段
+
     # --- 自动遗忘 ---
     forget_auto_run_hours: int = 24  # SessionStart 自动遗忘的最小间隔（小时）
 
@@ -117,6 +121,8 @@ class Config:
             "inject_w_frequency": self.inject_w_frequency,
             "inject_recency_tau_days": self.inject_recency_tau_days,
             "inject_freq_norm_cap": self.inject_freq_norm_cap,
+            "inject_w_relevance": self.inject_w_relevance,
+            "inject_project_aliases": self.inject_project_aliases,
             "forget_auto_run_hours": self.forget_auto_run_hours,
             "stop_hook_safe": self.stop_hook_safe,
             "value_max_chars": self.value_max_chars,
