@@ -7,6 +7,7 @@ Tools:
   memory_add      — manually add a memory
   memory_replace  — replace a memory (mark old as superseded)
   memory_remove   — soft-delete a memory
+  memory_consolidate — find/merge near-duplicate memories
 """
 
 import json
@@ -21,6 +22,7 @@ from evolvmem.embedding import EmbeddingEngine
 from evolvmem.retriever import Retriever
 from evolvmem.conflict_detector import ConflictDetector
 from evolvmem.forgetting import ForgettingEngine
+from evolvmem.consolidator import Consolidator
 
 
 class MemoryMCPServer:
@@ -34,6 +36,7 @@ class MemoryMCPServer:
         self.retriever = None
         self.conflict_detector = None
         self.forgetting = None
+        self.consolidator = None
 
     def initialize(self):
         """Initialize all components."""
@@ -56,6 +59,9 @@ class MemoryMCPServer:
         )
         self.conflict_detector = ConflictDetector(self.store)
         self.forgetting = ForgettingEngine(self.config, self.store)
+        self.consolidator = Consolidator(
+            self.config, self.store, self.vidx, self.engine
+        )
 
     def shutdown(self):
         """Clean up resources."""
@@ -86,6 +92,7 @@ class MemoryMCPServer:
             "memory_add": self._memory_add,
             "memory_replace": self._memory_replace,
             "memory_remove": self._memory_remove,
+            "memory_consolidate": self._memory_consolidate,
         }
         handler = handlers.get(tool_name)
         if handler is None:
@@ -240,6 +247,24 @@ class MemoryMCPServer:
             except Exception as e:
                 self._log(f"Vector removal failed (id={mem_id}): {e}")
         return {"status": "deleted", "id": mem_id}
+
+    def _memory_consolidate(self, args: dict) -> dict:
+        if not self.engine.is_loaded:
+            return {"error": "embedding engine not loaded"}
+        dry_run = bool(args.get("dry_run", True))
+        threshold = args.get("threshold")
+        result = self.consolidator.consolidate(
+            dry_run=dry_run,
+            threshold=float(threshold) if threshold is not None else None,
+        )
+        # 压缩输出，避免把整条 value 灌回上下文
+        for p in result.get("pairs", []):
+            for side in ("keep", "drop"):
+                m = p[side]
+                p[side] = {"id": m["id"], "key": m["key"],
+                           "preview": m["value"][:80],
+                           "importance": m["importance"]}
+        return result
 
     # ---- internals ----
 
@@ -452,6 +477,18 @@ class MemoryMCPServer:
                                     },
                                 },
                                 "required": ["id"],
+                            },
+                        },
+                        {
+                            "name": "memory_consolidate",
+                            "description": "Find and merge near-duplicate memories (vector similarity). dry_run=true (default) only reports candidates.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "dry_run": {"type": "boolean", "default": True},
+                                    "threshold": {"type": "number",
+                                                  "description": "similarity threshold, default from config (0.92)"},
+                                },
                             },
                         },
                     ]

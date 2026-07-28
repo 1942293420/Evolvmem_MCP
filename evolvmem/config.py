@@ -73,6 +73,9 @@ class Config:
     # --- 自动遗忘 ---
     forget_auto_run_hours: int = 24  # SessionStart 自动遗忘的最小间隔（小时）
 
+    # --- 近重复合并 ---
+    consolidate_similarity_threshold: float = 0.92  # 近重复合并的相似度阈值
+
     # --- 安全 ---
     stop_hook_safe: bool = True  # 防止 Stop Hook 无限循环
     value_max_chars: int = 500  # memory_add/replace 的 value 长度硬上限
@@ -124,6 +127,7 @@ class Config:
             "inject_w_relevance": self.inject_w_relevance,
             "inject_project_aliases": self.inject_project_aliases,
             "forget_auto_run_hours": self.forget_auto_run_hours,
+            "consolidate_similarity_threshold": self.consolidate_similarity_threshold,
             "stop_hook_safe": self.stop_hook_safe,
             "value_max_chars": self.value_max_chars,
         }

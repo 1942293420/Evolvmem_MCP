@@ -246,7 +246,7 @@ class TestIntegration:
         store.close()
 
     def test_mcp_tool_schemas_match_design(self):
-        """验证 MCP Server 注册了全部 5 个工具。"""
+        """验证 MCP Server 注册了全部 6 个工具。"""
         from evolvmem.mcp_server import MemoryMCPServer
         server = MemoryMCPServer()
         # 伪造 initialize request 后直接查询工具列表
@@ -257,9 +257,13 @@ class TestIntegration:
         tool_names = {t["name"] for t in tools}
         expected = {
             "memory_search", "memory_status", "memory_add",
-            "memory_replace", "memory_remove",
+            "memory_replace", "memory_remove", "memory_consolidate",
         }
         assert tool_names == expected
+
+    def test_memory_consolidate_requires_embedding(self, server):
+        result = server.handle_tool_call("memory_consolidate", {})
+        assert "error" in result
 
     def test_mcp_notifications_get_no_response(self):
         """JSON-RPC notification（无 id）不应产生响应。"""
