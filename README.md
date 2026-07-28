@@ -8,6 +8,9 @@ A fully-local, three-layer memory plugin for Claude Code with Chinese language s
 - **L1 Full History**: SQLite + FTS5/trigram exact search, supports Chinese substring matching
 - **L2 Semantic Index**: USearch HNSW vector search for finding related memories expressed differently
 - **Self-Iteration**: Auto-extraction, conflict detection, access-decay forgetting
+- **Consolidation**: `memory_consolidate` finds and merges near-duplicate memories via vector similarity (dry-run by default)
+- **Expiry**: Memories can carry an `expires_at` date; expired memories stop being injected/searched and are archived automatically
+- **Project Relevance**: SessionStart scoring boosts memories whose key matches the current project directory (configurable aliases)
 
 ## Quick Start
 
@@ -64,9 +67,10 @@ Optional: add a SessionStart hook for automatic active memory injection:
 |---|---|
 | `memory_search` | FTS5 + HNSW hybrid search, supports Chinese |
 | `memory_status` | View memory system status and statistics |
-| `memory_add` | Manually write a memory (optional `importance` 1-10 and `tier` pinned/normal parameters) |
+| `memory_add` | Manually write a memory (optional `importance` 1-10, `tier` pinned/normal, and `expires_at` date parameters) |
 | `memory_replace` | Replace a memory (old value marked as superseded) |
 | `memory_remove` | Soft-delete a memory |
+| `memory_consolidate` | Find and merge near-duplicate memories by vector similarity; `dry_run=true` (default) only reports candidates |
 
 ## Data Directory
 
@@ -97,6 +101,10 @@ Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 - `inject_w_importance` / `inject_w_recency` / `inject_w_frequency`: Scoring weights for importance/10, recency decay, and log1p(access_count), default 0.5 / 0.3 / 0.2
 - `inject_recency_tau_days`: Recency decay time constant in days, default 14.0
 - `inject_freq_norm_cap`: Access-count normalization cap for frequency scoring, default 20
+- `inject_w_relevance`: Weight of the project-relevance bonus in SessionStart scoring (memories whose key segment matches the current directory name), default 0.3
+- `inject_project_aliases`: Map of directory name → memory key segment for project matching (e.g. `{"my-project": "myproj"}`), default `{}`
+- `consolidate_similarity_threshold`: Cosine-similarity threshold above which two memories are near-duplicate merge candidates for `memory_consolidate`, default 0.92
+- `expires_at` (per-memory field, not config): Optional expiry date set via `memory_add` (e.g. `2026-12-31`); expired memories are excluded from injection and search, and are auto-archived
 - `forget_auto_run_hours`: Minimum interval between auto-forgetting runs at SessionStart, default 24
 - `forget_rate_limit_days`: Minimum interval between two downgrades of the same memory, default 7
 - `stop_hook_safe`: Prevent Stop Hook infinite loops, default true
