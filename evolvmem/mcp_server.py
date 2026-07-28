@@ -164,6 +164,9 @@ class MemoryMCPServer:
             extra["importance"] = importance
         if tier is not None:
             extra["tier"] = tier
+        expires_at = args.get("expires_at")
+        if expires_at is not None:
+            extra["expires_at"] = expires_at
 
         # Conflict detection
         decision = self.conflict_detector.check(key, value)
@@ -442,6 +445,10 @@ class MemoryMCPServer:
                                         "type": "string",
                                         "enum": ["pinned", "normal"],
                                         "description": "pinned = injected every session; normal = scored competition",
+                                    },
+                                    "expires_at": {
+                                        "type": "string",
+                                        "description": "Optional expiry, e.g. 2026-12-31; expired memories stop being injected and get archived",
                                     },
                                 },
                                 "required": ["key", "value"],

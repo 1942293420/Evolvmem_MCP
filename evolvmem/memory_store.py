@@ -89,6 +89,11 @@ class MemoryStore:
                 "ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'normal'"
             )
             migrated = True
+        # expires_at 独立迁移：无需回填，不影响 migrated 标志
+        if "expires_at" not in cols:
+            self._conn.execute(
+                "ALTER TABLE memories ADD COLUMN expires_at TEXT DEFAULT NULL"
+            )
         if migrated:
             self._backfill_importance_tier()
 
@@ -193,15 +198,17 @@ class MemoryStore:
     def _insert_row(self, key: str, value: str, category: str,
                     tag_str: str, source_session: str,
                     supersedes: int | None,
-                    importance: float = 5.0, tier: str = "normal") -> int:
+                    importance: float = 5.0, tier: str = "normal",
+                    expires_at: str | None = None) -> int:
         """Insert a row into memories and return its id. Does NOT commit."""
         now = _now_iso()
         cur = self._conn.execute(
             "INSERT INTO memories (key, value, status, category, tags, "
-            "source_session, supersedes, importance, tier, created_at, updated_at) "
-            "VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)",
+            "source_session, supersedes, importance, tier, expires_at, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (key, value, category, tag_str, source_session, supersedes,
-             importance, tier, now, now),
+             importance, tier, expires_at, now, now),
         )
         return cur.lastrowid
 
@@ -209,12 +216,16 @@ class MemoryStore:
             tags: list[str] | None = None,
             source_session: str = "",
             supersedes: int | None = None,
-            importance: float = 5.0, tier: str = "normal") -> int:
+            importance: float = 5.0, tier: str = "normal",
+            expires_at: str | None = None) -> int:
         """Insert a new active memory. Returns the new record id."""
+        if expires_at and len(expires_at) == 10:
+            expires_at += " 00:00:00"
         tag_str = ",".join(tags) if tags else ""
         new_id = self._insert_row(key, value, category, tag_str,
                                   source_session, supersedes,
-                                  importance=importance, tier=tier)
+                                  importance=importance, tier=tier,
+                                  expires_at=expires_at)
         self._conn.commit()
         return new_id
 
@@ -249,6 +260,11 @@ class MemoryStore:
         tier = kwargs.pop("tier", None)
         if tier is None:
             tier = old["tier"]
+        expires_at = kwargs.pop("expires_at", None)
+        if expires_at is None:
+            expires_at = old["expires_at"]
+        if expires_at and len(expires_at) == 10:
+            expires_at += " 00:00:00"
 
         try:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -259,6 +275,7 @@ class MemoryStore:
                 kwargs.pop("source_session", ""),
                 old_id,
                 importance=importance, tier=tier,
+                expires_at=expires_at,
             )
             now = _now_iso()
             self._conn.execute(
@@ -298,10 +315,16 @@ class MemoryStore:
     # ---- queries ----
 
     def get_active(self) -> list[dict]:
-        """Return all status='active' memories, ordered by updated_at descending."""
+        """Return all status='active' and unexpired memories, ordered by updated_at descending.
+
+        Expired memories (expires_at <= now) keep status='active' but are
+        excluded here until the forgetting engine archives them.
+        """
         rows = self._execute(
             "SELECT * FROM memories WHERE status='active' "
-            "ORDER BY updated_at DESC"
+            "AND (expires_at IS NULL OR expires_at > ?) "
+            "ORDER BY updated_at DESC",
+            (_now_iso(),),
         )
         return [dict(r) for r in rows]
 

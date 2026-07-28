@@ -60,3 +60,13 @@ class TestForgettingEngine:
         assert archived_count == 1
         assert store.get_by_id(mem_id)["status"] == "archived"
         store.close()
+
+    def test_run_archives_expired(self, test_config):
+        from evolvmem.memory_store import MemoryStore
+        from evolvmem.forgetting import ForgettingEngine
+        with MemoryStore(test_config) as store:
+            mid = store.add(key="p:t:fact:exp", value="已过期",
+                            expires_at="2020-01-01 00:00:00")
+            archived = ForgettingEngine(test_config, store).run()
+            assert archived >= 1
+            assert store.get_by_id(mid)["status"] == "archived"

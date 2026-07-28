@@ -1,7 +1,7 @@
 """Access-decay forgetting engine — auto-archives long-unaccessed low-activity memories."""
 
 from evolvmem.config import Config
-from evolvmem.memory_store import MemoryStore
+from evolvmem.memory_store import MemoryStore, _now_iso
 
 
 class ForgettingEngine:
@@ -31,8 +31,19 @@ class ForgettingEngine:
         self.store.archive(mem_id)
 
     def run(self) -> int:
-        """Run one forgetting check, return number of archived memories."""
+        """Run one forgetting check, return number of archived memories.
+
+        Expired memories (expires_at <= now) are archived first, then the
+        regular access-decay rules run on the rest.
+        """
+        expired = self.store._execute(
+            "SELECT id FROM memories WHERE status='active' "
+            "AND expires_at IS NOT NULL AND expires_at <= ?",
+            (_now_iso(),),
+        )
+        for row in expired:
+            self.store.archive(row["id"])
         candidates = self.find_candidates()
         for c in candidates:
             self.archive(c["id"])
-        return len(candidates)
+        return len(expired) + len(candidates)

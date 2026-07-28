@@ -241,3 +241,14 @@ class TestMemoryStore:
         assert rec2["importance"] == 3.0
         assert rec2["tier"] == "pinned"  # 未指定的字段不变
         store.close()
+
+    def test_expired_memory_not_in_get_active(self, test_config):
+        store = MemoryStore(test_config)
+        store.initialize()
+        store.add(key="p:t:fact:temp", value="临时事实",
+                  expires_at="2020-01-01 00:00:00")
+        store.add(key="p:t:fact:durable", value="长期事实")
+        actives = store.get_active()
+        assert len(actives) == 1
+        assert actives[0]["key"] == "p:t:fact:durable"
+        store.close()
