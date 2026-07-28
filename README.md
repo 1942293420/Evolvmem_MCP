@@ -101,9 +101,9 @@ Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 - `inject_w_importance` / `inject_w_recency` / `inject_w_frequency`: Scoring weights for importance/10, recency decay, and log1p(access_count), default 0.5 / 0.3 / 0.2
 - `inject_recency_tau_days`: Recency decay time constant in days, default 14.0
 - `inject_freq_norm_cap`: Access-count normalization cap for frequency scoring, default 20
-- `inject_w_relevance`: Weight of the project-relevance bonus in SessionStart scoring (memories whose key segment matches the current directory name), default 0.3
+- `inject_w_relevance`: Weight of the project-relevance bonus in SessionStart scoring (memories whose key contains the current directory name — or its alias — as a substring), default 0.3
 - `inject_project_aliases`: Map of directory name → memory key segment for project matching (e.g. `{"my-project": "myproj"}`), default `{}`
-- `consolidate_similarity_threshold`: Cosine-similarity threshold above which two memories are near-duplicate merge candidates for `memory_consolidate`, default 0.92
+- `consolidate_similarity_threshold`: Similarity threshold above which two memories are near-duplicate merge candidates for `memory_consolidate`, default 0.92. Note the metric is `similarity = (1+cos)/2` (not raw cosine): 0.92 corresponds to a true cosine of ≈ 0.84; for real merges a threshold ≥ 0.97 (≈ cosine 0.94) is recommended
 - `expires_at` (per-memory field, not config): Optional expiry date set via `memory_add` (e.g. `2026-12-31`); expired memories are excluded from injection and search, and are auto-archived
 - `forget_auto_run_hours`: Minimum interval between auto-forgetting runs at SessionStart, default 24
 - `forget_rate_limit_days`: Minimum interval between two downgrades of the same memory, default 7

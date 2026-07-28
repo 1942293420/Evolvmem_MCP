@@ -3,6 +3,10 @@
 Uses the existing HNSW vector index: for each active memory, find its
 nearest neighbor; pairs above the similarity threshold are merge candidates.
 The higher-scored memory (compute_score) is kept, the other is archived.
+
+Similarity metric: with the usearch Cos distance, similarity = 1 - distance/2
+= (1+cos)/2 (not raw cosine). The default threshold 0.92 therefore corresponds
+to a true cosine of ≈ 0.84; for real merges use threshold >= 0.97 (≈ cosine 0.94).
 """
 
 import numpy as np

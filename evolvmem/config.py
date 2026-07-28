@@ -74,6 +74,8 @@ class Config:
     forget_auto_run_hours: int = 24  # SessionStart 自动遗忘的最小间隔（小时）
 
     # --- 近重复合并 ---
+    # 口径说明：similarity = (1+cos)/2（非原始余弦）；0.92 ≈ 真实余弦 0.84，
+    # 真实合并建议 threshold ≥ 0.97（≈ cos 0.94）
     consolidate_similarity_threshold: float = 0.92  # 近重复合并的相似度阈值
 
     # --- 安全 ---
