@@ -277,15 +277,16 @@ def make_handler(store: MemoryStore):
     return MemoryWebHandler
 
 
-def run(port: int = 9377, data_dir: str | None = None) -> None:
+def run(port: int = 9377, data_dir: str | None = None,
+        host: str = "127.0.0.1") -> None:
     config = Config.from_file()
     if data_dir:
         config.data_dir = Path(data_dir)
     store = MemoryStore(config)
     store.initialize()
     # 单线程服务：sqlite 连接不支持跨线程使用；本地单用户控制台无需并发
-    server = HTTPServer(("127.0.0.1", port), make_handler(store))
-    print(f"EvolvMem web console: http://127.0.0.1:{port} "
+    server = HTTPServer((host, port), make_handler(store))
+    print(f"EvolvMem web console: http://{host}:{port} "
           f"(data: {config.db_path})")
     try:
         server.serve_forever()
@@ -299,10 +300,12 @@ def run(port: int = 9377, data_dir: str | None = None) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="EvolvMem web console")
     parser.add_argument("--port", type=int, default=9377)
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="bind address (default: 127.0.0.1; use 0.0.0.0 for LAN)")
     parser.add_argument("--data-dir", default=None,
                         help="override data dir (default: ~/.claude/evolvmem)")
     args = parser.parse_args()
-    run(port=args.port, data_dir=args.data_dir)
+    run(port=args.port, data_dir=args.data_dir, host=args.host)
 
 
 if __name__ == "__main__":
