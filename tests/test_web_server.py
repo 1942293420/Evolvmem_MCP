@@ -69,6 +69,20 @@ def test_stats_never_accessed(store):
     assert st["total_active"] == 3
 
 
+def test_top_accessed_ranked_by_composite_heat(test_config):
+    from evolvmem.web_server import api_stats
+    s = MemoryStore(test_config); s.initialize()
+    # 高频低分：4 次命中但 importance 1 → 综合 1*(4+1)=5
+    junk = s.add(key="p:t:junk", value="空摘要", importance=1.0)
+    for _ in range(4): s.update_access(junk)
+    # 低频高分：1 次命中 importance 9 → 综合 9*(1+1)=18
+    gem = s.add(key="p:t:gem", value="核心规则", importance=9.0)
+    s.update_access(gem)
+    top = api_stats(s)["top_accessed"]
+    assert top[0]["id"] == gem  # 高分低频应排在高频低分之前
+    s.close()
+
+
 # ---- api_memories ----
 
 def test_memories_default_sort_by_access_desc(store):

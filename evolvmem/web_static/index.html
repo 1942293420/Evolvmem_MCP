@@ -37,7 +37,7 @@
   .hot-item .k { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hot-item .bar-wrap { flex: 0 1 220px; height: 10px; background: #f3f4f6; border-radius: 5px; overflow: hidden; }
   .hot-item .bar { height: 100%; background: linear-gradient(90deg, #c4b5fd, #8b5cf6); border-radius: 5px; }
-  .hot-item .cnt { width: 40px; text-align: right; font-variant-numeric: tabular-nums; color: #1a1a2e; font-weight: 600; }
+  .hot-item .cnt { width: 64px; text-align: right; font-variant-numeric: tabular-nums; color: #1a1a2e; font-weight: 600; }
 
   /* 过滤器 */
   .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
@@ -135,7 +135,7 @@
 
   <!-- 热门榜 -->
   <section class="panel">
-    <h2 style="font-size:15px;margin-bottom:10px;">🔥 调用频率 Top 10</h2>
+    <h2 style="font-size:15px;margin-bottom:10px;">🔥 综合热度 Top 10（重要性 × 检索命中）</h2>
     <div class="hot-list" id="hot"></div>
   </section>
 
@@ -170,7 +170,7 @@
       <option value="asc">升序</option>
     </select>
     <input type="text" id="f-q" placeholder="搜索 key / value …">
-    <label class="toggle"><input type="checkbox" id="f-skill"> 只看技能候选（≥3 次调用）</label>
+    <label class="toggle"><input type="checkbox" id="f-skill"> 只看技能候选（≥3 次命中）</label>
     <button id="btn-refresh">刷新</button>
   </section>
 
@@ -180,7 +180,7 @@
       <thead>
         <tr>
           <th>ID</th><th>Key</th><th>Value</th><th>层级</th><th>属性</th>
-          <th>重要性</th><th style="min-width:130px;">调用次数</th><th>最近访问</th><th>操作</th>
+          <th>重要性</th><th style="min-width:130px;">检索命中</th><th>最近访问</th><th>操作</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -284,13 +284,14 @@
       `<div class="stat-card ${c[2]}"><div class="num">${c[0]}</div><div class="label">${c[1]}</div></div>`
     ).join("");
 
-    const max = Math.max(1, ...s.top_accessed.map(t => t.access_count));
+    const heat = t => t.importance * (t.access_count + 1);
+    const max = Math.max(1, ...s.top_accessed.map(heat));
     $("hot").innerHTML = s.top_accessed.length ? s.top_accessed.map((t, i) =>
       `<div class="hot-item">
         <span class="rank">${i + 1}</span>
         <span class="k" title="${esc(t.key)}">${esc(t.key)}</span>
-        <span class="bar-wrap"><span class="bar" style="display:block;width:${(t.access_count / max * 100).toFixed(1)}%"></span></span>
-        <span class="cnt">${t.access_count}</span>
+        <span class="bar-wrap"><span class="bar" style="display:block;width:${(heat(t) / max * 100).toFixed(1)}%"></span></span>
+        <span class="cnt">${t.access_count}次/${Number(t.importance).toFixed(0)}分</span>
       </div>`
     ).join("") : '<div class="empty">暂无数据</div>';
 
