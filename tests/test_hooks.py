@@ -149,6 +149,27 @@ class TestSessionStartHook:
 
         assert "more memories not injected" in result
 
+    def test_index_lines_ordered_by_score(self, test_config):
+        test_config.inject_pinned_max_chars = 50  # pinned 层只留 1 条
+        test_config.inject_max_chars = 200        # 精选层只留 1 条
+        test_config.inject_index_max_chars = 30   # 索引层只留 1 行
+        with MemoryStore(test_config) as store:
+            # pin 占满 pinned 预算 → low 落选进 pinned_omit；
+            # first 占满精选预算 → high 落选进 normal_omit。
+            # 旧拼接顺序 pinned_omit 在 normal_omit 前，低分 low 会先入索引；
+            # 索引层应按 score 降序，只显示分最高的 high。
+            store.add(key="p:t:fact:pin", value="p" * 40,
+                      importance=9.0, tier="pinned")
+            store.add(key="p:t:fact:low", value="低分",
+                      importance=1.0, tier="pinned")
+            store.add(key="p:t:fact:first", value="x" * 180, importance=9.0)
+            store.add(key="p:t:fact:high", value="高分", importance=8.0)
+
+        result = get_session_start_block(config=test_config)
+
+        assert "- p:t:fact:high" in result
+        assert "- p:t:fact:low" not in result
+
     def test_session_start_creates_forgetting_marker(self, test_config):
         with MemoryStore(test_config) as store:
             store.add(key="p:t:0", value="some value")

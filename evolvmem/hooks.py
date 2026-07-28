@@ -136,6 +136,7 @@ def get_session_start_block(config: Config | None = None) -> str:
 
     # Layer 3: index lines for everything omitted
     omitted = pinned_omit + normal_omit + quota_overflow
+    omitted.sort(key=lambda m: compute_score(m, config), reverse=True)
     index_sel, index_omit = ([], omitted)
     if config.inject_index_max_chars > 0 and omitted:
         index_sel, index_omit = _take_budget(
