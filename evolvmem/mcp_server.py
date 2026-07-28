@@ -493,7 +493,7 @@ class MemoryMCPServer:
                                     },
                                     "value": {
                                         "type": "string",
-                                        "description": "New memory content",
+                                        "description": "New memory content (value 至少 10 字符，低信息过渡语会被拒收)",
                                     },
                                 },
                                 "required": ["key", "value"],

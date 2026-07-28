@@ -127,7 +127,7 @@
 <div class="wrap">
   <header>
     <h1>📚 EvolvMem 记忆图书馆</h1>
-    <span class="sub">按调用频率管理记忆，高频知识可考虑生成 skill</span>
+    <span class="sub">按检索命中与重要性管理记忆，高频知识可考虑生成 skill</span>
   </header>
 
   <!-- 统计卡片 -->
@@ -160,7 +160,7 @@
     <select id="f-project"><option value="">全部</option></select>
     <label>排序</label>
     <select id="f-sort">
-      <option value="access_count" selected>调用频率</option>
+      <option value="access_count" selected>检索命中</option>
       <option value="last_accessed">最近访问</option>
       <option value="importance">重要性</option>
       <option value="created_at">创建时间</option>
@@ -390,7 +390,7 @@
       ["属性", r.attribute || "—"],
       ["标签", r.tags || "—"],
       ["重要性", Number(r.importance).toFixed(1)],
-      ["调用次数", r.access_count],
+      ["检索命中", r.access_count],
       ["最近访问", r.last_accessed || "—"],
       ["创建时间", r.created_at || "—"],
       ["更新时间", r.updated_at || "—"],
