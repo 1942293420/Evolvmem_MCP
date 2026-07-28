@@ -237,7 +237,7 @@ class TestIntegration:
         })
         assert seed["status"] == "added"
         result = server.handle_tool_call("memory_replace", {
-            "key": "p:t:fact:rl", "value": "等待用户确认。",
+            "key": "p:t:fact:rl", "value": "等待用户确认后再继续推进。",
         })
         assert "error" in result
 
