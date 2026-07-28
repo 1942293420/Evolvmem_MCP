@@ -33,8 +33,9 @@ _LOW_INFO_PATTERNS = (
 
 
 def _is_low_info(value: str) -> bool:
-    v = value.strip()
-    return any(p in v for p in _LOW_INFO_PATTERNS)
+    # 整句匹配语义：strip 后以模式开头才算低信息（句中出现不误伤）；casefold 兼容大小写变体
+    v = value.strip().casefold()
+    return any(v.startswith(p.casefold()) for p in _LOW_INFO_PATTERNS)
 
 
 class MemoryMCPServer:
@@ -242,6 +243,13 @@ class MemoryMCPServer:
             return {"error": f"value too long ({len(new_value)} > {self.config.value_max_chars} chars); "
                              "split or summarize before adding"}
 
+        if len(new_value.strip()) < self.config.value_min_chars:
+            return {"error": f"value too short ({len(new_value.strip())} < {self.config.value_min_chars} chars); "
+                             "no information content"}
+        if _is_low_info(new_value):
+            return {"error": "value looks like a low-information placeholder "
+                             "(transitional/chatter); not persisting"}
+
         new_id = self.store.replace(key=key, new_value=new_value)
 
         # Update vector index
@@ -444,7 +452,7 @@ class MemoryMCPServer:
                                     },
                                     "value": {
                                         "type": "string",
-                                        "description": "Memory content",
+                                        "description": "Memory content (value 至少 10 字符，低信息过渡语会被拒收)",
                                     },
                                     "attribute": {
                                         "type": "string",

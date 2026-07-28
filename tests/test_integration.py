@@ -211,8 +211,39 @@ class TestIntegration:
         })
         assert result["status"] == "added"
 
+    def test_memory_add_accepts_pattern_mid_sentence(self, server):
+        """模式词出现在句中不算低信息——整句语义合格必须入库。"""
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:window", "value": "部署窗口需等待用户确认后再排期",
+        })
+        assert result["status"] == "added"
+
+    def test_memory_add_rejects_low_info_prefix_variant(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:trivial2", "value": "等待用户下一步指令。",
+        })
+        assert "error" in result
+
+    def test_memory_add_rejects_low_info_case_variant(self, server):
+        """大小写变体同样拒收。"""
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:trivial3", "value": "No action required.",
+        })
+        assert "error" in result
+
+    def test_memory_replace_rejects_low_info_value(self, server):
+        seed = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:rl", "value": "供应商合同必须双人复核后归档",
+        })
+        assert seed["status"] == "added"
+        result = server.handle_tool_call("memory_replace", {
+            "key": "p:t:fact:rl", "value": "等待用户确认。",
+        })
+        assert "error" in result
+
     def test_memory_replace_rejects_overlong_value(self, server):
-        server.handle_tool_call("memory_add", {"key": "p:t:fact:r", "value": "待替换的初始值内容"})
+        seed = server.handle_tool_call("memory_add", {"key": "p:t:fact:r", "value": "待替换的初始值，内容足够长"})
+        assert seed["status"] == "added"
         result = server.handle_tool_call("memory_replace", {
             "key": "p:t:fact:r", "value": "y" * 501,
         })
