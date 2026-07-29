@@ -202,7 +202,15 @@
         <option value="reference">地下书库 (reference)</option>
       </select>
     </div>
-    <div class="row"><label>属性</label><input type="text" id="m-attribute"></div>
+    <div class="row"><label>属性</label>
+      <select id="m-attribute">
+        <option value="fact">事实 (fact)</option>
+        <option value="decision">决策 (decision)</option>
+        <option value="preference">偏好 (preference)</option>
+        <option value="constraint">约束 (constraint)</option>
+        <option value="user_profile">用户画像 (user_profile)</option>
+      </select>
+    </div>
     <div class="row"><label>标签（逗号分隔）</label><input type="text" id="m-tags"></div>
     <div class="btns">
       <button class="ghost" id="m-cancel">取消</button>
@@ -247,6 +255,11 @@
 
   const TIER_CN = { pinned: "注入", normal: "rank评分", reference: "地下书库" };
   const tierCN = (t) => TIER_CN[t] || t;
+  const ATTR_CN = {
+    fact: "事实", decision: "决策", preference: "偏好",
+    constraint: "约束", user_profile: "用户画像",
+  };
+  const attrCN = (a) => ATTR_CN[a] || a || "—";
 
   function toast(msg) {
     const t = $("toast");
@@ -295,11 +308,11 @@
       </div>`
     ).join("") : '<div class="empty">暂无数据</div>';
 
-    // 属性下拉（保留当前选择）
+    // 属性下拉（保留当前选择，显示中文）
     const sel = $("f-attribute"), cur = sel.value;
     sel.innerHTML = '<option value="">全部</option>' + Object.keys(s.by_attribute)
       .filter(c => c && c !== "(未分类)").sort()
-      .map(c => `<option value="${esc(c)}">${esc(c)} (${s.by_attribute[c]})</option>`).join("");
+      .map(c => `<option value="${esc(c)}">${esc(attrCN(c))} (${s.by_attribute[c]})</option>`).join("");
     sel.value = cur;
 
     // 分类下拉（保留当前选择）
@@ -361,7 +374,7 @@
         <td class="key" title="${val}">${esc(r.key)}${skill}</td>
         <td class="val"><span class="val-preview">${short}</span></td>
         <td><span class="badge badge-${esc(r.tier)}" title="${esc(r.tier)}">${tierCN(r.tier)}</span></td>
-        <td>${r.attribute ? `<span class="badge badge-cat">${esc(r.attribute)}</span>` : ""}</td>
+        <td>${r.attribute ? `<span class="badge badge-cat" title="${esc(r.attribute)}">${esc(attrCN(r.attribute))}</span>` : ""}</td>
         <td>${Number(r.importance).toFixed(1)}</td>
         <td><div class="freq">
           <span class="n">${r.access_count}</span>
@@ -387,7 +400,7 @@
     $("d-key").textContent = `#${r.id}  ${r.key}`;
     const meta = [
       ["层级", `${tierCN(r.tier)} (${r.tier})`],
-      ["属性", r.attribute || "—"],
+      ["属性", attrCN(r.attribute) + (r.attribute ? ` (${r.attribute})` : "")],
       ["标签", r.tags || "—"],
       ["重要性", Number(r.importance).toFixed(1)],
       ["检索命中", r.access_count],
@@ -461,7 +474,7 @@
     $("m-key").textContent = `#${r.id}  ${r.key}`;
     $("m-importance").value = r.importance;
     $("m-tier").value = r.tier;
-    $("m-attribute").value = r.attribute || "";
+    $("m-attribute").value = ATTR_CN[r.attribute] ? r.attribute : "fact";
     $("m-tags").value = r.tags || "";
     $("modal-mask").classList.add("open");
   }
