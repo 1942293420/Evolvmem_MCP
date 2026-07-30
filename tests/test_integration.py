@@ -217,6 +217,49 @@ class TestIntegration:
         })
         assert result["status"] == "added"
 
+    def test_memory_add_merges_semantic_duplicate(self, server, test_config):
+        """跨 key 语义合并：不同 key、同 value → merged，active 只剩一条，旧记录 supersede。"""
+        server.vidx = VectorIndex(test_config)
+        server.vidx.initialize(dim=512)
+        server.engine = FakeEmbeddingEngine()
+        try:
+            first = server.handle_tool_call("memory_add", {
+                "key": "p:t:decision:db", "value": "数据库选用 MySQL",
+            })
+            assert first["status"] == "added"
+            second = server.handle_tool_call("memory_add", {
+                "key": "other:key:fact:x", "value": "数据库选用 MySQL",
+            })
+            assert second["status"] == "merged"
+            assert second["merged_into"] == first["id"]
+            assert second["key"] == "p:t:decision:db"
+            assert server.store.count_active() == 1
+            active = server.store.get_active()[0]
+            assert active["key"] == "p:t:decision:db"
+            assert active["value"] == "数据库选用 MySQL"
+            assert server.store.get_by_id(first["id"])["status"] == "superseded"
+        finally:
+            server.vidx.close()
+
+    def test_memory_add_reference_tier_skips_merge(self, server, test_config):
+        """tier="reference" 的新值不参与语义合并——永不 supersede 别人。"""
+        server.vidx = VectorIndex(test_config)
+        server.vidx.initialize(dim=512)
+        server.engine = FakeEmbeddingEngine()
+        try:
+            first = server.handle_tool_call("memory_add", {
+                "key": "p:t:decision:db", "value": "数据库选用 MySQL",
+            })
+            assert first["status"] == "added"
+            second = server.handle_tool_call("memory_add", {
+                "key": "p:t:arch:doc", "value": "数据库选用 MySQL",
+                "tier": "reference",
+            })
+            assert second["status"] == "added"
+            assert server.store.count_active() == 2
+        finally:
+            server.vidx.close()
+
     def test_memory_add_accepts_pattern_mid_sentence(self, server):
         """模式词出现在句中不算低信息——整句语义合格必须入库。"""
         result = server.handle_tool_call("memory_add", {
