@@ -9,6 +9,7 @@ A fully-local, three-layer memory plugin for Claude Code with Chinese language s
 - **L2 Semantic Index**: USearch HNSW vector search for finding related memories expressed differently
 - **Self-Iteration**: Auto-extraction, conflict detection, access-decay forgetting
 - **Consolidation**: `memory_consolidate` finds and merges near-duplicate memories via vector similarity (dry-run by default)
+- **Semantic Merge**: Write-time semantic merge — new values automatically supersede near-identical memories instead of duplicating them (`add_merge_threshold`) — plus weekly auto-consolidation at SessionStart (`consolidate_auto_run_hours`)
 - **Expiry**: Memories can carry an `expires_at` date; expired memories stop being injected/searched and are archived automatically
 - **Project Relevance**: SessionStart scoring boosts memories whose key matches the current project directory (configurable aliases)
 - **Quality Gate**: `memory_add`/`memory_replace` reject values shorter than `value_min_chars` (default 10) and low-information placeholder phrases (e.g. "等待用户确认", "no action required"), keeping trivial auto-summary noise out of the store
@@ -113,6 +114,8 @@ Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 - `inject_w_relevance`: Weight of the project-relevance bonus in SessionStart scoring (memories whose key contains the current directory name — or its alias — as a substring), default 0.3
 - `inject_project_aliases`: Map of directory name → memory key segment for project matching (e.g. `{"my-project": "myproj"}`), default `{}`
 - `consolidate_similarity_threshold`: Similarity threshold above which two memories are near-duplicate merge candidates for `memory_consolidate`, default 0.92. Note the metric is `similarity = (1+cos)/2` (not raw cosine): 0.92 corresponds to a true cosine of ≈ 0.84; for real merges a threshold ≥ 0.97 (≈ cosine 0.94) is recommended
+- `consolidate_auto_run_hours`: Minimum interval between auto-consolidation runs at SessionStart (merges near-identical pairs at a conservative 0.97 threshold; failures never block session start), default 168 (weekly); 0 disables
+- `add_merge_threshold`: Write-time semantic merge threshold — when a new value's similarity to an existing memory meets or exceeds it, the existing memory is superseded instead of adding a near-duplicate, default 0.95
 - `expires_at` (per-memory field, not config): Optional expiry date set via `memory_add` (e.g. `2026-12-31`); expired memories are excluded from injection and search, and are auto-archived
 - `forget_auto_run_hours`: Minimum interval between auto-forgetting runs at SessionStart, default 24
 - `forget_rate_limit_days`: Minimum interval between two downgrades of the same memory, default 7
