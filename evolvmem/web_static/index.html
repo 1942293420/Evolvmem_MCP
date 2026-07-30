@@ -211,9 +211,9 @@
         <option value="user_profile">用户画像 (user_profile)</option>
       </select>
     </div>
-    <div class="row"><label>分类（项目，可选择或输入新分类）</label>
-      <input type="text" id="m-project" list="m-project-list" placeholder="选择已有分类，或输入新分类名">
-      <datalist id="m-project-list"></datalist>
+    <div class="row"><label>分类（项目）</label>
+      <select id="m-project"></select>
+      <input type="text" id="m-project-new" placeholder="输入新分类名，回车确认" style="display:none;margin-top:6px;">
     </div>
     <div class="row"><label>标签（检索关键词，逗号分隔——memory_search 全文索引会用到，如：飞书, docker, 权限）</label><input type="text" id="m-tags"></div>
     <div class="btns">
@@ -487,9 +487,12 @@
     const projTags = tags.filter(t => t.startsWith("分类:"));
     const freeTags = tags.filter(t => !t.startsWith("分类:"));
     const mp = $("m-project");
-    $("m-project-list").innerHTML =
-      allProjects.map(p => `<option value="${esc(p)}">`).join("");
+    mp.innerHTML = '<option value="">（无）</option>' +
+      allProjects.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("") +
+      '<option value="__new__">＋ 新建分类…</option>';
     mp.value = projTags[0] || "";
+    $("m-project-new").style.display = "none";
+    $("m-project-new").value = "";
     $("m-tags").value = freeTags.join(", ");
     $("modal-mask").classList.add("open");
   }
@@ -497,10 +500,20 @@
   $("modal-mask").addEventListener("click", (e) => {
     if (e.target === $("modal-mask")) $("modal-mask").classList.remove("open");
   });
+  // 选择「新建分类…」时展开输入框
+  $("m-project").addEventListener("change", () => {
+    const isNew = $("m-project").value === "__new__";
+    $("m-project-new").style.display = isNew ? "block" : "none";
+    if (isNew) $("m-project-new").focus();
+  });
   $("m-save").onclick = async () => {
     // 保存时把分类标签并回 tags（分类 + 自由标签）；分类统一补 分类: 前缀
     const freeTags = $("m-tags").value.split(",").map(s => s.trim()).filter(Boolean);
-    let proj = $("m-project").value.trim();
+    let proj = $("m-project").value;
+    if (proj === "__new__") {
+      proj = $("m-project-new").value.trim();
+      if (!proj) { toast("请输入新分类名"); return; }
+    }
     if (proj && !proj.startsWith("分类:")) proj = "分类:" + proj;
     const tags = proj ? [proj, ...freeTags] : freeTags;
     const body = {
