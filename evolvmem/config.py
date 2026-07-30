@@ -77,6 +77,7 @@ class Config:
     # 口径说明：similarity = (1+cos)/2（非原始余弦）；0.92 ≈ 真实余弦 0.84，
     # 真实合并建议 threshold ≥ 0.97（≈ cos 0.94）
     consolidate_similarity_threshold: float = 0.92  # 近重复合并的相似度阈值
+    consolidate_auto_run_hours: int = 168  # SessionStart 自动合并的最小间隔（小时），0=关闭
 
     # --- 写入侧语义合并 ---
     add_merge_threshold: float = 0.95  # 写入侧语义合并阈值（≥即 supersede 而非新增）
@@ -134,6 +135,7 @@ class Config:
             "inject_project_aliases": self.inject_project_aliases,
             "forget_auto_run_hours": self.forget_auto_run_hours,
             "consolidate_similarity_threshold": self.consolidate_similarity_threshold,
+            "consolidate_auto_run_hours": self.consolidate_auto_run_hours,
             "add_merge_threshold": self.add_merge_threshold,
             "stop_hook_safe": self.stop_hook_safe,
             "value_max_chars": self.value_max_chars,

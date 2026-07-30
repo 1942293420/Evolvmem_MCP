@@ -195,6 +195,19 @@ class TestSessionStartHook:
 
         assert (test_config.data_dir / ".last_forget").exists()
 
+    def test_session_start_creates_consolidation_marker(self, test_config):
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:0", value="some value")
+        get_session_start_block(config=test_config)
+        assert (test_config.data_dir / ".last_consolidate").exists()
+
+    def test_consolidation_skipped_when_disabled(self, test_config):
+        test_config.consolidate_auto_run_hours = 0
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:0", value="some value")
+        get_session_start_block(config=test_config)
+        assert not (test_config.data_dir / ".last_consolidate").exists()
+
     def test_cwd_project_boosts_matching_memories(self, test_config, monkeypatch):
         monkeypatch.chdir(test_config.data_dir)  # basename = 临时目录名，不含 'purchase'
         with MemoryStore(test_config) as store:

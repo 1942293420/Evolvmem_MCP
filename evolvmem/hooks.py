@@ -37,6 +37,46 @@ def _maybe_run_forgetting(config: Config, store: MemoryStore) -> None:
         pass
 
 
+def _last_consolidate_path(config: Config) -> Path:
+    return config.data_dir / ".last_consolidate"
+
+
+def _maybe_run_consolidation(config: Config, store: MemoryStore) -> None:
+    """Run auto-consolidation at most once per consolidate_auto_run_hours.
+
+    Conservative threshold (0.97) — only near-identical pairs merge.
+    Failures are swallowed — maintenance must never block session start.
+    """
+    if config.consolidate_auto_run_hours <= 0:
+        return
+    try:
+        marker = _last_consolidate_path(config)
+        interval_s = config.consolidate_auto_run_hours * 3600
+        if marker.exists():
+            if time.time() - marker.stat().st_mtime < interval_s:
+                return
+        marker.touch()
+        from evolvmem.vector_index import VectorIndex
+        from evolvmem.embedding import EmbeddingEngine
+        from evolvmem.consolidator import Consolidator
+        engine = EmbeddingEngine(config)
+        try:
+            engine.initialize()
+        except Exception:
+            return  # 无 embedding 时跳过，marker 已记避免每次都尝试
+        vidx = VectorIndex(config)
+        vidx.initialize(dim=config.embedding_dim)
+        merged = Consolidator(config, store, vidx, engine).consolidate(
+            dry_run=False, threshold=0.97)
+        if merged.get("merged"):
+            print(f"[evolvmem] auto-consolidation merged {merged['merged']} pairs",
+                  file=sys.stderr, flush=True)
+        vidx.close()
+        engine.close()
+    except Exception:
+        pass
+
+
 def _format_full_line(m: dict) -> str:
     tags = m.get("tags", "")
     if tags:
@@ -122,6 +162,7 @@ def get_session_start_block(config: Config | None = None) -> str:
 
     with MemoryStore(config) as store:
         _maybe_run_forgetting(config, store)
+        _maybe_run_consolidation(config, store)
         memories = store.get_active()
 
     if not memories:
