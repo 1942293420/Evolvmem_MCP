@@ -12,6 +12,7 @@ Tools:
 
 import json
 import math
+import select
 import sys
 import os
 import traceback
@@ -331,8 +332,23 @@ class MemoryMCPServer:
 
     # ---- MCP protocol ----
 
+    _PARENT_CHECK_INTERVAL_S = 60  # stdin 空闲多久检查一次父进程存活
+
+    def _parent_gone(self) -> bool:
+        """Parent (kimi CLI) died → we were re-parented (to init or a
+        subreaper like systemd --user, whose pid is NOT 1). Compare against
+        the ppid we started with instead of assuming orphan ⇒ ppid 1."""
+        return os.getppid() != self._original_ppid
+
     def run(self):
-        """stdio MCP main loop."""
+        """stdio MCP main loop.
+
+        Exits on stdin EOF (normal shutdown) or when the parent process is
+        gone (kimi killed/crashed): without this, an orphaned server blocks
+        on readline forever, holding its SQLite connection — and any
+        uncommitted write transaction — hostage (2026-07-29 lockup).
+        """
+        self._original_ppid = os.getppid()
         self._log("MCP Server starting")
         try:
             self.initialize()
@@ -341,7 +357,18 @@ class MemoryMCPServer:
             traceback.print_exc(file=sys.stderr)
             sys.exit(1)
 
-        for line in sys.stdin:
+        stdin_fd = sys.stdin.fileno()
+        while True:
+            ready, _, _ = select.select([stdin_fd], [], [],
+                                        self._PARENT_CHECK_INTERVAL_S)
+            if not ready:
+                if self._parent_gone():
+                    self._log("parent process gone, exiting")
+                    break
+                continue
+            line = sys.stdin.readline()
+            if not line:  # EOF — client closed the pipe
+                break
             line = line.strip()
             if not line:
                 continue
