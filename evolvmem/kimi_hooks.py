@@ -143,9 +143,12 @@ def _persist_candidates(config, store, vidx, engine, candidates, session_id: str
                 match = find_semantic_match(store, vidx, engine, value,
                                             config.add_merge_threshold)
                 if match:
+                    # 合并目标是 pinned 记忆时保留 pinned tier，避免被候选的
+                    # 默认 "normal" 静默降级、掉出每会话必注入层
+                    merged_tier = "pinned" if match.get("tier") == "pinned" else c.tier
                     added_ids.append(store.replace(
                         key=match["key"], new_value=value,
-                        importance=c.importance, tier=c.tier))
+                        importance=c.importance, tier=merged_tier))
                     continue
             new_id = store.add(key=c.key, value=value, attribute=c.attribute,
                                tags=c.tags, importance=c.importance, tier=c.tier,
