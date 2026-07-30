@@ -13,7 +13,7 @@
     font-size: 14px;
     line-height: 1.5;
   }
-  .wrap { max-width: 1400px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .wrap { max-width: 1760px; width: 96vw; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
   header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   header h1 { font-size: 20px; color: #1a1a2e; }
   header .sub { color: #8b8b9e; font-size: 13px; }
@@ -68,7 +68,7 @@
   th { color: #8b8b9e; font-weight: 600; font-size: 12px; white-space: nowrap; }
   tr:hover td { background: #faf9ff; }
   td.key { max-width: 260px; word-break: break-all; font-weight: 600; color: #1a1a2e; }
-  td.val { max-width: 340px; }
+  td.val { max-width: 560px; }
   .val-preview { color: #55556b; cursor: pointer; word-break: break-all; }
   .val-full { color: #1a1a2e; white-space: pre-wrap; word-break: break-all; background: #faf9ff; border-radius: 6px; padding: 8px; margin-top: 4px; cursor: pointer; }
   .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; }
@@ -104,7 +104,7 @@
     display: none; align-items: center; justify-content: center; z-index: 10;
   }
   .modal-mask.open { display: flex; }
-  .modal { background: #fff; border-radius: 12px; padding: 20px 24px; width: min(480px, 92vw); display: flex; flex-direction: column; gap: 12px; }
+  .modal { background: #fff; border-radius: 12px; padding: 20px 24px; width: min(640px, 94vw); display: flex; flex-direction: column; gap: 12px; }
   .modal h3 { font-size: 16px; }
   .modal .row { display: flex; flex-direction: column; gap: 4px; }
   .modal .row label { font-size: 12px; color: #8b8b9e; }
@@ -112,7 +112,7 @@
   .modal .m-key { font-size: 12px; color: #8b8b9e; word-break: break-all; }
 
   /* 详情弹窗（二级页面） */
-  .modal.detail { width: min(880px, 94vw); max-height: 88vh; overflow-y: auto; }
+  .modal.detail { width: min(1100px, 94vw); max-height: 88vh; overflow-y: auto; }
   .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 16px; font-size: 13px; }
   .detail-grid .k { color: #8b8b9e; font-size: 12px; }
   .detail-value {
@@ -211,7 +211,12 @@
         <option value="user_profile">用户画像 (user_profile)</option>
       </select>
     </div>
-    <div class="row"><label>标签（逗号分隔）</label><input type="text" id="m-tags"></div>
+    <div class="row"><label>分类（项目）</label>
+      <select id="m-project">
+        <option value="">（无）</option>
+      </select>
+    </div>
+    <div class="row"><label>标签（逗号分隔，仅自由标签，不含分类）</label><input type="text" id="m-tags"></div>
     <div class="btns">
       <button class="ghost" id="m-cancel">取消</button>
       <button id="m-save">保存</button>
@@ -321,7 +326,10 @@
     psel.innerHTML = '<option value="">全部</option>' + projects
       .map(p => `<option value="${esc(p)}">${esc(p)} (${s.by_project[p]})</option>`).join("");
     psel.value = pcur;
+    allProjects = projects;  // 供编辑弹窗的分类下拉使用
   }
+
+  let allProjects = [];
 
   // ---- 列表 ----
   let listCache = {};
@@ -475,7 +483,20 @@
     $("m-importance").value = r.importance;
     $("m-tier").value = r.tier;
     $("m-attribute").value = ATTR_CN[r.attribute] ? r.attribute : "fact";
-    $("m-tags").value = r.tags || "";
+    // tags 拆成 分类标签（分类:X）与自由标签两部分
+    const tags = (r.tags || "").split(",").map(s => s.trim()).filter(Boolean);
+    const projTags = tags.filter(t => t.startsWith("分类:"));
+    const freeTags = tags.filter(t => !t.startsWith("分类:"));
+    const mp = $("m-project");
+    mp.innerHTML = '<option value="">（无）</option>' +
+      allProjects.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+    // 当前分类若不在全集里（罕见），补一个选项保持可见
+    const cur = projTags[0] || "";
+    if (cur && !allProjects.includes(cur)) {
+      mp.innerHTML += `<option value="${esc(cur)}">${esc(cur)}</option>`;
+    }
+    mp.value = cur;
+    $("m-tags").value = freeTags.join(", ");
     $("modal-mask").classList.add("open");
   }
   $("m-cancel").onclick = () => $("modal-mask").classList.remove("open");
@@ -483,11 +504,15 @@
     if (e.target === $("modal-mask")) $("modal-mask").classList.remove("open");
   });
   $("m-save").onclick = async () => {
+    // 保存时把分类标签并回 tags（分类下拉单选 + 自由标签）
+    const freeTags = $("m-tags").value.split(",").map(s => s.trim()).filter(Boolean);
+    const proj = $("m-project").value;
+    const tags = proj ? [proj, ...freeTags] : freeTags;
     const body = {
       importance: parseFloat($("m-importance").value),
       tier: $("m-tier").value,
       attribute: $("m-attribute").value.trim(),
-      tags: $("m-tags").value.split(",").map(s => s.trim()).filter(Boolean),
+      tags,
     };
     if (isNaN(body.importance)) { toast("重要性必须是数字"); return; }
     try {
