@@ -135,8 +135,11 @@ def _persist_candidates(config, store, vidx, engine, candidates, session_id: str
             new_id = store.replace(key=c.key, new_value=value,
                                    importance=c.importance, tier=c.tier)
         else:
-            # decision.action == "add": 同 key 无冲突 → 再做跨 key 语义合并
-            if engine is not None and getattr(engine, "is_loaded", False):
+            # 同 key 无冲突或 conflict → 再做跨 key 语义合并
+            # （tier == "reference" 的候选不参与合并：永不 supersede 别人，
+            #   与 mcp_server._memory_add 的守卫一致）
+            if (engine is not None and getattr(engine, "is_loaded", False)
+                    and c.tier != "reference"):
                 match = find_semantic_match(store, vidx, engine, value,
                                             config.add_merge_threshold)
                 if match:

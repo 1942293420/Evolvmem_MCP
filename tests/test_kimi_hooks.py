@@ -32,3 +32,22 @@ def test_semantically_similar_candidate_merges(test_config):
     assert active["value"] == "数据库选用 MySQL"
     assert store.get_by_id(old)["status"] == "superseded"
     vidx.close(); store.close()
+
+
+def test_reference_tier_candidate_skips_merge(test_config):
+    """tier="reference" 的候选不触发语义合并——走正常 add，旧记录保持 active 且 tier 不变。"""
+    store = MemoryStore(test_config); store.initialize()
+    vidx = VectorIndex(test_config); vidx.initialize(dim=8)
+    engine = FakeEngine()
+    old = _add(store, vidx, engine, "p:t:decision:db", "数据库选用 MySQL")
+
+    cands = [CandidateMemory(key="p:t:arch:doc",
+                             value="数据库选用 MySQL",
+                             attribute="fact", tier="reference")]
+    n = _persist_candidates(test_config, store, vidx, engine, cands, "sess")
+    assert n == 1
+    assert store.count_active() == 2
+    rec = store.get_by_id(old)
+    assert rec["status"] == "active"
+    assert rec["tier"] == "normal"
+    vidx.close(); store.close()
