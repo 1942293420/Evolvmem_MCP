@@ -211,6 +211,12 @@ class TestIntegration:
         })
         assert result["status"] == "added"
 
+    def test_memory_add_skips_merge_when_engine_not_loaded(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:x", "value": "供应商合同必须双人复核后归档",
+        })
+        assert result["status"] == "added"
+
     def test_memory_add_accepts_pattern_mid_sentence(self, server):
         """模式词出现在句中不算低信息——整句语义合格必须入库。"""
         result = server.handle_tool_call("memory_add", {

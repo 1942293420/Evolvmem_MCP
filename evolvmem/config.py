@@ -78,6 +78,9 @@ class Config:
     # 真实合并建议 threshold ≥ 0.97（≈ cos 0.94）
     consolidate_similarity_threshold: float = 0.92  # 近重复合并的相似度阈值
 
+    # --- 写入侧语义合并 ---
+    add_merge_threshold: float = 0.95  # 写入侧语义合并阈值（≥即 supersede 而非新增）
+
     # --- 安全 ---
     stop_hook_safe: bool = True  # 防止 Stop Hook 无限循环
     value_max_chars: int = 500  # memory_add/replace 的 value 长度硬上限
@@ -131,6 +134,7 @@ class Config:
             "inject_project_aliases": self.inject_project_aliases,
             "forget_auto_run_hours": self.forget_auto_run_hours,
             "consolidate_similarity_threshold": self.consolidate_similarity_threshold,
+            "add_merge_threshold": self.add_merge_threshold,
             "stop_hook_safe": self.stop_hook_safe,
             "value_max_chars": self.value_max_chars,
             "value_min_chars": self.value_min_chars,

@@ -24,6 +24,7 @@ from evolvmem.retriever import Retriever
 from evolvmem.conflict_detector import ConflictDetector
 from evolvmem.forgetting import ForgettingEngine
 from evolvmem.consolidator import Consolidator
+from evolvmem.semantic_merge import find_semantic_match
 
 
 # 低信息过渡语：自动摘要里常见的"零价值"句式（命中即拒收）
@@ -216,7 +217,28 @@ class MemoryMCPServer:
 
             return {"status": "replaced", "new_id": new_id, "old_id": old_id}
         else:
-            # decision.action == "add": no existing key, insert directly
+            # decision.action == "add": 同 key 无冲突 → 再做跨 key 语义合并
+            # （tier == "reference" 的新值同样不参与合并：永不 supersede 别人）
+            if self.engine.is_loaded and tier != "reference":
+                match = find_semantic_match(
+                    self.store, self.vidx, self.engine, value,
+                    self.config.add_merge_threshold)
+                if match:
+                    new_id = self.store.replace(
+                        key=match["key"], new_value=value, **extra)
+                    if self.engine.is_loaded:
+                        try:
+                            vec = self.engine.encode_document(value)
+                            import numpy as np
+                            self.vidx.add(new_id, np.array(vec, dtype=np.float32))
+                            self.vidx.save()
+                        except Exception as e:
+                            self._log(f"Vector update failed (id={new_id}): {e}")
+                    return {"status": "merged", "merged_into": match["id"],
+                            "key": match["key"],
+                            "similarity": match["similarity"],
+                            "new_id": new_id}
+            # no existing key and no semantic match, insert directly
             mem_id = self.store.add(
                 key=key, value=value, attribute=attribute, tags=tags, **extra
             )
