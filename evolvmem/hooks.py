@@ -1,0 +1,334 @@
+"""SessionStart and Stop Hook integration — memory formatting and extraction triggering."""
+
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+from evolvmem.config import Config
+from evolvmem.memory_store import MemoryStore
+from evolvmem.auto_extractor import AutoExtractor
+from evolvmem.forgetting import ForgettingEngine
+from evolvmem.scoring import compute_score
+
+
+def _last_forget_path(config: Config) -> Path:
+    return config.data_dir / ".last_forget"
+
+
+def _maybe_run_forgetting(config: Config, store: MemoryStore) -> None:
+    """Run the forgetting engine at most once per forget_auto_run_hours.
+
+    Failures are swallowed — memory maintenance must never block session start.
+    """
+    try:
+        marker = _last_forget_path(config)
+        interval_s = config.forget_auto_run_hours * 3600
+        if marker.exists():
+            last_run = marker.stat().st_mtime
+            if time.time() - last_run < interval_s:
+                return
+        archived = ForgettingEngine(config, store).run()
+        marker.touch()
+        if archived:
+            print(f"[evolvmem] auto-forgetting archived {archived} memories",
+                  file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
+def _last_consolidate_path(config: Config) -> Path:
+    return config.data_dir / ".last_consolidate"
+
+
+def _maybe_run_consolidation(config: Config, store: MemoryStore) -> None:
+    """Run auto-consolidation at most once per consolidate_auto_run_hours.
+
+    Conservative threshold (0.97) — only near-identical pairs merge.
+    Failures are swallowed — maintenance must never block session start.
+    """
+    if config.consolidate_auto_run_hours <= 0:
+        return
+    try:
+        marker = _last_consolidate_path(config)
+        interval_s = config.consolidate_auto_run_hours * 3600
+        if marker.exists():
+            if time.time() - marker.stat().st_mtime < interval_s:
+                return
+        marker.touch()
+        from evolvmem.vector_index import VectorIndex
+        from evolvmem.embedding import EmbeddingEngine
+        from evolvmem.consolidator import Consolidator
+        engine = EmbeddingEngine(config)
+        try:
+            engine.initialize()
+        except Exception:
+            return  # 无 embedding 时跳过，marker 已记避免每次都尝试
+        vidx = VectorIndex(config)
+        vidx.initialize(dim=config.embedding_dim)
+        merged = Consolidator(config, store, vidx, engine).consolidate(
+            dry_run=False, threshold=0.97)
+        if merged.get("merged"):
+            print(f"[evolvmem] auto-consolidation merged {merged['merged']} pairs",
+                  file=sys.stderr, flush=True)
+        vidx.close()
+        engine.close()
+    except Exception:
+        pass
+
+
+def _format_full_line(m: dict) -> str:
+    tags = m.get("tags", "")
+    if tags:
+        return f"- **{m['key']}** [{tags}]: {m['value']}"
+    return f"- **{m['key']}**: {m['value']}"
+
+
+def _format_index_line(m: dict) -> str:
+    tags = m.get("tags", "")
+    suffix = f" [{tags}]" if tags else ""
+    return f"- {m['key']}{suffix} ({len(m['value'])}字)"
+
+
+def _take_budget(items: list[dict], max_count: int, max_chars: int,
+                 formatter=_format_full_line) -> tuple[list[dict], list[dict]]:
+    """Take items within count/char budget. First item is always kept.
+
+    Returns (selected, omitted).
+    """
+    selected: list[dict] = []
+    used = 0
+    for i, m in enumerate(items):
+        if len(selected) >= max_count:
+            return selected, items[i:]
+        line_len = len(formatter(m))
+        if selected and used + line_len > max_chars:
+            return selected, items[i:]
+        selected.append(m)
+        used += line_len
+    return selected, []
+
+
+def _key_prefix(key: str) -> str:
+    """First two segments of a dotted key, e.g. 'project:purchase:fact:x' → 'project:purchase'."""
+    parts = key.split(":")
+    return ":".join(parts[:2]) if len(parts) >= 2 else key
+
+
+def _apply_prefix_quota(items: list[dict], quota: int) -> tuple[list[dict], list[dict]]:
+    """Cap items per key prefix. Returns (kept, overflow), both order-preserving."""
+    counts: dict[str, int] = {}
+    kept: list[dict] = []
+    overflow: list[dict] = []
+    for m in items:
+        prefix = _key_prefix(m["key"])
+        if counts.get(prefix, 0) < quota:
+            kept.append(m)
+            counts[prefix] = counts.get(prefix, 0) + 1
+        else:
+            overflow.append(m)
+    return kept, overflow
+
+
+def _session_context() -> dict:
+    """Weak query signal for relevance: the session's working directory name."""
+    try:
+        return {"project": os.path.basename(os.getcwd())}
+    except Exception:
+        return {}
+
+
+def _is_session_log(key: str) -> bool:
+    """Session-summary log keys end with ':progress:log:<date...>'.
+
+    Matches both 'project:{proj}:progress:log:{date}' and the legacy
+    '{proj}:progress:log:{date}' form.
+    """
+    parts = key.split(":")
+    return len(parts) >= 4 and parts[-3] == "progress" and parts[-2] == "log"
+
+
+def _log_project_date(key: str) -> tuple[str, str]:
+    """Extract (project, YYYY-MM-DD) from a log key; date is '' when absent."""
+    parts = key.split(":")
+    project = parts[1] if parts[0] == "project" and len(parts) >= 5 else parts[0]
+    m = re.search(r"\d{4}-\d{2}-\d{2}", parts[-1])
+    return project, (m.group(0) if m else "")
+
+
+def _build_digest_lines(logs: list[dict], config: Config) -> list[str]:
+    """Render the '最近项目动态' layer from session-summary log memories.
+
+    Groups logs by project, newest first, capped per project and by an
+    independent char budget. The first entry is always kept (same
+    convention as _take_budget). Returns [] when the layer has nothing
+    to show.
+    """
+    if config.digest_max_chars <= 0 or not logs:
+        return []
+    cutoff = time.time() - config.digest_days * 86400
+    entries: list[tuple[str, str, str]] = []  # (date, project, value)
+    for m in logs:
+        project, date = _log_project_date(m["key"])
+        ts = date or (m.get("created_at") or "")[:10]
+        try:
+            epoch = time.mktime(time.strptime(ts, "%Y-%m-%d"))
+        except (ValueError, OverflowError):
+            continue
+        if epoch < cutoff:
+            continue
+        entries.append((ts, project, m["value"]))
+    if not entries:
+        return []
+    entries.sort(key=lambda e: e[0], reverse=True)
+
+    per_project: dict[str, int] = {}
+    selected: list[str] = []
+    used = 0
+    for ts, project, value in entries:
+        if per_project.get(project, 0) >= config.digest_per_project:
+            continue
+        line = f"- 【{project}】{ts[5:]} {value}"
+        if selected and used + len(line) > config.digest_max_chars:
+            break
+        selected.append(line)
+        per_project[project] = per_project.get(project, 0) + 1
+        used += len(line)
+    if not selected:
+        return []
+    return [
+        "### 最近项目动态",
+        *selected,
+        "(以上是最近会话的摘要。若用户开场没有提出具体问题，先简要列出这些项目供其选择；"
+        "用户想继续某个项目或需要更多上下文时，用 memory_search 查询该项目。)",
+    ]
+
+
+def get_session_start_block(config: Config | None = None) -> str:
+    """Build the SessionStart injection block with four layers:
+
+    0. Digest layer — recent session-summary logs (key ends with
+       ':progress:log:<date>') grouped by project, newest first, with
+       their own budget; these are excluded from the other layers.
+    1. Pinned layer — tier='pinned' memories always injected (own budget),
+       sorted by importance desc.
+    2. Scored layer — normal memories ranked by compute_score()
+       (importance + recency + frequency + project relevance), competing
+       for the remaining inject_max_chars budget, with a per-key-prefix quota.
+    3. Index layer — omitted memories listed as one-line indexes so the
+       agent knows they exist and can fetch them via memory_search.
+       tier='reference' memories (long documents) always land here and are
+       never injected in full.
+
+    Args:
+        config: Configuration object, uses defaults when None.
+
+    Returns:
+        Formatted system prompt string; empty string if no active memories.
+    """
+    if config is None:
+        config = Config.from_file()
+
+    with MemoryStore(config) as store:
+        _maybe_run_forgetting(config, store)
+        _maybe_run_consolidation(config, store)
+        memories = store.get_active()
+
+    # 会话摘要日志走独立的「最近项目动态」层，不参与 pinned/精选/索引三层
+    logs = [m for m in memories if _is_session_log(m["key"])]
+    memories = [m for m in memories if not _is_session_log(m["key"])]
+
+    if not memories and not logs:
+        return ""
+
+    context = _session_context()
+
+    pinned = [m for m in memories if m.get("tier") == "pinned"]
+    reference = [m for m in memories if m.get("tier") == "reference"]
+    normal = [m for m in memories
+              if m.get("tier") not in ("pinned", "reference")]
+
+    # Layer 1: pinned, own budget, importance desc
+    pinned.sort(key=lambda m: m.get("importance") or 5.0, reverse=True)
+    pinned_sel, pinned_omit = _take_budget(
+        pinned, config.inject_pinned_max_count, config.inject_pinned_max_chars)
+
+    # Layer 2: normal, scored, prefix quota, remaining budget
+    normal.sort(key=lambda m: compute_score(m, config, context=context),
+                reverse=True)
+    normal_quota, quota_overflow = _apply_prefix_quota(
+        normal, config.inject_key_prefix_quota)
+    pinned_chars = sum(len(_format_full_line(m)) for m in pinned_sel)
+    normal_sel, normal_omit = _take_budget(
+        normal_quota,
+        max(0, config.inject_max_count - len(pinned_sel)),
+        max(0, config.inject_max_chars - pinned_chars))
+
+    # Layer 3: index lines for everything omitted — reference-tier memories
+    # (long documents) always land here: never injected in full, only
+    # advertised for on-demand memory_search retrieval.
+    omitted = pinned_omit + normal_omit + quota_overflow + reference
+    omitted.sort(key=lambda m: compute_score(m, config, context=context),
+                 reverse=True)
+    index_sel, index_omit = ([], omitted)
+    if config.inject_index_max_chars > 0 and omitted:
+        index_sel, index_omit = _take_budget(
+            omitted, len(omitted), config.inject_index_max_chars,
+            formatter=_format_index_line)
+
+    # Compose
+    lines = [
+        "## Persistent Memory (from EvolvMem plugin)",
+        "",
+        "The following are preferences, decisions, and constraints extracted from previous conversations "
+        "that are still valid.",
+        "These are persisted facts, not context from the current conversation.",
+        "Trust priority: user's current instructions > current code and tests > the memories below > history.",
+        "If any memory contradicts what the user is currently saying, follow the user's current statement.",
+        "Only the most relevant memories are injected here; use the memory_search tool to recall the rest on demand.",
+        "",
+    ]
+
+    digest_lines = _build_digest_lines(logs, config)
+    if digest_lines:
+        lines.extend(digest_lines)
+        lines.append("")
+
+    if pinned_sel:
+        lines.append("### 常驻记忆 (pinned)")
+        lines.extend(_format_full_line(m) for m in pinned_sel)
+        lines.append("")
+
+    if normal_sel:
+        lines.append("### 记忆精选 (by importance)")
+        lines.extend(_format_full_line(m) for m in normal_sel)
+        lines.append("")
+
+    if index_sel:
+        lines.append("### 记忆索引 (use memory_search to fetch full content)")
+        lines.extend(_format_index_line(m) for m in index_sel)
+
+    if index_omit:
+        lines.append("")
+        lines.append(
+            f"({len(index_omit)} more memories not injected; "
+            f"use the memory_search tool to retrieve them when needed.)"
+        )
+
+    return "\n".join(lines)
+
+
+def get_stop_prompt(messages_summary: str) -> str:
+    """Build the extraction prompt for the Stop Hook.
+
+    Args:
+        messages_summary: Conversation summary string (from the hook system).
+
+    Returns:
+        Extraction prompt string, to be passed to Claude for analysis.
+    """
+    extractor = AutoExtractor()
+    return extractor.build_extraction_prompt(
+        messages=[{"role": "user", "content": messages_summary}],
+    )

@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EvolvMem 记忆图书馆</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: #f3f4f6;
+    color: #1a1a2e;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1760px; width: 96vw; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 20px; color: #1a1a2e; }
+  header .sub { color: #8b8b9e; font-size: 13px; }
+  .panel { background: #fff; border-radius: 12px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(26,26,46,.06); }
+
+  /* 统计卡片 */
+  .stats { display: flex; flex-wrap: wrap; gap: 12px; }
+  .stat-card {
+    flex: 1 1 140px; background: #fff; border-radius: 12px; padding: 14px 18px;
+    box-shadow: 0 1px 3px rgba(26,26,46,.06); border-top: 3px solid #8b5cf6;
+  }
+  .stat-card .num { font-size: 26px; font-weight: 700; color: #1a1a2e; }
+  .stat-card .label { font-size: 12px; color: #8b8b9e; }
+  .stat-card.muted { border-top-color: #c4b5fd; }
+  .stat-card.gray { border-top-color: #d1d5db; }
+
+  /* 热门榜 */
+  .hot-list { display: flex; flex-direction: column; gap: 8px; }
+  .hot-item { display: flex; align-items: center; gap: 10px; }
+  .hot-item .rank { width: 22px; color: #8b5cf6; font-weight: 700; text-align: right; }
+  .hot-item .k { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hot-item .bar-wrap { flex: 0 1 220px; height: 10px; background: #f3f4f6; border-radius: 5px; overflow: hidden; }
+  .hot-item .bar { height: 100%; background: linear-gradient(90deg, #c4b5fd, #8b5cf6); border-radius: 5px; }
+  .hot-item .cnt { width: 64px; text-align: right; font-variant-numeric: tabular-nums; color: #1a1a2e; font-weight: 600; }
+
+  /* 过滤器 */
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .filters label { font-size: 12px; color: #8b8b9e; }
+  select, input[type=text], input[type=number] {
+    padding: 6px 10px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff;
+    color: #1a1a2e; font-size: 13px; outline: none;
+  }
+  select:focus, input:focus { border-color: #8b5cf6; }
+  input[type=text] { flex: 1 1 200px; }
+  button {
+    padding: 6px 14px; border: none; border-radius: 8px; background: #8b5cf6; color: #fff;
+    font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: #7c3aed; }
+  button.ghost { background: #f3f4f6; color: #1a1a2e; border: 1px solid #e5e7eb; }
+  button.ghost:hover { background: #e5e7eb; }
+  button.danger { background: #f3f4f6; color: #dc2626; border: 1px solid #fecaca; }
+  button.danger:hover { background: #fee2e2; }
+  button.small { padding: 3px 10px; font-size: 12px; }
+  .toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .toggle input { accent-color: #8b5cf6; }
+
+  /* 表格 */
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+  th { color: #8b8b9e; font-weight: 600; font-size: 12px; white-space: nowrap; }
+  tr:hover td { background: #faf9ff; }
+  td.key { max-width: 260px; word-break: break-all; font-weight: 600; color: #1a1a2e; }
+  td.val { max-width: 560px; }
+  .val-preview { color: #55556b; cursor: pointer; word-break: break-all; }
+  .val-full { color: #1a1a2e; white-space: pre-wrap; word-break: break-all; background: #faf9ff; border-radius: 6px; padding: 8px; margin-top: 4px; cursor: pointer; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; }
+  .badge-pinned { background: #ede9fe; color: #7c3aed; }
+  .badge-normal { background: #f3f4f6; color: #55556b; }
+  .badge-reference { background: #e0f2fe; color: #0369a1; }
+  .badge-skill { background: #fef3c7; color: #b45309; margin-left: 4px; }
+  .badge-cat { background: #f3f4f6; color: #55556b; }
+
+  /* 频率条 */
+  .freq { display: flex; align-items: center; gap: 8px; }
+  .freq .n { font-weight: 700; min-width: 24px; text-align: right; font-variant-numeric: tabular-nums; }
+  .freq .bar-wrap { flex: 1 1 60px; min-width: 40px; height: 8px; background: #f3f4f6; border-radius: 4px; overflow: hidden; }
+  .freq .bar { height: 100%; border-radius: 4px; }
+  .heat-0 { background: #e5e7eb; }
+  .heat-1 { background: #c4b5fd; }
+  .heat-2 { background: #a78bfa; }
+  .heat-3 { background: #8b5cf6; }
+  .heat-4 { background: #7c3aed; }
+
+  .actions { white-space: nowrap; display: flex; gap: 6px; }
+  .empty { text-align: center; color: #8b8b9e; padding: 40px 0; }
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #1a1a2e; color: #fff; padding: 8px 18px; border-radius: 8px;
+    font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  .toast.show { opacity: .95; }
+
+  /* 编辑弹窗 */
+  .modal-mask {
+    position: fixed; inset: 0; background: rgba(26,26,46,.35);
+    display: none; align-items: center; justify-content: center; z-index: 10;
+  }
+  .modal-mask.open { display: flex; }
+  .modal { background: #fff; border-radius: 12px; padding: 20px 24px; width: min(640px, 94vw); display: flex; flex-direction: column; gap: 12px; }
+  .modal h3 { font-size: 16px; }
+  .modal .row { display: flex; flex-direction: column; gap: 4px; }
+  .modal .row label { font-size: 12px; color: #8b8b9e; }
+  .modal .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+  .modal .m-key { font-size: 12px; color: #8b8b9e; word-break: break-all; }
+
+  /* 详情弹窗（二级页面） */
+  .modal.detail { width: min(1100px, 94vw); max-height: 88vh; overflow-y: auto; }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 16px; font-size: 13px; }
+  .detail-grid .k { color: #8b8b9e; font-size: 12px; }
+  .detail-value {
+    background: #faf9ff; border-radius: 8px; padding: 14px 16px;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 52vh; overflow-y: auto;
+    font-size: 13px; line-height: 1.7; color: #1a1a2e;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📚 EvolvMem 记忆图书馆</h1>
+    <span class="sub">按检索命中与重要性管理记忆，高频知识可考虑生成 skill</span>
+  </header>
+
+  <!-- 统计卡片 -->
+  <section class="stats" id="stats"></section>
+
+  <!-- 热门榜 -->
+  <section class="panel">
+    <h2 style="font-size:15px;margin-bottom:10px;">🔥 综合热度 Top 10（重要性 × 检索命中）</h2>
+    <div class="hot-list" id="hot"></div>
+  </section>
+
+  <!-- 过滤器 -->
+  <section class="panel filters">
+    <label>状态</label>
+    <select id="f-status">
+      <option value="active" selected>active</option>
+      <option value="archived">archived</option>
+      <option value="all">全部</option>
+    </select>
+    <label>层级</label>
+    <select id="f-tier">
+      <option value="">全部</option>
+      <option value="pinned">注入</option>
+      <option value="normal">rank评分</option>
+      <option value="reference">地下书库</option>
+    </select>
+    <label>属性</label>
+    <select id="f-attribute"><option value="">全部</option></select>
+    <label>分类</label>
+    <select id="f-project"><option value="">全部</option></select>
+    <label>排序</label>
+    <select id="f-sort">
+      <option value="access_count" selected>检索命中</option>
+      <option value="last_accessed">最近访问</option>
+      <option value="importance">重要性</option>
+      <option value="created_at">创建时间</option>
+    </select>
+    <select id="f-order">
+      <option value="desc" selected>降序</option>
+      <option value="asc">升序</option>
+    </select>
+    <input type="text" id="f-q" placeholder="搜索 key / value …">
+    <label class="toggle"><input type="checkbox" id="f-skill"> 只看技能候选（≥3 次命中）</label>
+    <button id="btn-refresh">刷新</button>
+  </section>
+
+  <!-- 主表格 -->
+  <section class="panel table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Key</th><th>Value</th><th>层级</th><th>属性</th>
+          <th>重要性</th><th style="min-width:130px;">检索命中</th><th>最近访问</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="empty" style="display:none;">没有符合条件的记忆</div>
+  </section>
+</div>
+
+<!-- 编辑弹窗 -->
+<div class="modal-mask" id="modal-mask">
+  <div class="modal">
+    <h3>编辑记忆元数据</h3>
+    <div class="m-key" id="m-key"></div>
+    <div class="row"><label>重要性 (0-10)</label><input type="number" id="m-importance" min="0" max="10" step="0.5"></div>
+    <div class="row"><label>层级</label>
+      <select id="m-tier">
+        <option value="pinned">注入 (pinned)</option>
+        <option value="normal">rank评分 (normal)</option>
+        <option value="reference">地下书库 (reference)</option>
+      </select>
+    </div>
+    <div class="row"><label>属性</label>
+      <select id="m-attribute">
+        <option value="fact">事实 (fact)</option>
+        <option value="decision">决策 (decision)</option>
+        <option value="preference">偏好 (preference)</option>
+        <option value="constraint">约束 (constraint)</option>
+        <option value="user_profile">用户画像 (user_profile)</option>
+      </select>
+    </div>
+    <div class="row"><label>分类（项目）</label>
+      <select id="m-project"></select>
+      <input type="text" id="m-project-new" placeholder="输入新分类名，回车确认" style="display:none;margin-top:6px;">
+    </div>
+    <div class="row"><label>标签（检索关键词，逗号分隔——memory_search 全文索引会用到，如：飞书, docker, 权限）</label><input type="text" id="m-tags"></div>
+    <div class="btns">
+      <button class="ghost" id="m-cancel">取消</button>
+      <button id="m-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 详情弹窗（二级页面） -->
+<div class="modal-mask" id="detail-mask">
+  <div class="modal detail">
+    <h3 id="d-key"></h3>
+    <div class="detail-grid" id="d-meta"></div>
+    <div class="detail-value" id="d-value"></div>
+    <div class="btns" style="display:flex;justify-content:flex-end;">
+      <button class="ghost" id="d-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全量数据弹窗（原始 JSON） -->
+<div class="modal-mask" id="raw-mask">
+  <div class="modal detail">
+    <h3 id="r-key"></h3>
+    <pre class="detail-value" id="r-json" style="max-height:64vh;"></pre>
+    <div class="btns" style="display:flex;justify-content:flex-end;gap:8px;">
+      <button class="ghost" id="r-copy">复制</button>
+      <button class="ghost" id="r-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  const TIER_CN = { pinned: "注入", normal: "rank评分", reference: "地下书库" };
+  const tierCN = (t) => TIER_CN[t] || t;
+  const ATTR_CN = {
+    fact: "事实", decision: "决策", preference: "偏好",
+    constraint: "约束", user_profile: "用户画像",
+  };
+  const attrCN = (a) => ATTR_CN[a] || a || "—";
+
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 1800);
+  }
+
+  async function api(path, opts) {
+    const res = await fetch(path, opts);
+    const data = await res.json();
+    if (!res.ok && data && data.error) throw new Error(data.error);
+    return data;
+  }
+
+  async function post(id, action, body) {
+    return api(`/api/memory/${id}/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  // ---- 统计与热门榜 ----
+  async function loadStats() {
+    const s = await api("/api/stats");
+    const cards = [
+      [s.total_active, "总记忆数 (active)", ""],
+      [s.by_tier.pinned || 0, "注入 (pinned)", ""],
+      [s.by_tier.normal || 0, "rank评分 (normal)", "muted"],
+      [s.by_tier.reference || 0, "地下书库 (reference)", "muted"],
+      [s.never_accessed, "从未被调用", "gray"],
+    ];
+    $("stats").innerHTML = cards.map(c =>
+      `<div class="stat-card ${c[2]}"><div class="num">${c[0]}</div><div class="label">${c[1]}</div></div>`
+    ).join("");
+
+    const heat = t => t.importance * (t.access_count + 1);
+    const max = Math.max(1, ...s.top_accessed.map(heat));
+    $("hot").innerHTML = s.top_accessed.length ? s.top_accessed.map((t, i) =>
+      `<div class="hot-item">
+        <span class="rank">${i + 1}</span>
+        <span class="k" title="${esc(t.key)}">${esc(t.key)}</span>
+        <span class="bar-wrap"><span class="bar" style="display:block;width:${(heat(t) / max * 100).toFixed(1)}%"></span></span>
+        <span class="cnt">${t.access_count}次/${Number(t.importance).toFixed(0)}分</span>
+      </div>`
+    ).join("") : '<div class="empty">暂无数据</div>';
+
+    // 属性下拉（保留当前选择，显示中文）
+    const sel = $("f-attribute"), cur = sel.value;
+    sel.innerHTML = '<option value="">全部</option>' + Object.keys(s.by_attribute)
+      .filter(c => c && c !== "(未分类)").sort()
+      .map(c => `<option value="${esc(c)}">${esc(attrCN(c))} (${s.by_attribute[c]})</option>`).join("");
+    sel.value = cur;
+
+    // 分类下拉（保留当前选择）
+    const psel = $("f-project"), pcur = psel.value;
+    const projects = Object.keys(s.by_project || {}).sort();
+    psel.innerHTML = '<option value="">全部</option>' + projects
+      .map(p => `<option value="${esc(p)}">${esc(p)} (${s.by_project[p]})</option>`).join("");
+    psel.value = pcur;
+    allProjects = projects;  // 供编辑弹窗的分类下拉使用
+  }
+
+  let allProjects = [];
+
+  // ---- 列表 ----
+  let listCache = {};
+
+  function heatClass(n) {
+    if (n <= 0) return "heat-0";
+    if (n < 3) return "heat-1";
+    if (n < 6) return "heat-2";
+    if (n < 10) return "heat-3";
+    return "heat-4";
+  }
+
+  function currentParams() {
+    return new URLSearchParams({
+      status: $("f-status").value,
+      tier: $("f-tier").value,
+      attribute: $("f-attribute").value,
+      project: $("f-project").value,
+      q: $("f-q").value.trim(),
+      sort: $("f-sort").value,
+      order: $("f-order").value,
+    });
+  }
+
+  async function loadList() {
+    const rows = await api("/api/memories?" + currentParams());
+    listCache = {};
+    rows.forEach(r => listCache[r.id] = r);
+    const skillOnly = $("f-skill").checked;
+    const filtered = skillOnly ? rows.filter(r => r.access_count >= 3) : rows;
+    const max = Math.max(1, ...rows.map(r => r.access_count));
+    $("empty").style.display = filtered.length ? "none" : "block";
+    $("tbody").innerHTML = filtered.map(r => {
+      const skill = r.access_count >= 3
+        ? '<span class="badge badge-skill">高频，可考虑生成 skill</span>' : "";
+      const ops = [];
+      ops.push(`<button class="ghost small" data-act="raw" data-id="${r.id}">全量</button>`);
+      ops.push(`<button class="ghost small" data-act="edit" data-id="${r.id}">编辑</button>`);
+      if (r.status === "active") {
+        ops.push(`<button class="ghost small" data-act="archive" data-id="${r.id}">软删除</button>`);
+      } else if (r.status === "archived") {
+        ops.push(`<button class="ghost small" data-act="restore" data-id="${r.id}">恢复</button>`);
+      }
+      ops.push(`<button class="danger small" data-act="delete" data-id="${r.id}">删除</button>`);
+      ops.push(`<button class="danger small" data-act="hard_delete" data-id="${r.id}">彻底删除</button>`);
+      const val = esc(r.value);
+      const short = r.value.length > 80 ? esc(r.value.slice(0, 80)) + "…" : val;
+      return `<tr data-id="${r.id}">
+        <td>${r.id}</td>
+        <td class="key" title="${val}">${esc(r.key)}${skill}</td>
+        <td class="val"><span class="val-preview">${short}</span></td>
+        <td><span class="badge badge-${esc(r.tier)}" title="${esc(r.tier)}">${tierCN(r.tier)}</span></td>
+        <td>${r.attribute ? `<span class="badge badge-cat" title="${esc(r.attribute)}">${esc(attrCN(r.attribute))}</span>` : ""}</td>
+        <td>${Number(r.importance).toFixed(1)}</td>
+        <td><div class="freq">
+          <span class="n">${r.access_count}</span>
+          <span class="bar-wrap"><span class="bar ${heatClass(r.access_count)}" style="display:block;width:${(r.access_count / max * 100).toFixed(1)}%"></span></span>
+        </div></td>
+        <td>${r.last_accessed ? esc(r.last_accessed.slice(0, 16)) : "—"}</td>
+        <td class="actions">${ops.join("")}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  async function refresh() {
+    try {
+      await Promise.all([loadStats(), loadList()]);
+    } catch (e) {
+      toast("加载失败: " + e.message);
+    }
+  }
+
+  // ---- 表格交互：详情弹窗 / 操作 ----
+  function openDetail(r) {
+    if (!r) return;
+    $("d-key").textContent = `#${r.id}  ${r.key}`;
+    const meta = [
+      ["层级", `${tierCN(r.tier)} (${r.tier})`],
+      ["属性", attrCN(r.attribute) + (r.attribute ? ` (${r.attribute})` : "")],
+      ["标签", r.tags || "—"],
+      ["重要性", Number(r.importance).toFixed(1)],
+      ["检索命中", r.access_count],
+      ["最近访问", r.last_accessed || "—"],
+      ["创建时间", r.created_at || "—"],
+      ["更新时间", r.updated_at || "—"],
+      ["过期时间", r.expires_at || "—"],
+      ["状态", r.status],
+    ];
+    $("d-meta").innerHTML = meta.map(([k, v]) =>
+      `<div><div class="k">${esc(k)}</div><div>${esc(v)}</div></div>`).join("");
+    $("d-value").textContent = r.value;
+    $("detail-mask").classList.add("open");
+  }
+  $("d-close").onclick = () => $("detail-mask").classList.remove("open");
+  $("detail-mask").addEventListener("click", (e) => {
+    if (e.target === $("detail-mask")) $("detail-mask").classList.remove("open");
+  });
+
+  // ---- 全量数据（原始 JSON 视图） ----
+  function openRaw(r) {
+    if (!r) return;
+    $("r-key").textContent = `#${r.id}  ${r.key} — 数据库完整原始记录`;
+    $("r-json").textContent = JSON.stringify(r, null, 2);
+    $("raw-mask").classList.add("open");
+  }
+  $("r-close").onclick = () => $("raw-mask").classList.remove("open");
+  $("raw-mask").addEventListener("click", (e) => {
+    if (e.target === $("raw-mask")) $("raw-mask").classList.remove("open");
+  });
+  $("r-copy").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($("r-json").textContent);
+      toast("已复制到剪贴板");
+    } catch (e) { toast("复制失败: " + e.message); }
+  };
+
+  $("tbody").addEventListener("click", async (e) => {
+    const prev = e.target.closest(".val-preview");
+    if (prev) {
+      const tr = prev.closest("tr");
+      openDetail(listCache[tr.dataset.id]);
+      return;
+    }
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    const id = Number(btn.dataset.id), act = btn.dataset.act;
+    try {
+      if (act === "raw") openRaw(listCache[id]);
+      else if (act === "edit") openModal(listCache[id]);
+      else if (act === "archive") { await post(id, "archive"); toast("已软删除"); refresh(); }
+      else if (act === "restore") { await post(id, "restore"); toast("已恢复"); refresh(); }
+      else if (act === "delete") {
+        if (confirm(`确认删除 #${id}？（软删除，status → deleted）`)) {
+          await post(id, "delete"); toast("已删除"); refresh();
+        }
+      }
+      else if (act === "hard_delete") {
+        if (confirm(`确认彻底删除 #${id}？\n物理删除数据库行，不可恢复！`)) {
+          await post(id, "hard_delete"); toast("已彻底删除"); refresh();
+        }
+      }
+    } catch (err) { toast("操作失败: " + err.message); }
+  });
+
+  // ---- 编辑弹窗 ----
+  let editingId = null;
+  function openModal(r) {
+    if (!r) return;
+    editingId = r.id;
+    $("m-key").textContent = `#${r.id}  ${r.key}`;
+    $("m-importance").value = r.importance;
+    $("m-tier").value = r.tier;
+    $("m-attribute").value = ATTR_CN[r.attribute] ? r.attribute : "fact";
+    // tags 拆成 分类标签（分类:X）与自由标签两部分
+    const tags = (r.tags || "").split(",").map(s => s.trim()).filter(Boolean);
+    const projTags = tags.filter(t => t.startsWith("分类:"));
+    const freeTags = tags.filter(t => !t.startsWith("分类:"));
+    const mp = $("m-project");
+    mp.innerHTML = '<option value="">（无）</option>' +
+      allProjects.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("") +
+      '<option value="__new__">＋ 新建分类…</option>';
+    mp.value = projTags[0] || "";
+    $("m-project-new").style.display = "none";
+    $("m-project-new").value = "";
+    $("m-tags").value = freeTags.join(", ");
+    $("modal-mask").classList.add("open");
+  }
+  $("m-cancel").onclick = () => $("modal-mask").classList.remove("open");
+  $("modal-mask").addEventListener("click", (e) => {
+    if (e.target === $("modal-mask")) $("modal-mask").classList.remove("open");
+  });
+  // 选择「新建分类…」时展开输入框
+  $("m-project").addEventListener("change", () => {
+    const isNew = $("m-project").value === "__new__";
+    $("m-project-new").style.display = isNew ? "block" : "none";
+    if (isNew) $("m-project-new").focus();
+  });
+  $("m-save").onclick = async () => {
+    // 保存时把分类标签并回 tags（分类 + 自由标签）；分类统一补 分类: 前缀
+    const freeTags = $("m-tags").value.split(",").map(s => s.trim()).filter(Boolean);
+    let proj = $("m-project").value;
+    if (proj === "__new__") {
+      proj = $("m-project-new").value.trim();
+      if (!proj) { toast("请输入新分类名"); return; }
+    }
+    if (proj && !proj.startsWith("分类:")) proj = "分类:" + proj;
+    const tags = proj ? [proj, ...freeTags] : freeTags;
+    const body = {
+      importance: parseFloat($("m-importance").value),
+      tier: $("m-tier").value,
+      attribute: $("m-attribute").value.trim(),
+      tags,
+    };
+    if (isNaN(body.importance)) { toast("重要性必须是数字"); return; }
+    try {
+      await post(editingId, "update", body);
+      $("modal-mask").classList.remove("open");
+      toast("已保存");
+      refresh();
+    } catch (e) { toast("保存失败: " + e.message); }
+  };
+
+  // ---- 过滤器事件 ----
+  ["f-status", "f-tier", "f-attribute", "f-project", "f-sort", "f-order", "f-skill"]
+    .forEach(id => $(id).addEventListener("change", loadList));
+  let debounce;
+  $("f-q").addEventListener("input", () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(loadList, 250);
+  });
+  $("btn-refresh").onclick = refresh;
+
+  refresh();
+})();
+</script>
+</body>
+</html>

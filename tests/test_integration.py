@@ -1,0 +1,434 @@
+"""端到端集成测试——从写入到检索的完整链路。"""
+
+import hashlib
+import pytest
+import numpy as np
+from evolvmem.config import Config
+from evolvmem.memory_store import MemoryStore
+from evolvmem.vector_index import VectorIndex
+from evolvmem.retriever import Retriever
+from evolvmem.conflict_detector import ConflictDetector
+from evolvmem.forgetting import ForgettingEngine
+from evolvmem.auto_extractor import AutoExtractor
+
+
+@pytest.fixture
+def server(test_config):
+    """MemoryMCPServer wired to a temp-dir store (embedding engine stays unloaded)."""
+    from evolvmem.mcp_server import MemoryMCPServer
+    srv = MemoryMCPServer()
+    srv.config = test_config
+    srv.store = MemoryStore(test_config)
+    srv.store.initialize()
+    srv.conflict_detector = ConflictDetector(srv.store)
+    yield srv
+    srv.store.close()
+
+
+class FakeEmbeddingEngine:
+    """假 embedding 引擎，返回确定性向量（同文本 → 同向量）。"""
+
+    def __init__(self, dim=512):
+        self._dim = dim
+        self._loaded = True
+
+    @property
+    def is_loaded(self):
+        return self._loaded
+
+    @property
+    def dim(self):
+        return self._dim
+
+    def encode(self, text):
+        """确定性随机向量（基于 text hash），保证相同 text 返回相同向量。"""
+        h = hashlib.md5(text.encode()).digest()
+        seed = int.from_bytes(h[:4], 'big')
+        rng = np.random.RandomState(seed)
+        v = rng.randn(self._dim).astype(np.float32)
+        return (v / np.linalg.norm(v)).tolist()
+
+    def encode_batch(self, texts):
+        return [self.encode(t) for t in texts]
+
+    def encode_query(self, text):
+        return self.encode(text)
+
+    def encode_document(self, text):
+        return self.encode(text)
+
+
+class TestIntegration:
+    """完整的记忆生命周期测试。"""
+
+    def test_full_lifecycle_write_search_replace(self, test_config):
+        """完整生命周期：写入 → 检索 → 替换 → 验证历史。"""
+        # 初始化
+        store = MemoryStore(test_config)
+        store.initialize()
+        vidx = VectorIndex(test_config)
+        vidx.initialize(dim=512)
+        engine = FakeEmbeddingEngine()
+        retriever = Retriever(test_config, store, vidx, engine)
+        detector = ConflictDetector(store)
+
+        # 1. 写入记忆
+        mem1_id = store.add(
+            key="project:shop:decision:after_sales",
+            value="破损商品直接退款，不再补发",
+            attribute="decision",
+            tags=["售后", "退款"],
+        )
+        mem2_id = store.add(
+            key="user:preference:theme",
+            value="偏好暗色主题界面",
+            attribute="preference",
+            tags=["UI"],
+        )
+        mem3_id = store.add(
+            key="project:db:fact:version",
+            value="PostgreSQL 版本需 15 以上",
+            attribute="fact",
+            tags=["数据库"],
+        )
+
+        # 更新向量索引
+        for mid in [mem1_id, mem2_id, mem3_id]:
+            rec = store.get_by_id(mid)
+            vec = np.array(engine.encode(rec["value"]), dtype=np.float32)
+            vidx.add(mid, vec)
+        vidx.save()
+
+        # 2. FTS5 精确搜索（混合检索会返回多项，但正确结果应在其中）
+        results = retriever.search("退款", top_k=5)
+        assert len(results) >= 1
+        result_keys = [r["key"] for r in results]
+        assert "project:shop:decision:after_sales" in result_keys
+
+        # 3. 语义搜索（换了表达方式）
+        results = retriever.search("用户喜欢什么颜色", top_k=5)
+        # 应命中 "暗色主题"
+        keys = [r["key"] for r in results]
+        assert "user:preference:theme" in keys
+
+        # 4. 替换记忆
+        decision = detector.check(
+            "project:shop:decision:after_sales",
+            "破损商品直接退款，不再补发；VIP 客户额外补偿优惠券",
+        )
+        assert decision.action == "replace"
+
+        new_id = store.replace(
+            key="project:shop:decision:after_sales",
+            new_value="破损商品直接退款，不再补发；VIP 客户额外补偿优惠券",
+        )
+        new_vec = np.array(
+            engine.encode(
+                "破损商品直接退款，不再补发；VIP 客户额外补偿优惠券"
+            ),
+            dtype=np.float32,
+        )
+        vidx.add(new_id, new_vec)
+        vidx.save()
+
+        # 5. 验证：旧值 superseded，新值 active
+        old = store.get_by_id(mem1_id)
+        assert old["status"] == "superseded"
+        new = store.get_by_id(new_id)
+        assert new["status"] == "active"
+
+        # get_active 只返回新的
+        actives = store.get_active()
+        after_sales_memories = [
+            m for m in actives
+            if m["key"] == "project:shop:decision:after_sales"
+        ]
+        assert len(after_sales_memories) == 1
+        assert "VIP" in after_sales_memories[0]["value"]
+
+        # 6. 历史查询仍能找到旧值
+        history = store.get_by_key("project:shop:decision:after_sales")
+        assert len(history) == 2  # 旧 (superseded) + 新 (active)
+
+        # 清理
+        store.close()
+        vidx.close()
+
+    def test_memory_add_with_importance_tier(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:constraint:db",
+            "value": "禁止直接操作生产数据库",
+            "attribute": "constraint",
+            "importance": 9.0,
+            "tier": "pinned",
+        })
+        assert result["status"] == "added"
+        rec = server.store.get_by_id(result["id"])
+        assert rec["importance"] == 9.0
+        assert rec["tier"] == "pinned"
+
+    def test_memory_add_nan_importance_uses_default(self, server):
+        """min(10.0, nan) 返回 10.0 —— NaN importance 必须走默认值路径落库为 5.0。"""
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:nan",
+            "value": "nan importance 测试",
+            "importance": float("nan"),
+        })
+        assert result["status"] == "added"
+        rec = server.store.get_by_id(result["id"])
+        assert rec["importance"] == 5.0
+
+    def test_memory_add_rejects_overlong_value(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:long", "value": "x" * 501,
+        })
+        assert "error" in result
+        assert "too long" in result["error"]
+        assert server.store.count_active() == 0
+
+    def test_memory_add_accepts_value_at_limit(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:ok", "value": "x" * 500,
+        })
+        assert result["status"] == "added"
+
+    def test_memory_add_rejects_trivial_value(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:trivial", "value": "等待用户指令。",
+        })
+        assert "error" in result
+        assert server.store.count_active() == 0
+
+    def test_memory_add_rejects_too_short(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:short", "value": "短",
+        })
+        assert "error" in result
+
+    def test_memory_add_accepts_normal_value(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:ok", "value": "供应商合同必须双人复核后归档",
+        })
+        assert result["status"] == "added"
+
+    def test_memory_add_skips_merge_when_engine_not_loaded(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:x", "value": "供应商合同必须双人复核后归档",
+        })
+        assert result["status"] == "added"
+
+    def test_memory_add_merges_semantic_duplicate(self, server, test_config):
+        """跨 key 语义合并：不同 key、同 value → merged，active 只剩一条，旧记录 supersede。"""
+        server.vidx = VectorIndex(test_config)
+        server.vidx.initialize(dim=512)
+        server.engine = FakeEmbeddingEngine()
+        try:
+            first = server.handle_tool_call("memory_add", {
+                "key": "p:t:decision:db", "value": "数据库选用 MySQL",
+            })
+            assert first["status"] == "added"
+            second = server.handle_tool_call("memory_add", {
+                "key": "other:key:fact:x", "value": "数据库选用 MySQL",
+            })
+            assert second["status"] == "merged"
+            assert second["merged_into"] == first["id"]
+            assert second["key"] == "p:t:decision:db"
+            assert server.store.count_active() == 1
+            active = server.store.get_active()[0]
+            assert active["key"] == "p:t:decision:db"
+            assert active["value"] == "数据库选用 MySQL"
+            assert server.store.get_by_id(first["id"])["status"] == "superseded"
+        finally:
+            server.vidx.close()
+
+    def test_memory_add_reference_tier_skips_merge(self, server, test_config):
+        """tier="reference" 的新值不参与语义合并——永不 supersede 别人。"""
+        server.vidx = VectorIndex(test_config)
+        server.vidx.initialize(dim=512)
+        server.engine = FakeEmbeddingEngine()
+        try:
+            first = server.handle_tool_call("memory_add", {
+                "key": "p:t:decision:db", "value": "数据库选用 MySQL",
+            })
+            assert first["status"] == "added"
+            second = server.handle_tool_call("memory_add", {
+                "key": "p:t:arch:doc", "value": "数据库选用 MySQL",
+                "tier": "reference",
+            })
+            assert second["status"] == "added"
+            assert server.store.count_active() == 2
+        finally:
+            server.vidx.close()
+
+    def test_memory_add_accepts_pattern_mid_sentence(self, server):
+        """模式词出现在句中不算低信息——整句语义合格必须入库。"""
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:window", "value": "部署窗口需等待用户确认后再排期",
+        })
+        assert result["status"] == "added"
+
+    def test_memory_add_rejects_low_info_prefix_variant(self, server):
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:trivial2", "value": "等待用户下一步指令。",
+        })
+        assert "error" in result
+
+    def test_memory_add_rejects_low_info_case_variant(self, server):
+        """大小写变体同样拒收。"""
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:trivial3", "value": "No action required.",
+        })
+        assert "error" in result
+
+    def test_memory_replace_rejects_low_info_value(self, server):
+        seed = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:rl", "value": "供应商合同必须双人复核后归档",
+        })
+        assert seed["status"] == "added"
+        result = server.handle_tool_call("memory_replace", {
+            "key": "p:t:fact:rl", "value": "等待用户确认后再继续推进。",
+        })
+        assert "error" in result
+
+    def test_memory_replace_rejects_overlong_value(self, server):
+        seed = server.handle_tool_call("memory_add", {"key": "p:t:fact:r", "value": "待替换的初始值，内容足够长"})
+        assert seed["status"] == "added"
+        result = server.handle_tool_call("memory_replace", {
+            "key": "p:t:fact:r", "value": "y" * 501,
+        })
+        assert "error" in result
+
+    def test_auto_extractor_realistic_conversation(self):
+        """从真实对话中提取记忆。"""
+        extractor = AutoExtractor()
+        conversation = [
+            {"role": "user", "content": "我们用 PostgreSQL 代替 MySQL 吧，性能更好"},
+            {"role": "assistant", "content": "好的，我来调整配置"},
+        ]
+        prompt = extractor.build_extraction_prompt(conversation)
+        assert "PostgreSQL" in prompt
+        assert "MySQL" in prompt
+
+        # 模拟 Claude 返回的 JSON
+        fake_response = """```json
+[
+  {
+    "key": "project:db:decision:engine",
+    "value": "数据库选用 PostgreSQL，替代 MySQL",
+    "attribute": "decision",
+    "tags": ["数据库", "PostgreSQL", "架构"],
+    "confidence": 0.95
+  }
+]
+```"""
+        candidates = extractor.parse_response(fake_response)
+        assert len(candidates) == 1
+        assert candidates[0].key == "project:db:decision:engine"
+        assert extractor.should_persist(candidates[0]) is True
+
+    def test_forgetting_does_not_archive_recently_used(self, test_config):
+        """遗忘引擎不归档最近使用的记忆。"""
+        store = MemoryStore(test_config)
+        store.initialize()
+        mem_id = store.add(key="p:f:1", value="活跃记忆")
+        store.update_access(mem_id)
+
+        engine = ForgettingEngine(test_config, store)
+        engine.config.forget_days_threshold = 0
+        engine.config.forget_access_count_threshold = 2
+
+        candidates = engine.find_candidates()
+        # access_count=1 但刚被访问，last_accessed 很新
+        # 由于 forget_rate_limit_days 默认为 7，刚更新的记忆不会成为候选
+        assert len(candidates) == 0
+
+        store.close()
+
+    def test_mcp_tool_schemas_match_design(self):
+        """验证 MCP Server 注册了全部 6 个工具。"""
+        from evolvmem.mcp_server import MemoryMCPServer
+        server = MemoryMCPServer()
+        # 伪造 initialize request 后直接查询工具列表
+        response = server._handle_request({
+            "method": "tools/list", "id": 1, "jsonrpc": "2.0",
+        })
+        tools = response["result"]["tools"]
+        tool_names = {t["name"] for t in tools}
+        expected = {
+            "memory_search", "memory_status", "memory_add",
+            "memory_replace", "memory_remove", "memory_consolidate",
+        }
+        assert tool_names == expected
+
+    def test_memory_consolidate_requires_embedding(self, server):
+        result = server.handle_tool_call("memory_consolidate", {})
+        assert "error" in result
+
+    def test_mcp_notifications_get_no_response(self):
+        """JSON-RPC notification（无 id）不应产生响应。"""
+        from evolvmem.mcp_server import MemoryMCPServer
+        server = MemoryMCPServer()
+        assert server._handle_request({
+            "method": "notifications/initialized", "jsonrpc": "2.0",
+        }) is None
+
+    def test_mcp_ping(self):
+        from evolvmem.mcp_server import MemoryMCPServer
+        server = MemoryMCPServer()
+        resp = server._handle_request({
+            "method": "ping", "id": 1, "jsonrpc": "2.0",
+        })
+        assert resp["id"] == 1
+        assert resp["result"] == {}
+
+    def test_mcp_initialize_echoes_protocol_version(self):
+        from evolvmem.mcp_server import MemoryMCPServer
+        server = MemoryMCPServer()
+        resp = server._handle_request({
+            "method": "initialize", "id": 1, "jsonrpc": "2.0",
+            "params": {"protocolVersion": "2025-03-26"},
+        })
+        assert resp["result"]["protocolVersion"] == "2025-03-26"
+
+    def test_mcp_tool_error_sets_is_error(self):
+        """工具调用返回 error 时应置 isError: true。"""
+        from evolvmem.mcp_server import MemoryMCPServer
+        server = MemoryMCPServer()
+        resp = server._handle_request({
+            "method": "tools/call", "id": 2, "jsonrpc": "2.0",
+            "params": {"name": "no_such_tool", "arguments": {}},
+        })
+        assert resp["result"]["isError"] is True
+
+    def test_usearch_rebuild_from_sqlite(self, test_config):
+        """向量索引崩溃后从 SQLite 重建。"""
+        store = MemoryStore(test_config)
+        store.initialize()
+        mem_id = store.add(
+            key="p:rebuild:test", value="重建测试记忆", tags=["测试"]
+        )
+        store.close()
+
+        vidx = VectorIndex(test_config)
+        vidx.initialize(dim=512)
+        engine = FakeEmbeddingEngine()
+
+        # 模拟重建
+        store2 = MemoryStore(test_config)
+        store2.initialize()
+        all_ids = store2.all_ids()
+        records = store2.get_by_ids(all_ids)
+
+        ids = []
+        embeddings = []
+        for r in records:
+            vec = np.array(engine.encode(r["value"]), dtype=np.float32)
+            ids.append(r["id"])
+            embeddings.append(vec)
+
+        vidx.rebuild(ids, embeddings)
+        assert vidx.count() == 1
+        assert vidx.check_consistency(len(all_ids))
+
+        store2.close()
+        vidx.close()
