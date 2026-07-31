@@ -27,7 +27,10 @@ class MemoryStore:
     def initialize(self) -> None:
         """Open database, create tables and indexes (idempotent)."""
         self.config.ensure_dirs()
-        self._conn = sqlite3.connect(str(self.config.db_path))
+        # check_same_thread=False: MCP server 在后台线程初始化（建连接）、
+        # 主线程处理 tools/call；两边由 _init_done 门闩串行化，不会并发访问
+        self._conn = sqlite3.connect(str(self.config.db_path),
+                                     check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")

@@ -63,6 +63,12 @@ Return a JSON array, each entry containing:
 
 If nothing is worth persisting, return an empty array `[]`.
 
+## Session Summary Entry
+In addition to the atomic entries above, always include exactly ONE extra entry summarizing the session as a whole — which project it concerned, what was done, and where things stand:
+- key: the literal string `SESSION_SUMMARY` (the caller rewrites it)
+- value: at most 200 characters, narrative style
+- attribute: "fact"; importance: 5-6; tier: "normal"; tags: ["日志", "分类:<project>"]
+
 ## Conversation
 {conversation}
 

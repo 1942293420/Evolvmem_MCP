@@ -4,7 +4,7 @@ A fully-local, three-layer memory plugin for Claude Code with Chinese language s
 
 ## Features
 
-- **L0 Active Memory**: Three-layer SessionStart injection — pinned memories always injected, normal memories ranked by importance+recency+frequency score, the rest listed as a searchable index (progressive disclosure)
+- **L0 Active Memory**: SessionStart injection — a project digest layer (recent per-project session summaries from `:progress:log:` memories, `digest_*` config), then pinned memories always injected, normal memories ranked by importance+recency+frequency score, the rest listed as a searchable index (progressive disclosure)
 - **L1 Full History**: SQLite + FTS5/trigram exact search, supports Chinese substring matching
 - **L2 Semantic Index**: USearch HNSW vector search for finding related memories expressed differently
 - **Self-Iteration**: Auto-extraction, conflict detection, access-decay forgetting

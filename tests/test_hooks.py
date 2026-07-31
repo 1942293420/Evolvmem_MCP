@@ -1,5 +1,7 @@
 """hooks module tests."""
 
+import time
+
 from evolvmem.hooks import get_session_start_block, get_stop_prompt
 from evolvmem.memory_store import MemoryStore
 
@@ -233,3 +235,111 @@ class TestStopHook:
 
         assert "Redis" in prompt
         assert "Retention" in prompt or "extract" in prompt
+
+
+class TestProjectDigestLayer:
+    @staticmethod
+    def _date(days_ago: int) -> str:
+        return time.strftime(
+            "%Y-%m-%d", time.localtime(time.time() - days_ago * 86400))
+
+    def test_digest_layer_groups_by_project(self, test_config):
+        d0, d1 = self._date(0), self._date(1)
+        with MemoryStore(test_config) as store:
+            store.add(key=f"project:eva:progress:log:{d0}-0900",
+                      value="EVA 部署了 TEI")
+            store.add(key=f"project:evolvmem:progress:log:{d1}-0800",
+                      value="evolvmem 三期完成")
+            store.add(key="p:t:fact:0", value="普通事实")
+
+        result = get_session_start_block(config=test_config)
+
+        assert "最近项目动态" in result
+        assert f"【eva】{d0[5:]} EVA 部署了 TEI" in result
+        assert f"【evolvmem】{d1[5:]} evolvmem 三期完成" in result
+        # 新的在前
+        assert result.index("EVA 部署了 TEI") < result.index("evolvmem 三期完成")
+
+    def test_legacy_four_segment_log_key(self, test_config):
+        d0 = self._date(0)
+        with MemoryStore(test_config) as store:
+            store.add(key=f"eva:progress:log:{d0}-infra", value="旧格式日志内容")
+
+        result = get_session_start_block(config=test_config)
+
+        assert f"【eva】{d0[5:]} 旧格式日志内容" in result
+
+    def test_digest_per_project_cap(self, test_config):
+        d = [self._date(i) for i in range(3)]
+        with MemoryStore(test_config) as store:
+            for i in range(3):
+                store.add(key=f"project:eva:progress:log:{d[i]}-0{i}00",
+                          value=f"第{i}天日志")
+
+        result = get_session_start_block(config=test_config)
+
+        assert "第0天日志" in result
+        assert "第1天日志" in result
+        assert "第2天日志" not in result
+
+    def test_digest_old_logs_filtered(self, test_config):
+        old = self._date(40)
+        with MemoryStore(test_config) as store:
+            store.add(key=f"project:eva:progress:log:{old}-0900",
+                      value="很久以前的日志")
+            store.add(key="p:t:fact:0", value="普通事实")
+
+        result = get_session_start_block(config=test_config)
+
+        assert "最近项目动态" not in result
+        # 老日志不回退到精选/索引层
+        assert "progress:log" not in result
+        assert "普通事实" in result
+
+    def test_digest_logs_excluded_from_scored_and_index(self, test_config):
+        d0 = self._date(0)
+        with MemoryStore(test_config) as store:
+            store.add(key=f"project:eva:progress:log:{d0}-0900",
+                      value="高重要性日志", importance=9.0)
+
+        result = get_session_start_block(config=test_config)
+
+        # 不进精选层（加粗行），也不进索引层（key 行）
+        assert "- **project:eva:progress:log" not in result
+        assert f"- project:eva:progress:log:{d0}-0900" not in result
+
+    def test_digest_char_budget(self, test_config):
+        test_config.digest_max_chars = 100
+        d0, d1 = self._date(0), self._date(1)
+        with MemoryStore(test_config) as store:
+            store.add(key=f"project:aaa:progress:log:{d0}-0900",
+                      value="x" * 60)
+            store.add(key=f"project:bbb:progress:log:{d1}-0900",
+                      value="y" * 60)
+
+        result = get_session_start_block(config=test_config)
+
+        assert "x" * 60 in result  # 第一条永远保留
+        assert "y" * 60 not in result
+
+    def test_digest_disabled_when_budget_zero(self, test_config):
+        test_config.digest_max_chars = 0
+        d0 = self._date(0)
+        with MemoryStore(test_config) as store:
+            store.add(key=f"project:eva:progress:log:{d0}-0900",
+                      value="日志内容")
+
+        result = get_session_start_block(config=test_config)
+
+        assert "最近项目动态" not in result
+
+    def test_only_logs_still_produces_block(self, test_config):
+        d0 = self._date(0)
+        with MemoryStore(test_config) as store:
+            store.add(key=f"project:eva:progress:log:{d0}-0900",
+                      value="唯一日志")
+
+        result = get_session_start_block(config=test_config)
+
+        assert "最近项目动态" in result
+        assert "唯一日志" in result

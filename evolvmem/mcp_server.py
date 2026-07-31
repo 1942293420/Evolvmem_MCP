@@ -15,6 +15,7 @@ import math
 import select
 import sys
 import os
+import threading
 import traceback
 from evolvmem.config import Config
 from evolvmem.memory_store import MemoryStore
@@ -52,22 +53,28 @@ class MemoryMCPServer:
         self.conflict_detector = None
         self.forgetting = None
         self.consolidator = None
+        # 初始化门闩：run() 里由后台线程完成重初始化后置位，
+        # tools/call 等待它，握手（initialize/tools/list）不等
+        self._init_done = threading.Event()
+        self._init_error: Exception | None = None
 
     def initialize(self):
         """Initialize all components."""
         self.store.initialize()
         self.vidx.initialize(dim=self.config.embedding_dim)
 
-        # Check USearch vs SQLite consistency
-        sqlite_count = len(self.store.all_ids())
-        if not self.vidx.check_consistency(sqlite_count):
-            self._rebuild_vector_index()
-
         # Try loading the embedding model (FTS5 search works without it)
         try:
             self.engine.initialize()
-        except (FileNotFoundError, ImportError) as e:
+        except Exception as e:
+            # 宽捕获：模型加载的任何瞬时失败（缺文件/缺依赖/内存不足）都降级为
+            # 仅 FTS 搜索，而不是让整个会话的 tools/call 被 _init_error 堵死
             self._log(f"Embedding engine not loaded: {e}")
+
+        # Check USearch vs SQLite consistency (needs engine for rebuild)
+        sqlite_count = len(self.store.all_ids())
+        if not self.vidx.check_consistency(sqlite_count):
+            self._rebuild_vector_index()
 
         self.retriever = Retriever(
             self.config, self.store, self.vidx, self.engine
@@ -80,6 +87,8 @@ class MemoryMCPServer:
 
     def shutdown(self):
         """Clean up resources."""
+        # 等后台初始化结束，避免关闭与初始化并发操作同一资源
+        self._init_done.wait()
         try:
             if self.vidx:
                 self.vidx.save()
@@ -355,12 +364,54 @@ class MemoryMCPServer:
     # ---- MCP protocol ----
 
     _PARENT_CHECK_INTERVAL_S = 60  # stdin 空闲多久检查一次父进程存活
+    _INIT_WAIT_TIMEOUT_S = 120     # tools/call 等待初始化完成的上限
+
+    def _start_init_thread(self) -> None:
+        """Run heavy initialize() in a daemon thread so the MCP handshake
+        is answered immediately. Model loading and a full vector-index
+        rebuild can exceed the client's startup timeout (2026-07-31:
+        200-vector rebuild took >60s and the handshake timed out)."""
+        def _init():
+            try:
+                self.initialize()
+            except Exception as e:
+                self._init_error = e
+                self._log(f"Initialization failed: {e}")
+                traceback.print_exc(file=sys.stderr)
+            finally:
+                self._init_done.set()
+
+        threading.Thread(target=_init, name="evolvmem-init", daemon=True).start()
+
+    def _init_gate_error(self) -> str | None:
+        """None when ready to serve tools/call, else a human-readable error."""
+        if not self._init_done.is_set():
+            if not self._init_done.wait(timeout=self._INIT_WAIT_TIMEOUT_S):
+                return (f"server still initializing after "
+                        f"{self._INIT_WAIT_TIMEOUT_S}s (model loading / "
+                        f"vector index rebuild); retry shortly")
+        if self._init_error is not None:
+            return f"server initialization failed: {self._init_error}"
+        return None
 
     def _parent_gone(self) -> bool:
         """Parent (kimi CLI) died → we were re-parented (to init or a
         subreaper like systemd --user, whose pid is NOT 1). Compare against
         the ppid we started with instead of assuming orphan ⇒ ppid 1."""
         return os.getppid() != self._original_ppid
+
+    @staticmethod
+    def _dbg(msg: str):
+        """Raw I/O debug trace, enabled via EVOLVMEM_DEBUG_LOG=<path>."""
+        path = os.environ.get("EVOLVMEM_DEBUG_LOG")
+        if not path:
+            return
+        try:
+            import time as _time
+            with open(path, "a") as f:
+                f.write(f"[{_time.strftime('%H:%M:%S')}] pid={os.getpid()} ppid={os.getppid()} {msg}\n")
+        except Exception:
+            pass
 
     def run(self):
         """stdio MCP main loop.
@@ -372,26 +423,36 @@ class MemoryMCPServer:
         """
         self._original_ppid = os.getppid()
         self._log("MCP Server starting")
-        try:
-            self.initialize()
-        except Exception as e:
-            self._log(f"Initialization failed: {e}")
-            traceback.print_exc(file=sys.stderr)
-            sys.exit(1)
+        self._dbg("run() entered")
+        self._start_init_thread()
 
         stdin_fd = sys.stdin.fileno()
+        pending = b""
         while True:
-            ready, _, _ = select.select([stdin_fd], [], [],
-                                        self._PARENT_CHECK_INTERVAL_S)
-            if not ready:
-                if self._parent_gone():
-                    self._log("parent process gone, exiting")
+            # 只在缓冲区没有完整行时才碰 fd。
+            # 不能用 select + sys.stdin.readline()：TextIOWrapper 会把多条消息
+            # 预读进 userspace 缓冲，select 在裸 fd 上看不到它们，于是整条消息
+            # 被饿死，直到客户端关管道（2026-07-31 kimi 握手挂起 180s 的根因：
+            # tools/list 紧跟 notification 到达，被预读吞掉，select 空转）。
+            if b"\n" not in pending:
+                ready, _, _ = select.select([stdin_fd], [], [],
+                                            self._PARENT_CHECK_INTERVAL_S)
+                if not ready:
+                    self._dbg("select tick (no stdin data)")
+                    if self._parent_gone():
+                        self._log("parent process gone, exiting")
+                        break
+                    continue
+                chunk = os.read(stdin_fd, 65536)
+                self._dbg(f"os.read -> {len(chunk)}B")
+                if chunk:
+                    pending += chunk
+                    continue
+                if not pending:  # EOF — client closed the pipe
                     break
-                continue
-            line = sys.stdin.readline()
-            if not line:  # EOF — client closed the pipe
-                break
-            line = line.strip()
+            line_b, _, pending = pending.partition(b"\n")
+            line = line_b.decode("utf-8", errors="replace").strip()
+            self._dbg(f"line -> {line[:80]!r}")
             if not line:
                 continue
             request = None
@@ -405,6 +466,7 @@ class MemoryMCPServer:
                 if response is not None:
                     sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
                     sys.stdout.flush()
+                    self._dbg(f"responded to id={request.get('id')} method={request.get('method')}")
             except Exception:
                 self._log("Request handling error")
                 traceback.print_exc(file=sys.stderr)
@@ -582,7 +644,11 @@ class MemoryMCPServer:
             params = request.get("params", {})
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
-            result = self.handle_tool_call(tool_name, tool_args)
+            gate_error = self._init_gate_error()
+            if gate_error is not None:
+                result = {"error": gate_error}
+            else:
+                result = self.handle_tool_call(tool_name, tool_args)
             response_result = {
                 "content": [
                     {

@@ -12,6 +12,7 @@ Usage:
 import glob
 import json
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -24,6 +25,8 @@ _MODEL = "kimi-for-coding"
 _MAX_CONVERSATION_CHARS = 12000
 _MAX_MEMORIES_PER_SESSION = 8
 _TOKEN_GRACE_S = 60
+_SESSION_SUMMARY_KEY = "SESSION_SUMMARY"
+_WD_DIR_RE = re.compile(r"^wd_(.+)_[0-9a-f]{8,}$")
 
 
 def _log(msg: str) -> None:
@@ -64,6 +67,32 @@ def _find_wire(session_id: str) -> str | None:
         if matches:
             return matches[0]
     return None
+
+
+def _project_from_wire(wire_path: str, aliases: dict) -> str:
+    """Infer the project key segment from the session working-directory name.
+
+    The sessions directory entry looks like 'wd_<cwd-basename>_<hex>';
+    the basename is mapped through inject_project_aliases (directory name
+    → key segment) and sanitized. Falls back to 'general'.
+    """
+    dirname = ""
+    for part in Path(wire_path).parts:
+        m = _WD_DIR_RE.match(part)
+        if m:
+            dirname = m.group(1)
+            break
+    segment = aliases.get(dirname, dirname).lower() if dirname else ""
+    segment = re.sub(r"_+", "_", re.sub(r"[^\w一-鿿-]", "_", segment)).strip("_")
+    return segment or "general"
+
+
+def _split_summary_candidate(candidates: list) -> tuple:
+    """Pull out the SESSION_SUMMARY entry (at most one) from LLM candidates."""
+    for i, c in enumerate(candidates):
+        if c.key.strip().upper() == _SESSION_SUMMARY_KEY:
+            return c, candidates[:i] + candidates[i + 1:]
+    return None, candidates
 
 
 def _read_conversation(wire_path: str) -> str:
@@ -196,11 +225,21 @@ def session_end(payload: dict) -> None:
         [{"role": "user", "content": conversation}])
     raw = _call_llm(prompt, token)
     candidates = extractor.parse_response(raw)
-    if not candidates:
+
+    config = Config.from_file()
+    # 会话摘要单独拆出：key 规范为 project:{项目}:progress:log:{日期-时分}，
+    # 持久化时单独放行，不占 _MAX_MEMORIES_PER_SESSION 配额
+    summary, candidates = _split_summary_candidate(candidates)
+    if summary is not None:
+        project = _project_from_wire(wire, config.inject_project_aliases)
+        summary.key = (f"project:{project}:progress:log:"
+                       f"{time.strftime('%Y-%m-%d-%H%M')}")
+        if "日志" not in summary.tags:
+            summary.tags = [*summary.tags, "日志"]
+    if not candidates and summary is None:
         _log("nothing worth persisting")
         return
 
-    config = Config.from_file()
     # embedding/向量索引先就绪：persist 循环内要做跨 key 语义合并和向量同步；
     # 加载失败则传 None，退化为纯 SQLite 写入（不阻塞持久化）
     engine = None
@@ -219,7 +258,12 @@ def session_end(payload: dict) -> None:
         engine, vidx = None, None
 
     with MemoryStore(config) as store:
-        n = _persist_candidates(config, store, vidx, engine, candidates, session_id)
+        n = 0
+        if summary is not None:
+            n += _persist_candidates(config, store, vidx, engine,
+                                     [summary], session_id)
+        n += _persist_candidates(config, store, vidx, engine,
+                                 candidates, session_id)
     if vidx is not None:
         vidx.close()
     if engine is not None:

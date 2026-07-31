@@ -70,6 +70,11 @@ class Config:
     inject_w_relevance: float = 0.3   # cwd 项目匹配加分权重
     inject_project_aliases: dict = field(default_factory=dict)  # 目录名 → key 段
 
+    # --- 最近项目动态层（会话摘要日志） ---
+    digest_days: int = 30          # 项目动态层回溯天数（按日志 key 中的日期过滤）
+    digest_per_project: int = 2    # 每项目最多展示的日志条数
+    digest_max_chars: int = 800    # 项目动态层字符预算（0 = 关闭该层）
+
     # --- 自动遗忘 ---
     forget_auto_run_hours: int = 24  # SessionStart 自动遗忘的最小间隔（小时）
 
@@ -133,6 +138,9 @@ class Config:
             "inject_freq_norm_cap": self.inject_freq_norm_cap,
             "inject_w_relevance": self.inject_w_relevance,
             "inject_project_aliases": self.inject_project_aliases,
+            "digest_days": self.digest_days,
+            "digest_per_project": self.digest_per_project,
+            "digest_max_chars": self.digest_max_chars,
             "forget_auto_run_hours": self.forget_auto_run_hours,
             "consolidate_similarity_threshold": self.consolidate_similarity_threshold,
             "consolidate_auto_run_hours": self.consolidate_auto_run_hours,

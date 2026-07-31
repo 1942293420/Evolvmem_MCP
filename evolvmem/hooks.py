@@ -1,6 +1,7 @@
 """SessionStart and Stop Hook integration — memory formatting and extraction triggering."""
 
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -138,9 +139,78 @@ def _session_context() -> dict:
         return {}
 
 
-def get_session_start_block(config: Config | None = None) -> str:
-    """Build the SessionStart injection block with three layers:
+def _is_session_log(key: str) -> bool:
+    """Session-summary log keys end with ':progress:log:<date...>'.
 
+    Matches both 'project:{proj}:progress:log:{date}' and the legacy
+    '{proj}:progress:log:{date}' form.
+    """
+    parts = key.split(":")
+    return len(parts) >= 4 and parts[-3] == "progress" and parts[-2] == "log"
+
+
+def _log_project_date(key: str) -> tuple[str, str]:
+    """Extract (project, YYYY-MM-DD) from a log key; date is '' when absent."""
+    parts = key.split(":")
+    project = parts[1] if parts[0] == "project" and len(parts) >= 5 else parts[0]
+    m = re.search(r"\d{4}-\d{2}-\d{2}", parts[-1])
+    return project, (m.group(0) if m else "")
+
+
+def _build_digest_lines(logs: list[dict], config: Config) -> list[str]:
+    """Render the '最近项目动态' layer from session-summary log memories.
+
+    Groups logs by project, newest first, capped per project and by an
+    independent char budget. The first entry is always kept (same
+    convention as _take_budget). Returns [] when the layer has nothing
+    to show.
+    """
+    if config.digest_max_chars <= 0 or not logs:
+        return []
+    cutoff = time.time() - config.digest_days * 86400
+    entries: list[tuple[str, str, str]] = []  # (date, project, value)
+    for m in logs:
+        project, date = _log_project_date(m["key"])
+        ts = date or (m.get("created_at") or "")[:10]
+        try:
+            epoch = time.mktime(time.strptime(ts, "%Y-%m-%d"))
+        except (ValueError, OverflowError):
+            continue
+        if epoch < cutoff:
+            continue
+        entries.append((ts, project, m["value"]))
+    if not entries:
+        return []
+    entries.sort(key=lambda e: e[0], reverse=True)
+
+    per_project: dict[str, int] = {}
+    selected: list[str] = []
+    used = 0
+    for ts, project, value in entries:
+        if per_project.get(project, 0) >= config.digest_per_project:
+            continue
+        line = f"- 【{project}】{ts[5:]} {value}"
+        if selected and used + len(line) > config.digest_max_chars:
+            break
+        selected.append(line)
+        per_project[project] = per_project.get(project, 0) + 1
+        used += len(line)
+    if not selected:
+        return []
+    return [
+        "### 最近项目动态",
+        *selected,
+        "(以上是最近会话的摘要。若用户开场没有提出具体问题，先简要列出这些项目供其选择；"
+        "用户想继续某个项目或需要更多上下文时，用 memory_search 查询该项目。)",
+    ]
+
+
+def get_session_start_block(config: Config | None = None) -> str:
+    """Build the SessionStart injection block with four layers:
+
+    0. Digest layer — recent session-summary logs (key ends with
+       ':progress:log:<date>') grouped by project, newest first, with
+       their own budget; these are excluded from the other layers.
     1. Pinned layer — tier='pinned' memories always injected (own budget),
        sorted by importance desc.
     2. Scored layer — normal memories ranked by compute_score()
@@ -165,7 +235,11 @@ def get_session_start_block(config: Config | None = None) -> str:
         _maybe_run_consolidation(config, store)
         memories = store.get_active()
 
-    if not memories:
+    # 会话摘要日志走独立的「最近项目动态」层，不参与 pinned/精选/索引三层
+    logs = [m for m in memories if _is_session_log(m["key"])]
+    memories = [m for m in memories if not _is_session_log(m["key"])]
+
+    if not memories and not logs:
         return ""
 
     context = _session_context()
@@ -215,6 +289,11 @@ def get_session_start_block(config: Config | None = None) -> str:
         "Only the most relevant memories are injected here; use the memory_search tool to recall the rest on demand.",
         "",
     ]
+
+    digest_lines = _build_digest_lines(logs, config)
+    if digest_lines:
+        lines.extend(digest_lines)
+        lines.append("")
 
     if pinned_sel:
         lines.append("### 常驻记忆 (pinned)")

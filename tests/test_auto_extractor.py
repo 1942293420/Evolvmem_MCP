@@ -109,3 +109,8 @@ class TestAutoExtractor:
         prompt = extractor.build_extraction_prompt([{"role": "user", "content": "hi"}])
         assert "importance" in prompt
         assert "200" in prompt
+
+    def test_extraction_prompt_requires_session_summary(self):
+        extractor = AutoExtractor()
+        prompt = extractor.build_extraction_prompt([{"role": "user", "content": "hi"}])
+        assert "SESSION_SUMMARY" in prompt
