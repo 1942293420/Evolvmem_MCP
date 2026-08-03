@@ -5,7 +5,6 @@ import pytest
 
 from evolvmem import extraction_policy as policy
 from evolvmem.auto_extractor import CandidateMemory
-from evolvmem.extraction_policy import evaluate_candidate, rank_candidates
 
 
 def candidate(value: str, **overrides) -> CandidateMemory:
@@ -95,8 +94,8 @@ def test_sanitize_summary_rejects_empty_low_information_or_non_chinese(value):
     (candidate("提交 commit abcdef123456 已完成。"), "ephemeral"),
 ])
 def test_evaluate_candidate_rejects_unsafe_or_ephemeral_items(item, reason):
-    assert evaluate_candidate(item).reason == reason
-    assert evaluate_candidate(item).accepted is False
+    assert policy.evaluate_candidate(item).reason == reason
+    assert policy.evaluate_candidate(item).accepted is False
 
 
 def test_evaluate_candidate_keeps_durable_broker_constraint():
@@ -106,7 +105,7 @@ def test_evaluate_candidate_keeps_durable_broker_constraint():
         importance=10,
         tier="pinned",
     )
-    assert evaluate_candidate(item).accepted is True
+    assert policy.evaluate_candidate(item).accepted is True
 
 
 def test_evaluate_candidate_keeps_password_policy_without_password_value():
@@ -114,7 +113,7 @@ def test_evaluate_candidate_keeps_password_policy_without_password_value():
         "密码策略要求至少 12 位并启用多因素认证。",
         attribute="constraint",
     )
-    assert evaluate_candidate(item).accepted is True
+    assert policy.evaluate_candidate(item).accepted is True
 
 
 def test_rank_candidates_deduplicates_same_key_by_quality_tuple():
@@ -125,7 +124,7 @@ def test_rank_candidates_deduplicates_same_key_by_quality_tuple():
         confidence=0.9,
         importance=8,
     )
-    assert rank_candidates([low, high]) == [high]
+    assert policy.rank_candidates([low, high]) == [high]
 
 
 def test_rank_candidates_promotes_pinned_even_when_model_puts_it_last():
@@ -145,7 +144,7 @@ def test_rank_candidates_promotes_pinned_even_when_model_puts_it_last():
         tier="pinned",
         importance=7,
     )
-    ranked = rank_candidates([*ordinary, pinned], limit=8)
+    ranked = policy.rank_candidates([*ordinary, pinned], limit=8)
     assert ranked[0] is pinned
     assert len(ranked) == 8
 
@@ -154,4 +153,4 @@ def test_rank_candidates_uses_importance_confidence_then_original_order():
     first = candidate("保留第一项架构决定。", key="a", importance=7, confidence=0.8)
     second = candidate("保留第二项架构决定。", key="b", importance=8, confidence=0.6)
     third = candidate("保留第三项架构决定。", key="c", importance=7, confidence=0.8)
-    assert rank_candidates([first, second, third]) == [second, first, third]
+    assert policy.rank_candidates([first, second, third]) == [second, first, third]
