@@ -29,7 +29,13 @@ def _result(status, *, persisted=0, reason="", rate_limited=False):
 
 def test_batch_advances_only_completed_or_skipped_sessions(monkeypatch):
     monkeypatch.setattr(stale, "log", lambda _message: None)
-    state = {}
+    state = {
+        "session_retry": {
+            "mtime": 5.0,
+            "via": "offline-fallback",
+            "status": "completed",
+        },
+    }
     hooks = FakeKimiHooks({
         "session_done": _result("completed", persisted=3),
         "session_short": _result("skipped", reason="conversation too short"),
@@ -58,7 +64,14 @@ def test_batch_advances_only_completed_or_skipped_sessions(monkeypatch):
             "via": "offline-fallback",
             "status": "skipped",
         },
+        "session_retry": {
+            "mtime": 5.0,
+            "via": "offline-fallback",
+            "status": "completed",
+        },
     }
+    assert state["session_retry"]["mtime"] == 5.0
+    assert state["session_done"]["mtime"] == 30.0
 
 
 def test_rate_limit_stops_remaining_batch(monkeypatch):

@@ -337,14 +337,16 @@ def _extract_candidates(messages: list[dict[str, str]],
         return _keep_latest_summary(candidates)
 
 
-def _persist_candidates(config, store, vidx, engine, candidates, session_id: str) -> int:
+def _persist_candidates(
+        config, store, vidx, engine, candidates, session_id: str,
+) -> list[int]:
     """Persist extraction candidates: gate checks → conflict detection → write.
 
     The add branch (no same-key conflict) also checks for a semantically
     identical active memory: a hit supersedes the old record instead of
     coexisting as a fragmented duplicate. vidx/engine may be None (embedding
-    unavailable) — semantic merge and vector sync are then skipped.
-    Returns the number of memories persisted.
+    unavailable) — semantic merge is then skipped. Returns the IDs written to
+    SQLite; vector synchronization is deliberately handled after commit.
     """
     from evolvmem.auto_extractor import AutoExtractor
     from evolvmem.conflict_detector import ConflictDetector
@@ -367,7 +369,8 @@ def _persist_candidates(config, store, vidx, engine, candidates, session_id: str
             continue
         if decision.action == "replace":
             new_id = store.replace(key=c.key, new_value=value,
-                                   importance=c.importance, tier=c.tier)
+                                   importance=c.importance, tier=c.tier,
+                                   source_session=session_id)
         else:
             # 同 key 无冲突或 conflict → 再做跨 key 语义合并
             # （tier == "reference" 的候选不参与合并：永不 supersede 别人，
@@ -382,27 +385,36 @@ def _persist_candidates(config, store, vidx, engine, candidates, session_id: str
                     merged_tier = "pinned" if match.get("tier") == "pinned" else c.tier
                     added_ids.append(store.replace(
                         key=match["key"], new_value=value,
-                        importance=c.importance, tier=merged_tier))
+                        importance=c.importance, tier=merged_tier,
+                        source_session=session_id))
                     continue
             new_id = store.add(key=c.key, value=value, attribute=c.attribute,
                                tags=c.tags, importance=c.importance, tier=c.tier,
                                source_session=session_id)
         added_ids.append(new_id)
-    # 向量索引同步（失败不阻塞，MCP 启动时一致性校验会兜底）
-    if added_ids and vidx is not None and engine is not None \
-            and getattr(engine, "is_loaded", False):
-        try:
-            import numpy as np
-            for mid in added_ids:
-                rec = store.get_by_id(mid)
-                if rec:
-                    vidx.add(mid, np.array(
-                        engine.encode_document(rec["value"]),
-                        dtype=np.float32))
-            vidx.save()
-        except Exception as e:
-            _log(f"vector sync skipped: {e}")
-    return len(added_ids)
+    return added_ids
+
+
+def _sync_candidate_vectors(store, vidx, engine,
+                            memory_ids: list[int]) -> None:
+    """Best-effort vector sync for an already committed SQLite batch."""
+    if not memory_ids or vidx is None or engine is None:
+        return
+    if not getattr(engine, "is_loaded", False):
+        return
+    try:
+        import numpy as np
+        for memory_id in memory_ids:
+            record = store.get_by_id(memory_id)
+            if record:
+                embedding = engine.encode_document(record["value"])
+                vidx.add(
+                    memory_id,
+                    np.array(embedding, dtype=np.float32),
+                )
+        vidx.save()
+    except Exception as error:
+        _log(f"vector sync skipped: {type(error).__name__}")
 
 
 def session_end(payload: dict) -> ExtractionResult:
@@ -496,7 +508,7 @@ def session_end(payload: dict) -> ExtractionResult:
     if "日志" not in summary.tags:
         summary.tags = [*summary.tags, "日志"]
 
-    # embedding/向量索引先就绪：persist 循环内要做跨 key 语义合并和向量同步；
+    # embedding/向量索引先就绪：事务内只读索引做跨 key 语义合并；
     # 加载失败则传 None，退化为纯 SQLite 写入（不阻塞持久化）
     engine = None
     vidx = None
@@ -515,14 +527,18 @@ def session_end(payload: dict) -> ExtractionResult:
 
     try:
         with MemoryStore(config) as store:
-            n = 0
-            n += _persist_candidates(config, store, vidx, engine,
-                                     [summary], session_id)
-            n += _persist_candidates(config, store, vidx, engine,
-                                     selected, session_id)
-    except Exception as e:
-        _log(f"persistence failed: {e}")
-        return ExtractionResult("retry", reason=f"persistence failed: {e}")
+            with store.transaction():
+                memory_ids = _persist_candidates(
+                    config, store, vidx, engine, [summary], session_id,
+                )
+                memory_ids.extend(_persist_candidates(
+                    config, store, vidx, engine, selected, session_id,
+                ))
+            _sync_candidate_vectors(store, vidx, engine, memory_ids)
+            n = len(memory_ids)
+    except Exception as error:
+        _log(f"persistence failed: {type(error).__name__}")
+        return ExtractionResult("retry", reason="persistence failed")
     finally:
         if vidx is not None:
             vidx.close()

@@ -3,6 +3,7 @@
 import hashlib
 import pytest
 import numpy as np
+import evolvmem.kimi_hooks as hooks
 from evolvmem.config import Config
 from evolvmem.memory_store import MemoryStore
 from evolvmem.vector_index import VectorIndex
@@ -56,6 +57,21 @@ class FakeEmbeddingEngine:
 
     def encode_document(self, text):
         return self.encode(text)
+
+
+class FailingVectorIndex:
+    def add(self, memory_id, embedding):
+        raise RuntimeError("synthetic vector failure")
+
+    def save(self):
+        raise AssertionError("save must not run after add failure")
+
+
+class LoadedFakeEngine:
+    is_loaded = True
+
+    def encode_document(self, value):
+        return [0.0, 1.0]
 
 
 class TestIntegration:
@@ -153,6 +169,25 @@ class TestIntegration:
         # 清理
         store.close()
         vidx.close()
+
+    def test_vector_failure_after_commit_keeps_sqlite_records(
+            self, monkeypatch, test_config):
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+        with MemoryStore(test_config) as store:
+            memory_id = store.add(
+                "project:x:decision:api",
+                "采用统一接口，因为它减少重复实现。",
+            )
+            hooks._sync_candidate_vectors(
+                store,
+                FailingVectorIndex(),
+                LoadedFakeEngine(),
+                [memory_id],
+            )
+            assert store.get_by_id(memory_id)["status"] == "active"
+        assert logs == ["vector sync skipped: RuntimeError"]
+        assert "统一接口" not in "\n".join(logs)
 
     def test_memory_add_with_importance_tier(self, server):
         result = server.handle_tool_call("memory_add", {

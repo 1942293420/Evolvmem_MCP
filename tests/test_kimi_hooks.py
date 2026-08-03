@@ -1,6 +1,7 @@
 """kimi_hooks module tests (external LLM/IO is replaced at the boundary)."""
 
 import json
+import sqlite3
 from email.message import Message
 from io import BytesIO
 from urllib.error import HTTPError
@@ -446,6 +447,49 @@ class TestSessionEndOutcome:
         with MemoryStore(test_config) as store:
             assert store.count_active() == 0
 
+    def test_session_end_rolls_back_summary_and_atomics_on_third_write_failure(
+            self, monkeypatch, tmp_path, test_config):
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+            CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次确认了三项长期架构规则。",
+                tags=["日志"],
+            ),
+            CandidateMemory(
+                key="project:x:decision:first",
+                value="采用第一项长期架构决定。",
+            ),
+            CandidateMemory(
+                key="project:x:decision:second",
+                value="采用第二项长期架构决定。",
+            ),
+            CandidateMemory(
+                key="project:x:constraint:third",
+                value="必须遵守第三项长期安全约束。",
+            ),
+        ])
+        real_add = MemoryStore.add
+        calls = 0
+
+        def fail_on_third(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise sqlite3.OperationalError(
+                    "synthetic third write failure"
+                )
+            return real_add(self, *args, **kwargs)
+
+        monkeypatch.setattr(MemoryStore, "add", fail_on_third)
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "retry"
+        with MemoryStore(test_config) as store:
+            assert store.count_active() == 0
+
     def test_session_end_redacts_before_llm_without_mutating_wire(
             self, monkeypatch, tmp_path, test_config):
         secret = "Synthetic-Pass-For-Redaction-123!"
@@ -738,13 +782,68 @@ class TestSessionEndOutcome:
         ]
 
         with MemoryStore(test_config) as store:
-            persisted = hooks._persist_candidates(
+            memory_ids = hooks._persist_candidates(
                 test_config, store, None, None, candidates, "synthetic",
             )
             records = store.get_active()
 
-        assert persisted == 9
+        assert memory_ids == list(range(1, 10))
         assert len(records) == 9
+
+    def test_persist_candidates_preserves_source_session_on_replace_paths(
+            self, monkeypatch, test_config):
+        from evolvmem import semantic_merge
+
+        same_key = "project:test:decision:api"
+        semantic_key = "project:test:decision:storage"
+        with MemoryStore(test_config) as store:
+            old_same_key_id = store.add(
+                same_key,
+                "采用旧接口。",
+                source_session="old-session",
+            )
+            old_semantic_id = store.add(
+                semantic_key,
+                "采用旧存储方案。",
+                source_session="old-session",
+            )
+            monkeypatch.setattr(
+                semantic_merge,
+                "find_semantic_match",
+                lambda *_args, **_kwargs: store.get_by_id(old_semantic_id),
+            )
+
+            same_key_ids = hooks._persist_candidates(
+                test_config,
+                store,
+                None,
+                None,
+                [CandidateMemory(
+                    key=same_key,
+                    value="采用统一接口，因为它能够长期减少重复实现。",
+                )],
+                "replacement-session",
+            )
+            semantic_ids = hooks._persist_candidates(
+                test_config,
+                store,
+                object(),
+                type("LoadedEngine", (), {"is_loaded": True})(),
+                [CandidateMemory(
+                    key="project:test:fact:storage-alias",
+                    value="采用统一存储方案，因为它能够长期减少维护成本。",
+                )],
+                "semantic-session",
+            )
+
+            assert store.get_by_id(old_same_key_id)["status"] == "superseded"
+            assert store.get_by_id(same_key_ids[0])["source_session"] == (
+                "replacement-session"
+            )
+            assert store.get_by_id(old_semantic_id)["status"] == "superseded"
+            assert store.get_by_id(semantic_ids[0])["source_session"] == (
+                "semantic-session"
+            )
 
     def test_completed_extraction_returns_count_and_persists(
             self, monkeypatch, tmp_path, test_config):
