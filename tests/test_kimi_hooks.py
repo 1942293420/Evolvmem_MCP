@@ -490,6 +490,89 @@ class TestSessionEndOutcome:
         with MemoryStore(test_config) as store:
             assert store.count_active() == 0
 
+    def test_session_end_syncs_vectors_after_commit_and_keeps_completed_on_failure(
+            self, monkeypatch, tmp_path, test_config):
+        from evolvmem import embedding, vector_index
+
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks,
+            "_call_llm",
+            lambda *_: json.dumps({"memories": [
+                {
+                    "key": "SESSION_SUMMARY",
+                    "value": "本次确认了长期统一接口方案。",
+                    "tags": ["日志"],
+                },
+                {
+                    "key": "project:x:decision:api",
+                    "value": "采用统一接口，因为它能够长期减少重复实现。",
+                    "attribute": "decision",
+                },
+            ]}, ensure_ascii=False),
+        )
+        committed_batches = []
+
+        class LoadedEngine:
+            is_loaded = True
+
+            def __init__(self, config):
+                self.config = config
+
+            def initialize(self):
+                pass
+
+            def encode_document(self, value):
+                return [0.0, 1.0]
+
+            def close(self):
+                pass
+
+        class FailingIndex:
+            def __init__(self, config):
+                self.config = config
+
+            def initialize(self, dim):
+                pass
+
+            def add(self, memory_id, embedding_value):
+                connection = sqlite3.connect(str(self.config.db_path))
+                try:
+                    active_count = connection.execute(
+                        "SELECT COUNT(*) FROM memories WHERE status='active'"
+                    ).fetchone()[0]
+                    row = connection.execute(
+                        "SELECT status FROM memories WHERE id=?",
+                        (memory_id,),
+                    ).fetchone()
+                finally:
+                    connection.close()
+                committed_batches.append((active_count, row[0] if row else None))
+                raise RuntimeError("synthetic vector failure")
+
+            def save(self):
+                raise AssertionError("save must not run after add failure")
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(embedding, "EmbeddingEngine", LoadedEngine)
+        monkeypatch.setattr(vector_index, "VectorIndex", FailingIndex)
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2
+        assert committed_batches == [(2, "active")]
+        with MemoryStore(test_config) as store:
+            records = store.get_active()
+        assert len(records) == 2
+        assert all(record["status"] == "active" for record in records)
+        assert "vector sync skipped: RuntimeError" in logs
+
     def test_session_end_redacts_before_llm_without_mutating_wire(
             self, monkeypatch, tmp_path, test_config):
         secret = "Synthetic-Pass-For-Redaction-123!"
