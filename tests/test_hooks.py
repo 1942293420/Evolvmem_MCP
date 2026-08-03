@@ -234,7 +234,7 @@ class TestStopHook:
         prompt = get_stop_prompt("user: We decided to use Redis for caching\nassistant: OK, noted")
 
         assert "Redis" in prompt
-        assert "Retention" in prompt or "extract" in prompt
+        assert "保留规则" in prompt
 
 
 class TestProjectDigestLayer:
