@@ -445,23 +445,29 @@ def session_end(payload: dict) -> ExtractionResult:
     except ContextOverflowError as e:
         _log(f"fallback extraction still exceeded context: {e}")
         return ExtractionResult("retry", reason=str(e))
-    except Exception as e:
-        _log(f"extraction failed: {e}")
-        return ExtractionResult("retry", reason=f"extraction failed: {e}")
+    except Exception as error:
+        _log(f"extraction failed: {type(error).__name__}")
+        return ExtractionResult("retry", reason="extraction failed")
 
     # 会话摘要单独拆出：key 规范为 project:{项目}:progress:log:{日期-时分}，
     # 持久化时单独放行，不占 _MAX_MEMORIES_PER_SESSION 配额
-    summary, candidates = _split_summary_candidate(candidates)
-    if summary is None:
-        _log("extraction deferred: SESSION_SUMMARY missing after parsing")
-        return ExtractionResult("retry", reason="SESSION_SUMMARY missing")
     try:
+        summary, candidates = _split_summary_candidate(candidates)
+        if summary is None:
+            _log("extraction deferred: SESSION_SUMMARY missing after parsing")
+            return ExtractionResult("retry", reason="SESSION_SUMMARY missing")
         summary_value, summary_redactions = sanitize_summary(summary.value)
         redacted_count += summary_redactions
         if summary_value is None:
             _log("extraction deferred: unsafe or non-Chinese SESSION_SUMMARY")
             return ExtractionResult("retry", reason="invalid SESSION_SUMMARY")
         summary.value = summary_value
+        if not isinstance(summary.tags, list):
+            summary.tags = []
+        else:
+            summary.tags = [
+                tag for tag in summary.tags if isinstance(tag, str)
+            ]
 
         rejections: Counter[str] = Counter()
         accepted = []

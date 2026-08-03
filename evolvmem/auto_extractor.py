@@ -105,7 +105,8 @@ class AutoExtractor:
                 continue
             key = item.get("key", "")
             value = item.get("value", "")
-            if not key or not value:
+            if (not isinstance(key, str) or not isinstance(value, str)
+                    or not key or not value):
                 continue
             try:
                 importance = float(item.get("importance", 5.0))
@@ -117,12 +118,21 @@ class AutoExtractor:
             tier = item.get("tier", "normal")
             if tier not in ("pinned", "normal", "reference"):
                 tier = "normal"
+            tags = item.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
+            else:
+                tags = [tag for tag in tags if isinstance(tag, str)]
+            try:
+                confidence = float(item.get("confidence", 0.5))
+            except (TypeError, ValueError):
+                raise ValueError("invalid candidate confidence") from None
             candidates.append(CandidateMemory(
                 key=key,
                 value=value,
                 attribute=item.get("attribute", "fact"),
-                tags=item.get("tags", []),
-                confidence=float(item.get("confidence", 0.5)),
+                tags=tags,
+                confidence=confidence,
                 importance=importance,
                 tier=tier,
             ))

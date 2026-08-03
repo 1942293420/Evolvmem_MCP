@@ -1,5 +1,7 @@
 """AutoExtractor tests."""
 
+import json
+
 import pytest
 from evolvmem.auto_extractor import AutoExtractor, CandidateMemory
 
@@ -115,6 +117,51 @@ class TestAutoExtractor:
         candidates = extractor.parse_response(response)
         assert candidates[0].importance == 5.0
         assert candidates[0].tier == "normal"
+
+    @pytest.mark.parametrize("tags", [None, "日志", {"kind": "日志"}])
+    def test_parse_non_list_tags_normalizes_to_empty(self, tags):
+        extractor = AutoExtractor()
+        response = json.dumps({"memories": [{
+            "key": "SESSION_SUMMARY",
+            "value": "本次确认了长期架构约束。",
+            "tags": tags,
+        }]}, ensure_ascii=False)
+
+        candidates = extractor.parse_response(response)
+
+        assert len(candidates) == 1
+        assert candidates[0].tags == []
+
+    def test_parse_invalid_confidence_error_does_not_echo_provider_value(self):
+        extractor = AutoExtractor()
+        secret = "Synthetic-Pass-In-Confidence-123!"
+        response = json.dumps({"memories": [{
+            "key": "SESSION_SUMMARY",
+            "value": "本次确认了长期架构约束。",
+            "confidence": secret,
+        }]}, ensure_ascii=False)
+
+        with pytest.raises(ValueError) as exc_info:
+            extractor.parse_response(response)
+
+        assert secret not in str(exc_info.value)
+
+    def test_parse_skips_non_string_key_or_value(self):
+        extractor = AutoExtractor()
+        response = json.dumps({"memories": [
+            {
+                "key": {"topic": "malformed"},
+                "value": "这是键格式错误的候选。",
+            },
+            {
+                "key": "project:test:fact:malformed",
+                "value": {"text": "这是值格式错误的候选。"},
+            },
+        ]}, ensure_ascii=False)
+
+        candidates = extractor.parse_response(response)
+
+        assert candidates == []
 
     def test_parse_nan_importance_falls_back_to_default(self):
         """json.loads 接受 NaN 字面量；min(10.0, nan) 会返回 10.0，必须回退默认 5.0。"""

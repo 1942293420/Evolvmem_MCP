@@ -508,6 +508,79 @@ class TestSessionEndOutcome:
         assert "ValueError" in "\n".join(logs)
         assert secret not in "\n".join(logs)
 
+    def test_session_end_malformed_confidence_returns_safe_retry(
+            self, monkeypatch, tmp_path, test_config):
+        secret = "Synthetic-Pass-In-Provider-Confidence-123!"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks,
+            "_call_llm",
+            lambda *_: json.dumps({"memories": [{
+                "key": "SESSION_SUMMARY",
+                "value": "本次确认了长期架构约束并完成安全检查。",
+                "confidence": secret,
+            }]}, ensure_ascii=False),
+        )
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "retry"
+        assert result.reason == "extraction failed"
+        assert "ValueError" in "\n".join(logs)
+        assert secret not in result.reason
+        assert secret not in "\n".join(logs)
+
+    @pytest.mark.parametrize("tags", [None, "日志", {"kind": "日志"}])
+    def test_session_end_normalizes_non_list_summary_tags(
+            self, monkeypatch, tmp_path, test_config, tags):
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+            CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次确认了长期架构约束并完成安全检查。",
+                tags=tags,
+            ),
+        ])
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "completed"
+        assert result.persisted == 1
+        with MemoryStore(test_config) as store:
+            records = store.get_active()
+        assert len(records) == 1
+        assert records[0]["tags"] == "日志"
+
+    def test_session_end_malformed_key_returns_safe_retry(
+            self, monkeypatch, tmp_path, test_config):
+        secret = "Synthetic-Pass-In-Malformed-Key-123!"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+            CandidateMemory(
+                key={"secret": secret},
+                value="这是格式错误但不应逃逸的长期候选。",
+            ),
+            CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次确认了长期架构约束并完成安全检查。",
+            ),
+        ])
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "retry"
+        assert result.reason == "candidate policy failed"
+        assert "AttributeError" in "\n".join(logs)
+        assert secret not in result.reason
+        assert secret not in "\n".join(logs)
+
     @pytest.mark.parametrize("summary_value", [
         "English-only session summary",
         "password: Synthetic-Pass-Only-123!",
