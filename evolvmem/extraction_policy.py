@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from evolvmem.auto_extractor import CandidateMemory
 
@@ -70,6 +71,23 @@ _SENSITIVE_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ),
 )
 
+_EPHEMERAL_PATTERNS = (
+    re.compile(r"(?:等待|稍后|之后).{0,12}(?:用户|输入|确认)"),
+    re.compile(r"(?:临时|暂时|一次性).{0,12}(?:密码|设置|测试|任务)"),
+    re.compile(r"(?:本次|此次|刚刚)?.{0,12}(?:测试|用例).{0,12}(?:通过|成功|完成|\d+\s*个)"),
+    re.compile(r"(?:本次|此次|刚刚)?.{0,12}(?:部署|发布|上线).{0,8}(?:通过|成功|完成|结束)"),
+    re.compile(r"(?:commit|提交)\s*[0-9a-f]{7,40}", re.IGNORECASE),
+)
+_DURABLE_CONTEXT_RE = re.compile(
+    r"长期|持续|永久|约束|规则|决定|原因|因为|防止|禁止|必须"
+)
+
+
+@dataclass(frozen=True)
+class PolicyDecision:
+    accepted: bool
+    reason: str = ""
+
 
 def contains_cjk(text: str) -> bool:
     """Return whether *text* includes a CJK ideograph."""
@@ -79,6 +97,49 @@ def contains_cjk(text: str) -> bool:
 def contains_sensitive_text(text: str) -> bool:
     """Return whether *text* contains a value that should be redacted."""
     return any(pattern.search(text) for _, pattern, _ in _SENSITIVE_RULES)
+
+
+def evaluate_candidate(candidate: CandidateMemory) -> PolicyDecision:
+    """Apply safety, language, and durability gates to one candidate."""
+    value = candidate.value.strip()
+    if contains_sensitive_text(value):
+        return PolicyDecision(False, "sensitive")
+    if not contains_cjk(value):
+        return PolicyDecision(False, "language")
+    is_ephemeral = any(pattern.search(value) for pattern in _EPHEMERAL_PATTERNS)
+    if is_ephemeral and not _DURABLE_CONTEXT_RE.search(value):
+        return PolicyDecision(False, "ephemeral")
+    return PolicyDecision(True)
+
+
+def _quality_tuple(
+    candidate: CandidateMemory, original_index: int
+) -> tuple[bool, float, float, int]:
+    return (
+        candidate.tier == "pinned",
+        candidate.importance,
+        candidate.confidence,
+        -original_index,
+    )
+
+
+def rank_candidates(
+    candidates: list[CandidateMemory], limit: int = 8
+) -> list[CandidateMemory]:
+    """Deduplicate candidates by key, rank by quality, and apply *limit*."""
+    best_by_key: dict[str, tuple[CandidateMemory, int]] = {}
+    for index, candidate in enumerate(candidates):
+        normalized_key = candidate.key.strip().casefold()
+        current = best_by_key.get(normalized_key)
+        if current is None or _quality_tuple(candidate, index) > _quality_tuple(*current):
+            best_by_key[normalized_key] = (candidate, index)
+
+    ranked = sorted(
+        best_by_key.values(),
+        key=lambda item: _quality_tuple(*item),
+        reverse=True,
+    )
+    return [candidate for candidate, _ in ranked[:limit]]
 
 
 def _redact_text(value: str) -> tuple[str, int]:
