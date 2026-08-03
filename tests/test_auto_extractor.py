@@ -29,6 +29,17 @@ class TestAutoExtractor:
         assert candidates[0].key == "project:db:decision:engine"
         assert candidates[0].value == "Use PostgreSQL as primary database"
 
+    def test_parse_memories_object_protocol(self):
+        extractor = AutoExtractor()
+        response = """```json
+{"memories": [{"key": "project:db:decision:engine", "value": "Use PostgreSQL as primary database", "attribute": "decision", "confidence": 0.95}]}
+```"""
+
+        candidates = extractor.parse_response(response)
+
+        assert len(candidates) == 1
+        assert candidates[0].key == "project:db:decision:engine"
+
     def test_should_persist_decision(self):
         extractor = AutoExtractor()
         c = CandidateMemory(
@@ -114,3 +125,15 @@ class TestAutoExtractor:
         extractor = AutoExtractor()
         prompt = extractor.build_extraction_prompt([{"role": "user", "content": "hi"}])
         assert "SESSION_SUMMARY" in prompt
+        assert "Even when no atomic memory" in prompt
+        assert '{"memories": []}' not in prompt
+
+    def test_extraction_prompt_requests_memories_object_protocol(self):
+        extractor = AutoExtractor()
+
+        prompt = extractor.build_extraction_prompt(
+            [{"role": "user", "content": "hi"}]
+        )
+
+        assert "JSON object" in prompt
+        assert '"memories"' in prompt

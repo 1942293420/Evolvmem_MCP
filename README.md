@@ -8,6 +8,8 @@ A fully-local, three-layer memory plugin for Claude Code with Chinese language s
 - **L1 Full History**: SQLite + FTS5/trigram exact search, supports Chinese substring matching
 - **L2 Semantic Index**: USearch HNSW vector search for finding related memories expressed differently
 - **Self-Iteration**: Auto-extraction, conflict detection, access-decay forgetting
+- **Reliable Session Extraction**: Kimi SessionEnd extraction sends the complete conversation first, falls back to message-boundary chunks only after an explicit context-window error, and keeps transient failures pending for retry
+- **Crash Recovery**: An optional stale-session worker reprocesses idle `wire.jsonl` sessions that never reached SessionEnd; completed/skipped sessions advance state, while timeouts, rate limits, and malformed responses do not
 - **Consolidation**: `memory_consolidate` finds and merges near-duplicate memories via vector similarity (dry-run by default)
 - **Semantic Merge**: Write-time semantic merge — new values automatically supersede near-identical memories instead of duplicating them (`add_merge_threshold`) — plus weekly auto-consolidation at SessionStart (`consolidate_auto_run_hours`)
 - **Expiry**: Memories can carry an `expires_at` date; expired memories stop being injected/searched and are archived automatically
@@ -62,6 +64,29 @@ Optional: add a SessionStart hook for automatic active memory injection:
   }
 }
 ```
+
+### Kimi Code automatic extraction
+
+`evolvmem.kimi_hooks session-end` reads the session's complete `wire.jsonl` conversation and sends it to the configured extraction provider. DeepSeek V4 Flash in non-thinking mode is the default. Provider credentials live outside the repository at `~/.claude/evolvmem/llm_credentials.json`:
+
+```json
+{
+  "provider": "deepseek",
+  "api_key": "your-key-here",
+  "base_url": "https://api.deepseek.com/chat/completions",
+  "model": "deepseek-v4-flash"
+}
+```
+
+The extractor requests a top-level JSON object shaped as `{"memories": [...]}`. The parser also accepts the legacy top-level array for compatibility. It does not pre-split ordinary long conversations. Only an explicit model context-window error triggers fallback chunks, which preserve user/assistant message boundaries. HTTP 429, transient 5xx responses, network timeouts, authentication failures, and responses without the required session summary are reported as retryable instead of being treated as successful extraction.
+
+For sessions that terminate without firing SessionEnd, run the offline worker periodically:
+
+```cron
+23 * * * * /usr/bin/flock -n ~/.claude/evolvmem/.extract_stale.lock env PYTHONPATH=/path/to/evolvmem-plugin /path/to/evolvmem-plugin/.venv/bin/python /path/to/evolvmem-plugin/scripts/extract_stale_sessions.py >> ~/.claude/evolvmem/extract_stale.log 2>&1
+```
+
+The worker scans sessions idle for at least 30 minutes and processes at most three per run. Its state file is `~/.claude/evolvmem/.extracted_sessions.json`. A session version is recorded only after a `completed` or intentional `skipped` result; retryable failures remain pending, and exhausted rate limiting stops the rest of that run.
 
 ## Tools
 

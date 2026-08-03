@@ -22,9 +22,8 @@ class CandidateMemory:
 class AutoExtractor:
     """Automatic memory extractor.
 
-    Orchestrates Claude through prompts to review conversations and produce candidate memories.
-    Actual inference is done by Claude within Claude Code's Stop Hook;
-    this module is responsible for building prompts and parsing responses.
+    Prompts the configured provider to review conversations and produce
+    candidate memories; this module builds the prompt and parses responses.
     """
 
     EXTRACTION_PROMPT = """You are a memory management assistant. Review the following conversation and extract information worth persisting.
@@ -52,7 +51,8 @@ Examples:
 - `project:evolvmem:arch:embedding_model` — architecture choice
 
 ## Output Format
-Return a JSON array, each entry containing:
+Return a JSON object with exactly one top-level field named "memories".
+The value of "memories" must be an array whose entries contain:
 - key: stable identifier
 - value: memory content — MUST be a single sentence, at most 200 characters. Longer content must be split or condensed.
 - attribute: decision | preference | fact | constraint | user_profile
@@ -61,19 +61,19 @@ Return a JSON array, each entry containing:
 - importance: integer 1-10. Guide: 9-10 = hard constraints / make-or-break decisions; 7-8 = important architecture or business decisions; 5-6 = ordinary preferences and facts; 3-4 = marginal reference material
 - tier: "pinned" if this memory must be visible in EVERY session (constraints, durable user preferences, user profile); "reference" if it is a long reference document that should only be fetched via memory_search when relevant (never injected); otherwise "normal"
 
-If nothing is worth persisting, return an empty array `[]`.
-
 ## Session Summary Entry
 In addition to the atomic entries above, always include exactly ONE extra entry summarizing the session as a whole — which project it concerned, what was done, and where things stand:
 - key: the literal string `SESSION_SUMMARY` (the caller rewrites it)
 - value: at most 200 characters, narrative style
 - attribute: "fact"; importance: 5-6; tier: "normal"; tags: ["日志", "分类:<project>"]
 
+Even when no atomic memory is worth persisting, return a "memories" array containing the SESSION_SUMMARY entry; never return an empty array.
+
 ## Conversation
 {conversation}
 
 ## Output
-Only return the JSON array, no other content:"""
+Only return the JSON object, no other content:"""
 
     def build_extraction_prompt(self,
                                 messages: list[dict[str, str]]) -> str:
@@ -85,10 +85,10 @@ Only return the JSON array, no other content:"""
         return self.EXTRACTION_PROMPT.format(conversation=conversation)
 
     def parse_response(self, response_text: str) -> list[CandidateMemory]:
-        """Parse the JSON returned by Claude, extract the candidate memory list."""
+        """Parse provider JSON and extract the candidate memory list."""
         # Extract JSON block
         json_match = re.search(
-            r'```(?:json)?\s*(\[.*?\])\s*```',
+            r'```(?:json)?\s*([\[{].*[\]}])\s*```',
             response_text, re.DOTALL,
         )
         if json_match:
@@ -98,7 +98,11 @@ Only return the JSON array, no other content:"""
             json_str = response_text.strip()
 
         try:
-            items = json.loads(json_str)
+            payload = json.loads(json_str)
+            if isinstance(payload, dict):
+                items = payload.get("memories", [])
+            else:
+                items = payload
             if not isinstance(items, list):
                 return []
         except json.JSONDecodeError:

@@ -13,20 +13,63 @@ import glob
 import json
 import os
 import re
+import socket
 import sys
 import time
 import urllib.request
+from dataclasses import dataclass
+from urllib.error import HTTPError, URLError
 from pathlib import Path
 
 _KIMI_API = "https://api.kimi.com/coding/v1/chat/completions"
-_CRED_PATH = Path.home() / ".kimi-code" / "credentials" / "kimi-code.json"
 _SESSIONS_DIR = Path.home() / ".kimi-code" / "sessions"
 _MODEL = "kimi-for-coding"
-_MAX_CONVERSATION_CHARS = 12000
+_LLM_CONFIG_PATH = (Path.home() / ".claude" / "evolvmem"
+                    / "llm_credentials.json")
+_PROVIDER_DEFAULTS = {
+    "deepseek": (
+        "https://api.deepseek.com/chat/completions",
+        "deepseek-v4-flash",
+    ),
+    "kimi": (_KIMI_API, _MODEL),
+}
+_FALLBACK_CHUNK_CHARS = 120000
+_EXTRACTION_BUDGET_S = 240
 _MAX_MEMORIES_PER_SESSION = 8
-_TOKEN_GRACE_S = 60
 _SESSION_SUMMARY_KEY = "SESSION_SUMMARY"
 _WD_DIR_RE = re.compile(r"^wd_(.+)_[0-9a-f]{8,}$")
+
+
+class ContextOverflowError(RuntimeError):
+    """The extraction request exceeded the model context window."""
+
+
+class RetryableExtractionError(RuntimeError):
+    """Extraction did not complete and must remain pending for a later run."""
+
+    def __init__(self, message: str, *, rate_limited: bool = False):
+        super().__init__(message)
+        self.rate_limited = rate_limited
+
+
+@dataclass(frozen=True)
+class ExtractionResult:
+    """Outcome consumed by both the live hook and stale-session worker."""
+
+    status: str
+    persisted: int = 0
+    reason: str = ""
+    rate_limited: bool = False
+
+
+@dataclass(frozen=True)
+class LLMConfig:
+    """Credentials and endpoint for the session extraction provider."""
+
+    provider: str
+    api_key: str
+    base_url: str
+    model: str
 
 
 def _log(msg: str) -> None:
@@ -43,16 +86,26 @@ def session_start() -> None:
 
 # ---- session-end ----
 
-def _load_token() -> str | None:
+def _load_llm_config() -> LLMConfig | None:
     try:
-        data = json.loads(_CRED_PATH.read_text(encoding="utf-8"))
-        expires_at = data.get("expires_at") or 0
-        if time.time() > expires_at - _TOKEN_GRACE_S:
-            _log("access token expired or expiring soon, skip extraction")
+        data = json.loads(_LLM_CONFIG_PATH.read_text(encoding="utf-8"))
+        provider = str(data.get("provider", "deepseek")).strip().casefold()
+        if provider not in _PROVIDER_DEFAULTS:
+            _log(f"unsupported extraction provider: {provider!r}")
             return None
-        return data.get("access_token")
+        api_key = str(data.get("api_key", "")).strip()
+        if not api_key:
+            _log(f"{_LLM_CONFIG_PATH} has no api_key, skip extraction")
+            return None
+        default_url, default_model = _PROVIDER_DEFAULTS[provider]
+        return LLMConfig(
+            provider=provider,
+            api_key=api_key,
+            base_url=str(data.get("base_url") or default_url).strip(),
+            model=str(data.get("model") or default_model).strip(),
+        )
     except Exception as e:
-        _log(f"credential read failed: {e}")
+        _log(f"LLM credential read failed: {e}")
         return None
 
 
@@ -95,8 +148,8 @@ def _split_summary_candidate(candidates: list) -> tuple:
     return None, candidates
 
 
-def _read_conversation(wire_path: str) -> str:
-    texts: list[str] = []
+def _read_messages(wire_path: str) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
     with open(wire_path, encoding="utf-8") as fh:
         for line in fh:
             try:
@@ -106,28 +159,174 @@ def _read_conversation(wire_path: str) -> str:
             if ev.get("type") == "turn.prompt":
                 for part in ev.get("input", []):
                     if isinstance(part, dict) and part.get("type") == "text":
-                        texts.append(f"[user]: {part['text']}")
+                        messages.append({
+                            "role": "user", "content": part["text"],
+                        })
             elif ev.get("type") == "context.append_loop_event":
                 e = ev.get("event", {})
                 part = e.get("part", {}) if isinstance(e, dict) else {}
                 if e.get("type") == "content.part" and part.get("type") == "text":
-                    texts.append(f"[assistant]: {part['text']}")
-    return "\n".join(texts)[-_MAX_CONVERSATION_CHARS:]
+                    messages.append({
+                        "role": "assistant", "content": part["text"],
+                    })
+    return messages
 
 
-def _call_llm(prompt: str, token: str) -> str:
-    body = json.dumps({
-        "model": _MODEL,
+def _read_conversation(wire_path: str) -> str:
+    """Backward-compatible rendered conversation for diagnostics."""
+    return "\n".join(
+        f"[{message['role']}]: {message['content']}"
+        for message in _read_messages(wire_path)
+    )
+
+
+def _call_llm(prompt: str, llm_config: LLMConfig) -> str:
+    request_body = {
+        "model": llm_config.model,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 4096,
-    }).encode("utf-8")
+    }
+    if llm_config.provider == "deepseek":
+        request_body.update({
+            "temperature": 0.2,
+            "thinking": {"type": "disabled"},
+            "response_format": {"type": "json_object"},
+        })
+    body = json.dumps(request_body).encode("utf-8")
     req = urllib.request.Request(
-        _KIMI_API, data=body,
-        headers={"Authorization": f"Bearer {token}",
+        llm_config.base_url, data=body,
+        headers={"Authorization": f"Bearer {llm_config.api_key}",
                  "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return data["choices"][0]["message"]["content"]
+
+
+def _http_error_body(error: HTTPError) -> str:
+    try:
+        return error.read().decode("utf-8", errors="replace").casefold()
+    except Exception:
+        return ""
+
+
+def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
+                         deadline: float | None = None) -> str:
+    """Retry transient provider failures within one extraction budget."""
+    max_attempts = 3
+    if deadline is None:
+        deadline = time.monotonic() + _EXTRACTION_BUDGET_S
+    for attempt in range(max_attempts):
+        if time.monotonic() >= deadline:
+            raise RetryableExtractionError("extraction retry budget exhausted")
+        try:
+            return _call_llm(prompt, llm_config)
+        except HTTPError as error:
+            body = _http_error_body(error)
+            if error.code in (400, 422) and any(marker in body for marker in (
+                "context_length_exceeded", "maximum context length",
+                "context too long", "context window",
+            )):
+                raise ContextOverflowError(
+                    f"{llm_config.provider} context window exceeded"
+                ) from error
+            rate_limited = error.code == 429
+            if error.code not in (408, 429, 500, 502, 503, 504):
+                raise RetryableExtractionError(
+                    f"{llm_config.provider} HTTP {error.code}; "
+                    "retry after credentials/service recover",
+                    rate_limited=rate_limited,
+                ) from error
+            if attempt == max_attempts - 1:
+                raise RetryableExtractionError(
+                    f"{llm_config.provider} HTTP {error.code} retries exhausted",
+                    rate_limited=rate_limited,
+                ) from error
+            retry_after = error.headers.get("Retry-After") if error.headers else None
+            try:
+                delay = float(retry_after) if retry_after is not None else (2, 5)[attempt]
+            except ValueError:
+                delay = (2, 5)[attempt]
+        except (TimeoutError, socket.timeout, URLError) as error:
+            # A second blocking read timeout can already consume the hook's
+            # 240-second budget, so timeout-like failures get one retry only.
+            if attempt >= 1:
+                raise RetryableExtractionError(
+                    f"{llm_config.provider} network retries exhausted"
+                ) from error
+            delay = 2.0
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RetryableExtractionError("extraction retry budget exhausted")
+        time.sleep(max(0.0, min(delay, 30.0, remaining)))
+    raise AssertionError("unreachable")
+
+
+def _chunk_messages(messages: list[dict[str, str]],
+                    max_chars: int) -> list[list[dict[str, str]]]:
+    """Pack whole messages into fallback chunks without splitting content."""
+    chunks: list[list[dict[str, str]]] = []
+    current: list[dict[str, str]] = []
+    current_chars = 0
+    for message in messages:
+        message_chars = (len(message.get("role", ""))
+                         + len(message.get("content", "")) + 4)
+        if current and current_chars + message_chars > max_chars:
+            chunks.append(current)
+            current = []
+            current_chars = 0
+        current.append(message)
+        current_chars += message_chars
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _keep_latest_summary(candidates: list) -> list:
+    """Keep atomic candidates plus only the latest chunk's session summary."""
+    summaries = [
+        c for c in candidates
+        if c.key.strip().upper() == _SESSION_SUMMARY_KEY
+    ]
+    atomic = [
+        c for c in candidates
+        if c.key.strip().upper() != _SESSION_SUMMARY_KEY
+    ]
+    return atomic + summaries[-1:]
+
+
+def _extract_candidates(messages: list[dict[str, str]],
+                        llm_config: LLMConfig,
+                        fallback_chunk_chars: int = _FALLBACK_CHUNK_CHARS
+                        ) -> list:
+    """Extract the full conversation once; chunk only on context overflow."""
+    from evolvmem.auto_extractor import AutoExtractor
+
+    extractor = AutoExtractor()
+    deadline = time.monotonic() + _EXTRACTION_BUDGET_S
+
+    def extract(batch: list[dict[str, str]]) -> list:
+        prompt = extractor.build_extraction_prompt(batch)
+        candidates = extractor.parse_response(
+            _call_llm_with_retry(prompt, llm_config, deadline=deadline)
+        )
+        if not any(
+            c.key.strip().upper() == _SESSION_SUMMARY_KEY
+            for c in candidates
+        ):
+            raise RetryableExtractionError(
+                f"{llm_config.provider} extraction response omitted "
+                "SESSION_SUMMARY"
+            )
+        return candidates
+
+    try:
+        return _keep_latest_summary(extract(messages))
+    except ContextOverflowError:
+        candidates = []
+        for chunk in _chunk_messages(messages, fallback_chunk_chars):
+            candidates.extend(extract(chunk))
+        return _keep_latest_summary(candidates)
 
 
 def _persist_candidates(config, store, vidx, engine, candidates, session_id: str) -> int:
@@ -200,9 +399,8 @@ def _persist_candidates(config, store, vidx, engine, candidates, session_id: str
     return len(added_ids)
 
 
-def session_end(payload: dict) -> None:
+def session_end(payload: dict) -> ExtractionResult:
     """Distill the closed session into memories via the extractor + live gate."""
-    from evolvmem.auto_extractor import AutoExtractor
     from evolvmem.config import Config
     from evolvmem.memory_store import MemoryStore
 
@@ -210,35 +408,51 @@ def session_end(payload: dict) -> None:
     wire = _find_wire(session_id)
     if not wire:
         _log(f"wire.jsonl not found for {session_id}, skip")
-        return
-    conversation = _read_conversation(wire)
-    if len(conversation) < 200:
+        return ExtractionResult("retry", reason="wire.jsonl not found")
+    try:
+        messages = _read_messages(wire)
+    except Exception as e:
+        _log(f"conversation read failed: {e}")
+        return ExtractionResult("retry", reason=f"conversation read failed: {e}")
+    conversation_chars = sum(len(m.get("content", "")) for m in messages)
+    if conversation_chars < 200:
         _log("conversation too short, skip")
-        return
+        return ExtractionResult("skipped", reason="conversation too short")
 
-    token = _load_token()
-    if not token:
-        return
+    llm_config = _load_llm_config()
+    if not llm_config:
+        return ExtractionResult("retry", reason="LLM provider unavailable")
 
-    extractor = AutoExtractor()
-    prompt = extractor.build_extraction_prompt(
-        [{"role": "user", "content": conversation}])
-    raw = _call_llm(prompt, token)
-    candidates = extractor.parse_response(raw)
+    try:
+        candidates = _extract_candidates(messages, llm_config)
+    except RetryableExtractionError as e:
+        _log(f"extraction deferred: {e}")
+        return ExtractionResult(
+            "retry", reason=str(e), rate_limited=e.rate_limited
+        )
+    except ContextOverflowError as e:
+        _log(f"fallback extraction still exceeded context: {e}")
+        return ExtractionResult("retry", reason=str(e))
+    except Exception as e:
+        _log(f"extraction failed: {e}")
+        return ExtractionResult("retry", reason=f"extraction failed: {e}")
 
     config = Config.from_file()
     # 会话摘要单独拆出：key 规范为 project:{项目}:progress:log:{日期-时分}，
     # 持久化时单独放行，不占 _MAX_MEMORIES_PER_SESSION 配额
     summary, candidates = _split_summary_candidate(candidates)
-    if summary is not None:
-        project = _project_from_wire(wire, config.inject_project_aliases)
-        summary.key = (f"project:{project}:progress:log:"
-                       f"{time.strftime('%Y-%m-%d-%H%M')}")
-        if "日志" not in summary.tags:
-            summary.tags = [*summary.tags, "日志"]
-    if not candidates and summary is None:
-        _log("nothing worth persisting")
-        return
+    if summary is None:
+        _log("extraction deferred: SESSION_SUMMARY missing after parsing")
+        return ExtractionResult("retry", reason="SESSION_SUMMARY missing")
+    project = _project_from_wire(wire, config.inject_project_aliases)
+    try:
+        summary_time = os.path.getmtime(wire)
+    except OSError:
+        summary_time = time.time()
+    summary.key = (f"project:{project}:progress:log:"
+                   f"{time.strftime('%Y-%m-%d-%H%M', time.localtime(summary_time))}")
+    if "日志" not in summary.tags:
+        summary.tags = [*summary.tags, "日志"]
 
     # embedding/向量索引先就绪：persist 循环内要做跨 key 语义合并和向量同步；
     # 加载失败则传 None，退化为纯 SQLite 写入（不阻塞持久化）
@@ -257,18 +471,23 @@ def session_end(payload: dict) -> None:
         _log(f"embedding init failed, semantic merge/vector sync skipped: {e}")
         engine, vidx = None, None
 
-    with MemoryStore(config) as store:
-        n = 0
-        if summary is not None:
+    try:
+        with MemoryStore(config) as store:
+            n = 0
             n += _persist_candidates(config, store, vidx, engine,
                                      [summary], session_id)
-        n += _persist_candidates(config, store, vidx, engine,
-                                 candidates, session_id)
-    if vidx is not None:
-        vidx.close()
-    if engine is not None:
-        engine.close()
+            n += _persist_candidates(config, store, vidx, engine,
+                                     candidates, session_id)
+    except Exception as e:
+        _log(f"persistence failed: {e}")
+        return ExtractionResult("retry", reason=f"persistence failed: {e}")
+    finally:
+        if vidx is not None:
+            vidx.close()
+        if engine is not None:
+            engine.close()
     _log(f"session-end extraction: {n} memories persisted from {session_id}")
+    return ExtractionResult("completed", persisted=n)
 
 
 # ---- entry ----

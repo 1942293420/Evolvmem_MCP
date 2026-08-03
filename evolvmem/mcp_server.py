@@ -644,11 +644,18 @@ class MemoryMCPServer:
             params = request.get("params", {})
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
-            gate_error = self._init_gate_error()
-            if gate_error is not None:
-                result = {"error": gate_error}
-            else:
+            known_tools = {
+                "memory_search", "memory_status", "memory_add",
+                "memory_replace", "memory_remove", "memory_consolidate",
+            }
+            if tool_name not in known_tools:
                 result = self.handle_tool_call(tool_name, tool_args)
+            else:
+                gate_error = self._init_gate_error()
+                if gate_error is not None:
+                    result = {"error": gate_error}
+                else:
+                    result = self.handle_tool_call(tool_name, tool_args)
             response_result = {
                 "content": [
                     {

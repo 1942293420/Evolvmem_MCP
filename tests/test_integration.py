@@ -390,10 +390,17 @@ class TestIntegration:
         })
         assert resp["result"]["protocolVersion"] == "2025-03-26"
 
-    def test_mcp_tool_error_sets_is_error(self):
-        """工具调用返回 error 时应置 isError: true。"""
+    def test_unknown_mcp_tool_does_not_wait_for_initialization(self, monkeypatch):
+        """未知工具无需任何组件，必须立即返回而不是等待初始化门闩。"""
         from evolvmem.mcp_server import MemoryMCPServer
         server = MemoryMCPServer()
+        monkeypatch.setattr(
+            server,
+            "_init_gate_error",
+            lambda: (_ for _ in ()).throw(
+                AssertionError("unknown tool unexpectedly waited for initialization")
+            ),
+        )
         resp = server._handle_request({
             "method": "tools/call", "id": 2, "jsonrpc": "2.0",
             "params": {"name": "no_such_tool", "arguments": {}},
