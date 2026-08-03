@@ -446,6 +446,233 @@ class TestSessionEndOutcome:
         with MemoryStore(test_config) as store:
             assert store.count_active() == 0
 
+    def test_session_end_redacts_before_llm_without_mutating_wire(
+            self, monkeypatch, tmp_path, test_config):
+        secret = "Synthetic-Pass-For-Redaction-123!"
+        wire = self._wire_session(
+            monkeypatch,
+            tmp_path,
+            test_config,
+            text=f"请分析长期规则。password: {secret}。" + "甲" * 145,
+        )
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        original = wire.read_text(encoding="utf-8")
+        assert secret in original
+        seen = {}
+
+        def fake_extract(messages, llm_config):
+            seen["messages"] = messages
+            assert llm_config.provider == "deepseek"
+            assert secret not in repr(messages)
+            return [CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次确认了长期架构约束并完成安全检查。",
+                tags=["日志", "分类:test"],
+            )]
+
+        monkeypatch.setattr(hooks, "_extract_candidates", fake_extract)
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "completed"
+        assert wire.read_text(encoding="utf-8") == original
+        assert "[已脱敏:password]" in repr(seen["messages"])
+        assert sum(
+            len(message["content"]) for message in seen["messages"]
+        ) < 200
+
+    def test_session_end_redacts_before_llm_failure_without_logging_secret(
+            self, monkeypatch, tmp_path, test_config):
+        secret = "Synthetic-Pass-In-Redaction-Error-123!"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks,
+            "redact_messages",
+            lambda _messages: (_ for _ in ()).throw(ValueError(secret)),
+            raising=False,
+        )
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+            CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次确认了长期架构约束并完成安全检查。",
+            ),
+        ])
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "retry"
+        assert result.reason == "redaction failed"
+        assert "ValueError" in "\n".join(logs)
+        assert secret not in "\n".join(logs)
+
+    @pytest.mark.parametrize("summary_value", [
+        "English-only session summary",
+        "password: Synthetic-Pass-Only-123!",
+    ])
+    def test_session_end_retries_without_writes_when_summary_is_invalid(
+            self, monkeypatch, tmp_path, test_config, summary_value):
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        config_loads = []
+        monkeypatch.setattr(
+            Config,
+            "from_file",
+            classmethod(
+                lambda cls, path=None: config_loads.append(path) or test_config
+            ),
+        )
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+            CandidateMemory(key="SESSION_SUMMARY", value=summary_value),
+            CandidateMemory(
+                key="project:x:constraint:safe",
+                value="这是应当保留的长期安全约束。",
+                attribute="constraint",
+            ),
+        ])
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "retry"
+        assert config_loads == []
+        with MemoryStore(test_config) as store:
+            assert store.count_active() == 0
+
+    @pytest.mark.parametrize("candidates", [
+        [CandidateMemory(
+            key="SESSION_SUMMARY",
+            value={"secret": "Synthetic-Pass-Malformed-Summary-123!"},
+        )],
+        [
+            CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次确认了长期架构约束并完成安全检查。",
+            ),
+            CandidateMemory(
+                key="project:test:fact:malformed",
+                value={"secret": "Synthetic-Pass-Malformed-Candidate-123!"},
+            ),
+        ],
+    ], ids=["summary", "ordinary"])
+    def test_session_end_retries_when_candidate_policy_raises(
+            self, monkeypatch, tmp_path, test_config, candidates):
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks, "_extract_candidates", lambda *_: candidates,
+        )
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "retry"
+        assert result.reason == "candidate policy failed"
+        assert "AttributeError" in "\n".join(logs)
+        assert "Synthetic-Pass" not in "\n".join(logs)
+        with MemoryStore(test_config) as store:
+            assert store.count_active() == 0
+
+    def test_session_end_pinned_sorting_filters_candidates_and_keeps_quota(
+            self, monkeypatch, tmp_path, test_config):
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        candidates = [
+            CandidateMemory(
+                key=f"project:test:decision:durable_{index}",
+                value=f"这是需要长期保留的架构决定第{index}条。",
+                attribute="decision",
+                importance=8 - index / 10,
+                confidence=0.9,
+            )
+            for index in range(9)
+        ]
+        candidates.extend([
+            CandidateMemory(
+                key="project:test:constraint:credential",
+                value="长期密码是 password: Synthetic-Pass-Reject-123!",
+                attribute="constraint",
+            ),
+            CandidateMemory(
+                key="project:test:fact:one_off_test",
+                value="本次测试已经成功完成。",
+            ),
+            CandidateMemory(
+                key="project:test:fact:english_only",
+                value="English-only durable candidate",
+            ),
+            CandidateMemory(
+                key="user:preference:communication:language",
+                value="用户长期偏好使用中文沟通。",
+                attribute="preference",
+                tier="pinned",
+                importance=5,
+                confidence=0.8,
+            ),
+            CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次确认了长期架构约束并完成安全检查。",
+                tags=["日志", "分类:test"],
+            ),
+        ])
+        monkeypatch.setattr(
+            hooks, "_extract_candidates", lambda *_: candidates,
+        )
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "completed"
+        assert result.persisted == 9
+        with MemoryStore(test_config) as store:
+            records = store.get_active()
+        assert len(records) == 9
+        summaries = [
+            record for record in records if ":progress:log:" in record["key"]
+        ]
+        atomics = [
+            record for record in records if ":progress:log:" not in record["key"]
+        ]
+        assert len(summaries) == 1
+        assert len(atomics) == 8
+        assert any(
+            record["key"] == "user:preference:communication:language"
+            for record in atomics
+        )
+        assert all(
+            "Synthetic-Pass" not in record["value"] for record in records
+        )
+        stats_line = next(line for line in logs if "rejected_sensitive=" in line)
+        assert stats_line == (
+            "provider=deepseek redacted=0 accepted=8 "
+            "rejected_sensitive=1 rejected_ephemeral=1 "
+            "rejected_language=1 persisted=9"
+        )
+        assert "Synthetic-Pass" not in "\n".join(logs)
+
+    def test_persist_candidates_has_no_internal_session_cap(
+            self, test_config):
+        candidates = [
+            CandidateMemory(
+                key=f"project:test:decision:uncapped_{index}",
+                value=f"这是调用方已经筛选完成的长期决定第{index}条。",
+                attribute="decision",
+            )
+            for index in range(9)
+        ]
+
+        with MemoryStore(test_config) as store:
+            persisted = hooks._persist_candidates(
+                test_config, store, None, None, candidates, "synthetic",
+            )
+            records = store.get_active()
+
+        assert persisted == 9
+        assert len(records) == 9
+
     def test_completed_extraction_returns_count_and_persists(
             self, monkeypatch, tmp_path, test_config):
         self._wire_session(monkeypatch, tmp_path, test_config)

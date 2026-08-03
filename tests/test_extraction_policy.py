@@ -78,7 +78,12 @@ def test_sanitize_summary_redacts_local_secret_and_requires_chinese():
     assert policy.contains_cjk(summary)
 
 
-@pytest.mark.parametrize("value", ["", "only English summary", "[已脱敏:password]"])
+@pytest.mark.parametrize("value", [
+    "",
+    "only English summary",
+    "[已脱敏:password]",
+    "password: Synthetic-Pass-Only-123!",
+])
 def test_sanitize_summary_rejects_empty_low_information_or_non_chinese(value):
     summary, _ = policy.sanitize_summary(value)
     assert summary is None

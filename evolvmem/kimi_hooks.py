@@ -17,9 +17,17 @@ import socket
 import sys
 import time
 import urllib.request
+from collections import Counter
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from pathlib import Path
+
+from evolvmem.extraction_policy import (
+    evaluate_candidate,
+    rank_candidates,
+    redact_messages,
+    sanitize_summary,
+)
 
 _KIMI_API = "https://api.kimi.com/coding/v1/chat/completions"
 _SESSIONS_DIR = Path.home() / ".kimi-code" / "sessions"
@@ -347,8 +355,6 @@ def _persist_candidates(config, store, vidx, engine, candidates, session_id: str
     detector = ConflictDetector(store)
     added_ids: list[int] = []
     for c in candidates:
-        if len(added_ids) >= _MAX_MEMORIES_PER_SESSION:
-            break
         if not extractor.should_persist(c):
             continue
         value = c.value.strip()
@@ -424,7 +430,13 @@ def session_end(payload: dict) -> ExtractionResult:
         return ExtractionResult("retry", reason="LLM provider unavailable")
 
     try:
-        candidates = _extract_candidates(messages, llm_config)
+        model_messages, redacted_count = redact_messages(messages)
+    except Exception as error:
+        _log(f"extraction deferred: redaction failed: {type(error).__name__}")
+        return ExtractionResult("retry", reason="redaction failed")
+
+    try:
+        candidates = _extract_candidates(model_messages, llm_config)
     except RetryableExtractionError as e:
         _log(f"extraction deferred: {e}")
         return ExtractionResult(
@@ -437,13 +449,37 @@ def session_end(payload: dict) -> ExtractionResult:
         _log(f"extraction failed: {e}")
         return ExtractionResult("retry", reason=f"extraction failed: {e}")
 
-    config = Config.from_file()
     # 会话摘要单独拆出：key 规范为 project:{项目}:progress:log:{日期-时分}，
     # 持久化时单独放行，不占 _MAX_MEMORIES_PER_SESSION 配额
     summary, candidates = _split_summary_candidate(candidates)
     if summary is None:
         _log("extraction deferred: SESSION_SUMMARY missing after parsing")
         return ExtractionResult("retry", reason="SESSION_SUMMARY missing")
+    try:
+        summary_value, summary_redactions = sanitize_summary(summary.value)
+        redacted_count += summary_redactions
+        if summary_value is None:
+            _log("extraction deferred: unsafe or non-Chinese SESSION_SUMMARY")
+            return ExtractionResult("retry", reason="invalid SESSION_SUMMARY")
+        summary.value = summary_value
+
+        rejections: Counter[str] = Counter()
+        accepted = []
+        for candidate in candidates:
+            decision = evaluate_candidate(candidate)
+            if decision.accepted:
+                accepted.append(candidate)
+            else:
+                rejections[decision.reason] += 1
+        selected = rank_candidates(accepted, limit=_MAX_MEMORIES_PER_SESSION)
+    except Exception as error:
+        _log(
+            "extraction deferred: candidate policy failed: "
+            f"{type(error).__name__}"
+        )
+        return ExtractionResult("retry", reason="candidate policy failed")
+
+    config = Config.from_file()
     project = _project_from_wire(wire, config.inject_project_aliases)
     try:
         summary_time = os.path.getmtime(wire)
@@ -477,7 +513,7 @@ def session_end(payload: dict) -> ExtractionResult:
             n += _persist_candidates(config, store, vidx, engine,
                                      [summary], session_id)
             n += _persist_candidates(config, store, vidx, engine,
-                                     candidates, session_id)
+                                     selected, session_id)
     except Exception as e:
         _log(f"persistence failed: {e}")
         return ExtractionResult("retry", reason=f"persistence failed: {e}")
@@ -486,7 +522,13 @@ def session_end(payload: dict) -> ExtractionResult:
             vidx.close()
         if engine is not None:
             engine.close()
-    _log(f"session-end extraction: {n} memories persisted from {session_id}")
+    _log(
+        f"provider={llm_config.provider} redacted={redacted_count} "
+        f"accepted={len(selected)} "
+        f"rejected_sensitive={rejections['sensitive']} "
+        f"rejected_ephemeral={rejections['ephemeral']} "
+        f"rejected_language={rejections['language']} persisted={n}"
+    )
     return ExtractionResult("completed", persisted=n)
 
 

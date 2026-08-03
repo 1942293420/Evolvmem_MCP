@@ -171,6 +171,6 @@ def sanitize_summary(value: str) -> tuple[str | None, int]:
     """Redact a summary and reject empty, low-information, non-Chinese output."""
     sanitized, count = _redact_text(value.strip())
     informative = re.sub(r"\[已脱敏:[^\]]+\]|[\s，。；：、.!?]", "", sanitized)
-    if not informative or not contains_cjk(sanitized):
+    if not informative or not contains_cjk(informative):
         return None, count
     return sanitized, count
