@@ -4,6 +4,45 @@ import pytest
 from evolvmem.memory_store import MemoryStore
 
 
+@pytest.fixture
+def store(test_config):
+    with MemoryStore(test_config) as instance:
+        yield instance
+
+
+def test_transaction_commits_all_writes(store):
+    with store.transaction():
+        first = store.add("project:x:fact:first", "第一条长期记录内容。")
+        second = store.add("project:x:fact:second", "第二条长期记录内容。")
+    assert store.get_by_id(first)["status"] == "active"
+    assert store.get_by_id(second)["status"] == "active"
+
+
+def test_transaction_rolls_back_all_writes(store):
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        with store.transaction():
+            store.add("project:x:fact:first", "第一条长期记录内容。")
+            store.add("project:x:fact:second", "第二条长期记录内容。")
+            raise RuntimeError("synthetic failure")
+    assert store.get_by_key("project:x:fact:first") == []
+    assert store.get_by_key("project:x:fact:second") == []
+
+
+def test_replace_joins_outer_transaction_and_rolls_back(store):
+    old_id = store.add("project:x:decision:api", "采用旧接口方案。")
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        with store.transaction():
+            store.replace(
+                "project:x:decision:api",
+                "采用新接口方案，因为它避免重复写入。",
+            )
+            raise RuntimeError("synthetic failure")
+    assert store.get_by_id(old_id)["status"] == "active"
+    records = store.get_by_key("project:x:decision:api")
+    active_ids = [record["id"] for record in records if record["status"] == "active"]
+    assert active_ids == [old_id]
+
+
 class TestMemoryStore:
     def test_initialize_creates_tables(self, test_config):
         store = MemoryStore(test_config)

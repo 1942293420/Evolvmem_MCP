@@ -1,5 +1,7 @@
 """SQLite memory store: metadata + FTS5 full-text index + trigram Chinese substring index."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import sqlite3
 import re
 from datetime import datetime, timezone
@@ -21,6 +23,7 @@ class MemoryStore:
         self.config = config
         self._conn: sqlite3.Connection | None = None
         self._has_trigram: bool | None = None
+        self._transaction_depth = 0
 
     # ---- lifecycle ----
 
@@ -206,6 +209,27 @@ class MemoryStore:
 
     # ---- write ----
 
+    def _commit_if_outermost(self) -> None:
+        if self._transaction_depth == 0:
+            self._conn.commit()
+
+    @contextmanager
+    def transaction(self) -> Iterator["MemoryStore"]:
+        outermost = self._transaction_depth == 0
+        if outermost:
+            self._conn.execute("BEGIN IMMEDIATE")
+        self._transaction_depth += 1
+        try:
+            yield self
+            if outermost:
+                self._conn.commit()
+        except Exception:
+            if outermost:
+                self._conn.rollback()
+            raise
+        finally:
+            self._transaction_depth -= 1
+
     def _insert_row(self, key: str, value: str, attribute: str,
                     tag_str: str, source_session: str,
                     supersedes: int | None,
@@ -237,7 +261,7 @@ class MemoryStore:
                                   source_session, supersedes,
                                   importance=importance, tier=tier,
                                   expires_at=expires_at)
-        self._conn.commit()
+        self._commit_if_outermost()
         return new_id
 
     def add_if_changed(self, key: str, value: str, **kwargs) -> int | None:
@@ -253,6 +277,12 @@ class MemoryStore:
         Wrapped in a single explicit transaction so no dual-active window exists:
         at no point can two records with the same key both be 'active'.
         """
+        if self._transaction_depth:
+            return self._replace_no_commit(key, new_value, **kwargs)
+        with self.transaction():
+            return self._replace_no_commit(key, new_value, **kwargs)
+
+    def _replace_no_commit(self, key: str, new_value: str, **kwargs) -> int:
         old = self._get_active_by_key(key)
         if old is None:
             return self.add(key=key, value=new_value, **kwargs)
@@ -277,27 +307,21 @@ class MemoryStore:
         if expires_at and len(expires_at) == 10:
             expires_at += " 00:00:00"
 
-        try:
-            self._conn.execute("BEGIN IMMEDIATE")
-            new_id = self._insert_row(
-                key, new_value,
-                attribute,
-                tag_str,
-                kwargs.pop("source_session", ""),
-                old_id,
-                importance=importance, tier=tier,
-                expires_at=expires_at,
-            )
-            now = _now_iso()
-            self._conn.execute(
-                "UPDATE memories SET status='superseded', superseded_by=?, "
-                "updated_at=? WHERE id=?",
-                (new_id, now, old_id),
-            )
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+        new_id = self._insert_row(
+            key, new_value,
+            attribute,
+            tag_str,
+            kwargs.pop("source_session", ""),
+            old_id,
+            importance=importance, tier=tier,
+            expires_at=expires_at,
+        )
+        now = _now_iso()
+        self._conn.execute(
+            "UPDATE memories SET status='superseded', superseded_by=?, "
+            "updated_at=? WHERE id=?",
+            (new_id, now, old_id),
+        )
         return new_id
 
     def remove(self, mem_id: int) -> None:
@@ -306,7 +330,7 @@ class MemoryStore:
             "UPDATE memories SET status='deleted', updated_at=? WHERE id=?",
             (_now_iso(), mem_id),
         )
-        self._conn.commit()
+        self._commit_if_outermost()
 
     def update_metadata(self, mem_id: int, importance: float | None = None,
                         tier: str | None = None) -> None:
@@ -321,7 +345,7 @@ class MemoryStore:
                 "UPDATE memories SET tier=?, updated_at=? WHERE id=?",
                 (tier, _now_iso(), mem_id),
             )
-        self._conn.commit()
+        self._commit_if_outermost()
 
     # ---- queries ----
 
@@ -379,7 +403,7 @@ class MemoryStore:
             "last_accessed = ? WHERE id = ?",
             (_now_iso(), mem_id),
         )
-        self._conn.commit()
+        self._commit_if_outermost()
 
     # ---- full-text search ----
 
@@ -470,4 +494,4 @@ class MemoryStore:
             "UPDATE memories SET status='archived', updated_at=? WHERE id=?",
             (_now_iso(), mem_id),
         )
-        self._conn.commit()
+        self._commit_if_outermost()
