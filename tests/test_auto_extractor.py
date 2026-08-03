@@ -4,6 +4,22 @@ import pytest
 from evolvmem.auto_extractor import AutoExtractor, CandidateMemory
 
 
+def test_extraction_prompt_requires_chinese_durable_memories():
+    """The provider contract must request Chinese, durable memories only."""
+    prompt = AutoExtractor().build_extraction_prompt([
+        {"role": "user", "content": "请记住这个长期约束"},
+    ])
+
+    assert "value 必须使用中文" in prompt
+    assert "长期" in prompt
+    assert "临时密码" in prompt
+    assert "测试通过" in prompt
+    assert "部署完成" in prompt
+    assert '"memories"' in prompt
+    assert "SESSION_SUMMARY" in prompt
+    assert "SESSION_SUMMARY 不占 8 条原子记忆配额" in prompt
+
+
 class TestAutoExtractor:
     def test_format_extraction_prompt_includes_rules(self):
         extractor = AutoExtractor()
@@ -11,8 +27,8 @@ class TestAutoExtractor:
             messages=[{"role": "user", "content": "Let's use PostgreSQL"}],
         )
         assert "PostgreSQL" in prompt
-        assert "Retention" in prompt or "extract" in prompt
-        assert "Stable Key" in prompt or "key" in prompt
+        assert "保留规则" in prompt
+        assert "稳定 key 格式" in prompt
 
     def test_parse_empty_response(self):
         extractor = AutoExtractor()
@@ -125,7 +141,7 @@ class TestAutoExtractor:
         extractor = AutoExtractor()
         prompt = extractor.build_extraction_prompt([{"role": "user", "content": "hi"}])
         assert "SESSION_SUMMARY" in prompt
-        assert "Even when no atomic memory" in prompt
+        assert "即使没有原子记忆也不能省略" in prompt
         assert '{"memories": []}' not in prompt
 
     def test_extraction_prompt_requests_memories_object_protocol(self):
@@ -135,5 +151,5 @@ class TestAutoExtractor:
             [{"role": "user", "content": "hi"}]
         )
 
-        assert "JSON object" in prompt
+        assert "JSON 对象" in prompt
         assert '"memories"' in prompt
