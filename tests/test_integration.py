@@ -3,6 +3,7 @@
 import hashlib
 import pytest
 import numpy as np
+import evolvmem.kimi_hooks as hooks
 from evolvmem.config import Config
 from evolvmem.memory_store import MemoryStore
 from evolvmem.vector_index import VectorIndex
@@ -56,6 +57,21 @@ class FakeEmbeddingEngine:
 
     def encode_document(self, text):
         return self.encode(text)
+
+
+class FailingVectorIndex:
+    def add(self, memory_id, embedding):
+        raise RuntimeError("synthetic vector failure")
+
+    def save(self):
+        raise AssertionError("save must not run after add failure")
+
+
+class LoadedFakeEngine:
+    is_loaded = True
+
+    def encode_document(self, value):
+        return [0.0, 1.0]
 
 
 class TestIntegration:
@@ -153,6 +169,25 @@ class TestIntegration:
         # 清理
         store.close()
         vidx.close()
+
+    def test_vector_failure_after_commit_keeps_sqlite_records(
+            self, monkeypatch, test_config):
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+        with MemoryStore(test_config) as store:
+            memory_id = store.add(
+                "project:x:decision:api",
+                "采用统一接口，因为它减少重复实现。",
+            )
+            hooks._sync_candidate_vectors(
+                store,
+                FailingVectorIndex(),
+                LoadedFakeEngine(),
+                [memory_id],
+            )
+            assert store.get_by_id(memory_id)["status"] == "active"
+        assert logs == ["vector sync skipped: RuntimeError"]
+        assert "统一接口" not in "\n".join(logs)
 
     def test_memory_add_with_importance_tier(self, server):
         result = server.handle_tool_call("memory_add", {
@@ -390,10 +425,17 @@ class TestIntegration:
         })
         assert resp["result"]["protocolVersion"] == "2025-03-26"
 
-    def test_mcp_tool_error_sets_is_error(self):
-        """工具调用返回 error 时应置 isError: true。"""
+    def test_unknown_mcp_tool_does_not_wait_for_initialization(self, monkeypatch):
+        """未知工具无需任何组件，必须立即返回而不是等待初始化门闩。"""
         from evolvmem.mcp_server import MemoryMCPServer
         server = MemoryMCPServer()
+        monkeypatch.setattr(
+            server,
+            "_init_gate_error",
+            lambda: (_ for _ in ()).throw(
+                AssertionError("unknown tool unexpectedly waited for initialization")
+            ),
+        )
         resp = server._handle_request({
             "method": "tools/call", "id": 2, "jsonrpc": "2.0",
             "params": {"name": "no_such_tool", "arguments": {}},

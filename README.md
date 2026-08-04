@@ -8,6 +8,8 @@ A fully-local, three-layer memory plugin for Claude Code with Chinese language s
 - **L1 Full History**: SQLite + FTS5/trigram exact search, supports Chinese substring matching
 - **L2 Semantic Index**: USearch HNSW vector search for finding related memories expressed differently
 - **Self-Iteration**: Auto-extraction, conflict detection, access-decay forgetting
+- **Reliable Session Extraction**: Kimi SessionEnd extraction sends the complete conversation first, falls back to message-boundary chunks only after an explicit context-window error, and keeps transient failures pending for retry
+- **Crash Recovery**: An optional stale-session worker reprocesses idle `wire.jsonl` sessions that never reached SessionEnd; completed/skipped sessions advance state, while timeouts, rate limits, and malformed responses do not
 - **Consolidation**: `memory_consolidate` finds and merges near-duplicate memories via vector similarity (dry-run by default)
 - **Semantic Merge**: Write-time semantic merge — new values automatically supersede near-identical memories instead of duplicating them (`add_merge_threshold`) — plus weekly auto-consolidation at SessionStart (`consolidate_auto_run_hours`)
 - **Expiry**: Memories can carry an `expires_at` date; expired memories stop being injected/searched and are archived automatically
@@ -62,6 +64,35 @@ Optional: add a SessionStart hook for automatic active memory injection:
   }
 }
 ```
+
+### Kimi Code automatic extraction
+
+`evolvmem.kimi_hooks session-end` reads the session's complete `wire.jsonl` conversation and sends it to the configured extraction provider. DeepSeek V4 Flash in non-thinking mode is the default, and the normal path makes one model request. Kimi and other supported models can be selected manually in the configuration; there is no automatic Flash/Pro routing or automatic Kimi fallback. Provider credentials live outside the repository at `~/.claude/evolvmem/llm_credentials.json`:
+
+```json
+{
+  "provider": "deepseek",
+  "api_key": "your-key-here",
+  "base_url": "https://api.deepseek.com/chat/completions",
+  "model": "deepseek-v4-flash"
+}
+```
+
+The extractor requests a top-level JSON object shaped as `{"memories": [...]}` and requires both the session summary and atomic memory values to be written in Chinese. The parser also accepts the legacy top-level array for compatibility. Before the request, credential-like text is redacted from an in-memory copy of the messages; the rules cover structured/quoted and namespaced assignments, short explicit values, credential locations, URL userinfo, JWT/Bearer values, and complete or incomplete private-key blocks. The original `wire.jsonl` and parsed message objects are not modified. Cross-origin and HTTPS-to-HTTP redirects are rejected before bearer authorization can be forwarded. Each attempt uses only the shared deadline's remaining time, and success/error bodies are read with fixed byte caps and post-read deadline checks.
+
+The extractor does not pre-split ordinary long conversations. Only an explicit model context-window error triggers fallback chunks, which preserve user/assistant message boundaries. HTTP 429, transient 5xx responses, network timeouts, authentication failures, and responses without a valid Chinese session summary are reported as retryable instead of being treated as successful extraction.
+
+After extraction, every pure deterministic persistability gate runs before same-key deduplication and ranking. These gates screen and bound candidate values, stable keys, attributes, tiers, tags, importance, and confidence; they also reject sensitive, short-lived, low-information, non-Chinese, malformed, overlong, and low-confidence atomics. Eligible candidates are deduplicated by normalized key and ranked by pinned tier, importance, confidence, and original order. Persistence then keeps traversing that ranked list until at most eight atomics are actually written, so a database duplicate cannot consume a slot that a valid later candidate could fill.
+
+The session summary has its own safe path and does not consume the atomic-memory quota. Its provider-supplied metadata is discarded and rebuilt locally as a normal fact/log; extraction is completed only after that summary is written or an equivalent safe summary already exists. The summary and atomic writes are committed in one SQLite transaction. Vector-index synchronization starts only after the SQLite commit, so an index failure does not roll back durable records. A durable dirty marker forces startup repair even when SQLite and vector counts happen to match but their IDs drifted. The extraction statistics line contains counts and reason codes and never candidate bodies or sensitive fragments; other operational diagnostics may include bounded identifiers and exception types.
+
+For sessions that terminate without firing SessionEnd, run the offline worker periodically:
+
+```cron
+23 * * * * /usr/bin/flock -n ~/.claude/evolvmem/.extract_stale.lock env PYTHONPATH=/path/to/evolvmem-plugin /path/to/evolvmem-plugin/.venv/bin/python /path/to/evolvmem-plugin/scripts/extract_stale_sessions.py >> ~/.claude/evolvmem/extract_stale.log 2>&1
+```
+
+The worker scans sessions idle for at least 30 minutes and processes at most three per run. Its state file is `~/.claude/evolvmem/.extracted_sessions.json`. Only an exact terminal mtime checkpoint proves that a wire version completed; historical memory rows are not treated as version checkpoints, so a session without state is safely reprocessed once. A session version and mtime are recorded only after a `completed` or intentional `skipped` result; retryable failures leave the prior mtime unchanged and remain pending, and exhausted rate limiting stops the rest of that run.
 
 ## Tools
 

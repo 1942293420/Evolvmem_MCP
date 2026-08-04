@@ -2,6 +2,8 @@
 
 import numpy as np
 import pytest
+from evolvmem import kimi_hooks as hooks
+from evolvmem.memory_store import MemoryStore
 from evolvmem.vector_index import VectorIndex
 
 
@@ -109,6 +111,69 @@ class TestVectorIndex:
         idx.save()
         assert idx.check_consistency(expected_count=1)
         assert not idx.check_consistency(expected_count=2)  # 不一致
+        idx.close()
+
+    def test_dirty_marker_detects_equal_cardinality_drift_and_rebuild_clears_it(
+            self, test_config):
+        embedding = make_embedding()
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+        idx.add(1, embedding)
+        idx.save()
+        idx.mark_dirty()
+
+        assert idx.count() == 1
+        assert idx.is_dirty() is True
+        assert idx.check_consistency(expected_count=1) is False
+        idx.close()
+
+        reopened = VectorIndex(test_config)
+        reopened.initialize(dim=512)
+        assert reopened.count() == 1
+        assert reopened.is_dirty() is True
+        assert reopened.check_consistency(expected_count=1) is False
+        reopened.save()
+        assert reopened.is_dirty() is True
+
+        reopened.rebuild([2], [embedding])
+
+        assert reopened.is_dirty() is False
+        assert reopened.check_consistency(expected_count=1) is True
+        reopened.close()
+
+    def test_failed_post_commit_sync_leaves_durable_dirty_marker(
+            self, monkeypatch, test_config):
+        class FailingEngine:
+            is_loaded = True
+
+            def encode_document(self, _value):
+                raise RuntimeError("synthetic vector failure")
+
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+        idx.add(999, make_embedding())
+        idx.save()
+        with MemoryStore(test_config) as store:
+            memory_id = store.add(
+                "project:test:decision:vector",
+                "采用长期向量同步方案，因为它能够支持语义检索。",
+            )
+
+            hooks._sync_candidate_vectors(
+                store,
+                idx,
+                FailingEngine(),
+                [memory_id],
+            )
+
+            assert store.get_by_id(memory_id)["status"] == "active"
+        assert idx.is_dirty() is True
+        assert idx.check_consistency(expected_count=1) is False
+        assert logs == ["vector sync skipped: RuntimeError"]
+        idx.save()
+        assert idx.is_dirty() is True
         idx.close()
 
     def test_empty_search_returns_empty(self, test_config):

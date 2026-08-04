@@ -1,7 +1,25 @@
 """AutoExtractor tests."""
 
+import json
+
 import pytest
 from evolvmem.auto_extractor import AutoExtractor, CandidateMemory
+
+
+def test_extraction_prompt_requires_chinese_durable_memories():
+    """The provider contract must request Chinese, durable memories only."""
+    prompt = AutoExtractor().build_extraction_prompt([
+        {"role": "user", "content": "请记住这个长期约束"},
+    ])
+
+    assert "value 必须使用中文" in prompt
+    assert "长期" in prompt
+    assert "临时密码" in prompt
+    assert "测试通过" in prompt
+    assert "部署完成" in prompt
+    assert '"memories"' in prompt
+    assert "SESSION_SUMMARY" in prompt
+    assert "SESSION_SUMMARY 不占 8 条原子记忆配额" in prompt
 
 
 class TestAutoExtractor:
@@ -11,8 +29,8 @@ class TestAutoExtractor:
             messages=[{"role": "user", "content": "Let's use PostgreSQL"}],
         )
         assert "PostgreSQL" in prompt
-        assert "Retention" in prompt or "extract" in prompt
-        assert "Stable Key" in prompt or "key" in prompt
+        assert "保留规则" in prompt
+        assert "稳定 key 格式" in prompt
 
     def test_parse_empty_response(self):
         extractor = AutoExtractor()
@@ -28,6 +46,17 @@ class TestAutoExtractor:
         assert len(candidates) == 1
         assert candidates[0].key == "project:db:decision:engine"
         assert candidates[0].value == "Use PostgreSQL as primary database"
+
+    def test_parse_memories_object_protocol(self):
+        extractor = AutoExtractor()
+        response = """```json
+{"memories": [{"key": "project:db:decision:engine", "value": "Use PostgreSQL as primary database", "attribute": "decision", "confidence": 0.95}]}
+```"""
+
+        candidates = extractor.parse_response(response)
+
+        assert len(candidates) == 1
+        assert candidates[0].key == "project:db:decision:engine"
 
     def test_should_persist_decision(self):
         extractor = AutoExtractor()
@@ -89,6 +118,70 @@ class TestAutoExtractor:
         assert candidates[0].importance == 5.0
         assert candidates[0].tier == "normal"
 
+    @pytest.mark.parametrize("tags", [None, "日志", {"kind": "日志"}])
+    def test_parse_non_list_tags_normalizes_to_empty(self, tags):
+        extractor = AutoExtractor()
+        response = json.dumps({"memories": [{
+            "key": "SESSION_SUMMARY",
+            "value": "本次确认了长期架构约束。",
+            "tags": tags,
+        }]}, ensure_ascii=False)
+
+        candidates = extractor.parse_response(response)
+
+        assert len(candidates) == 1
+        assert candidates[0].tags == []
+
+    def test_parse_invalid_confidence_error_does_not_echo_provider_value(self):
+        extractor = AutoExtractor()
+        secret = "Synthetic-Pass-In-Confidence-123!"
+        response = json.dumps({"memories": [{
+            "key": "SESSION_SUMMARY",
+            "value": "本次确认了长期架构约束。",
+            "confidence": secret,
+        }]}, ensure_ascii=False)
+
+        with pytest.raises(ValueError) as exc_info:
+            extractor.parse_response(response)
+
+        assert secret not in str(exc_info.value)
+
+    @pytest.mark.parametrize("confidence", [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        -0.01,
+        1.01,
+    ])
+    def test_parse_rejects_non_finite_or_out_of_range_confidence(
+            self, confidence):
+        extractor = AutoExtractor()
+        response = json.dumps({"memories": [{
+            "key": "project:test:fact:confidence",
+            "value": "这是长期有效的中文事实。",
+            "confidence": confidence,
+        }]}, ensure_ascii=False)
+
+        with pytest.raises(ValueError, match="invalid candidate confidence"):
+            extractor.parse_response(response)
+
+    def test_parse_skips_non_string_key_or_value(self):
+        extractor = AutoExtractor()
+        response = json.dumps({"memories": [
+            {
+                "key": {"topic": "malformed"},
+                "value": "这是键格式错误的候选。",
+            },
+            {
+                "key": "project:test:fact:malformed",
+                "value": {"text": "这是值格式错误的候选。"},
+            },
+        ]}, ensure_ascii=False)
+
+        candidates = extractor.parse_response(response)
+
+        assert candidates == []
+
     def test_parse_nan_importance_falls_back_to_default(self):
         """json.loads 接受 NaN 字面量；min(10.0, nan) 会返回 10.0，必须回退默认 5.0。"""
         extractor = AutoExtractor()
@@ -114,3 +207,15 @@ class TestAutoExtractor:
         extractor = AutoExtractor()
         prompt = extractor.build_extraction_prompt([{"role": "user", "content": "hi"}])
         assert "SESSION_SUMMARY" in prompt
+        assert "即使没有原子记忆也不能省略" in prompt
+        assert '{"memories": []}' not in prompt
+
+    def test_extraction_prompt_requests_memories_object_protocol(self):
+        extractor = AutoExtractor()
+
+        prompt = extractor.build_extraction_prompt(
+            [{"role": "user", "content": "hi"}]
+        )
+
+        assert "JSON 对象" in prompt
+        assert '"memories"' in prompt
