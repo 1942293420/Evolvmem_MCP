@@ -67,7 +67,7 @@ Optional: add a SessionStart hook for automatic active memory injection:
 
 ### Kimi Code automatic extraction
 
-`evolvmem.kimi_hooks session-end` reads the session's complete `wire.jsonl` conversation and sends it to the configured extraction provider. DeepSeek V4 Flash in non-thinking mode is the default. Provider credentials live outside the repository at `~/.claude/evolvmem/llm_credentials.json`:
+`evolvmem.kimi_hooks session-end` reads the session's complete `wire.jsonl` conversation and sends it to the configured extraction provider. DeepSeek V4 Flash in non-thinking mode is the default, and the normal path makes one model request. Kimi and other supported models can be selected manually in the configuration; there is no automatic Flash/Pro routing or automatic Kimi fallback. Provider credentials live outside the repository at `~/.claude/evolvmem/llm_credentials.json`:
 
 ```json
 {
@@ -78,7 +78,9 @@ Optional: add a SessionStart hook for automatic active memory injection:
 }
 ```
 
-The extractor requests a top-level JSON object shaped as `{"memories": [...]}`. The parser also accepts the legacy top-level array for compatibility. It does not pre-split ordinary long conversations. Only an explicit model context-window error triggers fallback chunks, which preserve user/assistant message boundaries. HTTP 429, transient 5xx responses, network timeouts, authentication failures, and responses without the required session summary are reported as retryable instead of being treated as successful extraction.
+The extractor requests a top-level JSON object shaped as `{"memories": [...]}` and requires both the session summary and atomic memory values to be written in Chinese. The parser also accepts the legacy top-level array for compatibility. Before the request, credential-like text is redacted from an in-memory copy of the messages; the original `wire.jsonl` and parsed message objects are not modified. It does not pre-split ordinary long conversations. Only an explicit model context-window error triggers fallback chunks, which preserve user/assistant message boundaries. HTTP 429, transient 5xx responses, network timeouts, authentication failures, and responses without a valid Chinese session summary are reported as retryable instead of being treated as successful extraction.
+
+After extraction, deterministic policy filters sensitive, short-lived, low-information, and non-Chinese atomic candidates. The remaining candidates are deduplicated by key, ranked by pinned tier, importance, confidence, and original order, and then limited to at most eight; the session summary has its own slot and does not consume that atomic-memory quota. The summary and selected atomic memories are committed in one SQLite transaction. Vector-index synchronization starts only after the SQLite commit, so an index failure does not roll back durable records and can be repaired by the existing consistency path. Operational logs contain counts and reason codes only, never candidate bodies or sensitive fragments.
 
 For sessions that terminate without firing SessionEnd, run the offline worker periodically:
 
@@ -86,7 +88,7 @@ For sessions that terminate without firing SessionEnd, run the offline worker pe
 23 * * * * /usr/bin/flock -n ~/.claude/evolvmem/.extract_stale.lock env PYTHONPATH=/path/to/evolvmem-plugin /path/to/evolvmem-plugin/.venv/bin/python /path/to/evolvmem-plugin/scripts/extract_stale_sessions.py >> ~/.claude/evolvmem/extract_stale.log 2>&1
 ```
 
-The worker scans sessions idle for at least 30 minutes and processes at most three per run. Its state file is `~/.claude/evolvmem/.extracted_sessions.json`. A session version is recorded only after a `completed` or intentional `skipped` result; retryable failures remain pending, and exhausted rate limiting stops the rest of that run.
+The worker scans sessions idle for at least 30 minutes and processes at most three per run. Its state file is `~/.claude/evolvmem/.extracted_sessions.json`. A session version and mtime are recorded only after a `completed` or intentional `skipped` result; retryable failures leave the prior mtime unchanged and remain pending, and exhausted rate limiting stops the rest of that run.
 
 ## Tools
 
