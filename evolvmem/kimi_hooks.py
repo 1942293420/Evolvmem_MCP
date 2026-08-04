@@ -13,6 +13,7 @@ import glob
 import hashlib
 import json
 import os
+import random
 import re
 import socket
 import sys
@@ -54,6 +55,9 @@ _MAX_PROJECT_CHARS = 48
 _MAX_SOURCE_SESSION_CHARS = 128
 _SESSION_SUMMARY_KEY = "SESSION_SUMMARY"
 _WD_DIR_RE = re.compile(r"^wd_(.+)_[0-9a-f]{8,}$")
+_HOOKS_LOG_PATH = Path.home() / ".claude" / "evolvmem" / "hooks.log"
+_HOOKS_LOG_MAX_BYTES = 1024 * 1024
+_LIVE_DIR = Path.home() / ".claude" / "evolvmem" / "live"
 
 
 class ContextOverflowError(RuntimeError):
@@ -63,9 +67,12 @@ class ContextOverflowError(RuntimeError):
 class RetryableExtractionError(RuntimeError):
     """Extraction did not complete and must remain pending for a later run."""
 
-    def __init__(self, message: str, *, rate_limited: bool = False):
+    def __init__(self, message: str, *, rate_limited: bool = False,
+                 halt_run: bool = False):
         super().__init__(message)
         self.rate_limited = rate_limited
+        # 认证/欠费等提供商硬故障：同批其余会话不必再试，整轮停止
+        self.halt_run = halt_run
 
 
 @dataclass(frozen=True)
@@ -76,6 +83,7 @@ class ExtractionResult:
     persisted: int = 0
     reason: str = ""
     rate_limited: bool = False
+    halt_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -134,6 +142,16 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 def _log(msg: str) -> None:
     print(f"[evolvmem] {msg}", file=sys.stderr, flush=True)
+    try:  # 落盘失败不影响 hook 本身
+        if (_HOOKS_LOG_PATH.exists()
+                and _HOOKS_LOG_PATH.stat().st_size > _HOOKS_LOG_MAX_BYTES):
+            _HOOKS_LOG_PATH.replace(
+                _HOOKS_LOG_PATH.with_name("hooks.log.1"))
+        with _HOOKS_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} [evolvmem] {msg}\n")
+    except Exception:
+        pass
 
 
 # ---- session-start ----
@@ -362,6 +380,12 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
                     f"{llm_config.provider} context window exceeded"
                 ) from error
             rate_limited = error.code == 429
+            if error.code in (401, 402, 403):
+                raise RetryableExtractionError(
+                    f"{llm_config.provider} HTTP {error.code} "
+                    "credentials/quota unavailable",
+                    halt_run=True,
+                ) from error
             if error.code not in (408, 429, 500, 502, 503, 504):
                 raise RetryableExtractionError(
                     f"{llm_config.provider} HTTP {error.code}; "
@@ -373,11 +397,13 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
                     f"{llm_config.provider} HTTP {error.code} retries exhausted",
                     rate_limited=rate_limited,
                 ) from error
+            # 指数退避 + 抖动；优先服从 provider 的 Retry-After
+            backoff = min(2.0 ** (attempt + 1), 30.0) + random.uniform(0.0, 1.0)
             retry_after = error.headers.get("Retry-After") if error.headers else None
             try:
-                delay = float(retry_after) if retry_after is not None else (2, 5)[attempt]
+                delay = float(retry_after) if retry_after is not None else backoff
             except ValueError:
-                delay = (2, 5)[attempt]
+                delay = backoff
         except (TimeoutError, socket.timeout, URLError) as error:
             # A second blocking read timeout can already consume the hook's
             # 240-second budget, so timeout-like failures get one retry only.
@@ -627,7 +653,8 @@ def session_end(payload: dict) -> ExtractionResult:
     except RetryableExtractionError as e:
         _log(f"extraction deferred: {e}")
         return ExtractionResult(
-            "retry", reason=str(e), rate_limited=e.rate_limited
+            "retry", reason=str(e), rate_limited=e.rate_limited,
+            halt_run=e.halt_run,
         )
     except ContextOverflowError as e:
         _log(f"fallback extraction still exceeded context: {e}")
@@ -771,17 +798,41 @@ def session_end(payload: dict) -> ExtractionResult:
     return ExtractionResult("completed", persisted=n)
 
 
+# ---- heartbeat ----
+
+def _touch_heartbeat(session_id: str) -> None:
+    """Mark a session as alive; the stale-session worker skips live sessions."""
+    safe = re.sub(r"[^\w-]", "_", str(session_id)).strip("_")
+    if not safe:
+        return
+    try:
+        _LIVE_DIR.mkdir(parents=True, exist_ok=True)
+        (_LIVE_DIR / safe).touch()
+    except Exception:
+        pass  # fail-open：心跳失败不影响会话
+
+
+def _payload_session_id(raw: str) -> str:
+    try:
+        return str(json.loads(raw).get("session_id", ""))
+    except Exception:
+        return ""
+
+
 # ---- entry ----
 
 def main() -> None:
     sub = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
         if sub == "session-start":
+            _touch_heartbeat(_payload_session_id(sys.stdin.read()))
             session_start()
         elif sub == "session-end":
             raw = sys.stdin.read()
             payload = json.loads(raw) if raw.strip() else {}
             session_end(payload)
+        elif sub == "heartbeat":
+            _touch_heartbeat(_payload_session_id(sys.stdin.read()))
         else:
             _log(f"unknown subcommand: {sub!r}")
     except Exception as e:  # fail-open: hook errors must never block a session

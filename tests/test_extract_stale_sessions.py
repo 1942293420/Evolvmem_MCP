@@ -176,3 +176,85 @@ def test_main_aborts_when_provider_config_is_unavailable(monkeypatch):
     monkeypatch.setattr(kimi_hooks, "_load_llm_config", lambda: None)
 
     stale.main()
+
+
+def test_live_session_with_quiet_wire_is_skipped(monkeypatch, tmp_path):
+    wire = (tmp_path / "wd_project_hash" / "session_live" / "agents"
+            / "main" / "wire.jsonl")
+    wire.parent.mkdir(parents=True)
+    wire.write_text("x" * (stale.MIN_WIRE_BYTES + 1), encoding="utf-8")
+    old_mtime = 1_700_000_000.0
+    os.utime(wire, (old_mtime, old_mtime))
+    monkeypatch.setattr(
+        stale,
+        "SESSIONS_GLOB",
+        str(tmp_path / "*" / "session_*" / "agents" / "main" / "wire.jsonl"),
+    )
+    live_dir = tmp_path / "live"
+    live_dir.mkdir()
+    monkeypatch.setattr(stale, "LIVE_DIR", live_dir)
+    now = old_mtime + stale.IDLE_MINUTES * 60 + 1
+
+    # 无心跳：静默会话是候选
+    assert stale.find_candidates(now=now, state={}) == [
+        (old_mtime, "session_live")]
+
+    # 新鲜心跳：会话仍打开，跳过
+    marker = live_dir / "session_live"
+    marker.touch()
+    os.utime(marker, (now, now))
+    assert stale.find_candidates(now=now, state={}) == []
+
+    # 心跳过期后重新成为候选
+    expired = now - stale.IDLE_MINUTES * 60 - 1
+    os.utime(marker, (expired, expired))
+    assert stale.find_candidates(now=now, state={}) == [
+        (old_mtime, "session_live")]
+
+
+def test_halt_run_stops_remaining_batch(monkeypatch):
+    monkeypatch.setattr(stale, "log", lambda _message: None)
+    state = {}
+    hooks = FakeKimiHooks({
+        "session_poor": SimpleNamespace(
+            status="retry", persisted=0,
+            reason="HTTP 402 credentials/quota unavailable",
+            rate_limited=False, halt_run=True,
+        ),
+        "session_not_called": SimpleNamespace(
+            status="completed", persisted=1, reason="",
+            rate_limited=False, halt_run=False,
+        ),
+    })
+
+    halted = stale.process_batch(
+        [
+            (20.0, "session_poor"),
+            (10.0, "session_not_called"),
+        ],
+        state,
+        hooks,
+    )
+
+    assert halted is True
+    assert hooks.calls == ["session_poor"]
+    assert state == {}
+
+
+def test_prune_live_markers_removes_old_only(monkeypatch, tmp_path):
+    live_dir = tmp_path / "live"
+    live_dir.mkdir()
+    monkeypatch.setattr(stale, "LIVE_DIR", live_dir)
+    now = 1_700_000_000.0
+    fresh = live_dir / "session_fresh"
+    fresh.touch()
+    os.utime(fresh, (now, now))
+    old = live_dir / "session_old"
+    old.touch()
+    old_ts = now - stale.LIVE_PRUNE_DAYS * 86400 - 1
+    os.utime(old, (old_ts, old_ts))
+
+    stale._prune_live_markers(now)
+
+    assert fresh.exists()
+    assert not old.exists()

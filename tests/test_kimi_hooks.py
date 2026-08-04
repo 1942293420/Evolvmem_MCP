@@ -1,7 +1,9 @@
 """kimi_hooks module tests (external LLM/IO is replaced at the boundary)."""
 
+import io
 import json
 import sqlite3
+import sys
 from email.message import Message
 from io import BytesIO
 from urllib.error import HTTPError
@@ -1500,3 +1502,144 @@ class TestSessionEndOutcome:
         assert result.persisted == 2
         with MemoryStore(test_config) as store:
             assert store.count_active() == 2
+
+
+class TestExtractionBackoff:
+    def test_backoff_delays_grow_exponentially(self, monkeypatch):
+        attempts = 0
+        delays = []
+
+        def fake_call(prompt, token, *, deadline=None):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise _http_error(429)
+            return _extraction_response("退避后成功摘要", "project:p:fact:backoff")
+
+        monkeypatch.setattr(hooks, "_call_llm", fake_call)
+        monkeypatch.setattr(hooks.time, "sleep", delays.append)
+        monkeypatch.setattr(hooks.random, "uniform", lambda _a, _b: 0.0)
+
+        candidates = hooks._extract_candidates(
+            [{"role": "user", "content": "限流后恢复的会话"}],
+            _llm_config(),
+        )
+
+        assert attempts == 3
+        assert delays == [2.0, 4.0]
+        assert candidates[-1].value == "退避后成功摘要"
+
+    def test_retry_after_header_overrides_backoff(self, monkeypatch):
+        attempts = 0
+        delays = []
+
+        def fake_call(prompt, token, *, deadline=None):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise _http_error(429, retry_after="7")
+            return _extraction_response("服从RetryAfter摘要", "project:p:fact:ra")
+
+        monkeypatch.setattr(hooks, "_call_llm", fake_call)
+        monkeypatch.setattr(hooks.time, "sleep", delays.append)
+
+        candidates = hooks._extract_candidates(
+            [{"role": "user", "content": "限流带Retry-After的会话"}],
+            _llm_config(),
+        )
+
+        assert delays == [7.0]
+        assert candidates[-1].value == "服从RetryAfter摘要"
+
+    def test_quota_error_halts_run_without_retry(self, monkeypatch):
+        attempts = 0
+
+        def fake_call(prompt, token, *, deadline=None):
+            nonlocal attempts
+            attempts += 1
+            raise _http_error(402)
+
+        monkeypatch.setattr(hooks, "_call_llm", fake_call)
+
+        with pytest.raises(hooks.RetryableExtractionError) as exc_info:
+            hooks._extract_candidates(
+                [{"role": "user", "content": "账户欠费的会话"}],
+                _llm_config(),
+            )
+
+        assert attempts == 1
+        assert exc_info.value.halt_run is True
+        assert exc_info.value.rate_limited is False
+
+
+class TestHooksLog:
+    def test_log_appends_timestamped_line(self, monkeypatch, tmp_path):
+        log_path = tmp_path / "hooks.log"
+        monkeypatch.setattr(hooks, "_HOOKS_LOG_PATH", log_path)
+
+        hooks._log("测试落盘")
+
+        content = log_path.read_text(encoding="utf-8")
+        assert "测试落盘" in content
+        assert "[evolvmem]" in content
+        assert content[0].isdigit()  # 时间戳在行首
+
+    def test_log_rotates_when_oversized(self, monkeypatch, tmp_path):
+        log_path = tmp_path / "hooks.log"
+        log_path.write_text("x" * 100, encoding="utf-8")
+        monkeypatch.setattr(hooks, "_HOOKS_LOG_PATH", log_path)
+        monkeypatch.setattr(hooks, "_HOOKS_LOG_MAX_BYTES", 10)
+
+        hooks._log("轮转后的新行")
+
+        rotated = tmp_path / "hooks.log.1"
+        assert rotated.exists()
+        assert rotated.read_text(encoding="utf-8") == "x" * 100
+        assert "轮转后的新行" in log_path.read_text(encoding="utf-8")
+
+    def test_log_file_failure_still_prints_stderr(
+            self, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(
+            hooks, "_HOOKS_LOG_PATH", tmp_path / "nonexistent_dir" / "h.log")
+
+        hooks._log("只到stderr")
+
+        assert "只到stderr" in capsys.readouterr().err
+
+
+class TestHeartbeat:
+    def test_touch_heartbeat_creates_marker(self, monkeypatch, tmp_path):
+        live_dir = tmp_path / "live"
+        monkeypatch.setattr(hooks, "_LIVE_DIR", live_dir)
+
+        hooks._touch_heartbeat("session_abc")
+        hooks._touch_heartbeat("")
+
+        assert (live_dir / "session_abc").exists()
+        assert len(list(live_dir.iterdir())) == 1
+
+    def test_touch_heartbeat_sanitizes_session_id(
+            self, monkeypatch, tmp_path):
+        live_dir = tmp_path / "live"
+        monkeypatch.setattr(hooks, "_LIVE_DIR", live_dir)
+
+        hooks._touch_heartbeat("../evil/../../x")
+
+        names = [p.name for p in live_dir.iterdir()]
+        assert names
+        assert all("/" not in name and ".." not in name for name in names)
+
+    def test_heartbeat_subcommand_writes_no_stdout(
+            self, monkeypatch, tmp_path, capsys):
+        live_dir = tmp_path / "live"
+        monkeypatch.setattr(hooks, "_LIVE_DIR", live_dir)
+        monkeypatch.setattr(sys, "argv", ["kimi_hooks", "heartbeat"])
+        monkeypatch.setattr(
+            sys, "stdin", io.StringIO('{"session_id": "session_hb"}'))
+
+        with pytest.raises(SystemExit) as exc_info:
+            hooks.main()
+
+        assert exc_info.value.code == 0
+        assert capsys.readouterr().out == ""
+        assert (live_dir / "session_hb").exists()
