@@ -19,12 +19,20 @@ class VectorIndex:
         self._index: Index | None = None
         self._dim: int | None = None
         self._view_mode: bool = False
+        self._owns_dirty_marker: bool = False
+
+    @property
+    def _dirty_path(self) -> Path:
+        return self.config.vector_path.with_suffix(
+            f"{self.config.vector_path.suffix}.dirty"
+        )
 
     # ---- lifecycle ----
 
     def initialize(self, dim: int = 512) -> None:
         """Create or load index. Uses mmap if file exists, creates new otherwise."""
         self._dim = dim
+        self._owns_dirty_marker = False
         path = str(self.config.vector_path)
         if Path(path).exists():
             self._index = Index.restore(path, view=False)
@@ -59,7 +67,12 @@ class VectorIndex:
             raise ValueError(
                 f"Expected {self._dim}-dim vector, got shape={vec.shape}"
             )
-        self._index.add(mem_id, vec)
+        self.mark_dirty()
+        try:
+            self._index.add(mem_id, vec)
+        except Exception:
+            self.preserve_dirty()
+            raise
 
     def add_batch(self, ids: list[int],
                   embeddings: list[np.ndarray]) -> None:
@@ -73,9 +86,11 @@ class VectorIndex:
         try:
             if mem_id not in self._index:
                 return False
+            self.mark_dirty()
             self._index.remove(mem_id)
             return True
         except Exception:
+            self.preserve_dirty()
             return False
 
     def rebuild(self, ids: list[int],
@@ -83,6 +98,7 @@ class VectorIndex:
         """Full index rebuild (SQLite as source, for crash recovery)."""
         if self._dim is None:
             raise RuntimeError("VectorIndex not initialized, call initialize() first")
+        self.mark_dirty()
         # Explicitly release old mmap index to avoid resource leak
         if self._index is not None:
             self._index = None
@@ -95,6 +111,7 @@ class VectorIndex:
         )
         self.add_batch(ids, embeddings)
         self.save()
+        self.clear_dirty()
 
     def save(self) -> None:
         """Persist to disk."""
@@ -105,6 +122,28 @@ class VectorIndex:
             )
         path = str(self.config.vector_path)
         self._index.save(path)
+        if self._owns_dirty_marker:
+            self.clear_dirty()
+
+    def mark_dirty(self) -> None:
+        """Persist that SQLite/vector synchronization is not yet durable."""
+        self._dirty_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self._dirty_path.exists():
+            self._dirty_path.touch()
+            self._owns_dirty_marker = True
+
+    def preserve_dirty(self) -> None:
+        """Prevent a later unrelated save from clearing a failure marker."""
+        self._owns_dirty_marker = False
+
+    def clear_dirty(self) -> None:
+        """Clear the durable marker only after a successful index save."""
+        self._dirty_path.unlink(missing_ok=True)
+        self._owns_dirty_marker = False
+
+    def is_dirty(self) -> bool:
+        """Return whether a previous synchronization may be incomplete."""
+        return self._dirty_path.exists()
 
     # ---- query ----
 
@@ -131,15 +170,8 @@ class VectorIndex:
         return len(self._index)
 
     def check_consistency(self, expected_count: int) -> bool:
-        """Check if USearch index entry count matches SQLite.
-
-        Note: only compares counts, does not verify ID match.
-        If counts match but IDs differ (e.g., after crash recovery key drift),
-        semantic search will return wrong results.
-        The caller should log a warning after the count check passes, advising
-        users to delete vectors.usearch and force a rebuild if results are wrong.
-        """
-        return self.count() == expected_count
+        """Check count and the durable incomplete-synchronization marker."""
+        return not self.is_dirty() and self.count() == expected_count
 
     def _ensure_initialized(self):
         if self._index is None:

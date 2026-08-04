@@ -10,6 +10,7 @@ Usage:
 """
 
 import glob
+import hashlib
 import json
 import os
 import re
@@ -20,9 +21,11 @@ import urllib.request
 from collections import Counter
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from pathlib import Path
 
 from evolvmem.extraction_policy import (
+    contains_sensitive_text,
     evaluate_candidate,
     rank_candidates,
     redact_messages,
@@ -43,7 +46,12 @@ _PROVIDER_DEFAULTS = {
 }
 _FALLBACK_CHUNK_CHARS = 120000
 _EXTRACTION_BUDGET_S = 240
+_REQUEST_TIMEOUT_S = 120.0
+_MAX_RESPONSE_BYTES = 1024 * 1024
+_MAX_ERROR_BODY_BYTES = 64 * 1024
 _MAX_MEMORIES_PER_SESSION = 8
+_MAX_PROJECT_CHARS = 48
+_MAX_SOURCE_SESSION_CHARS = 128
 _SESSION_SUMMARY_KEY = "SESSION_SUMMARY"
 _WD_DIR_RE = re.compile(r"^wd_(.+)_[0-9a-f]{8,}$")
 
@@ -78,6 +86,50 @@ class LLMConfig:
     api_key: str
     base_url: str
     model: str
+
+
+def _url_origin(url: str) -> tuple[str, str, int] | None:
+    """Return a normalized network origin, or ``None`` for an unsafe URL."""
+    try:
+        parsed = urlsplit(url)
+        scheme = parsed.scheme.casefold()
+        host = (parsed.hostname or "").casefold()
+        if scheme not in {"http", "https"} or not host:
+            return None
+        port = parsed.port
+    except ValueError:
+        return None
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return scheme, host, port
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Allow only same-origin redirects so bearer auth cannot escape."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        source_origin = _url_origin(req.full_url)
+        target_origin = _url_origin(newurl)
+        if (
+            source_origin is None
+            or target_origin is None
+            or source_origin != target_origin
+            or (source_origin[0] == "https" and target_origin[0] != "https")
+        ):
+            raise HTTPError(
+                req.full_url,
+                code,
+                "unsafe redirect blocked",
+                headers,
+                fp,
+            )
+        redirected = super().redirect_request(
+            req, fp, code, msg, headers, newurl
+        )
+        authorization = req.get_header("Authorization")
+        if authorization and redirected is not None:
+            redirected.add_header("Authorization", authorization)
+        return redirected
 
 
 def _log(msg: str) -> None:
@@ -144,8 +196,36 @@ def _project_from_wire(wire_path: str, aliases: dict) -> str:
             dirname = m.group(1)
             break
     segment = aliases.get(dirname, dirname).lower() if dirname else ""
+    if contains_sensitive_text(segment):
+        return "general"
     segment = re.sub(r"_+", "_", re.sub(r"[^\w一-鿿-]", "_", segment)).strip("_")
+    segment = segment[:_MAX_PROJECT_CHARS]
     return segment or "general"
+
+
+def _canonical_session_id(session_id: str, wire_path: str) -> str:
+    """Return a bounded ``session_*`` source identifier without raw metadata."""
+    wire_session = ""
+    try:
+        candidate = Path(wire_path).parents[2].name
+        if candidate.startswith("session_"):
+            wire_session = candidate
+    except IndexError:
+        pass
+    raw = wire_session or str(session_id)
+    if contains_sensitive_text(raw):
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+        return f"session_{digest}"
+    if not raw.startswith("session_"):
+        raw = f"session_{raw}"
+    if any(ord(character) < 32 for character in raw):
+        raw = ""
+    raw = re.sub(r"[^\w-]", "_", raw)
+    raw = re.sub(r"_+", "_", raw).strip("_")
+    if not raw.startswith("session_"):
+        digest = hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:16]
+        raw = f"session_{digest}"
+    return raw[:_MAX_SOURCE_SESSION_CHARS]
 
 
 def _split_summary_candidate(candidates: list) -> tuple:
@@ -188,7 +268,12 @@ def _read_conversation(wire_path: str) -> str:
     )
 
 
-def _call_llm(prompt: str, llm_config: LLMConfig) -> str:
+def _call_llm(
+    prompt: str,
+    llm_config: LLMConfig,
+    *,
+    deadline: float | None = None,
+) -> str:
     request_body = {
         "model": llm_config.model,
         "messages": [{"role": "user", "content": prompt}],
@@ -205,14 +290,48 @@ def _call_llm(prompt: str, llm_config: LLMConfig) -> str:
         llm_config.base_url, data=body,
         headers={"Authorization": f"Bearer {llm_config.api_key}",
                  "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    if deadline is None:
+        deadline = time.monotonic() + _REQUEST_TIMEOUT_S
+        timeout = _REQUEST_TIMEOUT_S
+    else:
+        timeout = min(_REQUEST_TIMEOUT_S, deadline - time.monotonic())
+        if timeout <= 0:
+            raise RetryableExtractionError(
+                "extraction retry budget exhausted"
+            )
+    opener = urllib.request.build_opener(_SafeRedirectHandler())
+    with opener.open(req, timeout=timeout) as resp:
+        raw = resp.read(_MAX_RESPONSE_BYTES + 1)
+        if time.monotonic() >= deadline:
+            raise RetryableExtractionError(
+                "extraction retry budget exhausted"
+            )
+        if len(raw) > _MAX_RESPONSE_BYTES:
+            raise RetryableExtractionError(
+                "provider response body exceeded limit"
+            )
+        data = json.loads(raw.decode("utf-8"))
     return data["choices"][0]["message"]["content"]
 
 
-def _http_error_body(error: HTTPError) -> str:
+def _http_error_body(
+    error: HTTPError,
+    *,
+    deadline: float | None = None,
+) -> str:
     try:
-        return error.read().decode("utf-8", errors="replace").casefold()
+        if deadline is not None and time.monotonic() >= deadline:
+            raise RetryableExtractionError(
+                "extraction retry budget exhausted"
+            )
+        raw = error.read(_MAX_ERROR_BODY_BYTES)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise RetryableExtractionError(
+                "extraction retry budget exhausted"
+            )
+        return raw.decode("utf-8", errors="replace").casefold()
+    except RetryableExtractionError:
+        raise
     except Exception:
         return ""
 
@@ -227,9 +346,14 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
         if time.monotonic() >= deadline:
             raise RetryableExtractionError("extraction retry budget exhausted")
         try:
-            return _call_llm(prompt, llm_config)
+            content = _call_llm(prompt, llm_config, deadline=deadline)
+            if time.monotonic() >= deadline:
+                raise RetryableExtractionError(
+                    "extraction retry budget exhausted"
+                )
+            return content
         except HTTPError as error:
-            body = _http_error_body(error)
+            body = _http_error_body(error, deadline=deadline)
             if error.code in (400, 422) and any(marker in body for marker in (
                 "context_length_exceeded", "maximum context length",
                 "context too long", "context window",
@@ -339,6 +463,7 @@ def _extract_candidates(messages: list[dict[str, str]],
 
 def _persist_candidates(
         config, store, vidx, engine, candidates, session_id: str,
+        *, max_writes: int | None = None,
 ) -> list[int]:
     """Persist extraction candidates: gate checks → conflict detection → write.
 
@@ -348,22 +473,15 @@ def _persist_candidates(
     unavailable) — semantic merge is then skipped. Returns the IDs written to
     SQLite; vector synchronization is deliberately handled after commit.
     """
-    from evolvmem.auto_extractor import AutoExtractor
     from evolvmem.conflict_detector import ConflictDetector
-    from evolvmem.mcp_server import _is_low_info
     from evolvmem.semantic_merge import find_semantic_match
 
-    extractor = AutoExtractor()
     detector = ConflictDetector(store)
     added_ids: list[int] = []
     for c in candidates:
-        if not extractor.should_persist(c):
-            continue
+        if max_writes is not None and len(added_ids) >= max_writes:
+            break
         value = c.value.strip()
-        if not (config.value_min_chars <= len(value) <= config.value_max_chars):
-            continue
-        if _is_low_info(value):
-            continue
         decision = detector.check(c.key, value)
         if decision.action == "skip":
             continue
@@ -395,6 +513,57 @@ def _persist_candidates(
     return added_ids
 
 
+def _summary_value_is_persistable(config, value: str) -> bool:
+    """Apply the summary-specific deterministic value bounds."""
+    from evolvmem.mcp_server import _is_low_info
+
+    stripped = value.strip()
+    return (
+        config.value_min_chars <= len(stripped) <= config.value_max_chars
+        and not _is_low_info(stripped)
+    )
+
+
+def _persist_summary(store, summary, session_id: str) -> tuple[list[int], bool]:
+    """Write a locally constructed summary or accept an existing equivalent."""
+    active = next(
+        (
+            record
+            for record in store.get_by_key(summary.key)
+            if record["status"] == "active"
+        ),
+        None,
+    )
+    if active is not None:
+        metadata_equivalent = (
+            active["attribute"] == summary.attribute
+            and active["tags"] == ",".join(summary.tags)
+            and active["importance"] == summary.importance
+            and active["tier"] == summary.tier
+        )
+        if (
+            active["value"].strip() == summary.value.strip()
+            and metadata_equivalent
+        ):
+            return [], True
+    metadata = {
+        "attribute": summary.attribute,
+        "tags": summary.tags,
+        "importance": summary.importance,
+        "tier": summary.tier,
+        "source_session": session_id,
+    }
+    if active is None:
+        memory_id = store.add(summary.key, summary.value.strip(), **metadata)
+    else:
+        memory_id = store.replace(
+            summary.key,
+            summary.value.strip(),
+            **metadata,
+        )
+    return [memory_id], True
+
+
 def _sync_candidate_vectors(store, vidx, engine,
                             memory_ids: list[int]) -> None:
     """Best-effort vector sync for an already committed SQLite batch."""
@@ -404,6 +573,9 @@ def _sync_candidate_vectors(store, vidx, engine,
         return
     try:
         import numpy as np
+        mark_dirty = getattr(vidx, "mark_dirty", None)
+        if callable(mark_dirty):
+            mark_dirty()
         for memory_id in memory_ids:
             record = store.get_by_id(memory_id)
             if record:
@@ -414,6 +586,9 @@ def _sync_candidate_vectors(store, vidx, engine,
                 )
         vidx.save()
     except Exception as error:
+        preserve_dirty = getattr(vidx, "preserve_dirty", None)
+        if callable(preserve_dirty):
+            preserve_dirty()
         _log(f"vector sync skipped: {type(error).__name__}")
 
 
@@ -473,23 +648,6 @@ def session_end(payload: dict) -> ExtractionResult:
         if summary_value is None:
             _log("extraction deferred: unsafe or non-Chinese SESSION_SUMMARY")
             return ExtractionResult("retry", reason="invalid SESSION_SUMMARY")
-        summary.value = summary_value
-        if not isinstance(summary.tags, list):
-            summary.tags = []
-        else:
-            summary.tags = [
-                tag for tag in summary.tags if isinstance(tag, str)
-            ]
-
-        rejections: Counter[str] = Counter()
-        accepted = []
-        for candidate in candidates:
-            decision = evaluate_candidate(candidate)
-            if decision.accepted:
-                accepted.append(candidate)
-            else:
-                rejections[decision.reason] += 1
-        selected = rank_candidates(accepted, limit=_MAX_MEMORIES_PER_SESSION)
     except Exception as error:
         _log(
             "extraction deferred: candidate policy failed: "
@@ -498,15 +656,60 @@ def session_end(payload: dict) -> ExtractionResult:
         return ExtractionResult("retry", reason="candidate policy failed")
 
     config = Config.from_file()
+    if not _summary_value_is_persistable(config, summary_value):
+        _log("extraction deferred: unsafe or non-Chinese SESSION_SUMMARY")
+        return ExtractionResult("retry", reason="invalid SESSION_SUMMARY")
     project = _project_from_wire(wire, config.inject_project_aliases)
     try:
         summary_time = os.path.getmtime(wire)
     except OSError:
         summary_time = time.time()
-    summary.key = (f"project:{project}:progress:log:"
-                   f"{time.strftime('%Y-%m-%d-%H%M', time.localtime(summary_time))}")
-    if "日志" not in summary.tags:
-        summary.tags = [*summary.tags, "日志"]
+    from evolvmem.auto_extractor import CandidateMemory
+
+    summary = CandidateMemory(
+        key=(f"project:{project}:progress:log:"
+             f"{time.strftime('%Y-%m-%d-%H%M', time.localtime(summary_time))}"),
+        value=summary_value,
+        attribute="fact",
+        tags=["日志", f"分类:{project}"],
+        confidence=1.0,
+        importance=5.0,
+        tier="normal",
+    )
+    source_session = _canonical_session_id(session_id, wire)
+
+    try:
+        rejections: Counter[str] = Counter()
+        eligible = []
+        for candidate in candidates:
+            decision = evaluate_candidate(
+                candidate,
+                value_min_chars=config.value_min_chars,
+                value_max_chars=config.value_max_chars,
+            )
+            if decision.accepted:
+                eligible.append(candidate)
+            else:
+                rejections[decision.reason] += 1
+        ranked = rank_candidates(eligible, limit=None)
+        ranked = [
+            CandidateMemory(
+                key=candidate.key.casefold(),
+                value=candidate.value.strip(),
+                attribute=candidate.attribute,
+                tags=list(candidate.tags),
+                confidence=candidate.confidence,
+                importance=candidate.importance,
+                tier=candidate.tier,
+            )
+            for candidate in ranked
+        ]
+    except Exception as error:
+        _log(
+            "extraction deferred: candidate policy failed: "
+            f"{type(error).__name__}"
+        )
+        return ExtractionResult("retry", reason="candidate policy failed")
 
     # embedding/向量索引先就绪：事务内只读索引做跨 key 语义合并；
     # 加载失败则传 None，退化为纯 SQLite 写入（不阻塞持久化）
@@ -528,12 +731,21 @@ def session_end(payload: dict) -> ExtractionResult:
     try:
         with MemoryStore(config) as store:
             with store.transaction():
-                memory_ids = _persist_candidates(
-                    config, store, vidx, engine, [summary], session_id,
+                summary_ids, summary_satisfied = _persist_summary(
+                    store, summary, source_session,
                 )
-                memory_ids.extend(_persist_candidates(
-                    config, store, vidx, engine, selected, session_id,
-                ))
+                if not summary_satisfied:
+                    raise RuntimeError("SESSION_SUMMARY was not persisted")
+                atomic_ids = _persist_candidates(
+                    config,
+                    store,
+                    vidx,
+                    engine,
+                    ranked,
+                    source_session,
+                    max_writes=_MAX_MEMORIES_PER_SESSION,
+                )
+                memory_ids = [*summary_ids, *atomic_ids]
             _sync_candidate_vectors(store, vidx, engine, memory_ids)
             n = len(memory_ids)
     except Exception as error:
@@ -546,10 +758,15 @@ def session_end(payload: dict) -> ExtractionResult:
             engine.close()
     _log(
         f"provider={llm_config.provider} redacted={redacted_count} "
-        f"accepted={len(selected)} "
+        f"accepted={len(atomic_ids)} "
         f"rejected_sensitive={rejections['sensitive']} "
         f"rejected_ephemeral={rejections['ephemeral']} "
-        f"rejected_language={rejections['language']} persisted={n}"
+        f"rejected_language={rejections['language']} "
+        f"rejected_metadata={rejections['metadata']} "
+        f"rejected_confidence={rejections['confidence']} "
+        f"rejected_length={rejections['length']} "
+        f"rejected_low_information={rejections['low_information']} "
+        f"persisted={n}"
     )
     return ExtractionResult("completed", persisted=n)
 

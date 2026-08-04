@@ -7,10 +7,10 @@
   1. wire.jsonl 最近 IDLE_MINUTES 分钟内没有改动（大概率已无活会话占用）；
   2. 自上次成功提炼后 wire 又有更新（以 mtime 为准，状态存 STATE_PATH）。
 
-已被 hook 正常提炼过的会话（memories.source_session 里有记录）只在 wire 再次
-变化时才重跑。每轮最多处理 MAX_PER_RUN 个会话（新的优先），避免积压会话
-一次性打满 LLM 调用。所有动作写到 stdout，由 cron 重定向到 LOG_PATH，
-让"没写"可见。
+只有状态文件中与当前 wire mtime 精确对应的终态检查点才证明该版本已完成。
+历史 memory 行不代表当前 wire 版本；缺少检查点的会话会安全地重跑一次。
+每轮最多处理 MAX_PER_RUN 个会话（新的优先），避免积压会话一次性打满 LLM
+调用。所有动作写到 stdout，由 cron 重定向到 LOG_PATH，让"没写"可见。
 
 用法（crontab，每小时一次）：
   23 * * * * /usr/bin/flock -n ~/.claude/evolvmem/.extract_stale.lock \
@@ -58,23 +58,7 @@ def save_state(state: dict) -> None:
     os.replace(tmp, STATE_PATH)
 
 
-def already_extracted_sessions() -> set:
-    """SessionEnd hook 成功提炼过的会话（memories.source_session 非空）。"""
-    import sqlite3
-    try:
-        conn = sqlite3.connect(DATA_DIR / "memory.db")
-        rows = conn.execute(
-            "SELECT DISTINCT source_session FROM memories"
-            " WHERE source_session LIKE 'session_%'").fetchall()
-        conn.close()
-        return {r[0] for r in rows}
-    except Exception as e:
-        log(f"warn: source_session lookup failed: {e}")
-        return set()
-
-
-def find_candidates(now: float, state: dict,
-                    hook_done: set[str]) -> list[tuple[float, str]]:
+def find_candidates(now: float, state: dict) -> list[tuple[float, str]]:
     """Find idle sessions whose latest wire version has not completed."""
     candidates = []
     for wire in glob.glob(SESSIONS_GLOB):
@@ -88,13 +72,6 @@ def find_candidates(now: float, state: dict,
             continue
         session_id = Path(wire).parents[2].name
         if st.st_mtime <= state.get(session_id, {}).get("mtime", 0):
-            continue
-        if session_id in hook_done and session_id not in state:
-            state[session_id] = {
-                "mtime": st.st_mtime,
-                "via": "hook",
-                "status": "completed",
-            }
             continue
         candidates.append((st.st_mtime, session_id))
     candidates.sort(reverse=True)
@@ -136,8 +113,7 @@ def process_batch(batch: list[tuple[float, str]], state: dict,
 def main() -> None:
     now = time.time()
     state = load_state()
-    hook_done = already_extracted_sessions()
-    candidates = find_candidates(now, state, hook_done)
+    candidates = find_candidates(now, state)
     batch = candidates[:MAX_PER_RUN]
     log(f"scan: {len(candidates)} stale session(s) pending, "
         f"processing {len(batch)}")

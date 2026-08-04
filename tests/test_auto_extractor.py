@@ -146,6 +146,25 @@ class TestAutoExtractor:
 
         assert secret not in str(exc_info.value)
 
+    @pytest.mark.parametrize("confidence", [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        -0.01,
+        1.01,
+    ])
+    def test_parse_rejects_non_finite_or_out_of_range_confidence(
+            self, confidence):
+        extractor = AutoExtractor()
+        response = json.dumps({"memories": [{
+            "key": "project:test:fact:confidence",
+            "value": "这是长期有效的中文事实。",
+            "confidence": confidence,
+        }]}, ensure_ascii=False)
+
+        with pytest.raises(ValueError, match="invalid candidate confidence"):
+            extractor.parse_response(response)
+
     def test_parse_skips_non_string_key_or_value(self):
         extractor = AutoExtractor()
         response = json.dumps({"memories": [

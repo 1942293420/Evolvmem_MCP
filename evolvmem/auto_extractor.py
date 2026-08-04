@@ -127,6 +127,8 @@ class AutoExtractor:
                 confidence = float(item.get("confidence", 0.5))
             except (TypeError, ValueError):
                 raise ValueError("invalid candidate confidence") from None
+            if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+                raise ValueError("invalid candidate confidence")
             candidates.append(CandidateMemory(
                 key=key,
                 value=value,

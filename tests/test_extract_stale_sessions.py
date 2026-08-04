@@ -126,7 +126,7 @@ def test_unexpected_failure_stays_pending_and_next_session_runs(monkeypatch):
     assert state["session_ok"]["status"] == "completed"
 
 
-def test_hook_completed_session_is_recorded_without_offline_retry(
+def test_absent_version_checkpoint_reprocesses_session_once(
         monkeypatch, tmp_path):
     wire = (tmp_path / "wd_project_hash" / "session_hook" / "agents"
             / "main" / "wire.jsonl")
@@ -144,26 +144,32 @@ def test_hook_completed_session_is_recorded_without_offline_retry(
     candidates = stale.find_candidates(
         now=old_mtime + stale.IDLE_MINUTES * 60 + 1,
         state=state,
-        hook_done={"session_hook"},
     )
 
-    assert candidates == []
+    assert candidates == [(old_mtime, "session_hook")]
+    hooks = FakeKimiHooks({
+        "session_hook": _result("completed", persisted=1),
+    })
+    assert stale.process_batch(candidates, state, hooks) is False
     assert state == {
         "session_hook": {
             "mtime": old_mtime,
-            "via": "hook",
+            "via": "offline-fallback",
             "status": "completed",
         }
     }
+    assert stale.find_candidates(
+        now=old_mtime + stale.IDLE_MINUTES * 60 + 1,
+        state=state,
+    ) == []
 
 
 def test_main_aborts_when_provider_config_is_unavailable(monkeypatch):
     monkeypatch.setattr(stale, "load_state", lambda: {})
-    monkeypatch.setattr(stale, "already_extracted_sessions", lambda: set())
     monkeypatch.setattr(
         stale,
         "find_candidates",
-        lambda _now, _state, _hook_done: [(1.0, "session_pending")],
+        lambda _now, _state: [(1.0, "session_pending")],
     )
     monkeypatch.setattr(stale, "save_state", lambda _state: None)
     monkeypatch.setattr(stale, "log", lambda _message: None)
