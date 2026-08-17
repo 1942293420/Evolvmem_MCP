@@ -22,28 +22,28 @@ class ContextCore:
     def initialize(
         self, *, migrate_legacy: bool = True
     ) -> ContextCoreBootstrapReport:
-        self.store.initialize()
-        if migrate_legacy:
-            migration = LegacyMemoryMigrator(self.store, self.config).migrate()
-        else:
-            migration = LegacyMigrationReport(
-                legacy_table_found=self.store.legacy_memory_table_exists(),
-                scanned=0,
-                created=0,
-                already_migrated=0,
-                duplicate_active_count=0,
-            )
-        return ContextCoreBootstrapReport(migration=migration)
+        try:
+            self.store.initialize()
+            if migrate_legacy:
+                migration = LegacyMemoryMigrator(self.store, self.config).migrate()
+            else:
+                migration = LegacyMigrationReport(
+                    legacy_table_found=self.store.legacy_memory_table_exists(),
+                    scanned=0,
+                    created=0,
+                    already_migrated=0,
+                    duplicate_active_count=0,
+                )
+            return ContextCoreBootstrapReport(migration=migration)
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         self.store.close()
 
     def __enter__(self) -> "ContextCore":
-        try:
-            self.initialize()
-        except BaseException:
-            self.close()
-            raise
+        self.initialize()
         return self
 
     def __exit__(self, *args: object) -> None:

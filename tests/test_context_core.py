@@ -96,3 +96,17 @@ def test_context_manager_closes_store_when_bootstrap_fails(
 
     with pytest.raises(RuntimeError, match="ContextStore is not initialized"):
         core.store.count_by_status()
+
+
+def test_initialize_closes_store_when_migration_fails(test_config, monkeypatch):
+    """A direct bootstrap failure must close the store opened by initialize."""
+    def fail_migration(self):
+        raise RuntimeError("synthetic migration failure")
+
+    monkeypatch.setattr(LegacyMemoryMigrator, "migrate", fail_migration)
+    core = ContextCore(test_config)
+
+    with pytest.raises(RuntimeError, match="synthetic migration failure"):
+        core.initialize()
+
+    assert core.store._conn is None
