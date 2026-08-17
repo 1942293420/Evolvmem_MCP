@@ -8,7 +8,7 @@ def normalize_content(value: str) -> str:
     """Canonicalize line endings and outer whitespace without flattening content."""
     if not isinstance(value, str):
         raise ContextValidationError("content must be a string")
-    return value.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return value.replace("\r\n", "\n").strip()
 
 
 def validate_layers(

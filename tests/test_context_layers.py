@@ -24,6 +24,17 @@ def test_normalize_content_preserves_interior_newlines_while_normalizing_outer_s
     assert normalize_content(" \r\n 第一行\r\n\r\n第二行 \t") == "第一行\n\n第二行"
 
 
+def test_legacy_conversion_preserves_lone_carriage_returns_in_l2():
+    """Changing non-CRLF source bytes would corrupt migrated legacy evidence."""
+    layers = layers_from_legacy_value(
+        "  Alpha\rBeta\r\nGamma\rDelta  ",
+        content_type=ContextContentType.FACT,
+        config=_config(l0=40, l1=40, l2=40),
+    )
+
+    assert layers.l2 == "Alpha\rBeta\nGamma\rDelta"
+
+
 @pytest.mark.parametrize(
     "layers, limit_name",
     [
@@ -35,6 +46,14 @@ def test_normalize_content_preserves_interior_newlines_while_normalizing_outer_s
 def test_new_layers_reject_each_configured_size_overflow(layers, limit_name):
     """Accepting an over-budget layer would violate the retrieval budget."""
     with pytest.raises(ContextValidationError, match=limit_name):
+        validate_layers(layers, _config())
+
+
+def test_new_layers_reject_a_canonically_over_budget_layer():
+    """Trimming outer whitespace must not hide content that exceeds its stored budget."""
+    layers = ContextLayers(" \r\n" + "x" * 21 + " \t", "description", "full source", "user")
+
+    with pytest.raises(ContextValidationError, match="l0"):
         validate_layers(layers, _config())
 
 

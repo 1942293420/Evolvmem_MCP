@@ -78,9 +78,16 @@ class ContextItemDraft:
 
         if not isinstance(self.layers, ContextLayers):
             raise ContextValidationError("layers must be a ContextLayers instance")
+        layers = ContextLayers(
+            l0=_normalize_text(self.layers.l0, "l0"),
+            l1=_normalize_text(self.layers.l1, "l1"),
+            l2=_normalize_text(self.layers.l2, "l2"),
+            generator=self.layers.generator,
+        )
         for name in ("l0", "l1", "l2"):
-            if not _normalize_text(getattr(self.layers, name), name):
+            if not getattr(layers, name):
                 raise ContextValidationError(f"{name} must not be empty")
+        object.__setattr__(self, "layers", layers)
 
         object.__setattr__(self, "tags", _normalize_tags(self.tags))
         _validate_number(self.importance, "importance", lower=1.0, upper=10.0)
@@ -133,7 +140,7 @@ class ContextVectorDocument:
 def _normalize_text(value: object, field_name: str) -> str:
     if not isinstance(value, str):
         raise ContextValidationError(f"{field_name} must be a string")
-    return value.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return value.replace("\r\n", "\n").strip()
 
 
 def _normalize_tags(tags: object) -> tuple[str, ...]:

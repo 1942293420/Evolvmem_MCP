@@ -41,6 +41,27 @@ def test_draft_normalizes_identity_and_tags_into_stable_values():
     assert draft.tags == ("python", "testing")
 
 
+def test_draft_retains_canonical_normalized_layer_content():
+    """Persisting raw layer whitespace would make equivalent context records differ."""
+    draft = ContextItemDraft(
+        identity_key="project:hermes",
+        content_type=ContextContentType.FACT,
+        layers=ContextLayers(
+            l0=" \r\n summary \t",
+            l1="\t description\r\nwith detail \r\n",
+            l2=" \r\n full source\r\nwith evidence \t",
+            generator="user",
+        ),
+    )
+
+    assert draft.layers == ContextLayers(
+        l0="summary",
+        l1="description\nwith detail",
+        l2="full source\nwith evidence",
+        generator="user",
+    )
+
+
 @pytest.mark.parametrize("identity_key", ["", " \t\n "])
 def test_draft_rejects_empty_identity_keys(identity_key):
     """An empty canonical key would make context replacement ambiguous."""
