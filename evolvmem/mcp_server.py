@@ -157,6 +157,9 @@ class MemoryMCPServer:
             "vector_count": vector_count,
             "embedding_loaded": self.engine.is_loaded,
             "embedding_dim": self.config.embedding_dim,
+            "embedding_diagnostics": list(
+                self.config.validate_runtime(require_model=True)
+            )[:8],
             "data_dir": str(self.config.data_dir),
         }
 

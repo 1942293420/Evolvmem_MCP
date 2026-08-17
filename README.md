@@ -25,7 +25,7 @@ A fully-local, three-layer memory plugin for Claude Code with Chinese language s
 The script will automatically:
 - Create `~/.claude/evolvmem/` directory and `models/` subdirectory
 - Install pip dependencies usearch and llama-cpp-python
-- Download bge-small-zh-Q5_K_M.gguf (~50MB, skipped if already present)
+- Download the canonical Nomic `nomic-embed-text-v1.5.f16.gguf` model (skipped if already present)
 - Generate default `config.json`
 - Verify the Config module can be imported
 
@@ -121,8 +121,8 @@ All data is stored under `~/.claude/evolvmem/`:
 |---|---|
 | `memory.db` | SQLite database with FTS5/trigram indexes |
 | `vectors.usearch` | USearch HNSW vector index |
-| `models/` | BGE-small-zh Q5_K_M GGUF model file |
-| `config.json` | Retrieval, forgetting, and other parameters |
+| `models/nomic-embed-text-v1.5.f16.gguf` | Canonical Nomic GGUF embedding model (768 dimensions) |
+| `config.json` | Retrieval, embedding runtime, forgetting, and other parameters |
 
 ## Configuration
 
@@ -132,7 +132,8 @@ Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 - `fts_weight` / `vector_weight`: Hybrid search weight allocation, default 0.6 / 0.4
 - `forget_days_threshold`: Days since last access before a memory can be archived, default 90
 - `forget_access_count_threshold`: Max access count below which memories may be downgraded, default 2
-- `embedding_dim`: Vector dimension, must match model, default 768
+- `embedding_model_filename`: GGUF filename to load; the canonical default is `nomic-embed-text-v1.5.f16.gguf`
+- `embedding_dim`: Vector dimension, must match model, default 768 for the canonical Nomic model
 - `embedding_query_prefix` / `embedding_doc_prefix`: Task prefixes applied when embedding queries/documents (nomic defaults `search_query: ` / `search_document: `, set to `""` to disable)
 - `inject_max_count`: Max memories injected on SessionStart, default 50
 - `inject_max_chars`: Total character budget for SessionStart injection, default 8000
@@ -162,8 +163,12 @@ Python dependencies (auto-installed by install.sh):
 pip install usearch llama-cpp-python
 ```
 
-Embedding model: BGE-small-zh Q5_K_M GGUF (~50MB), auto-downloaded by install.sh. For manual download, place `bge-small-zh-Q5_K_M.gguf` in `~/.claude/evolvmem/models/`.
+Embedding model: Nomic Embed Text v1.5 F16 GGUF (768 dimensions), auto-downloaded by install.sh. For manual installation, place `nomic-embed-text-v1.5.f16.gguf` in `~/.claude/evolvmem/models/`.
+
+### Migration from the prior BGE installer
+
+The old installer wrote only a 512-dimensional setting while downloading its BGE model. To keep using that model, explicitly add its filename and matching prefixes to `config.json` before using its existing vector index. Otherwise migrate to the Nomic 768-dimensional contract and rebuild `vectors.usearch`; do not mix vectors from the two model spaces.
 
 ## Architecture
 
-Three-layer memory structure: active memory (L0, SessionStart system prompt injection) -> exact retrieval (L1, SQLite + FTS5/trigram) -> semantic retrieval (L2, USearch HNSW). Memories self-iterate through auto-extraction, conflict detection, and access-decay forgetting. All data is stored locally, no external services required.
+The existing retrieval stack has three layers: active-memory injection (L0, SessionStart system prompt), exact retrieval (L1, SQLite + FTS5/trigram), and semantic retrieval (L2, USearch HNSW). Context Core will add its own bounded L0/L1/L2 context layers later; those limits are configured now but are not yet a second retrieval path. Memories self-iterate through auto-extraction, conflict detection, and access-decay forgetting. All data is stored locally, no external services required.

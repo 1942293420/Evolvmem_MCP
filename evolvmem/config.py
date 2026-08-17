@@ -5,6 +5,11 @@ from pathlib import Path
 import json
 import os
 
+from evolvmem.runtime_contract import (
+    DEFAULT_EMBEDDING_CONTRACT,
+    known_embedding_contract,
+)
+
 
 @dataclass
 class Config:
@@ -33,10 +38,17 @@ class Config:
     def vector_path(self) -> Path:
         return self.data_dir / "vectors.usearch"
 
+    @property
+    def context_vector_path(self) -> Path:
+        return self.data_dir / "context_vectors.usearch"
+
     # GGUF 模型路径
     @property
     def model_path(self) -> Path:
-        return self.data_dir / "models" / "nomic-embed-text-v1.5.f16.gguf"
+        filename = self.embedding_model_filename
+        if not self._is_safe_model_filename(filename):
+            return self.data_dir / "models"
+        return self.data_dir / "models" / filename
 
     # 配置文件路径
     @property
@@ -55,10 +67,16 @@ class Config:
     forget_rate_limit_days: int = 7          # 同一记忆两次降级的最小间隔
 
     # --- embedding 参数 ---
-    embedding_dim: int = 768
+    embedding_model_filename: str = DEFAULT_EMBEDDING_CONTRACT.filename
+    embedding_dim: int = DEFAULT_EMBEDDING_CONTRACT.dimension
     # nomic-embed-text-v1.5 任务前缀；置空字符串可关闭
-    embedding_query_prefix: str = "search_query: "
-    embedding_doc_prefix: str = "search_document: "
+    embedding_query_prefix: str = DEFAULT_EMBEDDING_CONTRACT.query_prefix
+    embedding_doc_prefix: str = DEFAULT_EMBEDDING_CONTRACT.document_prefix
+
+    # --- Context Core（尚未接入现有检索层）---
+    context_l0_max_chars: int = 240
+    context_l1_max_chars: int = 1200
+    context_l2_max_chars: int = 6000
 
     # --- SessionStart 注入限额 ---
     inject_max_count: int = 50     # 最多注入的记忆条数
@@ -108,6 +126,62 @@ class Config:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         (self.data_dir / "models").mkdir(parents=True, exist_ok=True)
 
+    def validate_runtime(self, *, require_model: bool = False) -> tuple[str, ...]:
+        """Return safe, user-actionable embedding/runtime diagnostics.
+
+        Validation intentionally does not exit: MCP startup remains able to serve
+        SQLite FTS even while the optional embedding model is unavailable.
+        """
+        diagnostics: list[str] = []
+        filename = self.embedding_model_filename
+        filename_is_safe = self._is_safe_model_filename(filename)
+        if not filename_is_safe:
+            diagnostics.append(
+                "embedding_model_filename must be a non-empty filename without path separators"
+            )
+        if not isinstance(self.embedding_dim, int) or self.embedding_dim <= 0:
+            diagnostics.append("embedding_dim must be a positive integer")
+
+        known = known_embedding_contract(filename) if filename_is_safe else None
+        if known is not None and self.embedding_dim != known.dimension:
+            diagnostics.append(
+                f"embedding_dim for '{filename}' must be {known.dimension}; "
+                f"configured {self.embedding_dim}"
+            )
+
+        layer_limits = (
+            self.context_l0_max_chars,
+            self.context_l1_max_chars,
+            self.context_l2_max_chars,
+        )
+        if any(not isinstance(limit, int) or limit <= 0 for limit in layer_limits):
+            diagnostics.append(
+                "context_l0_max_chars, context_l1_max_chars, and "
+                "context_l2_max_chars must be positive integers"
+            )
+        elif not self.context_l0_max_chars <= self.context_l1_max_chars <= self.context_l2_max_chars:
+            diagnostics.append(
+                "context layer limits must satisfy context_l0_max_chars <= "
+                "context_l1_max_chars <= context_l2_max_chars"
+            )
+
+        if require_model and filename_is_safe and not self.model_path.is_file():
+            diagnostics.append(
+                f"Model file not found: embedding_model_filename '{filename}' "
+                "is missing from the configured models directory"
+            )
+        return tuple(diagnostics)
+
+    @staticmethod
+    def _is_safe_model_filename(filename: object) -> bool:
+        """Accept a filename only when it cannot escape the models directory."""
+        return (
+            isinstance(filename, str)
+            and bool(filename.strip())
+            and Path(filename).name == filename
+            and "\\" not in filename
+        )
+
     @classmethod
     def from_file(cls, path: Path | None = None) -> "Config":
         """Load config from config.json; missing fields use defaults."""
@@ -133,9 +207,13 @@ class Config:
             "forget_days_threshold": self.forget_days_threshold,
             "forget_access_count_threshold": self.forget_access_count_threshold,
             "forget_rate_limit_days": self.forget_rate_limit_days,
+            "embedding_model_filename": self.embedding_model_filename,
             "embedding_dim": self.embedding_dim,
             "embedding_query_prefix": self.embedding_query_prefix,
             "embedding_doc_prefix": self.embedding_doc_prefix,
+            "context_l0_max_chars": self.context_l0_max_chars,
+            "context_l1_max_chars": self.context_l1_max_chars,
+            "context_l2_max_chars": self.context_l2_max_chars,
             "inject_max_count": self.inject_max_count,
             "inject_max_chars": self.inject_max_chars,
             "inject_pinned_max_count": self.inject_pinned_max_count,

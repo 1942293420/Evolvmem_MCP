@@ -14,8 +14,9 @@ class VectorIndex:
     Index file is loaded via mmap for zero-copy startup.
     """
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, *, path: Path | None = None):
         self.config = config
+        self.path = (path or config.vector_path).resolve()
         self._index: Index | None = None
         self._dim: int | None = None
         self._view_mode: bool = False
@@ -23,9 +24,7 @@ class VectorIndex:
 
     @property
     def _dirty_path(self) -> Path:
-        return self.config.vector_path.with_suffix(
-            f"{self.config.vector_path.suffix}.dirty"
-        )
+        return self.path.with_suffix(f"{self.path.suffix}.dirty")
 
     # ---- lifecycle ----
 
@@ -33,7 +32,7 @@ class VectorIndex:
         """Create or load index. Uses mmap if file exists, creates new otherwise."""
         self._dim = dim
         self._owns_dirty_marker = False
-        path = str(self.config.vector_path)
+        path = str(self.path)
         if Path(path).exists():
             self._index = Index.restore(path, view=False)
             self._view_mode = False
@@ -120,7 +119,7 @@ class VectorIndex:
             raise RuntimeError(
                 "cannot save a view-mode index; use rebuild() instead"
             )
-        path = str(self.config.vector_path)
+        path = str(self.path)
         self._index.save(path)
         if self._owns_dirty_marker:
             self.clear_dirty()

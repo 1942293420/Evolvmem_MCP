@@ -4,8 +4,8 @@ set -euo pipefail
 PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="$HOME/.claude/evolvmem"
 MODEL_DIR="$DATA_DIR/models"
-MODEL_FILE="bge-small-zh-Q5_K_M.gguf"
-MODEL_URL="https://huggingface.co/CompendiumLabs/bge-small-zh-Q5_K_M-GGUF/resolve/main/bge-small-zh-Q5_K_M.gguf"
+MODEL_FILE="$(PYTHONPATH="$PLUGIN_DIR" python3 -c 'from evolvmem.runtime_contract import DEFAULT_EMBEDDING_CONTRACT; print(DEFAULT_EMBEDDING_CONTRACT.filename)')"
+MODEL_URL="$(PYTHONPATH="$PLUGIN_DIR" python3 -c 'from evolvmem.runtime_contract import DEFAULT_EMBEDDING_CONTRACT; print(DEFAULT_EMBEDDING_CONTRACT.download_url)')"
 
 echo "=== EvolvMem Plugin Installation ==="
 echo ""
@@ -38,32 +38,8 @@ fi
 CONFIG_FILE="$DATA_DIR/config.json"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "[4/5] Creating default config..."
-    cat > "$CONFIG_FILE" << 'EOF'
-{
-    "fts_top_k": 20,
-    "vector_top_k": 20,
-    "fts_weight": 0.6,
-    "vector_weight": 0.4,
-    "forget_days_threshold": 90,
-    "forget_access_count_threshold": 2,
-    "forget_rate_limit_days": 7,
-    "embedding_dim": 512,
-    "inject_max_count": 50,
-    "inject_max_chars": 8000,
-    "inject_pinned_max_count": 10,
-    "inject_pinned_max_chars": 2000,
-    "inject_index_max_chars": 1000,
-    "inject_key_prefix_quota": 3,
-    "inject_w_importance": 0.5,
-    "inject_w_recency": 0.3,
-    "inject_w_frequency": 0.2,
-    "inject_recency_tau_days": 14.0,
-    "inject_freq_norm_cap": 20,
-    "forget_auto_run_hours": 24,
-    "stop_hook_safe": true,
-    "value_max_chars": 500
-}
-EOF
+    EVOLVMEM_DATA_DIR="$DATA_DIR" PYTHONPATH="$PLUGIN_DIR" python3 -c \
+        'from evolvmem.config import Config; Config().save()'
 else
     echo "[4/5] Config file already exists, skipping"
 fi
