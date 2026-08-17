@@ -585,6 +585,22 @@ class ContextStore:
         status_sql, status_params = self._status_filter(statuses)
         safe_query = self._sanitize_fts5_query(query)
         try:
+            ranked_rows = self._connection().execute(
+                "SELECT i.id AS item_id, l.layer, i.content_type, i.project, "
+                "i.status, -rank AS score "
+                f"FROM {table} f "
+                "JOIN context_layers l ON l.id=f.rowid "
+                "JOIN context_items i ON i.id=l.item_id "
+                f"WHERE {table} MATCH ? AND {status_sql} "
+                "ORDER BY rank, i.id, l.layer LIMIT ?",
+                (safe_query, *status_params, top_k * 2),
+            ).fetchall()
+            selected_ids = tuple(
+                dict.fromkeys(row["item_id"] for row in ranked_rows)
+            )[:top_k]
+            if not selected_ids:
+                return []
+            placeholders = ",".join("?" for _ in selected_ids)
             rows = self._connection().execute(
                 "SELECT i.id AS item_id, l.layer, i.content_type, i.project, "
                 "i.status, -rank AS score "
@@ -592,8 +608,9 @@ class ContextStore:
                 "JOIN context_layers l ON l.id=f.rowid "
                 "JOIN context_items i ON i.id=l.item_id "
                 f"WHERE {table} MATCH ? AND {status_sql} "
-                "ORDER BY rank LIMIT ?",
-                (safe_query, *status_params, top_k * 2),
+                f"AND i.id IN ({placeholders}) "
+                "ORDER BY rank, i.id, l.layer",
+                (safe_query, *status_params, *selected_ids),
             ).fetchall()
         except sqlite3.OperationalError:
             return []

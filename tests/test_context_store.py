@@ -368,6 +368,34 @@ def test_search_fts_finds_l0_and_l1_but_never_l2(store, draft_factory):
     )
 
 
+def test_search_fts_keeps_all_matched_layers_after_item_ranking(store, draft_factory):
+    """A crowded row ranking must not truncate a selected item's weaker layer."""
+    target = store.create_item(
+        draft_factory(
+            "project:test:fact:target",
+            l0="rankingneedle",
+            l1="rankingneedle " + "padding " * 80,
+            l2="complete source",
+            status=ContextStatus.ACTIVE,
+        )
+    )
+    store.create_item(
+        draft_factory(
+            "project:test:fact:competitor",
+            l0="rankingneedle " + "padding " * 10,
+            l1="unrelated detail",
+            l2="complete source",
+            status=ContextStatus.ACTIVE,
+        )
+    )
+
+    hits = store.search_fts("rankingneedle", top_k=1)
+
+    assert len(hits) == 1
+    assert hits[0].item_id == target.id
+    assert hits[0].match_layers == (ContextLayer.L0, ContextLayer.L1)
+
+
 def test_fts_triggers_follow_direct_layer_updates_and_deletes(store, draft_factory):
     """Updating or deleting indexed layers must not leave stale lexical entries."""
     item = store.create_item(
