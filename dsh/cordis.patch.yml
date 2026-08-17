@@ -1,0 +1,38 @@
+# dsh-evolvmem bundle patch layer — applied over the profile's base tree at boot.
+# name 用包名自引用（dsh-evolvmem/host-*）：经 profile 的 node_modules 父级查找
+# 解析；挂进 profile 的 bundles 列表即生效。
+- insert:
+    - id: mcp-evolvmem
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: evolvmem
+        transport: stdio
+        command: /home/jiangli/hermes-memory-plugin/.venv/bin/python3
+        args: ['-m', 'evolvmem.mcp_server']
+        env:
+          PYTHONPATH: /home/jiangli/hermes-memory-plugin
+    - id: evolvmem-inject
+      name: dsh-evolvmem/host-inject
+      config:
+        python: /home/jiangli/hermes-memory-plugin/.venv/bin/python3
+        env:
+          PYTHONPATH: /home/jiangli/hermes-memory-plugin
+        timeoutMs: 15000
+    - id: evolvmem-extract
+      name: dsh-evolvmem/host-extract
+      config:
+        python: /home/jiangli/hermes-memory-plugin/.venv/bin/python3
+        env:
+          PYTHONPATH: /home/jiangli/hermes-memory-plugin
+        minChars: 200
+    - id: evolvmem-sweep
+      name: dsh-evolvmem/host-sweep
+      config:
+        python: /home/jiangli/hermes-memory-plugin/.venv/bin/python3
+        env:
+          PYTHONPATH: /home/jiangli/hermes-memory-plugin
+        dataDir: /home/jiangli/.claude/evolvmem
+        sweepIntervalMs: 1800000
+        sweepIdleMs: 1800000
+        maxPerSweep: 3
+        minChars: 200

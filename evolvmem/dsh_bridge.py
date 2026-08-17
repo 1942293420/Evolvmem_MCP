@@ -226,6 +226,31 @@ def extract_from_messages(
 
 
 def extract_cli(args: argparse.Namespace) -> int:
+    from evolvmem.config import Config
+
+    config = Config.from_file()
+    marker_path = config.data_dir / ".dsh_extracted.json"
+
+    def _read_markers() -> dict:
+        try:
+            return json.loads(marker_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _mark_done(session_id: str) -> None:
+        try:
+            markers = _read_markers()
+            markers[session_id] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            # 只保留最近 2000 个会话标记，防文件无限膨胀
+            if len(markers) > 2000:
+                keys = sorted(markers, key=lambda k: markers[k])[-2000:]
+                markers = {k: markers[k] for k in keys}
+            marker_path.write_text(
+                json.dumps(markers, ensure_ascii=False, indent=1),
+                encoding="utf-8")
+        except Exception as error:
+            _log(f"marker write failed (non-fatal): {error}")
+
     messages_path = Path(args.messages_file)
     try:
         data = json.loads(messages_path.read_text(encoding="utf-8"))
@@ -236,12 +261,20 @@ def extract_cli(args: argparse.Namespace) -> int:
                           "reason": f"messages file read failed: {error}"}))
         return 0  # fail-open
 
+    if args.session_id:
+        if args.session_id in _read_markers():
+            print(json.dumps({"status": "skipped",
+                              "reason": "already extracted"}))
+            return 0
+
     status, details = extract_from_messages(
         messages,
         session_id=args.session_id or messages_path.stem,
         project=args.project or "",
         mtime=messages_path.stat().st_mtime if messages_path.exists() else None,
     )
+    if status == "completed" and args.session_id:
+        _mark_done(args.session_id)
     print(json.dumps({"status": status, **details}, ensure_ascii=False))
     return 0
 
