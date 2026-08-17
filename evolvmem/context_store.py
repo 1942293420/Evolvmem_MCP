@@ -408,6 +408,165 @@ class ContextStore:
                 params,
             )
 
+    # ---- one-time legacy migration support ----
+
+    def legacy_memory_table_exists(self) -> bool:
+        row = self._connection().execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'"
+        ).fetchone()
+        return row is not None
+
+    def legacy_memory_row_count(self) -> int:
+        if not self.legacy_memory_table_exists():
+            return 0
+        row = self._connection().execute(
+            "SELECT COUNT(*) AS count FROM memories"
+        ).fetchone()
+        return int(row["count"])
+
+    def iter_unmigrated_legacy_rows(self) -> list[dict]:
+        """Read legacy rows without assuming MemoryStore upgraded their schema."""
+        if not self.legacy_memory_table_exists():
+            return []
+
+        columns = {
+            row["name"]
+            for row in self._connection().execute("PRAGMA table_info(memories)")
+        }
+
+        def legacy_column(name: str, default_sql: str) -> str:
+            if name in columns:
+                return f'm."{name}"'
+            return default_sql
+
+        attribute = (
+            legacy_column("attribute", "NULL")
+            if "attribute" in columns
+            else legacy_column("category", "''")
+        )
+        legacy_id = legacy_column("id", "m.rowid")
+        selections = (
+            f"{legacy_id} AS id",
+            legacy_column("key", "''") + " AS key",
+            legacy_column("value", "''") + " AS value",
+            legacy_column("status", "'archived'") + " AS status",
+            f"{attribute} AS attribute",
+            legacy_column("tags", "''") + " AS tags",
+            legacy_column("source_session", "''") + " AS source_session",
+            f"{legacy_column('access_count', '0')} AS access_count",
+            f"{legacy_column('last_accessed', 'NULL')} AS last_accessed",
+            f"{legacy_column('supersedes', 'NULL')} AS supersedes",
+            f"{legacy_column('superseded_by', 'NULL')} AS superseded_by",
+            legacy_column("created_at", "'1970-01-01 00:00:00'")
+            + " AS created_at",
+            legacy_column("updated_at", "'1970-01-01 00:00:00'")
+            + " AS updated_at",
+            f"{legacy_column('importance', '5.0')} AS importance",
+            legacy_column("tier", "'normal'") + " AS tier",
+            f"{legacy_column('expires_at', 'NULL')} AS expires_at",
+        )
+        rows = self._connection().execute(
+            f"SELECT {', '.join(selections)} FROM memories m "
+            "LEFT JOIN legacy_memory_migrations migration "
+            f"ON migration.legacy_memory_id={legacy_id} "
+            "WHERE migration.legacy_memory_id IS NULL ORDER BY id"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def apply_legacy_item_metadata(
+        self,
+        item_id: int,
+        *,
+        access_count: int,
+        last_accessed: str | None,
+        created_at: str,
+        updated_at: str,
+        original_l2: str,
+    ) -> None:
+        """Restore metadata create_item intentionally does not expose generally.
+
+        Exact legacy L2 evidence is authoritative even when it is blank or exceeds
+        today's validation budget; ordinary ContextItemDraft writes retain the
+        non-empty and bounded-layer invariants.
+        """
+        self._require_transaction("apply_legacy_item_metadata")
+        conn = self._connection()
+        conn.execute(
+            "UPDATE context_items SET access_count=?, last_accessed=?, "
+            "created_at=?, updated_at=? WHERE id=?",
+            (access_count, last_accessed, created_at, updated_at, item_id),
+        )
+        conn.execute(
+            "UPDATE context_layers SET content=?, content_hash=?, created_at=?, "
+            "updated_at=? WHERE item_id=? AND layer='l2'",
+            (
+                original_l2,
+                hashlib.sha256(original_l2.encode("utf-8")).hexdigest(),
+                created_at,
+                updated_at,
+                item_id,
+            ),
+        )
+        conn.execute(
+            "UPDATE context_layers SET created_at=?, updated_at=? "
+            "WHERE item_id=? AND layer IN ('l0', 'l1')",
+            (created_at, updated_at, item_id),
+        )
+
+    def record_migration_source(
+        self, item_id: int, *, source_ref: str, extraction_version: str
+    ) -> int:
+        self._require_transaction("record_migration_source")
+        cursor = self._connection().execute(
+            "INSERT INTO context_sources ("
+            "item_id, source_kind, source_ref, extraction_version, created_at"
+            ") VALUES (?, 'migration', ?, ?, ?)",
+            (item_id, source_ref, extraction_version, _now_iso()),
+        )
+        self._connection().execute(
+            "UPDATE context_items SET source_count=("
+            "SELECT COUNT(*) FROM context_sources WHERE item_id=?"
+            ") WHERE id=?",
+            (item_id, item_id),
+        )
+        return int(cursor.lastrowid)
+
+    def record_legacy_mapping(
+        self, legacy_memory_id: int, context_item_id: int
+    ) -> None:
+        self._require_transaction("record_legacy_mapping")
+        self._connection().execute(
+            "INSERT INTO legacy_memory_migrations ("
+            "legacy_memory_id, context_item_id, migrated_at"
+            ") VALUES (?, ?, ?)",
+            (legacy_memory_id, context_item_id, _now_iso()),
+        )
+
+    def resolve_legacy_mapping(self, legacy_memory_id: int) -> int | None:
+        row = self._connection().execute(
+            "SELECT context_item_id FROM legacy_memory_migrations "
+            "WHERE legacy_memory_id=?",
+            (legacy_memory_id,),
+        ).fetchone()
+        return None if row is None else int(row["context_item_id"])
+
+    def set_supersession_links(
+        self,
+        item_id: int,
+        *,
+        supersedes: int | None,
+        superseded_by: int | None,
+    ) -> None:
+        self._require_transaction("set_supersession_links")
+        self._connection().execute(
+            "UPDATE context_items SET supersedes=?, superseded_by=? WHERE id=?",
+            (supersedes, superseded_by, item_id),
+        )
+
+    def _require_transaction(self, operation: str) -> None:
+        if self._transaction_depth == 0:
+            raise RuntimeError(f"{operation} requires an active ContextStore transaction")
+
     # ---- reads ----
 
     def get_item(

@@ -1,0 +1,420 @@
+"""Behavioral contracts for one-time legacy-memory migration."""
+
+import sqlite3
+
+import pytest
+
+from evolvmem.context_migration import LegacyMemoryMigrator
+from evolvmem.context_models import (
+    ContextContentType,
+    ContextScope,
+    ContextStatus,
+    ContextTier,
+)
+from evolvmem.context_store import ContextStore
+from evolvmem.memory_store import MemoryStore
+
+
+def _create_legacy_rows(config, rows):
+    ids = []
+    with MemoryStore(config) as legacy:
+        for row in rows:
+            ids.append(legacy.add(**row))
+    return ids
+
+
+def _legacy_snapshot(config):
+    conn = sqlite3.connect(config.db_path)
+    try:
+        columns = tuple(row[1] for row in conn.execute("PRAGMA table_info(memories)"))
+        rows = conn.execute("SELECT * FROM memories ORDER BY id").fetchall()
+        return columns, rows
+    finally:
+        conn.close()
+
+
+def _mapped_item(store, legacy_id):
+    item_id = store.resolve_legacy_mapping(legacy_id)
+    assert item_id is not None
+    item = store.get_item(item_id)
+    assert item is not None
+    return item
+
+
+@pytest.mark.parametrize("create_legacy_table", [False, True])
+def test_empty_database_migration_succeeds_without_creating_items(
+    test_config, create_legacy_table
+):
+    """Missing or empty legacy storage must be a successful no-op."""
+    if create_legacy_table:
+        with MemoryStore(test_config):
+            pass
+
+    with ContextStore(test_config) as store:
+        report = LegacyMemoryMigrator(store, test_config).migrate()
+
+        assert report.legacy_table_found is create_legacy_table
+        assert report.scanned == 0
+        assert report.created == 0
+        assert report.already_migrated == 0
+        assert report.duplicate_active_count == 0
+        assert store.count_by_status() == {}
+
+
+def test_migration_preserves_legacy_metadata_layers_sources_and_supersession(
+    test_config,
+):
+    """Losing metadata, source evidence, or directional history breaks migration."""
+    test_config.context_l0_max_chars = 32
+    test_config.context_l1_max_chars = 64
+    test_config.context_l2_max_chars = 80
+    oversized = "  " + "x" * 100 + "\r\nlast line  "
+
+    with MemoryStore(test_config) as legacy:
+        active_id = legacy.add(
+            key="  global:constraint:retention  ",
+            value=oversized,
+            attribute="constraint",
+            tags=["safety", "durable"],
+            source_session="session-active",
+            importance=9.25,
+            tier="pinned",
+        )
+        old_id = legacy.add(
+            key="project:demo:decision:database",
+            value="Use SQLite first.",
+            attribute="decision",
+            tags=["database"],
+            source_session="session-old",
+            importance=7.0,
+        )
+        new_id = legacy.replace(
+            key="project:demo:decision:database",
+            new_value="Use PostgreSQL for production.",
+            source_session="session-new",
+        )
+        archived_id = legacy.add(
+            key="project:demo:fact:archived",
+            value="A historical archived fact.",
+            attribute="fact",
+            expires_at="2031-04-05 06:07:08",
+        )
+        deleted_id = legacy.add(
+            key="project:demo:fact:deleted",
+            value="A deliberately deleted fact.",
+            attribute="fact",
+        )
+        legacy.remove(deleted_id)
+        legacy._conn.execute(
+            "UPDATE memories SET status='archived' WHERE id=?", (archived_id,)
+        )
+        legacy._conn.execute(
+            "UPDATE memories SET access_count=7, last_accessed=?, created_at=?, "
+            "updated_at=? WHERE id=?",
+            (
+                "2026-01-02 03:04:05",
+                "2025-02-03 04:05:06",
+                "2026-02-03 04:05:06",
+                active_id,
+            ),
+        )
+        legacy._conn.commit()
+
+    before = _legacy_snapshot(test_config)
+    with ContextStore(test_config) as store:
+        report = LegacyMemoryMigrator(store, test_config).migrate()
+
+        assert report.scanned == 5
+        assert report.created == 5
+        assert report.already_migrated == 0
+
+        active = _mapped_item(store, active_id)
+        assert active.identity_key == "global:constraint:retention"
+        assert active.content_type is ContextContentType.CONSTRAINT
+        assert active.project == ""
+        assert active.scope is ContextScope.GLOBAL
+        assert active.status is ContextStatus.ACTIVE
+        assert active.tier is ContextTier.PINNED
+        assert active.tags == ("safety", "durable")
+        assert active.importance == 9.25
+        assert active.confidence == 1.0
+        assert active.source_state == "none"
+        assert active.source_count == 1
+        assert active.success_count == active.failure_count == 0
+        assert active.access_count == 7
+        assert active.last_accessed == "2026-01-02 03:04:05"
+        assert active.created_at == "2025-02-03 04:05:06"
+        assert active.updated_at == "2026-02-03 04:05:06"
+        assert active.layers is not None
+        assert len(active.layers.l0) <= test_config.context_l0_max_chars
+        assert len(active.layers.l1) <= test_config.context_l1_max_chars
+        assert active.layers.l2 == oversized.replace("\r\n", "\n")
+        assert len(active.layers.l2) > test_config.context_l2_max_chars
+        assert active.layers.generator == "migrated"
+
+        source = store._conn.execute(
+            "SELECT source_kind, source_ref, extraction_version "
+            "FROM context_sources WHERE item_id=?",
+            (active.id,),
+        ).fetchone()
+        assert tuple(source) == ("migration", "session-active", "legacy-v1")
+
+        old = _mapped_item(store, old_id)
+        new = _mapped_item(store, new_id)
+        assert old.status is ContextStatus.SUPERSEDED
+        assert new.status is ContextStatus.ACTIVE
+        assert old.supersedes is None
+        assert old.superseded_by == new.id
+        assert new.supersedes == old.id
+        assert new.superseded_by is None
+        assert old.confidence == 0.5
+
+        archived = _mapped_item(store, archived_id)
+        deleted = _mapped_item(store, deleted_id)
+        assert archived.status is ContextStatus.ARCHIVED
+        assert archived.expires_at == "2031-04-05 06:07:08"
+        assert deleted.status is ContextStatus.DELETED
+
+    assert _legacy_snapshot(test_config) == before
+
+
+@pytest.mark.parametrize(
+    "attribute,key,expected_type,expected_scope",
+    [
+        ("constraint", "constraint:key", ContextContentType.CONSTRAINT, ContextScope.GLOBAL),
+        ("preference", "preference:key", ContextContentType.PREFERENCE, ContextScope.GLOBAL),
+        ("user_profile", "profile:key", ContextContentType.USER_PROFILE, ContextScope.GLOBAL),
+        ("decision", "decision:key", ContextContentType.DECISION, ContextScope.PROJECT),
+        ("fact", "project:x:progress:log:2026-08-17", ContextContentType.SESSION_SUMMARY, ContextScope.PROJECT),
+        ("fact", "fact:key", ContextContentType.FACT, ContextScope.PROJECT),
+        ("unrecognized", "reference:key", ContextContentType.REFERENCE, ContextScope.PROJECT),
+    ],
+)
+def test_migration_maps_legacy_attributes_to_typed_scopes(
+    test_config, attribute, key, expected_type, expected_scope
+):
+    """Wrong attribute routing would make migrated retrieval semantically unsafe."""
+    legacy_id = _create_legacy_rows(
+        test_config,
+        [{"key": key, "value": "A sufficiently detailed legacy value.", "attribute": attribute}],
+    )[0]
+
+    with ContextStore(test_config) as store:
+        LegacyMemoryMigrator(store, test_config).migrate()
+        item = _mapped_item(store, legacy_id)
+
+    assert item.content_type is expected_type
+    assert item.scope is expected_scope
+    assert item.project == ""
+
+
+def test_second_migration_reports_every_existing_mapping_without_new_items(test_config):
+    """Repeating startup migration must not duplicate items, layers, or sources."""
+    _create_legacy_rows(
+        test_config,
+        [
+            {"key": "fact:first", "value": "The first durable fact."},
+            {"key": "fact:second", "value": "The second durable fact."},
+        ],
+    )
+
+    with ContextStore(test_config) as store:
+        first = LegacyMemoryMigrator(store, test_config).migrate()
+        second = LegacyMemoryMigrator(store, test_config).migrate()
+
+        assert first.created == 2
+        assert second.scanned == 2
+        assert second.created == 0
+        assert second.already_migrated == 2
+        assert store._conn.execute("SELECT COUNT(*) FROM context_items").fetchone()[0] == 2
+        assert store._conn.execute("SELECT COUNT(*) FROM context_layers").fetchone()[0] == 6
+        assert store._conn.execute("SELECT COUNT(*) FROM context_sources").fetchone()[0] == 2
+        assert store._conn.execute(
+            "SELECT COUNT(*) FROM legacy_memory_migrations"
+        ).fetchone()[0] == 2
+
+
+def test_mapping_failure_rolls_back_item_layers_source_and_mapping(test_config):
+    """A partial row migration must never survive a failed atomic transaction."""
+    legacy_id = _create_legacy_rows(
+        test_config,
+        [{"key": "fact:rollback", "value": "This migration must roll back atomically."}],
+    )[0]
+
+    with ContextStore(test_config) as store:
+        store._conn.executescript(
+            "CREATE TRIGGER abort_legacy_mapping "
+            "BEFORE INSERT ON legacy_memory_migrations BEGIN "
+            "SELECT RAISE(ABORT, 'synthetic mapping failure'); END;"
+        )
+        store._conn.commit()
+
+        with pytest.raises(sqlite3.IntegrityError, match="synthetic mapping failure"):
+            LegacyMemoryMigrator(store, test_config).migrate()
+
+        for table in (
+            "context_items",
+            "context_layers",
+            "context_sources",
+            "legacy_memory_migrations",
+        ):
+            assert store._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+        assert store._conn.execute(
+            "SELECT status FROM memories WHERE id=?", (legacy_id,)
+        ).fetchone()[0] == "active"
+
+
+def test_duplicate_active_normalized_identities_keep_newest_active(test_config):
+    """Duplicate active history must retain both values without violating uniqueness."""
+    with MemoryStore(test_config) as legacy:
+        older_id = legacy.add(
+            key="  project:x:fact:duplicate  ",
+            value="Older duplicate value.",
+            source_session="older-session",
+        )
+        newer_id = legacy.add(
+            key="project:x:fact:duplicate",
+            value="Newer duplicate value.",
+            source_session="newer-session",
+        )
+        legacy._conn.execute(
+            "UPDATE memories SET updated_at='2026-01-01 00:00:00' WHERE id=?",
+            (older_id,),
+        )
+        legacy._conn.execute(
+            "UPDATE memories SET updated_at='2026-01-02 00:00:00' WHERE id=?",
+            (newer_id,),
+        )
+        legacy._conn.commit()
+
+    before = _legacy_snapshot(test_config)
+    with ContextStore(test_config) as store:
+        report = LegacyMemoryMigrator(store, test_config).migrate()
+        older = _mapped_item(store, older_id)
+        newer = _mapped_item(store, newer_id)
+
+        assert report.duplicate_active_count == 1
+        assert older.identity_key == newer.identity_key == "project:x:fact:duplicate"
+        assert older.status is ContextStatus.CANDIDATE
+        assert newer.status is ContextStatus.ACTIVE
+        assert older.layers.l2 == "Older duplicate value."
+        assert newer.layers.l2 == "Newer duplicate value."
+        versions = dict(
+            store._conn.execute(
+                "SELECT m.legacy_memory_id, s.extraction_version "
+                "FROM legacy_memory_migrations m "
+                "JOIN context_sources s ON s.item_id=m.context_item_id"
+            ).fetchall()
+        )
+        assert versions == {
+            older_id: "legacy-v1:duplicate-active",
+            newer_id: "legacy-v1",
+        }
+
+    assert _legacy_snapshot(test_config) == before
+
+
+def test_duplicate_active_timestamp_tie_keeps_highest_legacy_id_active(test_config):
+    """Equal timestamps must resolve by descending ID rather than scan order."""
+    with MemoryStore(test_config) as legacy:
+        lower_id = legacy.add(key="fact:tied", value="Lower ID value.")
+        higher_id = legacy.add(key="fact:tied", value="Higher ID value.")
+        legacy._conn.execute(
+            "UPDATE memories SET updated_at='2026-01-01 00:00:00' "
+            "WHERE id IN (?, ?)",
+            (lower_id, higher_id),
+        )
+        legacy._conn.commit()
+
+    with ContextStore(test_config) as store:
+        report = LegacyMemoryMigrator(store, test_config).migrate()
+        lower = _mapped_item(store, lower_id)
+        higher = _mapped_item(store, higher_id)
+
+    assert report.duplicate_active_count == 1
+    assert lower.status is ContextStatus.CANDIDATE
+    assert higher.status is ContextStatus.ACTIVE
+
+
+def test_old_schema_missing_optional_columns_uses_deterministic_defaults(test_config):
+    """Migration must not depend on MemoryStore upgrading older legacy schemas."""
+    test_config.ensure_dirs()
+    conn = sqlite3.connect(test_config.db_path)
+    conn.execute(
+        "CREATE TABLE memories ("
+        "id INTEGER PRIMARY KEY, key TEXT, value TEXT, status TEXT, attribute TEXT, "
+        "tags TEXT, source_session TEXT, access_count INTEGER, last_accessed TEXT, "
+        "supersedes INTEGER, superseded_by INTEGER, created_at TEXT, updated_at TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO memories VALUES "
+        "(41, 'old:constraint:key', 'Old schema value.', 'active', 'constraint', "
+        "'legacy,old', 'old-session', 3, '2020-02-03 04:05:06', NULL, NULL, "
+        "'2019-01-01 00:00:00', '2020-01-01 00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    with ContextStore(test_config) as store:
+        report = LegacyMemoryMigrator(store, test_config).migrate()
+        item = _mapped_item(store, 41)
+
+    assert report.created == 1
+    assert item.importance == 5.0
+    assert item.tier is ContextTier.NORMAL
+    assert item.expires_at is None
+    assert item.scope is ContextScope.GLOBAL
+
+
+def test_invalid_historical_metadata_is_archived_without_discarding_row(test_config):
+    """Malformed metadata must fall back conservatively while retaining evidence."""
+    legacy_id = _create_legacy_rows(
+        test_config,
+        [
+            {
+                "key": "  odd   legacy   key  ",
+                "value": "  Unusual legacy evidence.  ",
+                "attribute": "mystery",
+            }
+        ],
+    )[0]
+    conn = sqlite3.connect(test_config.db_path)
+    conn.execute(
+        "UPDATE memories SET status='mystery', tier='urgent', importance='invalid' "
+        "WHERE id=?",
+        (legacy_id,),
+    )
+    conn.commit()
+    conn.close()
+
+    with ContextStore(test_config) as store:
+        report = LegacyMemoryMigrator(store, test_config).migrate()
+        item = _mapped_item(store, legacy_id)
+
+    assert report.created == 1
+    assert item.identity_key == "odd legacy key"
+    assert item.content_type is ContextContentType.REFERENCE
+    assert item.status is ContextStatus.ARCHIVED
+    assert item.tier is ContextTier.NORMAL
+    assert item.importance == 5.0
+    assert item.layers.l2 == "  Unusual legacy evidence.  "
+
+
+def test_whitespace_only_legacy_value_is_migrated_with_exact_l2(test_config):
+    """Malformed blank evidence must remain traceable instead of being discarded."""
+    original = " \r\n\t "
+    legacy_id = _create_legacy_rows(
+        test_config,
+        [{"key": "fact:blank", "value": original, "source_session": "blank-session"}],
+    )[0]
+    before = _legacy_snapshot(test_config)
+
+    with ContextStore(test_config) as store:
+        report = LegacyMemoryMigrator(store, test_config).migrate()
+        item = _mapped_item(store, legacy_id)
+
+    assert report.created == 1
+    assert item.layers.l0 == "reference: [empty legacy value]"
+    assert item.layers.l1 == "[empty legacy value]"
+    assert item.layers.l2 == " \n\t "
+    assert _legacy_snapshot(test_config) == before
