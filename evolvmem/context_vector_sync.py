@@ -34,20 +34,26 @@ class ContextVectorSynchronizer:
 
     def rebuild_active_l0(self) -> ContextVectorSyncReport:
         """Rebuild from active L0 documents, keeping SQLite untouched on failure."""
+        try:
+            self._mark_context_dirty()
+        except Exception as exc:
+            return ContextVectorSyncReport("failed", 0, exc.__class__.__name__)
+
         if self.vector_index.path != self.config.context_vector_path.resolve():
             return ContextVectorSyncReport("failed", 0, "ValueError")
 
         if self.embedding_engine is None or not self.embedding_engine.is_loaded:
-            self.vector_index.mark_dirty()
-            self.vector_index.preserve_dirty()
             return ContextVectorSyncReport("unavailable", 0, "embedding engine unavailable")
 
-        documents = self.store.list_vector_documents()
-        self.vector_index.mark_dirty()
+        document_count = 0
         try:
+            documents = self.store.list_vector_documents()
+            document_count = len(documents)
             self.vector_index.initialize(dim=self.config.embedding_dim)
             embeddings = [
-                np.asarray(self.embedding_engine.encode_document(document.l0), dtype=np.float32)
+                np.asarray(
+                    self.embedding_engine.encode_document(document.l0), dtype=np.float32
+                )
                 for document in documents
             ]
             for embedding in embeddings:
@@ -59,6 +65,14 @@ class ContextVectorSynchronizer:
         except Exception as exc:
             self.vector_index.preserve_dirty()
             return ContextVectorSyncReport(
-                "failed", len(documents), exc.__class__.__name__
+                "failed", document_count, exc.__class__.__name__
             )
-        return ContextVectorSyncReport("synchronized", len(documents))
+        return ContextVectorSyncReport("synchronized", document_count)
+
+    def _mark_context_dirty(self) -> None:
+        """Leave a durable retry marker without ever marking the legacy cache."""
+        marker_index = self.vector_index
+        if marker_index.path != self.config.context_vector_path.resolve():
+            marker_index = VectorIndex(self.config, path=self.config.context_vector_path)
+        marker_index.mark_dirty()
+        marker_index.preserve_dirty()

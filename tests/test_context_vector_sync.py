@@ -148,6 +148,42 @@ def test_unavailable_engine_reports_unavailable_without_breaking_fts(test_config
         context_index.close()
 
 
+def test_wrong_index_path_marks_the_context_cache_dirty_without_touching_legacy(test_config):
+    """A wiring error must leave a retry signal on the cache that actually failed."""
+    legacy_index = VectorIndex(test_config)
+    with ContextStore(test_config) as store:
+        synchronizer = ContextVectorSynchronizer(test_config, store, legacy_index, None)
+
+        report = synchronizer.rebuild_active_l0()
+
+        assert report.status == "failed"
+        assert report.detail == "ValueError"
+        assert test_config.context_vector_path.with_suffix(".usearch.dirty").exists()
+        assert legacy_index.is_dirty() is False
+    legacy_index.close()
+
+
+def test_dirty_marker_io_failure_returns_a_safe_failed_report(test_config, monkeypatch):
+    """A marker-write failure must not escape or expose context content."""
+    test_config.embedding_dim = 3
+    engine = DocumentEmbeddingEngine({"sensitive L0": [1, 0, 0]})
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("sensitive", l0="sensitive L0"))
+        synchronizer, context_index = make_synchronizer(test_config, store, engine)
+
+        def fail_to_mark_dirty():
+            raise OSError("cannot write marker for sensitive L0")
+
+        monkeypatch.setattr(context_index, "mark_dirty", fail_to_mark_dirty)
+        report = synchronizer.rebuild_active_l0()
+
+        assert report.status == "failed"
+        assert report.document_count == 0
+        assert report.detail == "OSError"
+        assert "sensitive L0" not in report.detail
+        context_index.close()
+
+
 def test_empty_active_set_rebuilds_a_valid_empty_context_index(test_config):
     """An empty SQLite truth set is a valid index state, not an unavailable rebuild."""
     test_config.embedding_dim = 3
