@@ -22,7 +22,7 @@ pip install usearch llama-cpp-python
 if [ -f "$MODEL_DIR/$MODEL_FILE" ]; then
     echo "[3/5] Model file already exists, skipping download"
 else
-    echo "[3/5] Downloading embedding model (~50MB)..."
+    echo "[3/5] Downloading embedding model..."
     if command -v wget &>/dev/null; then
         wget -q --show-progress -O "$MODEL_DIR/$MODEL_FILE" "$MODEL_URL"
     elif command -v curl &>/dev/null; then

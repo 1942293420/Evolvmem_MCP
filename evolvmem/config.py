@@ -139,11 +139,12 @@ class Config:
             diagnostics.append(
                 "embedding_model_filename must be a non-empty filename without path separators"
             )
-        if not isinstance(self.embedding_dim, int) or self.embedding_dim <= 0:
+        dimension_is_valid = self._is_positive_int(self.embedding_dim)
+        if not dimension_is_valid:
             diagnostics.append("embedding_dim must be a positive integer")
 
         known = known_embedding_contract(filename) if filename_is_safe else None
-        if known is not None and self.embedding_dim != known.dimension:
+        if known is not None and dimension_is_valid and self.embedding_dim != known.dimension:
             diagnostics.append(
                 f"embedding_dim for '{filename}' must be {known.dimension}; "
                 f"configured {self.embedding_dim}"
@@ -154,7 +155,7 @@ class Config:
             self.context_l1_max_chars,
             self.context_l2_max_chars,
         )
-        if any(not isinstance(limit, int) or limit <= 0 for limit in layer_limits):
+        if any(not self._is_positive_int(limit) for limit in layer_limits):
             diagnostics.append(
                 "context_l0_max_chars, context_l1_max_chars, and "
                 "context_l2_max_chars must be positive integers"
@@ -181,6 +182,11 @@ class Config:
             and Path(filename).name == filename
             and "\\" not in filename
         )
+
+    @staticmethod
+    def _is_positive_int(value: object) -> bool:
+        """Reject booleans even though Python models them as integers."""
+        return type(value) is int and value > 0
 
     @classmethod
     def from_file(cls, path: Path | None = None) -> "Config":

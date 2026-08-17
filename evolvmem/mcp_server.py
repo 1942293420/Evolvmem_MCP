@@ -66,10 +66,10 @@ class MemoryMCPServer:
         # Try loading the embedding model (FTS5 search works without it)
         try:
             self.engine.initialize()
-        except Exception as e:
+        except Exception:
             # 宽捕获：模型加载的任何瞬时失败（缺文件/缺依赖/内存不足）都降级为
             # 仅 FTS 搜索，而不是让整个会话的 tools/call 被 _init_error 堵死
-            self._log(f"Embedding engine not loaded: {e}")
+            self._log("Embedding engine unavailable; FTS-only mode")
 
         # Check USearch vs SQLite consistency (needs engine for rebuild)
         sqlite_count = len(self.store.all_ids())

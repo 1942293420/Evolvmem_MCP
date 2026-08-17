@@ -96,6 +96,65 @@ def test_path_like_model_filename_is_rejected_without_leaking_home_path(temp_dir
     assert any("embedding_model_filename" in message for message in diagnostics)
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "embedding_dim",
+        "context_l0_max_chars",
+        "context_l1_max_chars",
+        "context_l2_max_chars",
+    ],
+)
+def test_boolean_numeric_runtime_settings_are_rejected(temp_dir, field_name):
+    """JSON booleans must not be accepted as embedding dimensions or limits."""
+    config = Config(data_dir=temp_dir)
+    setattr(config, field_name, True)
+
+    diagnostics = config.validate_runtime()
+
+    assert any("positive integer" in message for message in diagnostics)
+
+
+def test_embedding_backend_error_is_not_logged_verbatim(temp_dir, monkeypatch):
+    """Backend failures must not leak paths or credentials through startup logs."""
+    from evolvmem import mcp_server
+
+    class Store:
+        def initialize(self):
+            pass
+
+        def all_ids(self):
+            return []
+
+    class Index:
+        def initialize(self, *, dim):
+            assert dim == 768
+
+        def check_consistency(self, expected_count):
+            assert expected_count == 0
+            return True
+
+    class FailingEngine:
+        def initialize(self):
+            raise RuntimeError("backend failed at /home/alice/secret.gguf token=secret")
+
+    server = mcp_server.MemoryMCPServer.__new__(mcp_server.MemoryMCPServer)
+    server.config = Config(data_dir=temp_dir)
+    server.store = Store()
+    server.vidx = Index()
+    server.engine = FailingEngine()
+    logs = []
+    server._log = logs.append
+    monkeypatch.setattr(mcp_server, "Retriever", lambda *_args: object())
+    monkeypatch.setattr(mcp_server, "ConflictDetector", lambda *_args: object())
+    monkeypatch.setattr(mcp_server, "ForgettingEngine", lambda *_args: object())
+    monkeypatch.setattr(mcp_server, "Consolidator", lambda *_args: object())
+
+    server.initialize()
+
+    assert logs == ["Embedding engine unavailable; FTS-only mode"]
+
+
 def test_initialize_rejects_probe_dimension_mismatch_and_clears_model(
         temp_dir, monkeypatch):
     """A wrong model output dimension must never leave vector encoding enabled."""
