@@ -121,8 +121,33 @@ All data is stored under `~/.claude/evolvmem/`:
 |---|---|
 | `memory.db` | SQLite database with FTS5/trigram indexes |
 | `vectors.usearch` | USearch HNSW vector index |
+| `context_vectors.usearch` | Separate, explicitly rebuilt Context Core L0 vector cache (not created by bootstrap) |
 | `models/nomic-embed-text-v1.5.f16.gguf` | Canonical Nomic GGUF embedding model (768 dimensions) |
 | `config.json` | Retrieval, embedding runtime, forgetting, and other parameters |
+
+## Context Core 2.0 Foundation
+
+The Context Core tables, typed `ContextItem` storage, idempotent legacy migration, and explicit vector-cache rebuild are available now as an opt-in foundation. Existing hooks, Kimi/DSH adapters, the Web Console, MCP routing, and all `memory_*` tools still use `MemoryStore`; running the migration does not switch those compatibility paths or delete or rewrite their legacy `memories` rows.
+
+Context Core's L0/L1/L2 names describe three representations of one `ContextItem`, not the legacy stack's active/history/vector labels. L0 is the compact retrieval representation, L1 is the bounded detailed representation, and L2 retains the complete source/evidence representation. SQLite remains the content source of truth: default FTS/trigram indexes contain only L0 and L1, while an explicit vector rebuild uses active, unexpired L0 only. The disposable Context Core cache is `context_vectors.usearch`, separate from the active legacy cache in `vectors.usearch` throughout the transition.
+
+A later feature-gated release will add layered injection and candidate/promotion behavior after the compatibility facade and rendering contract are verified. To create the Context Core schema and safely migrate local legacy rows now, run this from the repository with its environment active:
+
+```bash
+python - <<'PY'
+from evolvmem import Config, ContextCore
+
+config = Config.from_file()
+core = ContextCore(config)
+try:
+    report = core.initialize()
+    print(report.migration)
+finally:
+    core.close()
+PY
+```
+
+This command is local, transactional, non-destructive, and safe to repeat. It does not load or download an embedding model and does not create or rebuild either vector index.
 
 ## Configuration
 
@@ -171,4 +196,4 @@ The old installer wrote only a 512-dimensional setting while downloading its BGE
 
 ## Architecture
 
-The existing retrieval stack has three layers: active-memory injection (L0, SessionStart system prompt), exact retrieval (L1, SQLite + FTS5/trigram), and semantic retrieval (L2, USearch HNSW). Context Core will add its own bounded L0/L1/L2 context layers later; those limits are configured now but are not yet a second retrieval path. Memories self-iterate through auto-extraction, conflict detection, and access-decay forgetting. All data is stored locally, no external services required.
+The active compatibility stack has three layers: active-memory injection (L0, SessionStart system prompt), exact retrieval (L1, SQLite + FTS5/trigram), and semantic retrieval (L2, USearch HNSW). Context Core's independently stored, bounded L0/L1/L2 representations are available as the opt-in foundation described above, but they are not yet routed into that active retrieval path. Memories self-iterate through auto-extraction, conflict detection, and access-decay forgetting. All data is stored locally, no external services required.
