@@ -37,24 +37,85 @@ class LegacyMemoryMigrator:
 
         with self.store.transaction():
             scanned = self.store.legacy_memory_row_count()
-            rows = self.store.iter_unmigrated_legacy_rows()
-            already_migrated = scanned - len(rows)
+            rows = self.store.iter_legacy_rows()
+            already_migrated = sum(
+                row["context_item_id"] is not None for row in rows
+            )
             duplicate_ids = self._duplicate_active_ids(rows)
             created = 0
+            prepared_rows: list[
+                tuple[
+                    dict,
+                    int,
+                    int | None,
+                    ContextStatus,
+                    str,
+                    ContextTier,
+                    str | None,
+                    float,
+                ]
+            ] = []
 
             for row in rows:
                 legacy_id = self._legacy_id(row["id"])
-                content_type = self._content_type(row)
                 status = self._status(row.get("status"))
                 extraction_version = "legacy-v1"
                 if legacy_id in duplicate_ids:
                     status = ContextStatus.CANDIDATE
                     extraction_version = "legacy-v1:duplicate-active"
+                tier = self._tier(row.get("tier"))
+                expires_at = self._optional_text(row.get("expires_at"))
+                prepared_rows.append(
+                    (
+                        row,
+                        legacy_id,
+                        row["context_item_id"],
+                        status,
+                        extraction_version,
+                        tier,
+                        expires_at,
+                        self._confidence(status, tier, expires_at),
+                    )
+                )
+
+            # Release active-identity slots before inserting or promoting the
+            # deterministic winner for each complete legacy identity group.
+            for (
+                row,
+                _legacy_id,
+                context_item_id,
+                status,
+                extraction_version,
+                _tier,
+                _expires_at,
+                confidence,
+            ) in prepared_rows:
+                if context_item_id is None or status is ContextStatus.ACTIVE:
+                    continue
+                self.store._reconcile_legacy_item_state(
+                    context_item_id,
+                    status=status,
+                    confidence=confidence,
+                    updated_at=self._timestamps(row)[1],
+                    extraction_version=extraction_version,
+                )
+
+            for (
+                row,
+                legacy_id,
+                context_item_id,
+                status,
+                extraction_version,
+                tier,
+                expires_at,
+                confidence,
+            ) in prepared_rows:
+                if context_item_id is not None:
+                    continue
+                content_type = self._content_type(row)
 
                 original_l2 = self._source_text(row.get("value")).replace("\r\n", "\n")
                 layers = self._layers(original_l2, content_type)
-                tier = self._tier(row.get("tier"))
-                expires_at = self._optional_text(row.get("expires_at"))
                 draft = ContextItemDraft(
                     identity_key=self._identity_key(row.get("key"), legacy_id),
                     content_type=content_type,
@@ -65,12 +126,12 @@ class LegacyMemoryMigrator:
                     tier=tier,
                     tags=self._tags(row.get("tags")),
                     importance=self._importance(row.get("importance")),
-                    confidence=self._confidence(status, tier, expires_at),
+                    confidence=confidence,
                     expires_at=expires_at,
                 )
-                item = self.store.create_item(draft)
+                item = self.store._create_legacy_item(draft)
                 created_at, updated_at = self._timestamps(row)
-                self.store.apply_legacy_item_metadata(
+                self.store._apply_legacy_item_metadata(
                     item.id,
                     access_count=self._nonnegative_int(row.get("access_count")),
                     last_accessed=self._optional_text(row.get("last_accessed")),
@@ -86,12 +147,26 @@ class LegacyMemoryMigrator:
                 self.store.record_legacy_mapping(legacy_id, item.id)
                 created += 1
 
-            for row in rows:
-                item_id = self.store.resolve_legacy_mapping(
-                    self._legacy_id(row["id"])
-                )
-                if item_id is None:  # pragma: no cover - inserted in the first pass
+            for (
+                row,
+                legacy_id,
+                _context_item_id,
+                status,
+                extraction_version,
+                _tier,
+                _expires_at,
+                confidence,
+            ) in prepared_rows:
+                item_id = self.store.resolve_legacy_mapping(legacy_id)
+                if item_id is None:  # pragma: no cover - mapped in the insertion pass
                     raise RuntimeError("legacy mapping disappeared during migration")
+                self.store._reconcile_legacy_item_state(
+                    item_id,
+                    status=status,
+                    confidence=confidence,
+                    updated_at=self._timestamps(row)[1],
+                    extraction_version=extraction_version,
+                )
                 self.store.set_supersession_links(
                     item_id,
                     supersedes=self._mapped_link(row.get("supersedes")),

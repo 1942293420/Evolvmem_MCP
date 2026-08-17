@@ -1,4 +1,4 @@
-"""Behavioral contracts for one-time legacy-memory migration."""
+"""Behavioral contracts for recurring legacy-memory migration."""
 
 import sqlite3
 
@@ -232,6 +232,180 @@ def test_second_migration_reports_every_existing_mapping_without_new_items(test_
         assert store._conn.execute(
             "SELECT COUNT(*) FROM legacy_memory_migrations"
         ).fetchone()[0] == 2
+
+
+def test_migration_reconciles_legacy_replace_created_after_prior_migration(test_config):
+    """Scanning only unmapped rows would collide with the mapped active predecessor."""
+    with MemoryStore(test_config) as legacy:
+        old_legacy_id = legacy.add(
+            key="project:demo:decision:database",
+            value="Use SQLite first.",
+            attribute="decision",
+            source_session="session-old",
+        )
+
+    with ContextStore(test_config) as store:
+        first = LegacyMemoryMigrator(store, test_config).migrate()
+        old_context_id = store.resolve_legacy_mapping(old_legacy_id)
+        assert first.created == 1
+        assert old_context_id is not None
+
+    with MemoryStore(test_config) as legacy:
+        new_legacy_id = legacy.replace(
+            key="project:demo:decision:database",
+            new_value="Use PostgreSQL for production.",
+            source_session="session-new",
+        )
+    before = _legacy_snapshot(test_config)
+
+    with ContextStore(test_config) as store:
+        second = LegacyMemoryMigrator(store, test_config).migrate()
+        old = _mapped_item(store, old_legacy_id)
+        new = _mapped_item(store, new_legacy_id)
+        item_count = store._conn.execute(
+            "SELECT COUNT(*) FROM context_items"
+        ).fetchone()[0]
+        third = LegacyMemoryMigrator(store, test_config).migrate()
+
+        assert second.scanned == 2
+        assert second.created == 1
+        assert second.already_migrated == 1
+        assert second.duplicate_active_count == 0
+        assert old.id == old_context_id
+        assert old.status is ContextStatus.SUPERSEDED
+        assert old.supersedes is None
+        assert old.superseded_by == new.id
+        assert new.status is ContextStatus.ACTIVE
+        assert new.supersedes == old.id
+        assert new.superseded_by is None
+        assert item_count == 2
+        assert third.created == 0
+        assert third.already_migrated == 2
+        assert store._conn.execute(
+            "SELECT COUNT(*) FROM context_items"
+        ).fetchone()[0] == item_count
+
+    assert _legacy_snapshot(test_config) == before
+
+
+def test_migration_reconciles_new_active_duplicate_against_existing_mapping(test_config):
+    """Duplicate selection must include mapped rows, not only newly unmapped rows."""
+    with MemoryStore(test_config) as legacy:
+        older_legacy_id = legacy.add(
+            key="  project:x:fact:duplicate  ",
+            value="Older duplicate value.",
+            source_session="older-session",
+        )
+        legacy._conn.execute(
+            "UPDATE memories SET updated_at='2026-01-01 00:00:00' WHERE id=?",
+            (older_legacy_id,),
+        )
+        legacy._conn.commit()
+
+    with ContextStore(test_config) as store:
+        LegacyMemoryMigrator(store, test_config).migrate()
+        older_context_id = store.resolve_legacy_mapping(older_legacy_id)
+        assert older_context_id is not None
+
+    with MemoryStore(test_config) as legacy:
+        newer_legacy_id = legacy.add(
+            key="project:x:fact:duplicate",
+            value="Newer duplicate value.",
+            source_session="newer-session",
+        )
+        legacy._conn.execute(
+            "UPDATE memories SET updated_at='2026-01-02 00:00:00' WHERE id=?",
+            (newer_legacy_id,),
+        )
+        legacy._conn.commit()
+    before = _legacy_snapshot(test_config)
+
+    with ContextStore(test_config) as store:
+        second = LegacyMemoryMigrator(store, test_config).migrate()
+        older = _mapped_item(store, older_legacy_id)
+        newer = _mapped_item(store, newer_legacy_id)
+        item_count = store._conn.execute(
+            "SELECT COUNT(*) FROM context_items"
+        ).fetchone()[0]
+        third = LegacyMemoryMigrator(store, test_config).migrate()
+        versions = dict(
+            store._conn.execute(
+                "SELECT m.legacy_memory_id, s.extraction_version "
+                "FROM legacy_memory_migrations m "
+                "JOIN context_sources s ON s.item_id=m.context_item_id"
+            ).fetchall()
+        )
+
+        assert second.created == 1
+        assert second.already_migrated == 1
+        assert second.duplicate_active_count == 1
+        assert older.id == older_context_id
+        assert older.status is ContextStatus.CANDIDATE
+        assert newer.status is ContextStatus.ACTIVE
+        assert older.supersedes is older.superseded_by is None
+        assert newer.supersedes is newer.superseded_by is None
+        assert versions == {
+            older_legacy_id: "legacy-v1:duplicate-active",
+            newer_legacy_id: "legacy-v1",
+        }
+        assert item_count == 2
+        assert third.created == 0
+        assert third.already_migrated == 2
+        assert third.duplicate_active_count == 1
+        assert store._conn.execute(
+            "SELECT COUNT(*) FROM context_items"
+        ).fetchone()[0] == item_count
+
+    assert _legacy_snapshot(test_config) == before
+
+
+def test_recurring_migration_rolls_back_reconciliation_when_new_mapping_fails(
+    test_config,
+):
+    """A failed recurring mapping must not strand the mapped predecessor inactive."""
+    with MemoryStore(test_config) as legacy:
+        old_legacy_id = legacy.add(key="fact:rollback-replace", value="Old value.")
+
+    with ContextStore(test_config) as store:
+        LegacyMemoryMigrator(store, test_config).migrate()
+        old_context_id = store.resolve_legacy_mapping(old_legacy_id)
+        assert old_context_id is not None
+
+    with MemoryStore(test_config) as legacy:
+        new_legacy_id = legacy.replace(
+            key="fact:rollback-replace", new_value="New value."
+        )
+    before = _legacy_snapshot(test_config)
+
+    with ContextStore(test_config) as store:
+        store._conn.executescript(
+            "CREATE TRIGGER abort_recurring_mapping "
+            "BEFORE INSERT ON legacy_memory_migrations BEGIN "
+            "SELECT RAISE(ABORT, 'synthetic recurring mapping failure'); END;"
+        )
+        store._conn.commit()
+
+        with pytest.raises(
+            sqlite3.IntegrityError, match="synthetic recurring mapping failure"
+        ):
+            LegacyMemoryMigrator(store, test_config).migrate()
+
+        old = store.get_item(old_context_id)
+        assert old is not None
+        assert old.status is ContextStatus.ACTIVE
+        assert old.superseded_by is None
+        assert store.resolve_legacy_mapping(new_legacy_id) is None
+        assert store._conn.execute(
+            "SELECT COUNT(*) FROM context_items"
+        ).fetchone()[0] == 1
+        assert store._conn.execute(
+            "SELECT COUNT(*) FROM context_layers"
+        ).fetchone()[0] == 3
+        assert store._conn.execute(
+            "SELECT COUNT(*) FROM context_sources"
+        ).fetchone()[0] == 1
+
+    assert _legacy_snapshot(test_config) == before
 
 
 def test_mapping_failure_rolls_back_item_layers_source_and_mapping(test_config):

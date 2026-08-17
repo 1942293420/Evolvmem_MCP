@@ -14,6 +14,7 @@ from evolvmem.context_models import (
     ContextScope,
     ContextStatus,
     ContextTier,
+    ContextValidationError,
 )
 from evolvmem.context_store import ContextStore
 
@@ -179,6 +180,24 @@ def test_create_item_atomically_persists_typed_item_and_exactly_three_layers(
     assert {row["generator"] for row in rows} == {"test-suite"}
 
 
+@pytest.mark.parametrize("oversized_layer", ["l0", "l1", "l2"])
+def test_create_item_rejects_each_over_budget_layer_without_writing_rows(
+    store, draft_factory, oversized_layer
+):
+    """Removing store-boundary validation would persist an over-budget layer."""
+    store.config.context_l0_max_chars = 8
+    store.config.context_l1_max_chars = 8
+    store.config.context_l2_max_chars = 8
+    layer_values = {"l0": "short", "l1": "detail", "l2": "source"}
+    layer_values[oversized_layer] = "x" * 9
+
+    with pytest.raises(ContextValidationError, match=oversized_layer):
+        store.create_item(draft_factory(**layer_values))
+
+    assert store._conn.execute("SELECT COUNT(*) FROM context_items").fetchone()[0] == 0
+    assert store._conn.execute("SELECT COUNT(*) FROM context_layers").fetchone()[0] == 0
+
+
 def test_lexical_tables_physically_contain_only_l0_and_l1_rows(store, draft_factory):
     """Even a raw FTS scan must not expose an L2 row as indexed content."""
     item = store.create_item(draft_factory())
@@ -282,6 +301,39 @@ def test_supersede_active_sets_both_links_and_leaves_one_active(store, draft_fac
     assert [item.id for item in history if item.status is ContextStatus.ACTIVE] == [
         successor.id
     ]
+
+
+@pytest.mark.parametrize("oversized_layer", ["l0", "l1", "l2"])
+def test_supersede_active_rejects_each_over_budget_layer_without_changing_active_item(
+    store, draft_factory, oversized_layer
+):
+    """Validating after demotion would corrupt the active history on bad input."""
+    store.config.context_l0_max_chars = 8
+    store.config.context_l1_max_chars = 8
+    store.config.context_l2_max_chars = 8
+    old = store.create_item(
+        draft_factory(
+            status=ContextStatus.ACTIVE,
+            l0="old",
+            l1="detail",
+            l2="source",
+        )
+    )
+    layer_values = {"l0": "new", "l1": "detail", "l2": "source"}
+    layer_values[oversized_layer] = "x" * 9
+
+    with pytest.raises(ContextValidationError, match=oversized_layer):
+        store.supersede_active(
+            draft_factory(status=ContextStatus.ACTIVE, **layer_values)
+        )
+
+    old_after = store.get_item(old.id)
+    assert old_after is not None
+    assert old_after.status is ContextStatus.ACTIVE
+    assert old_after.superseded_by is None
+    assert old_after.layers == old.layers
+    assert store._conn.execute("SELECT COUNT(*) FROM context_items").fetchone()[0] == 1
+    assert store._conn.execute("SELECT COUNT(*) FROM context_layers").fetchone()[0] == 3
 
 
 def test_supersede_active_rolls_back_old_status_when_successor_insert_fails(

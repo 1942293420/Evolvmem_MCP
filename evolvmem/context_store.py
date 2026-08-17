@@ -9,6 +9,7 @@ import re
 import sqlite3
 
 from evolvmem.config import Config
+from evolvmem.context_layers import validate_layers
 from evolvmem.context_models import (
     ContextContentType,
     ContextItem,
@@ -286,10 +287,17 @@ class ContextStore:
 
     def create_item(self, draft: ContextItemDraft) -> ContextItem:
         """Insert one item and its L0/L1/L2 rows atomically."""
+        validate_layers(draft.layers, self.config)
         if self._transaction_depth:
             return self._create_item_no_commit(draft)
         with self.transaction():
             return self._create_item_no_commit(draft)
+
+    def _create_legacy_item(self, draft: ContextItemDraft) -> ContextItem:
+        """Insert migration-derived layers with only the legacy L2 exception."""
+        self._require_transaction("_create_legacy_item")
+        validate_layers(draft.layers, self.config, allow_legacy_overflow=True)
+        return self._create_item_no_commit(draft)
 
     def _create_item_no_commit(
         self,
@@ -356,6 +364,7 @@ class ContextStore:
 
     def supersede_active(self, draft: ContextItemDraft) -> ContextItem:
         """Atomically supersede the active identity and create its successor."""
+        validate_layers(draft.layers, self.config)
         if self._transaction_depth:
             return self._supersede_active_no_commit(draft)
         with self.transaction():
@@ -408,7 +417,7 @@ class ContextStore:
                 params,
             )
 
-    # ---- one-time legacy migration support ----
+    # ---- recurring legacy migration support ----
 
     def legacy_memory_table_exists(self) -> bool:
         row = self._connection().execute(
@@ -424,8 +433,8 @@ class ContextStore:
         ).fetchone()
         return int(row["count"])
 
-    def iter_unmigrated_legacy_rows(self) -> list[dict]:
-        """Read legacy rows without assuming MemoryStore upgraded their schema."""
+    def iter_legacy_rows(self) -> list[dict]:
+        """Read all legacy rows and their mappings without upgrading the schema."""
         if not self.legacy_memory_table_exists():
             return []
 
@@ -464,16 +473,25 @@ class ContextStore:
             f"{legacy_column('importance', '5.0')} AS importance",
             legacy_column("tier", "'normal'") + " AS tier",
             f"{legacy_column('expires_at', 'NULL')} AS expires_at",
+            "migration.context_item_id AS context_item_id",
         )
         rows = self._connection().execute(
             f"SELECT {', '.join(selections)} FROM memories m "
             "LEFT JOIN legacy_memory_migrations migration "
             f"ON migration.legacy_memory_id={legacy_id} "
-            "WHERE migration.legacy_memory_id IS NULL ORDER BY id"
+            "ORDER BY id"
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def apply_legacy_item_metadata(
+    def iter_unmigrated_legacy_rows(self) -> list[dict]:
+        """Read only legacy rows that do not yet have a ContextItem mapping."""
+        return [
+            {key: value for key, value in row.items() if key != "context_item_id"}
+            for row in self.iter_legacy_rows()
+            if row["context_item_id"] is None
+        ]
+
+    def _apply_legacy_item_metadata(
         self,
         item_id: int,
         *,
@@ -489,7 +507,7 @@ class ContextStore:
         today's validation budget; ordinary ContextItemDraft writes retain the
         non-empty and bounded-layer invariants.
         """
-        self._require_transaction("apply_legacy_item_metadata")
+        self._require_transaction("_apply_legacy_item_metadata")
         conn = self._connection()
         conn.execute(
             "UPDATE context_items SET access_count=?, last_accessed=?, "
@@ -540,6 +558,28 @@ class ContextStore:
             "legacy_memory_id, context_item_id, migrated_at"
             ") VALUES (?, ?, ?)",
             (legacy_memory_id, context_item_id, _now_iso()),
+        )
+
+    def _reconcile_legacy_item_state(
+        self,
+        item_id: int,
+        *,
+        status: ContextStatus,
+        confidence: float,
+        updated_at: str,
+        extraction_version: str,
+    ) -> None:
+        """Refresh mutable legacy state while preserving the mapped ContextItem."""
+        self._require_transaction("_reconcile_legacy_item_state")
+        conn = self._connection()
+        conn.execute(
+            "UPDATE context_items SET status=?, confidence=?, updated_at=? WHERE id=?",
+            (status.value, confidence, updated_at, item_id),
+        )
+        conn.execute(
+            "UPDATE context_sources SET extraction_version=? "
+            "WHERE item_id=? AND source_kind='migration'",
+            (extraction_version, item_id),
         )
 
     def resolve_legacy_mapping(self, legacy_memory_id: int) -> int | None:
