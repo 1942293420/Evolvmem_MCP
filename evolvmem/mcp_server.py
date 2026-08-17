@@ -74,7 +74,7 @@ class MemoryMCPServer:
         # Check USearch vs SQLite consistency (needs engine for rebuild)
         sqlite_count = len(self.store.all_ids())
         if not self.vidx.check_consistency(sqlite_count):
-            self._rebuild_vector_index()
+            self._rebuild_under_lock()
 
         self.retriever = Retriever(
             self.config, self.store, self.vidx, self.engine
@@ -330,6 +330,29 @@ class MemoryMCPServer:
 
     # ---- internals ----
 
+    def _rebuild_under_lock(self) -> None:
+        """跨进程串行化全量重建。
+
+        多个 kimi 窗口并发启动时若各自全量重建，N 份 llama 编码互相拖慢
+        （2026-08-06 实测 4 进程并发单次重建从 ~25s 拖到 >10min），init 门闩
+        120s 超时导致 tools/call 全部超时。flock 串行化；拿到锁先复查一致性
+        ——多数情况下前一个进程已重建落盘，本轮直接跳过。
+        锁在重建期间持有；持锁进程崩溃时 flock 随 fd 关闭自动释放。
+        """
+        import fcntl
+        lock_path = self.config.vector_path.with_suffix(
+            f"{self.config.vector_path.suffix}.rebuild.lock")
+        with open(lock_path, "a") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                sqlite_count = len(self.store.all_ids())
+                if self.vidx.check_consistency(sqlite_count):
+                    self._log("Index already rebuilt by another process, skipping")
+                    return
+                self._rebuild_vector_index()
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
     def _rebuild_vector_index(self):
         """Rebuild USearch index from SQLite."""
         self._log("Vector index out of sync with SQLite, rebuilding...")
@@ -355,7 +378,16 @@ class MemoryMCPServer:
 
         if ids:
             self.vidx.rebuild(ids, embeddings)
-            self._log(f"Rebuild complete: {len(ids)} vectors")
+            # 立即落盘，不要等 shutdown：进程被客户端超时强杀时shutdown 跑不到，
+            # 索引文件缺失会让下次启动又全量重建（2026-08-06 复发超时的恶性循环）
+            try:
+                self.vidx.save()
+                # 全量重建已覆盖 SQLite 现状并落盘，此前任何进程留下的
+                # 未落盘标记都已了结（新增漂移由 count 一致性检查兜底）
+                self.vidx.clear_dirty()
+                self._log(f"Rebuild complete: {len(ids)} vectors (saved)")
+            except Exception as e:
+                self._log(f"Rebuild complete: {len(ids)} vectors, but save failed: {e}")
 
     @staticmethod
     def _log(msg: str):
