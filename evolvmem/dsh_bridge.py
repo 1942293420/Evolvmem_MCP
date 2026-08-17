@@ -1,0 +1,277 @@
+"""DSH 薄壳桥接：会话开始注入块 + 会话结束提取的一次性 CLI 入口。
+
+DSH bundle 的 inject.js / extract.js 通过 spawn 调用本模块的两个子命令；
+复用 hooks.py（L0 注入）与 kimi_hooks.py（提取管线）的全部既有逻辑，
+保证 DSH 侧与 Claude/Kimi 侧行为一致（同一个共享库、同一套代码）。
+
+用法：
+    python -m evolvmem.dsh_bridge inject
+    python -m evolvmem.dsh_bridge extract --messages-file /tmp/msgs.json \
+        --session-id <dsd-session-id> [--project <name>]
+
+两条命令都 fail-open：任何错误只写 stderr 并退出 0，绝不阻塞会话。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from collections import Counter
+from pathlib import Path
+
+
+def _log(msg: str) -> None:
+    print(f"[evolvmem.dsh_bridge] {msg}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# 注入：直接复用 hooks.get_session_start_block（含自动遗忘/合并 housekeeping）
+# ---------------------------------------------------------------------------
+
+
+def inject(project: str | None = None) -> str:
+    from evolvmem.config import Config
+    from evolvmem.hooks import get_session_start_block
+
+    config = Config.from_file()
+    block = get_session_start_block(config)
+    _log(f"inject: project={project or '-'} chars={len(block)}")
+    return block
+
+
+# ---------------------------------------------------------------------------
+# 提取：与 kimi_hooks.session_end 同一条管线，只是消息由 DSH 侧投影后传入
+# ---------------------------------------------------------------------------
+
+
+def extract_from_messages(
+    messages: list[dict],
+    session_id: str,
+    project: str,
+    mtime: float | None = None,
+) -> tuple[str, dict]:
+    """提炼 messages 为结构化记忆，返回 (status, details)。
+
+    status 取值与 kimi_hooks.ExtractionResult 对齐：
+    completed / skipped / retry。
+    """
+    from evolvmem import kimi_hooks as kh
+    from evolvmem.auto_extractor import CandidateMemory
+    from evolvmem.config import Config
+    from evolvmem.embedding import EmbeddingEngine
+    from evolvmem.extraction_policy import (
+        evaluate_candidate,
+        rank_candidates,
+        redact_messages,
+        sanitize_summary,
+    )
+    from evolvmem.memory_store import MemoryStore
+    from evolvmem.vector_index import VectorIndex
+
+    reason = ""
+    conversation_chars = sum(len(str(m.get("content", ""))) for m in messages)
+    if conversation_chars < 200:
+        _log("conversation too short, skip")
+        return "skipped", {"reason": "conversation too short"}
+
+    llm_config = kh._load_llm_config()
+    if not llm_config:
+        return "retry", {"reason": "LLM provider unavailable"}
+
+    try:
+        model_messages, redacted_count = redact_messages(messages)
+    except Exception as error:
+        _log(f"extraction deferred: redaction failed: {type(error).__name__}")
+        return "retry", {"reason": "redaction failed"}
+
+    try:
+        candidates = kh._extract_candidates(model_messages, llm_config)
+    except kh.RetryableExtractionError as e:
+        _log(f"extraction deferred: {e}")
+        details = {"reason": str(e)}
+        if e.rate_limited:
+            details["rate_limited"] = True
+        if e.halt_run:
+            details["halt_run"] = True
+        return "retry", details
+    except kh.ContextOverflowError as e:
+        _log(f"fallback extraction still exceeded context: {e}")
+        return "retry", {"reason": str(e)}
+    except Exception as error:
+        _log(f"extraction failed: {type(error).__name__}")
+        return "retry", {"reason": "extraction failed"}
+
+    try:
+        summary, candidates = kh._split_summary_candidate(candidates)
+        if summary is None:
+            _log("extraction deferred: SESSION_SUMMARY missing after parsing")
+            return "retry", {"reason": "SESSION_SUMMARY missing"}
+        summary_value, summary_redactions = sanitize_summary(summary.value)
+        redacted_count += summary_redactions
+        if summary_value is None:
+            _log("extraction deferred: unsafe or non-Chinese SESSION_SUMMARY")
+            return "retry", {"reason": "invalid SESSION_SUMMARY"}
+    except Exception as error:
+        _log(f"extraction deferred: candidate policy failed: "
+             f"{type(error).__name__}")
+        return "retry", {"reason": "candidate policy failed"}
+
+    config = Config.from_file()
+    if not kh._summary_value_is_persistable(config, summary_value):
+        _log("extraction deferred: unsafe or non-Chinese SESSION_SUMMARY")
+        return "retry", {"reason": "invalid SESSION_SUMMARY"}
+
+    summary_time = mtime if mtime is not None else time.time()
+    safe_project = (project or "dsh")[:kh._MAX_PROJECT_CHARS]
+    summary = CandidateMemory(
+        key=(f"project:{safe_project}:progress:log:"
+             f"{time.strftime('%Y-%m-%d-%H%M', time.localtime(summary_time))}"),
+        value=summary_value,
+        attribute="fact",
+        tags=["日志", f"分类:{safe_project}"],
+        confidence=1.0,
+        importance=5.0,
+        tier="normal",
+    )
+    source_session = f"dsh:{session_id}"[:kh._MAX_SOURCE_SESSION_CHARS]
+
+    try:
+        rejections: Counter[str] = Counter()
+        eligible = []
+        for candidate in candidates:
+            decision = evaluate_candidate(
+                candidate,
+                value_min_chars=config.value_min_chars,
+                value_max_chars=config.value_max_chars,
+            )
+            if decision.accepted:
+                eligible.append(candidate)
+            else:
+                rejections[decision.reason] += 1
+        ranked = rank_candidates(eligible, limit=None)
+        ranked = [
+            CandidateMemory(
+                key=candidate.key.casefold(),
+                value=candidate.value.strip(),
+                attribute=candidate.attribute,
+                tags=list(candidate.tags),
+                confidence=candidate.confidence,
+                importance=candidate.importance,
+                tier=candidate.tier,
+            )
+            for candidate in ranked
+        ]
+    except Exception as error:
+        _log(f"extraction deferred: candidate policy failed: "
+             f"{type(error).__name__}")
+        return "retry", {"reason": "candidate policy failed"}
+
+    engine = None
+    vidx = None
+    try:
+        eng = EmbeddingEngine(config)
+        eng.initialize()
+        if eng.is_loaded:
+            engine = eng
+            vidx = VectorIndex(config)
+            vidx.initialize(dim=config.embedding_dim)
+    except Exception as e:
+        _log(f"embedding init failed, semantic merge/vector sync skipped: {e}")
+        engine, vidx = None, None
+
+    try:
+        with MemoryStore(config) as store:
+            with store.transaction():
+                summary_ids, summary_satisfied = kh._persist_summary(
+                    store, summary, source_session,
+                )
+                if not summary_satisfied:
+                    raise RuntimeError("SESSION_SUMMARY was not persisted")
+                atomic_ids = kh._persist_candidates(
+                    config,
+                    store,
+                    vidx,
+                    engine,
+                    ranked,
+                    source_session,
+                    max_writes=kh._MAX_MEMORIES_PER_SESSION,
+                )
+                memory_ids = [*summary_ids, *atomic_ids]
+            kh._sync_candidate_vectors(store, vidx, engine, memory_ids)
+            n = len(memory_ids)
+    except Exception as error:
+        _log(f"persistence failed: {type(error).__name__}")
+        return "retry", {"reason": "persistence failed"}
+    finally:
+        if vidx is not None:
+            vidx.close()
+        if engine is not None:
+            engine.close()
+
+    _log(
+        f"extract: session={session_id} provider={llm_config.provider} "
+        f"redacted={redacted_count} accepted={len(atomic_ids)} "
+        f"rejected_sensitive={rejections['sensitive']} "
+        f"rejected_ephemeral={rejections['ephemeral']} "
+        f"rejected_language={rejections['language']} "
+        f"rejected_metadata={rejections['metadata']} "
+        f"rejected_confidence={rejections['confidence']} "
+        f"rejected_length={rejections['length']} "
+        f"rejected_low_information={rejections['low_information']} "
+        f"persisted={n}"
+    )
+    return "completed", {"persisted": n}
+
+
+def extract_cli(args: argparse.Namespace) -> int:
+    messages_path = Path(args.messages_file)
+    try:
+        data = json.loads(messages_path.read_text(encoding="utf-8"))
+        messages = data if isinstance(data, list) else data.get("messages", [])
+    except Exception as error:
+        _log(f"messages file read failed: {error}")
+        print(json.dumps({"status": "retry",
+                          "reason": f"messages file read failed: {error}"}))
+        return 0  # fail-open
+
+    status, details = extract_from_messages(
+        messages,
+        session_id=args.session_id or messages_path.stem,
+        project=args.project or "",
+        mtime=messages_path.stat().st_mtime if messages_path.exists() else None,
+    )
+    print(json.dumps({"status": status, **details}, ensure_ascii=False))
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="evolvmem.dsh_bridge")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("inject", help="print the session-start memory block")
+
+    p_extract = sub.add_parser("extract", help="extract memories from messages")
+    p_extract.add_argument("--messages-file", required=True,
+                           help="JSON file: list of {role, content}")
+    p_extract.add_argument("--session-id", default="",
+                           help="DSH session id for provenance")
+    p_extract.add_argument("--project", default="",
+                           help="project name for summary key and relevance")
+
+    args = parser.parse_args()
+    try:
+        if args.command == "inject":
+            print(inject())
+        else:
+            return extract_cli(args)
+    except Exception as error:  # fail-open：任何失败不阻塞会话
+        _log(f"unhandled error: {type(error).__name__}: {error}")
+        print(json.dumps({"status": "retry",
+                          "reason": f"{type(error).__name__}: {error}"}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

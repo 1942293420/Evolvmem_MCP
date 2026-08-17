@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 import json
+import os
 
 
 @dataclass
@@ -11,6 +12,16 @@ class Config:
 
     # Data directory
     data_dir: Path = Path.home() / ".claude" / "evolvmem"
+
+    def __post_init__(self) -> None:
+        """Honour EVOLVMEM_DATA_DIR for all construction paths.
+
+        DSH 薄壳通过该环境变量显式指向共享库；未设置时保持 Claude 侧默认
+        路径不变，两侧零影响。
+        """
+        env_dir = os.environ.get("EVOLVMEM_DATA_DIR")
+        if env_dir:
+            self.data_dir = Path(env_dir).expanduser()
 
     # SQLite 数据库路径
     @property
