@@ -418,3 +418,28 @@ def test_whitespace_only_legacy_value_is_migrated_with_exact_l2(test_config):
     assert item.layers.l1 == "[empty legacy value]"
     assert item.layers.l2 == " \n\t "
     assert _legacy_snapshot(test_config) == before
+
+
+def test_whitespace_only_legacy_value_bounds_sentinels_at_minimum_limits(test_config):
+    """Blank-value sentinels must obey retrieval budgets while L2 stays exact."""
+    test_config.context_l0_max_chars = 1
+    test_config.context_l1_max_chars = 1
+    test_config.context_l2_max_chars = 1
+    original = " \r\n\t "
+    legacy_id = _create_legacy_rows(
+        test_config,
+        [{"key": "fact:tight-blank", "value": original}],
+    )[0]
+    before = _legacy_snapshot(test_config)
+
+    with ContextStore(test_config) as store:
+        report = LegacyMemoryMigrator(store, test_config).migrate()
+        item = _mapped_item(store, legacy_id)
+
+    assert report.created == 1
+    assert item.layers.l0 == "…"
+    assert item.layers.l1 == "…"
+    assert 0 < len(item.layers.l0) <= test_config.context_l0_max_chars
+    assert 0 < len(item.layers.l1) <= test_config.context_l1_max_chars
+    assert item.layers.l2 == " \n\t "
+    assert _legacy_snapshot(test_config) == before

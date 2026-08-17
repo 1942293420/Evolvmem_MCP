@@ -226,12 +226,10 @@ class LegacyMemoryMigrator:
             return layers_from_legacy_value(
                 original_l2, content_type=content_type, config=self.config
             )
-        placeholder = "[empty legacy value]"
-        return ContextLayers(
-            l0=f"{content_type.value.replace('_', ' ')}: {placeholder}",
-            l1=placeholder,
-            l2=placeholder,
-            generator="migrated",
+        return layers_from_legacy_value(
+            "[empty legacy value]",
+            content_type=content_type,
+            config=self.config,
         )
 
     @classmethod
