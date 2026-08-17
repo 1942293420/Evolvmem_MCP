@@ -1,0 +1,64 @@
+"""Rebuild the disposable Context Core L0 vector cache from SQLite truth."""
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from evolvmem.config import Config
+from evolvmem.context_store import ContextStore
+from evolvmem.embedding import EmbeddingEngine
+from evolvmem.vector_index import VectorIndex
+
+
+@dataclass(frozen=True, slots=True)
+class ContextVectorSyncReport:
+    status: str
+    document_count: int
+    detail: str = ""
+
+
+class ContextVectorSynchronizer:
+    """Synchronize active ContextItem L0 values into the separate vector cache."""
+
+    def __init__(
+        self,
+        config: Config,
+        store: ContextStore,
+        vector_index: VectorIndex,
+        embedding_engine: EmbeddingEngine | None,
+    ):
+        self.config = config
+        self.store = store
+        self.vector_index = vector_index
+        self.embedding_engine = embedding_engine
+
+    def rebuild_active_l0(self) -> ContextVectorSyncReport:
+        """Rebuild from active L0 documents, keeping SQLite untouched on failure."""
+        if self.vector_index.path != self.config.context_vector_path.resolve():
+            return ContextVectorSyncReport("failed", 0, "ValueError")
+
+        if self.embedding_engine is None or not self.embedding_engine.is_loaded:
+            self.vector_index.mark_dirty()
+            self.vector_index.preserve_dirty()
+            return ContextVectorSyncReport("unavailable", 0, "embedding engine unavailable")
+
+        documents = self.store.list_vector_documents()
+        self.vector_index.mark_dirty()
+        try:
+            self.vector_index.initialize(dim=self.config.embedding_dim)
+            embeddings = [
+                np.asarray(self.embedding_engine.encode_document(document.l0), dtype=np.float32)
+                for document in documents
+            ]
+            for embedding in embeddings:
+                if embedding.ndim != 1 or embedding.shape[0] != self.config.embedding_dim:
+                    raise ValueError("embedding dimension mismatch")
+            self.vector_index.rebuild(
+                [document.item_id for document in documents], embeddings
+            )
+        except Exception as exc:
+            self.vector_index.preserve_dirty()
+            return ContextVectorSyncReport(
+                "failed", len(documents), exc.__class__.__name__
+            )
+        return ContextVectorSyncReport("synchronized", len(documents))
