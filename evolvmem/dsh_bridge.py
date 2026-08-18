@@ -176,7 +176,7 @@ def extract_from_messages(
         _log(f"embedding init failed, semantic merge/vector sync skipped: {e}")
         engine = None
 
-    from evolvmem.context_models import ContextMode
+    from evolvmem.context_models import ContextMode, parse_context_mode
     from evolvmem.context_service import ContextService
     from evolvmem.legacy_models import (
         LegacyExtractionItem,
@@ -186,8 +186,10 @@ def extract_from_messages(
     service = None
     try:
         service = ContextService(config, embedding_engine=engine)
+        # 未知 context_mode 按 legacy 落库：提炼正常持久化，Context 功能 fail-closed
+        mode = parse_context_mode(config.context_mode)
         service.initialize(
-            mode=ContextMode(config.context_mode), adapter="dsh"
+            mode=mode if mode is not None else ContextMode.LEGACY, adapter="dsh"
         )
         extraction = service.persist_legacy_extraction(
             LegacyExtractionRequest(

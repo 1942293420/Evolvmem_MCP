@@ -1505,6 +1505,42 @@ class TestSessionEndOutcome:
         with ContextStore(test_config) as context_store:
             assert context_store.count_by_status() == {}
 
+    def test_session_end_invalid_context_mode_persists_via_legacy_backend(
+            self, monkeypatch, tmp_path, test_config):
+        """非法 context_mode（如 typo）不得让提炼永远 retry：按 legacy 落库，
+        Context 功能 fail-closed，Core 表无写入。"""
+        from evolvmem.context_store import ContextStore
+
+        test_config.context_mode = "primray"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks,
+            "_extract_candidates",
+            lambda _messages, _token: [
+                CandidateMemory(
+                    key="project:test:fact:invalid-mode",
+                    value="非法模式也必须持久化的长期事实",
+                    confidence=0.9,
+                ),
+                CandidateMemory(
+                    key="SESSION_SUMMARY",
+                    value="本次会话验证了非法模式的 legacy 兜底",
+                    confidence=0.9,
+                    tags=["日志"],
+                ),
+            ],
+        )
+
+        result = hooks.session_end({"session_id": "session_invalid_mode"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2
+        with MemoryStore(test_config) as store:
+            assert store.count_active() == 2
+        with ContextStore(test_config) as context_store:
+            assert context_store.count_by_status() == {}
+
 
 
 class TestExtractionBackoff:

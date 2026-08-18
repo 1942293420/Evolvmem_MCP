@@ -27,6 +27,7 @@ from evolvmem.context_models import (
     ContextStatus,
     ContextTier,
     ContextValidationError,
+    parse_context_mode,
 )
 
 
@@ -132,6 +133,39 @@ def test_mode_match_and_selection_enums_expose_the_persisted_values():
     assert {member.value for member in ContextSelectionReason} == {
         "pinned_policy", "lexical", "vector",
     }
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("legacy", ContextMode.LEGACY),
+        ("compat", ContextMode.COMPAT),
+        ("shadow", ContextMode.SHADOW),
+        ("primary", ContextMode.PRIMARY),
+        (ContextMode.PRIMARY, ContextMode.PRIMARY),
+    ],
+)
+def test_parse_context_mode_accepts_exact_known_values(raw, expected):
+    assert parse_context_mode(raw) is expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "primray",   # 评审复现的 typo：不得抛 ValueError 崩溃调用方
+        "turbo",
+        "",
+        " primary",  # 不修剪、不大小写折叠：未知即 None
+        "Primary",
+        None,
+        0,
+        b"legacy",
+        ["legacy"],
+    ],
+)
+def test_parse_context_mode_fails_closed_to_none(raw):
+    """Unknown or non-string modes yield None; adapters never coerce to primary."""
+    assert parse_context_mode(raw) is None
 
 
 def _score_components(**overrides):

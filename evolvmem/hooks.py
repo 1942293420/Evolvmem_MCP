@@ -238,12 +238,14 @@ def get_session_start_block(config: Config | None = None) -> str:
 
     # 维护与读取统一经 ContextService 兼容门面：archive/access 变更按配置
     # mode 落到 legacy 投影或 Core 双侧；渲染仍用旧格式（读侧切换在后续切片）。
-    from evolvmem.context_models import ContextMode
+    from evolvmem.context_models import ContextMode, parse_context_mode
     from evolvmem.context_service import ContextService
 
+    # 未知 context_mode 按 legacy 兜底：注入与维护照旧，Context 功能 fail-closed
+    mode = parse_context_mode(config.context_mode)
     service = ContextService(config)
     service.initialize(
-        mode=ContextMode(config.context_mode),
+        mode=mode if mode is not None else ContextMode.LEGACY,
         adapter=config.adapter or "claude",
     )
     try:

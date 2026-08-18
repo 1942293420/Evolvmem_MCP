@@ -78,6 +78,20 @@ class ContextMode(str, Enum):
     PRIMARY = "primary"
 
 
+def parse_context_mode(raw: object) -> ContextMode | None:
+    """Parse a configured context mode; unknown values fail closed to None.
+
+    Callers must treat None as "context features disabled" and keep their
+    legacy path working — never coerce an unknown value to primary/shadow.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        return ContextMode(raw)
+    except ValueError:
+        return None
+
+
 class ContextMatchType(str, Enum):
     LEXICAL = "lexical"
     VECTOR = "vector"

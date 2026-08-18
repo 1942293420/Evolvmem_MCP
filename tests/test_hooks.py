@@ -291,6 +291,30 @@ class TestSessionStartCutoverRouting:
         finally:
             conn.close()
 
+    def test_invalid_context_mode_falls_back_to_legacy_without_crashing(
+            self, test_config):
+        """非法 context_mode（如 typo）不得让 SessionStart hook 崩溃：按 legacy
+        渲染与维护，Context 功能 fail-closed，Core 表保持空。"""
+        test_config.context_mode = "primray"
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:expired", value="过期事实",
+                      expires_at="2020-01-01 00:00:00")
+            store.add(key="p:t:fact:fresh", value="现行事实")
+
+        result = get_session_start_block(config=test_config)
+
+        assert "现行事实" in result
+        assert "过期事实" not in result
+        with MemoryStore(test_config) as store:
+            rows = store.get_by_key("p:t:fact:expired")
+            assert rows[0]["status"] == "archived"  # legacy 维护照旧
+        conn = sqlite3.connect(test_config.db_path)
+        try:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM context_items").fetchone()[0] == 0
+        finally:
+            conn.close()
+
 
 class TestStopHook:
     def test_stop_prompt_includes_conversation(self):

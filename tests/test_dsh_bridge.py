@@ -139,6 +139,39 @@ class TestExtract:
                     assert item.confidence == 0.9
                     assert item.importance == 6.0
 
+    def test_invalid_context_mode_persists_via_legacy_backend(
+            self, monkeypatch, _isolated_data_dir):
+        """非法 context_mode（如 typo）不得让提炼永远 retry：按 legacy 落库，
+        Context 功能 fail-closed，Core 表无写入。"""
+        from evolvmem.kimi_hooks import LLMConfig
+
+        monkeypatch.setenv("EVOLVMEM_CONTEXT_MODE", "primray")
+        monkeypatch.setattr(
+            kh, "_load_llm_config",
+            lambda: LLMConfig(provider="deepseek", api_key="k",
+                              base_url="https://example.invalid",
+                              model="deepseek-v4-flash"),
+        )
+        monkeypatch.setattr(
+            kh, "_extract_candidates",
+            lambda messages, llm_config: [_summary_candidate(),
+                                          _atomic_candidate()],
+        )
+        status, details = extract_from_messages(
+            _long_messages(), "dsh-invalid-mode-session", "testproj")
+        assert status == "completed"
+        assert details["persisted"] == 2
+
+        from evolvmem.config import Config
+        from evolvmem.context_store import ContextStore
+        from evolvmem.memory_store import MemoryStore
+        with MemoryStore(Config()) as store:
+            keys = {r["key"] for r in store.get_active()}
+            assert "test:memory:conclusion:对比" in keys
+            assert any(":progress:log:" in k for k in keys)
+        with ContextStore(Config()) as context_store:
+            assert context_store.count_by_status() == {}
+
     def test_extract_fails_open_never_raises(self, monkeypatch,
                                              _isolated_data_dir):
         def boom(*a, **kw):
