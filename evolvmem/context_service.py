@@ -18,9 +18,12 @@ markers, updated only after the SQLite commit.
 ``LegacyMemoryMigrator.migrate()``, never rebuilds a vector index, and
 never edits config. Context reads in legacy/compat mode fail closed with
 ``context_not_enabled``; shadow mode serves explicit reads; primary mode
-first re-validates the currently testable schema/layer/vector invariants
-and reports ``degraded_legacy`` when any of them fail (the full preflight
-evaluator arrives with the cutover gates).
+re-validates the startup invariants with the same evaluator the formal
+cutover gate uses — quick-check, mapping completeness, per-item layers,
+the full projection-lag classes, vector health, and config diagnostics —
+and reports ``degraded_legacy`` when any of them fail. Readiness is always
+computed from that evaluation; the service accepts no caller-supplied
+ready claim.
 
 Privacy contract: workspace paths are normalized to basename/alias before
 use, and the service neither stores nor logs absolute paths, queries, or
@@ -59,6 +62,7 @@ from evolvmem.context_renderer import ContextRenderCandidate, ContextRenderer
 from evolvmem.context_retriever import ContextRetriever
 from evolvmem.context_store import ContextStore
 from evolvmem.context_vector_sync import ContextVectorSynchronizer
+from evolvmem.cutover_checks import check_projection_lag
 from evolvmem.cutover_lock import CutoverLock
 from evolvmem.embedding import EmbeddingEngine
 from evolvmem.legacy_compat import LegacyCompatibilityFacade
@@ -200,15 +204,12 @@ class ContextService:
         except Exception:
             status_counts = {}  # a broken schema must not block diagnostics
         try:
-            legacy_rows = self.store.iter_legacy_rows()
-            mapping_count = sum(
-                1 for row in legacy_rows if row["context_item_id"] is not None
-            )
-            # Currently testable lag class: legacy rows without a mapping.
-            # The full mismatch evaluator arrives with the cutover gates.
-            projection_lag = sum(
-                1 for row in legacy_rows if row["context_item_id"] is None
-            )
+            # The full design-defined lag evaluator: every mismatch class,
+            # not just missing mappings. A broken schema must not block
+            # diagnostics, so failures degrade to zeros.
+            lag = check_projection_lag(self.config, self.store)
+            mapping_count = lag.legacy_rows - lag.missing_mapping
+            projection_lag = lag.projection_lag
         except Exception:
             mapping_count = 0
             projection_lag = 0
@@ -261,8 +262,15 @@ class ContextService:
         self._diagnostics = diagnostics
 
     def _primary_diagnostics(self) -> tuple[str, ...]:
-        """Revalidate the currently testable primary invariants, content-free."""
+        """Revalidate the startup primary invariants, content-free.
+
+        Quick-check, mapping completeness, per-item layers, and every
+        projection-lag class come from the same cutover_checks evaluator the
+        formal primary gate consumes, so startup readiness cannot drift from
+        the gate and can never be supplied by the caller.
+        """
         diagnostics: list[str] = list(self.config.validate_runtime())
+        diagnostics.extend(self._quick_check_diagnostics())
         try:
             self.store.count_by_status()
         except Exception:
@@ -276,11 +284,42 @@ class ContextService:
         except Exception:
             diagnostics.append("layer_invariant_failed")
             documents = None
+        diagnostics.extend(self._projection_invariant_diagnostics())
         diagnostics.extend(self._vector_diagnostics(documents))
+        deduped = list(dict.fromkeys(diagnostics))
         return tuple(
             message[:_MAX_DIAGNOSTIC_CHARS]
-            for message in diagnostics[:_MAX_DIAGNOSTICS]
+            for message in deduped[:_MAX_DIAGNOSTICS]
         )
+
+    def _quick_check_diagnostics(self) -> tuple[str, ...]:
+        try:
+            rows = self.store._connection().execute("PRAGMA quick_check").fetchall()
+        except Exception:
+            return ("quick_check_failed",)
+        if rows and all(str(row[0]).lower() == "ok" for row in rows):
+            return ()
+        return ("quick_check_failed",)
+
+    def _projection_invariant_diagnostics(self) -> tuple[str, ...]:
+        """Map the full lag report onto startup diagnostics, one code per cause."""
+        try:
+            report = check_projection_lag(self.config, self.store)
+        except Exception:
+            return ("projection_evaluation_failed",)
+        diagnostics: list[str] = []
+        if (
+            report.missing_mapping
+            or report.duplicate_mapping_target
+            or report.orphan_mapping
+            or report.dangling_item_mapping
+        ):
+            diagnostics.append("legacy_mapping_incomplete")
+        if report.layer_mismatch:
+            diagnostics.append("layer_invariant_failed")
+        if report.status_mismatch or report.l1_mismatch or report.supersession_mismatch:
+            diagnostics.append("projection_lag_nonzero")
+        return tuple(diagnostics)
 
     def _vector_diagnostics(
         self, documents: list[ContextVectorDocument] | None

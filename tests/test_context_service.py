@@ -7,6 +7,7 @@ import sqlite3
 
 import pytest
 
+from evolvmem.context_migration import LegacyMemoryMigrator
 from evolvmem.context_models import (
     ContextContentType,
     ContextItemDraft,
@@ -1865,3 +1866,150 @@ def test_extraction_batch_legacy_mode_writes_only_the_legacy_backend(test_config
     assert all(row["source_session"] == "session_legacy" for row in rows)
     service.close()
     store.close()
+
+
+# ---- primary gating via the shared cutover invariant evaluator ----
+
+
+def _write_legacy_rows(config, rows):
+    with MemoryStore(config) as legacy:
+        for row in rows:
+            legacy.add(**row)
+
+
+def _migrated_store(config, rows):
+    """RecordingStore over a legacy library fully migrated into Context Core."""
+    _write_legacy_rows(config, rows)
+    store = RecordingStore(config)
+    store.initialize()
+    report = LegacyMemoryMigrator(store, config).migrate()
+    assert report.created == len(rows)
+    return store
+
+
+def test_primary_mode_serves_reads_after_a_healthy_migration(test_config):
+    """Startup revalidation passes a fully migrated, vector-healthy library."""
+    store = _migrated_store(
+        test_config,
+        [
+            dict(
+                key="project:proj:decision:database",
+                value="Use SQLite first for the demo service.",
+                attribute="decision",
+            ),
+            dict(
+                key="project:proj:fact:refund",
+                value="退款政策：所有订单支持七天无理由退款。",
+                attribute="fact",
+            ),
+        ],
+    )
+    vector = FakeVectorIndex(test_config, count=2)
+    service = make_service(
+        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector
+    )
+
+    status = service.status()
+    assert status.ready is True
+    assert status.reason_codes == ()
+    assert status.diagnostics == ()
+    assert status.projection_lag == 0
+    assert status.mapping_count == 2
+
+    item_id = store.resolve_legacy_mapping(1)
+    assert item_id is not None
+    result = service.read(ContextReadRequest(id=item_id))
+    assert result.error_code is None
+    assert result.content == "Use SQLite first for the demo service."
+    service.close()
+
+
+def test_primary_mode_degrades_when_a_legacy_row_is_unmapped(test_config, store):
+    """An unmigrated legacy row fails startup mapping completeness."""
+    _write_legacy_rows(
+        test_config,
+        [dict(key="project:proj:fact:pending", value="a row never migrated into core")],
+    )
+    add_item(store, "alpha")
+    service = make_service(
+        test_config,
+        store,
+        mode=ContextMode.PRIMARY,
+        vector_index=FakeVectorIndex(test_config, count=1),
+    )
+
+    status = service.status()
+    assert status.ready is False
+    assert status.reason_codes == ("degraded_legacy",)
+    assert "legacy_mapping_incomplete" in status.diagnostics
+    assert status.projection_lag == 1
+
+    with pytest.raises(ContextServiceError) as excinfo:
+        service.search(_search_request())
+    assert excinfo.value.code == "degraded_legacy"
+    service.close()
+
+
+def test_primary_mode_degrades_on_projection_content_drift(test_config):
+    """A tampered Core L1 is projection lag, so primary startup degrades."""
+    store = _migrated_store(
+        test_config,
+        [dict(key="project:proj:fact:cache", value="The cache is in-process.")],
+    )
+    item_id = store.resolve_legacy_mapping(1)
+    assert item_id is not None
+    with store.transaction():
+        store._connection().execute(
+            "UPDATE context_layers SET content='tampered l1 summary' "
+            "WHERE item_id=? AND layer='l1'",
+            (item_id,),
+        )
+    service = make_service(
+        test_config,
+        store,
+        mode=ContextMode.PRIMARY,
+        vector_index=FakeVectorIndex(test_config, count=1),
+    )
+
+    status = service.status()
+    assert status.ready is False
+    assert status.reason_codes == ("degraded_legacy",)
+    assert "projection_lag_nonzero" in status.diagnostics
+    assert status.projection_lag == 1
+    service.close()
+
+
+def test_primary_readiness_is_computed_never_caller_supplied(test_config, store):
+    """No constructor or initialize argument can inject a ready verdict."""
+    with pytest.raises(TypeError):
+        ContextService(test_config, store=store, ready=True)
+    service = ContextService(test_config, store=store)
+    with pytest.raises(TypeError):
+        service.initialize(mode=ContextMode.PRIMARY, adapter="codex", ready=True)
+
+    status = service.initialize(mode=ContextMode.PRIMARY, adapter="codex")
+    assert status.ready is False  # the default vector index is uninitialized
+    assert status.reason_codes == ("degraded_legacy",)
+    service.close()
+
+
+def test_status_projection_lag_uses_the_full_mismatch_evaluator(test_config):
+    """status() reports design-defined lag: content drift counts, not just gaps."""
+    store = _migrated_store(
+        test_config,
+        [dict(key="project:proj:fact:cache", value="The cache is in-process.")],
+    )
+    item_id = store.resolve_legacy_mapping(1)
+    assert item_id is not None
+    with store.transaction():
+        store._connection().execute(
+            "UPDATE context_layers SET content='tampered l1 summary' "
+            "WHERE item_id=? AND layer='l1'",
+            (item_id,),
+        )
+    service = make_service(test_config, store)
+
+    status = service.status()
+    assert status.projection_lag == 1  # the old counter saw only missing mappings
+    assert status.mapping_count == 1
+    service.close()
