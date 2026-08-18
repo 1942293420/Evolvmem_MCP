@@ -594,6 +594,58 @@ def test_whitespace_only_legacy_value_is_migrated_with_exact_l2(test_config):
     assert _legacy_snapshot(test_config) == before
 
 
+def test_schema_creation_rolls_back_with_an_injected_migration_failure(
+    test_config, monkeypatch
+):
+    """Bootstrap DDL must share the migration transaction's rollback boundary."""
+    with MemoryStore(test_config) as legacy:
+        legacy_id = legacy.add(key="fact:atomic", value="Legacy value kept intact.")
+
+    store = ContextStore(test_config)
+    store.initialize(create_schema=False)
+
+    def fail_mapping(legacy_memory_id, context_item_id):
+        raise RuntimeError("synthetic migration failure")
+
+    monkeypatch.setattr(store, "record_legacy_mapping", fail_mapping)
+    with pytest.raises(RuntimeError, match="synthetic migration failure"):
+        with store.transaction():
+            store.create_schema_in_transaction()
+            LegacyMemoryMigrator(store, test_config).migrate()
+    store.close()
+
+    context_schema_objects = {
+        "context_items",
+        "context_layers",
+        "session_archives",
+        "context_sources",
+        "context_evidence",
+        "legacy_memory_migrations",
+        "context_layers_fts",
+        "context_layers_fts_trigram",
+        "context_layers_fts_ai",
+        "context_layers_fts_ad",
+        "context_layers_fts_au",
+        "context_layers_fts_trigram_ai",
+        "context_layers_fts_trigram_ad",
+        "context_layers_fts_trigram_au",
+    }
+    conn = sqlite3.connect(test_config.db_path)
+    try:
+        survivors = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'trigger')"
+            )
+        }
+        assert survivors & context_schema_objects == set()
+        assert conn.execute(
+            "SELECT status FROM memories WHERE id=?", (legacy_id,)
+        ).fetchone()[0] == "active"
+    finally:
+        conn.close()
+
+
 def test_whitespace_only_legacy_value_bounds_sentinels_at_minimum_limits(test_config):
     """Blank-value sentinels must obey retrieval budgets while L2 stays exact."""
     test_config.context_l0_max_chars = 1

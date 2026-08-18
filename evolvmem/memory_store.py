@@ -3,25 +3,25 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 import sqlite3
-import re
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
 
 from evolvmem.config import Config
-
-
-def _now_iso() -> str:
-    """Return UTC now in SQLite-compatible datetime format for correct comparison."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+from evolvmem.legacy_projection import (
+    LegacyProjectionInsert,
+    LegacyProjectionReplace,
+    LegacyProjectionRepository,
+    LegacyProjectionUpdate,
+    _has_cjk,
+    _now_iso,
+)
 
 
 class MemoryStore:
-    """SQLite memory store with FTS5 and trigram dual indexing."""
+    """Owning lifecycle/transaction wrapper over the legacy projection SQL."""
 
     def __init__(self, config: Config):
         self.config = config
         self._conn: sqlite3.Connection | None = None
+        self._repository: LegacyProjectionRepository | None = None
         self._has_trigram: bool | None = None
         self._transaction_depth = 0
 
@@ -40,11 +40,15 @@ class MemoryStore:
         self._create_tables()
         self._create_fts_indexes()
         self._conn.commit()
+        self._repository = LegacyProjectionRepository(
+            self._conn, self._require_transaction
+        )
 
     def close(self) -> None:
         if self._conn:
             self._conn.close()
             self._conn = None
+            self._repository = None
 
     def __enter__(self):
         self.initialize()
@@ -58,6 +62,17 @@ class MemoryStore:
     def _execute(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         cur = self._conn.execute(sql, params)
         return cur.fetchall()
+
+    def _projection(self) -> LegacyProjectionRepository:
+        if self._repository is None:
+            raise RuntimeError("MemoryStore is not initialized")
+        return self._repository
+
+    def _require_transaction(self, operation: str) -> None:
+        if self._transaction_depth == 0:
+            raise RuntimeError(
+                f"{operation} requires an active MemoryStore transaction"
+            )
 
     def _create_tables(self) -> None:
         self._conn.executescript("""
@@ -190,28 +205,13 @@ class MemoryStore:
             """)
 
     def _has_cjk(self, text: str) -> bool:
-        return bool(re.search(r'[一-鿿㐀-䶿]', text))
+        return _has_cjk(text)
 
     def _search_like(self, query: str, top_k: int = 20) -> list[dict]:
         """LIKE substring search - fallback when trigram is unavailable."""
-        pattern = f"%{query}%"
-        rows = self._execute(
-            "SELECT *, rank FROM ("
-            "  SELECT m.*, 1.0 as rank FROM memories m "
-            "  WHERE m.value LIKE ? AND m.status != 'deleted'"
-            "  UNION ALL"
-            "  SELECT m.*, 0.5 as rank FROM memories m "
-            "  WHERE m.tags LIKE ? AND m.status != 'deleted'"
-            ") ORDER BY rank DESC LIMIT ?",
-            (pattern, pattern, top_k),
-        )
-        return [dict(r) for r in rows]
+        return self._projection()._search_like(query, top_k)
 
     # ---- write ----
-
-    def _commit_if_outermost(self) -> None:
-        if self._transaction_depth == 0:
-            self._conn.commit()
 
     @contextmanager
     def transaction(self) -> Iterator["MemoryStore"]:
@@ -230,23 +230,6 @@ class MemoryStore:
         finally:
             self._transaction_depth -= 1
 
-    def _insert_row(self, key: str, value: str, attribute: str,
-                    tag_str: str, source_session: str,
-                    supersedes: int | None,
-                    importance: float = 5.0, tier: str = "normal",
-                    expires_at: str | None = None) -> int:
-        """Insert a row into memories and return its id. Does NOT commit."""
-        now = _now_iso()
-        cur = self._conn.execute(
-            "INSERT INTO memories (key, value, status, attribute, tags, "
-            "source_session, supersedes, importance, tier, expires_at, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (key, value, attribute, tag_str, source_session, supersedes,
-             importance, tier, expires_at, now, now),
-        )
-        return cur.lastrowid
-
     def add(self, key: str, value: str, attribute: str = "",
             tags: list[str] | None = None,
             source_session: str = "",
@@ -254,15 +237,21 @@ class MemoryStore:
             importance: float = 5.0, tier: str = "normal",
             expires_at: str | None = None) -> int:
         """Insert a new active memory. Returns the new record id."""
-        if expires_at and len(expires_at) == 10:
-            expires_at += " 00:00:00"
-        tag_str = ",".join(tags) if tags else ""
-        new_id = self._insert_row(key, value, attribute, tag_str,
-                                  source_session, supersedes,
-                                  importance=importance, tier=tier,
-                                  expires_at=expires_at)
-        self._commit_if_outermost()
-        return new_id
+        request = LegacyProjectionInsert(
+            key=key,
+            value=value,
+            attribute=attribute,
+            tags=tuple(tags) if tags else (),
+            source_session=source_session,
+            supersedes=supersedes,
+            importance=importance,
+            tier=tier,
+            expires_at=expires_at,
+        )
+        if self._transaction_depth:
+            return self._projection().insert(request)
+        with self.transaction():
+            return self._projection().insert(request)
 
     def add_if_changed(self, key: str, value: str, **kwargs) -> int | None:
         """Only insert if value differs from current active. Returns None if skipped."""
@@ -277,75 +266,40 @@ class MemoryStore:
         Wrapped in a single explicit transaction so no dual-active window exists:
         at no point can two records with the same key both be 'active'.
         """
+        request = LegacyProjectionReplace(
+            key=key,
+            new_value=new_value,
+            attribute=kwargs.pop("attribute", None),
+            tags=kwargs.pop("tags", None),
+            source_session=kwargs.pop("source_session", ""),
+            importance=kwargs.pop("importance", None),
+            tier=kwargs.pop("tier", None),
+            expires_at=kwargs.pop("expires_at", None),
+        )
         if self._transaction_depth:
-            return self._replace_no_commit(key, new_value, **kwargs)
+            return self._projection().replace(request)[1]
         with self.transaction():
-            return self._replace_no_commit(key, new_value, **kwargs)
-
-    def _replace_no_commit(self, key: str, new_value: str, **kwargs) -> int:
-        old = self._get_active_by_key(key)
-        if old is None:
-            return self.add(key=key, value=new_value, **kwargs)
-
-        old_id = old["id"]
-        attribute = kwargs.pop("attribute", None)
-        if attribute is None:
-            attribute = old["attribute"]
-        if "tags" in kwargs:
-            tag_str = ",".join(kwargs.pop("tags"))
-        else:
-            tag_str = old["tags"]
-        importance = kwargs.pop("importance", None)
-        if importance is None:
-            importance = old["importance"]
-        tier = kwargs.pop("tier", None)
-        if tier is None:
-            tier = old["tier"]
-        expires_at = kwargs.pop("expires_at", None)
-        if expires_at is None:
-            expires_at = old["expires_at"]
-        if expires_at and len(expires_at) == 10:
-            expires_at += " 00:00:00"
-
-        new_id = self._insert_row(
-            key, new_value,
-            attribute,
-            tag_str,
-            kwargs.pop("source_session", ""),
-            old_id,
-            importance=importance, tier=tier,
-            expires_at=expires_at,
-        )
-        now = _now_iso()
-        self._conn.execute(
-            "UPDATE memories SET status='superseded', superseded_by=?, "
-            "updated_at=? WHERE id=?",
-            (new_id, now, old_id),
-        )
-        return new_id
+            return self._projection().replace(request)[1]
 
     def remove(self, mem_id: int) -> None:
         """Soft delete: mark status as deleted."""
-        self._conn.execute(
-            "UPDATE memories SET status='deleted', updated_at=? WHERE id=?",
-            (_now_iso(), mem_id),
-        )
-        self._commit_if_outermost()
+        if self._transaction_depth:
+            self._projection().soft_delete(mem_id)
+            return
+        with self.transaction():
+            self._projection().soft_delete(mem_id)
 
     def update_metadata(self, mem_id: int, importance: float | None = None,
                         tier: str | None = None) -> None:
         """Update importance/tier in place (used by batch rescoring)."""
-        if importance is not None:
-            self._conn.execute(
-                "UPDATE memories SET importance=?, updated_at=? WHERE id=?",
-                (importance, _now_iso(), mem_id),
-            )
-        if tier is not None:
-            self._conn.execute(
-                "UPDATE memories SET tier=?, updated_at=? WHERE id=?",
-                (tier, _now_iso(), mem_id),
-            )
-        self._commit_if_outermost()
+        request = LegacyProjectionUpdate(
+            legacy_id=mem_id, importance=importance, tier=tier
+        )
+        if self._transaction_depth:
+            self._projection().update_metadata(request)
+            return
+        with self.transaction():
+            self._projection().update_metadata(request)
 
     # ---- queries ----
 
@@ -355,55 +309,32 @@ class MemoryStore:
         Expired memories (expires_at <= now) keep status='active' but are
         excluded here until the forgetting engine archives them.
         """
-        rows = self._execute(
-            "SELECT * FROM memories WHERE status='active' "
-            "AND (expires_at IS NULL OR expires_at > ?) "
-            "ORDER BY updated_at DESC",
-            (_now_iso(),),
-        )
-        return [dict(r) for r in rows]
+        return self._projection().get_active()
 
     def get_by_id(self, mem_id: int) -> dict | None:
-        rows = self._execute("SELECT * FROM memories WHERE id=?", (mem_id,))
-        return dict(rows[0]) if rows else None
+        return self._projection().get_by_id(mem_id)
 
     def get_by_key(self, key: str) -> list[dict]:
         """Return all records for a given key (including history), sorted by updated_at desc."""
-        rows = self._execute(
-            "SELECT * FROM memories WHERE key=? ORDER BY updated_at DESC",
-            (key,),
-        )
-        return [dict(r) for r in rows]
+        return self._projection().get_by_key(key)
 
     def _get_active_by_key(self, key: str) -> dict | None:
-        rows = self._execute(
-            "SELECT * FROM memories WHERE key=? AND status='active'",
-            (key,),
-        )
-        return dict(rows[0]) if rows else None
+        return self._projection()._get_active_by_key(key)
 
     def get_by_ids(self, ids: list[int]) -> list[dict]:
         """Batch fetch records by id."""
-        if not ids:
-            return []
-        placeholders = ",".join("?" for _ in ids)
-        rows = self._execute(
-            f"SELECT * FROM memories WHERE id IN ({placeholders})",
-            tuple(ids),
-        )
-        return [dict(r) for r in rows]
+        return self._projection().get_by_ids(ids)
 
     def update_access(self, mem_id: int) -> None:
         """Increment access_count and update last_accessed (called on retrieval hit).
 
         Does NOT touch updated_at — recency ordering must reflect writes, not reads.
         """
-        self._conn.execute(
-            "UPDATE memories SET access_count = access_count + 1, "
-            "last_accessed = ? WHERE id = ?",
-            (_now_iso(), mem_id),
-        )
-        self._commit_if_outermost()
+        if self._transaction_depth:
+            self._projection().update_access((mem_id,))
+            return
+        with self.transaction():
+            self._projection().update_access((mem_id,))
 
     # ---- full-text search ----
 
@@ -413,56 +344,15 @@ class MemoryStore:
         Always supplements with LIKE for CJK queries since short Chinese
         substrings (e.g. 2-char "退款") may not produce valid trigrams.
         """
-        if self._has_trigram and self._has_cjk(query):
-            results = self._search_fts5("memories_fts_trigram", query, top_k)
-        else:
-            results = self._search_fts5("memories_fts", query, top_k)
-
-        # Supplement with LIKE for CJK queries regardless of tokenizer
-        if self._has_cjk(query):
-            like_results = self._search_like(query, top_k)
-            seen = {r["id"] for r in results}
-            for r in like_results:
-                if r["id"] not in seen:
-                    results.append(r)
-        return results
-
-    def _search_fts5(self, table: str, query: str, top_k: int) -> list[dict]:
-        safe_query = self._sanitize_fts5_query(query)
-        try:
-            rows = self._execute(
-                f"SELECT m.*, rank FROM {table} f "
-                "JOIN memories m ON m.id = f.rowid "
-                f"WHERE {table} MATCH ? AND m.status != 'deleted' "
-                "ORDER BY rank LIMIT ?",
-                (safe_query, top_k),
-            )
-            return [dict(r) for r in rows]
-        except sqlite3.OperationalError:
-            return []
-
-    def _sanitize_fts5_query(self, query: str) -> str:
-        """Sanitize FTS5 query to avoid syntax errors."""
-        query = query.strip().strip('"')
-        # Escape FTS5 special characters
-        query = query.replace('"', '""')
-        return f'"{query}"'
+        return self._projection().search_fts(query, top_k)
 
     def all_ids(self) -> list[int]:
         """Return ids of all non-deleted records (for USearch sync)."""
-        rows = self._execute(
-            "SELECT id FROM memories WHERE status != 'deleted'"
-        )
-        return [r["id"] for r in rows]
+        return self._projection().all_ids()
 
     def count_active(self) -> int:
         """Count status='active' and unexpired memories (same scope as get_active)."""
-        rows = self._execute(
-            "SELECT COUNT(*) as cnt FROM memories WHERE status='active' "
-            "AND (expires_at IS NULL OR expires_at > ?)",
-            (_now_iso(),),
-        )
-        return rows[0]["cnt"]
+        return self._projection().count_active()
 
     def get_forgetting_candidates(self, days_threshold: int,
                                   access_threshold: int,
@@ -477,21 +367,16 @@ class MemoryStore:
         - tier is not 'pinned' — pinned memories are durable rules/preferences
           and must never be auto-archived regardless of usage
         """
-        rows = self._execute(
-            "SELECT * FROM memories WHERE status='active' "
-            "AND tier != 'pinned' "
-            "AND (last_accessed IS NULL OR last_accessed <= datetime('now', ?)) "
-            "AND access_count <= ? "
-            "AND (updated_at IS NULL OR updated_at <= datetime('now', ?))",
-            (f"-{days_threshold} days", access_threshold,
-             f"-{rate_limit_days} days"),
+        return self._projection().get_forgetting_candidates(
+            days_threshold=days_threshold,
+            access_threshold=access_threshold,
+            rate_limit_days=rate_limit_days,
         )
-        return [dict(r) for r in rows]
 
     def archive(self, mem_id: int) -> None:
         """Downgrade memory to archived."""
-        self._conn.execute(
-            "UPDATE memories SET status='archived', updated_at=? WHERE id=?",
-            (_now_iso(), mem_id),
-        )
-        self._commit_if_outermost()
+        if self._transaction_depth:
+            self._projection().set_status(mem_id, "archived")
+            return
+        with self.transaction():
+            self._projection().set_status(mem_id, "archived")

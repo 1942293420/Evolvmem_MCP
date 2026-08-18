@@ -23,11 +23,217 @@ from evolvmem.context_models import (
     ContextTier,
     ContextVectorDocument,
 )
+from evolvmem.legacy_projection import (
+    LegacyProjectionRepository,
+    LegacyProjectionUpdate,
+)
 
 
 def _now_iso() -> str:
     """Return a UTC timestamp whose lexical order matches chronological order."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# Each complete table/index/virtual-table/trigger definition is one explicit
+# statement, executed in order; arbitrary SQL is never split on semicolons, so
+# the whole schema can join one outer transaction without an implicit commit.
+_SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS context_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        identity_key TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        project TEXT NOT NULL DEFAULT '',
+        scope TEXT NOT NULL DEFAULT 'project',
+        status TEXT NOT NULL DEFAULT 'candidate',
+        tier TEXT NOT NULL DEFAULT 'normal',
+        tags TEXT NOT NULL DEFAULT '',
+        importance REAL NOT NULL DEFAULT 5.0,
+        confidence REAL NOT NULL DEFAULT 0.5,
+        source_state TEXT NOT NULL DEFAULT 'none',
+        source_count INTEGER NOT NULL DEFAULT 0,
+        success_count INTEGER NOT NULL DEFAULT 0,
+        failure_count INTEGER NOT NULL DEFAULT 0,
+        access_count INTEGER NOT NULL DEFAULT 0,
+        last_accessed TEXT,
+        last_verified_at TEXT,
+        expires_at TEXT,
+        supersedes INTEGER REFERENCES context_items(id),
+        superseded_by INTEGER REFERENCES context_items(id),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS context_layers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,
+        layer TEXT NOT NULL CHECK (layer IN ('l0', 'l1', 'l2')),
+        content TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        generator TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(item_id, layer)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS session_archives (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project TEXT NOT NULL,
+        adapter TEXT NOT NULL,
+        external_session_id TEXT NOT NULL,
+        payload_path TEXT NOT NULL,
+        payload_sha256 TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'available',
+        expires_at TEXT NOT NULL,
+        purged_at TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(adapter, external_session_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS context_sources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,
+        archive_id INTEGER REFERENCES session_archives(id),
+        source_kind TEXT NOT NULL,
+        source_ref TEXT NOT NULL DEFAULT '',
+        extraction_version TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(item_id, source_kind, source_ref)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS context_evidence (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,
+        source_id INTEGER REFERENCES context_sources(id),
+        outcome TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        observed_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS legacy_memory_migrations (
+        legacy_memory_id INTEGER PRIMARY KEY,
+        context_item_id INTEGER NOT NULL REFERENCES context_items(id),
+        migrated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_context_items_identity
+        ON context_items(identity_key, project, scope)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_context_items_status
+        ON context_items(status)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_context_items_project_scope_status
+        ON context_items(project, scope, status)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_context_items_expires_at
+        ON context_items(expires_at)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_context_layers_item
+        ON context_layers(item_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_context_sources_item
+        ON context_sources(item_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_context_evidence_item
+        ON context_evidence(item_id)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_context_items_one_active_identity
+        ON context_items(identity_key, project, scope)
+        WHERE status = 'active'
+    """,
+)
+
+_FTS_TABLE_STATEMENT = (
+    "CREATE VIRTUAL TABLE IF NOT EXISTS context_layers_fts "
+    "USING fts5(content, tokenize='unicode61')"
+)
+
+_FTS_TRIGRAM_TABLE_STATEMENT = (
+    "CREATE VIRTUAL TABLE IF NOT EXISTS context_layers_fts_trigram "
+    "USING fts5(content, tokenize='trigram')"
+)
+
+_FTS_TRIGGER_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TRIGGER IF NOT EXISTS context_layers_fts_ai
+    AFTER INSERT ON context_layers
+    WHEN new.layer IN ('l0', 'l1')
+    BEGIN
+        INSERT INTO context_layers_fts(rowid, content)
+        VALUES (new.id, new.content);
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS context_layers_fts_ad
+    AFTER DELETE ON context_layers
+    WHEN old.layer IN ('l0', 'l1')
+    BEGIN
+        DELETE FROM context_layers_fts WHERE rowid=old.id;
+    END
+    """,
+    "DROP TRIGGER IF EXISTS context_layers_fts_au_delete",
+    "DROP TRIGGER IF EXISTS context_layers_fts_au_insert",
+    """
+    CREATE TRIGGER IF NOT EXISTS context_layers_fts_au
+    AFTER UPDATE ON context_layers
+    WHEN old.layer IN ('l0', 'l1') OR new.layer IN ('l0', 'l1')
+    BEGIN
+        DELETE FROM context_layers_fts
+        WHERE rowid=old.id AND old.layer IN ('l0', 'l1');
+        INSERT INTO context_layers_fts(rowid, content)
+        SELECT new.id, new.content
+        WHERE new.layer IN ('l0', 'l1');
+    END
+    """,
+)
+
+_FTS_TRIGRAM_TRIGGER_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TRIGGER IF NOT EXISTS context_layers_fts_trigram_ai
+    AFTER INSERT ON context_layers
+    WHEN new.layer IN ('l0', 'l1')
+    BEGIN
+        INSERT INTO context_layers_fts_trigram(rowid, content)
+        VALUES (new.id, new.content);
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS context_layers_fts_trigram_ad
+    AFTER DELETE ON context_layers
+    WHEN old.layer IN ('l0', 'l1')
+    BEGIN
+        DELETE FROM context_layers_fts_trigram WHERE rowid=old.id;
+    END
+    """,
+    "DROP TRIGGER IF EXISTS context_layers_fts_trigram_au_delete",
+    "DROP TRIGGER IF EXISTS context_layers_fts_trigram_au_insert",
+    """
+    CREATE TRIGGER IF NOT EXISTS context_layers_fts_trigram_au
+    AFTER UPDATE ON context_layers
+    WHEN old.layer IN ('l0', 'l1') OR new.layer IN ('l0', 'l1')
+    BEGIN
+        DELETE FROM context_layers_fts_trigram
+        WHERE rowid=old.id AND old.layer IN ('l0', 'l1');
+        INSERT INTO context_layers_fts_trigram(rowid, content)
+        SELECT new.id, new.content
+        WHERE new.layer IN ('l0', 'l1');
+    END
+    """,
+)
 
 
 class ContextStore:
@@ -41,21 +247,31 @@ class ContextStore:
 
     # ---- lifecycle ----
 
-    def initialize(self) -> None:
-        """Open the configured database and idempotently create context schema."""
+    def initialize(self, *, create_schema: bool = True) -> None:
+        """Open the configured database and idempotently create context schema.
+
+        With create_schema=False the database must already exist: the store
+        opens through a read/write SQLite URI so a missing file is an explicit
+        error instead of an empty file creation, no Context DDL runs, and
+        `Config.ensure_dirs()` is never called.
+        """
         if self._conn is not None:
             return
 
-        self.config.ensure_dirs()
-        conn = sqlite3.connect(str(self.config.db_path), check_same_thread=False)
+        if create_schema:
+            self.config.ensure_dirs()
+            conn = sqlite3.connect(str(self.config.db_path), check_same_thread=False)
+        else:
+            uri = self.config.db_path.expanduser().resolve().as_uri() + "?mode=rw"
+            conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
             self._conn = conn
-            self._create_tables()
-            self._create_fts_indexes()
-            conn.commit()
+            if create_schema:
+                with self.transaction():
+                    self.create_schema_in_transaction()
         except Exception:
             conn.close()
             self._conn = None
@@ -100,189 +316,29 @@ class ContextStore:
 
     # ---- schema ----
 
-    def _create_tables(self) -> None:
-        self._connection().executescript(
-            """
-            CREATE TABLE IF NOT EXISTS context_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                identity_key TEXT NOT NULL,
-                content_type TEXT NOT NULL,
-                project TEXT NOT NULL DEFAULT '',
-                scope TEXT NOT NULL DEFAULT 'project',
-                status TEXT NOT NULL DEFAULT 'candidate',
-                tier TEXT NOT NULL DEFAULT 'normal',
-                tags TEXT NOT NULL DEFAULT '',
-                importance REAL NOT NULL DEFAULT 5.0,
-                confidence REAL NOT NULL DEFAULT 0.5,
-                source_state TEXT NOT NULL DEFAULT 'none',
-                source_count INTEGER NOT NULL DEFAULT 0,
-                success_count INTEGER NOT NULL DEFAULT 0,
-                failure_count INTEGER NOT NULL DEFAULT 0,
-                access_count INTEGER NOT NULL DEFAULT 0,
-                last_accessed TEXT,
-                last_verified_at TEXT,
-                expires_at TEXT,
-                supersedes INTEGER REFERENCES context_items(id),
-                superseded_by INTEGER REFERENCES context_items(id),
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
+    def create_schema_in_transaction(self) -> None:
+        """Create the Context schema inside the caller's outer transaction.
 
-            CREATE TABLE IF NOT EXISTS context_layers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,
-                layer TEXT NOT NULL CHECK (layer IN ('l0', 'l1', 'l2')),
-                content TEXT NOT NULL,
-                content_hash TEXT NOT NULL,
-                generator TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(item_id, layer)
-            );
-
-            CREATE TABLE IF NOT EXISTS session_archives (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project TEXT NOT NULL,
-                adapter TEXT NOT NULL,
-                external_session_id TEXT NOT NULL,
-                payload_path TEXT NOT NULL,
-                payload_sha256 TEXT NOT NULL,
-                state TEXT NOT NULL DEFAULT 'available',
-                expires_at TEXT NOT NULL,
-                purged_at TEXT,
-                created_at TEXT NOT NULL,
-                UNIQUE(adapter, external_session_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS context_sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,
-                archive_id INTEGER REFERENCES session_archives(id),
-                source_kind TEXT NOT NULL,
-                source_ref TEXT NOT NULL DEFAULT '',
-                extraction_version TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                UNIQUE(item_id, source_kind, source_ref)
-            );
-
-            CREATE TABLE IF NOT EXISTS context_evidence (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,
-                source_id INTEGER REFERENCES context_sources(id),
-                outcome TEXT NOT NULL,
-                note TEXT NOT NULL DEFAULT '',
-                observed_at TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS legacy_memory_migrations (
-                legacy_memory_id INTEGER PRIMARY KEY,
-                context_item_id INTEGER NOT NULL REFERENCES context_items(id),
-                migrated_at TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_context_items_identity
-                ON context_items(identity_key, project, scope);
-            CREATE INDEX IF NOT EXISTS idx_context_items_status
-                ON context_items(status);
-            CREATE INDEX IF NOT EXISTS idx_context_items_project_scope_status
-                ON context_items(project, scope, status);
-            CREATE INDEX IF NOT EXISTS idx_context_items_expires_at
-                ON context_items(expires_at);
-            CREATE INDEX IF NOT EXISTS idx_context_layers_item
-                ON context_layers(item_id);
-            CREATE INDEX IF NOT EXISTS idx_context_sources_item
-                ON context_sources(item_id);
-            CREATE INDEX IF NOT EXISTS idx_context_evidence_item
-                ON context_evidence(item_id);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_context_items_one_active_identity
-                ON context_items(identity_key, project, scope)
-                WHERE status = 'active';
-            """
-        )
-
-    def _create_fts_indexes(self) -> None:
+        Every statement executes individually so the whole bootstrap shares
+        the surrounding transaction's commit/rollback boundary.
+        """
+        self._require_transaction("create_schema_in_transaction")
         conn = self._connection()
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS context_layers_fts "
-            "USING fts5(content, tokenize='unicode61')"
-        )
+        for statement in _SCHEMA_TABLE_STATEMENTS:
+            conn.execute(statement)
 
+        conn.execute(_FTS_TABLE_STATEMENT)
         try:
-            conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS context_layers_fts_trigram "
-                "USING fts5(content, tokenize='trigram')"
-            )
+            conn.execute(_FTS_TRIGRAM_TABLE_STATEMENT)
             self._has_trigram = True
         except sqlite3.OperationalError:
             self._has_trigram = False
 
-        conn.executescript(
-            """
-            CREATE TRIGGER IF NOT EXISTS context_layers_fts_ai
-            AFTER INSERT ON context_layers
-            WHEN new.layer IN ('l0', 'l1')
-            BEGIN
-                INSERT INTO context_layers_fts(rowid, content)
-                VALUES (new.id, new.content);
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS context_layers_fts_ad
-            AFTER DELETE ON context_layers
-            WHEN old.layer IN ('l0', 'l1')
-            BEGIN
-                DELETE FROM context_layers_fts WHERE rowid=old.id;
-            END;
-
-            DROP TRIGGER IF EXISTS context_layers_fts_au_delete;
-            DROP TRIGGER IF EXISTS context_layers_fts_au_insert;
-
-            CREATE TRIGGER IF NOT EXISTS context_layers_fts_au
-            AFTER UPDATE ON context_layers
-            WHEN old.layer IN ('l0', 'l1') OR new.layer IN ('l0', 'l1')
-            BEGIN
-                DELETE FROM context_layers_fts
-                WHERE rowid=old.id AND old.layer IN ('l0', 'l1');
-                INSERT INTO context_layers_fts(rowid, content)
-                SELECT new.id, new.content
-                WHERE new.layer IN ('l0', 'l1');
-            END;
-            """
-        )
-
+        for statement in _FTS_TRIGGER_STATEMENTS:
+            conn.execute(statement)
         if self._has_trigram:
-            conn.executescript(
-                """
-                CREATE TRIGGER IF NOT EXISTS context_layers_fts_trigram_ai
-                AFTER INSERT ON context_layers
-                WHEN new.layer IN ('l0', 'l1')
-                BEGIN
-                    INSERT INTO context_layers_fts_trigram(rowid, content)
-                    VALUES (new.id, new.content);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS context_layers_fts_trigram_ad
-                AFTER DELETE ON context_layers
-                WHEN old.layer IN ('l0', 'l1')
-                BEGIN
-                    DELETE FROM context_layers_fts_trigram WHERE rowid=old.id;
-                END;
-
-                DROP TRIGGER IF EXISTS context_layers_fts_trigram_au_delete;
-                DROP TRIGGER IF EXISTS context_layers_fts_trigram_au_insert;
-
-                CREATE TRIGGER IF NOT EXISTS context_layers_fts_trigram_au
-                AFTER UPDATE ON context_layers
-                WHEN old.layer IN ('l0', 'l1') OR new.layer IN ('l0', 'l1')
-                BEGIN
-                    DELETE FROM context_layers_fts_trigram
-                    WHERE rowid=old.id AND old.layer IN ('l0', 'l1');
-                    INSERT INTO context_layers_fts_trigram(rowid, content)
-                    SELECT new.id, new.content
-                    WHERE new.layer IN ('l0', 'l1');
-                END;
-                """
-            )
+            for statement in _FTS_TRIGRAM_TRIGGER_STATEMENTS:
+                conn.execute(statement)
 
     # ---- writes ----
 
@@ -419,6 +475,15 @@ class ContextStore:
             )
 
     # ---- recurring legacy migration support ----
+
+    def legacy_projection(self) -> LegacyProjectionRepository:
+        """Borrow this store's connection for legacy memories-table projection.
+
+        The repository shares the connection and transaction guard, so every
+        projection write joins the active Context transaction and never
+        commits ahead of it.
+        """
+        return LegacyProjectionRepository(self._connection(), self._require_transaction)
 
     def legacy_memory_table_exists(self) -> bool:
         row = self._connection().execute(
@@ -603,6 +668,94 @@ class ContextStore:
             "UPDATE context_items SET supersedes=?, superseded_by=? WHERE id=?",
             (supersedes, superseded_by, item_id),
         )
+
+    # ---- exact mapped mutation primitives ----
+
+    def supersede_item(
+        self, predecessor_id: int, draft: ContextItemDraft
+    ) -> ContextItem:
+        """Supersede the exact mapped predecessor and create its active successor.
+
+        The predecessor is addressed by ID alone — never by identity — and
+        both link directions are updated inside the caller's transaction.
+        """
+        self._require_transaction("supersede_item")
+        validate_layers(draft.layers, self.config)
+        conn = self._connection()
+        predecessor = conn.execute(
+            "SELECT id FROM context_items WHERE id=?", (predecessor_id,)
+        ).fetchone()
+        if predecessor is None:
+            raise ValueError(
+                f"predecessor context item {predecessor_id} does not exist"
+            )
+        now = _now_iso()
+        conn.execute(
+            "UPDATE context_items SET status='superseded', updated_at=? WHERE id=?",
+            (now, predecessor_id),
+        )
+        successor = self._create_item_no_commit(
+            draft, status=ContextStatus.ACTIVE, supersedes=predecessor_id
+        )
+        conn.execute(
+            "UPDATE context_items SET superseded_by=?, updated_at=? WHERE id=?",
+            (successor.id, now, predecessor_id),
+        )
+        return successor
+
+    def set_item_status(self, item_id: int, status: ContextStatus) -> bool:
+        """Set one item's status; returns False when the id does not exist."""
+        self._require_transaction("set_item_status")
+        cursor = self._connection().execute(
+            "UPDATE context_items SET status=?, updated_at=? WHERE id=?",
+            (status.value, _now_iso(), item_id),
+        )
+        return cursor.rowcount > 0
+
+    def update_item_from_legacy(
+        self, item_id: int, request: LegacyProjectionUpdate
+    ) -> bool:
+        """Mirror a legacy metadata edit onto the exact mapped Context item."""
+        self._require_transaction("update_item_from_legacy")
+        conn = self._connection()
+        updated = False
+        if request.importance is not None:
+            cursor = conn.execute(
+                "UPDATE context_items SET importance=?, updated_at=? WHERE id=?",
+                (request.importance, _now_iso(), item_id),
+            )
+            updated = cursor.rowcount > 0
+        if request.tier is not None:
+            cursor = conn.execute(
+                "UPDATE context_items SET tier=?, updated_at=? WHERE id=?",
+                (request.tier, _now_iso(), item_id),
+            )
+            updated = cursor.rowcount > 0 or updated
+        return updated
+
+    def hard_delete_item(self, item_id: int) -> bool:
+        """Physically remove one item after deleting its legacy mapping.
+
+        The mapping must go first because it foreign-key references the item.
+        This is only a primitive; no automated lifecycle calls it.
+        """
+        self._require_transaction("hard_delete_item")
+        conn = self._connection()
+        conn.execute(
+            "DELETE FROM legacy_memory_migrations WHERE context_item_id=?",
+            (item_id,),
+        )
+        cursor = conn.execute("DELETE FROM context_items WHERE id=?", (item_id,))
+        return cursor.rowcount > 0
+
+    def delete_legacy_mapping(self, legacy_id: int) -> bool:
+        """Delete one legacy-ID mapping; returns False when it does not exist."""
+        self._require_transaction("delete_legacy_mapping")
+        cursor = self._connection().execute(
+            "DELETE FROM legacy_memory_migrations WHERE legacy_memory_id=?",
+            (legacy_id,),
+        )
+        return cursor.rowcount > 0
 
     def _require_transaction(self, operation: str) -> None:
         if self._transaction_depth == 0:

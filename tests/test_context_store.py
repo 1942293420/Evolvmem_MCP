@@ -2,10 +2,12 @@
 
 from dataclasses import replace
 import hashlib
+import inspect
 import sqlite3
 
 import pytest
 
+import evolvmem.context_store
 from evolvmem.context_models import (
     ContextContentType,
     ContextItemDraft,
@@ -17,6 +19,11 @@ from evolvmem.context_models import (
     ContextValidationError,
 )
 from evolvmem.context_store import ContextStore
+from evolvmem.legacy_projection import (
+    LegacyProjectionInsert,
+    LegacyProjectionUpdate,
+)
+from evolvmem.memory_store import MemoryStore
 
 
 @pytest.fixture
@@ -804,3 +811,265 @@ def test_list_pinned_policy_records_applies_seed_filters_without_l1_l2(
         assert record.available_layers == (
             ContextLayer.L0, ContextLayer.L1, ContextLayer.L2,
         )
+
+
+def test_initialize_without_schema_creation_requires_an_existing_database(
+    test_config,
+):
+    """create_schema=False must fail explicitly instead of creating an empty file."""
+    store = ContextStore(test_config)
+
+    with pytest.raises(sqlite3.OperationalError):
+        store.initialize(create_schema=False)
+
+    assert store._conn is None
+    assert not test_config.db_path.exists()
+    assert not (test_config.data_dir / "models").exists()
+
+
+def test_initialize_without_schema_creation_leaves_context_schema_absent(test_config):
+    """Opening an existing database must not create any Context table or trigger."""
+    with MemoryStore(test_config) as legacy:
+        legacy.add(key="fact:existing", value="A pre-existing legacy row.")
+
+    store = ContextStore(test_config)
+    store.initialize(create_schema=False)
+    try:
+        names = {
+            row[0]
+            for row in store._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'trigger')"
+            )
+        }
+    finally:
+        store.close()
+
+    assert "memories" in names
+    assert "legacy_memory_migrations" not in names
+    assert not any(name.startswith("context") for name in names)
+
+
+def test_create_schema_in_transaction_requires_an_active_transaction(store):
+    """Schema DDL must join an outer transaction rather than autocommitting."""
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.create_schema_in_transaction()
+
+
+def test_create_schema_in_transaction_is_idempotent(store, draft_factory):
+    """Repeated in-transaction schema creation keeps the Foundation schema stable."""
+    with store.transaction():
+        store.create_schema_in_transaction()
+    with store.transaction():
+        store.create_schema_in_transaction()
+
+    item = store.create_item(draft_factory())
+
+    assert item.id == 1
+    assert store.count_by_status() == {"candidate": 1}
+
+
+def test_context_schema_creation_never_uses_executescript():
+    """executescript implicitly commits, which would break atomic bootstrap."""
+    source = inspect.getsource(evolvmem.context_store)
+    assert "executescript" not in source
+
+
+def test_legacy_projection_shares_the_context_connection_and_guard(test_config):
+    """Projection writes must join the Context transaction, never commit early."""
+    with MemoryStore(test_config) as legacy:
+        legacy.add(key="fact:shared", value="Existing legacy row.")
+
+    with ContextStore(test_config) as store:
+        repo = store.legacy_projection()
+        with pytest.raises(RuntimeError, match="transaction"):
+            repo.insert(LegacyProjectionInsert(key="fact:uncommitted", value="v"))
+
+        with store.transaction():
+            legacy_id = repo.insert(
+                LegacyProjectionInsert(key="fact:committed", value="New row.")
+            )
+            other = sqlite3.connect(test_config.db_path)
+            try:
+                assert other.execute(
+                    "SELECT COUNT(*) FROM memories WHERE key='fact:committed'"
+                ).fetchone()[0] == 0
+            finally:
+                other.close()
+
+        assert repo.get_by_id(legacy_id)["value"] == "New row."
+
+
+def test_legacy_projection_rolls_back_with_the_context_transaction(test_config):
+    """A failed outer transaction must revert projection writes too."""
+    with MemoryStore(test_config) as legacy:
+        seeded = legacy.add(key="fact:rollback", value="Seeded row.")
+
+    with ContextStore(test_config) as store:
+        repo = store.legacy_projection()
+        with pytest.raises(RuntimeError, match="synthetic outer failure"):
+            with store.transaction():
+                repo.insert(LegacyProjectionInsert(key="fact:new", value="v"))
+                repo.soft_delete(seeded)
+                raise RuntimeError("synthetic outer failure")
+
+        assert repo.get_by_key("fact:new") == []
+        assert repo.get_by_id(seeded)["status"] == "active"
+
+
+def test_context_and_projection_writes_share_one_rollback(test_config, draft_factory):
+    """The cutover invariant: both stores commit or revert as one transaction."""
+    with MemoryStore(test_config):
+        pass
+
+    with ContextStore(test_config) as store:
+        repo = store.legacy_projection()
+        with pytest.raises(RuntimeError, match="synthetic failure"):
+            with store.transaction():
+                store.create_item(draft_factory())
+                repo.insert(LegacyProjectionInsert(key="fact:paired", value="v"))
+                raise RuntimeError("synthetic failure")
+
+        assert store.count_by_status() == {}
+        assert repo.get_by_key("fact:paired") == []
+
+
+def test_supersede_item_uses_the_exact_mapped_predecessor(store, draft_factory):
+    """Supersession must target the given ID, never an identity match."""
+    predecessor = store.create_item(
+        draft_factory("project:test:fact:old-identity", status=ContextStatus.ACTIVE)
+    )
+    decoy = store.create_item(
+        draft_factory("project:test:fact:new-identity", status=ContextStatus.CANDIDATE)
+    )
+
+    with store.transaction():
+        successor = store.supersede_item(
+            predecessor.id,
+            draft_factory("project:test:fact:new-identity"),
+        )
+
+    old = store.get_item(predecessor.id)
+    assert old.status is ContextStatus.SUPERSEDED
+    assert old.superseded_by == successor.id
+    assert successor.status is ContextStatus.ACTIVE
+    assert successor.supersedes == predecessor.id
+    untouched = store.get_item(decoy.id)
+    assert untouched.status is ContextStatus.CANDIDATE
+    assert untouched.supersedes is None
+    assert untouched.superseded_by is None
+
+
+def test_supersede_item_requires_a_transaction_and_an_existing_predecessor(
+    store, draft_factory
+):
+    """The primitive joins an outer transaction and fails loudly on bad IDs."""
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.supersede_item(1, draft_factory())
+
+    with store.transaction():
+        with pytest.raises(ValueError, match="does not exist"):
+            store.supersede_item(9999, draft_factory())
+
+    assert store.count_by_status() == {}
+
+
+def test_supersede_item_validates_layers_before_touching_the_predecessor(
+    store, draft_factory
+):
+    """An invalid successor must leave the predecessor's status and links intact."""
+    store.config.context_l0_max_chars = 8
+    predecessor = store.create_item(
+        draft_factory(status=ContextStatus.ACTIVE, l0="old", l1="detail", l2="source")
+    )
+
+    with store.transaction():
+        with pytest.raises(ContextValidationError, match="l0"):
+            store.supersede_item(
+                predecessor.id,
+                draft_factory(l0="x" * 9, l1="detail", l2="source"),
+            )
+
+    old = store.get_item(predecessor.id)
+    assert old.status is ContextStatus.ACTIVE
+    assert old.superseded_by is None
+
+
+def test_set_item_status_requires_transaction_and_updates_only_the_target(
+    store, draft_factory
+):
+    """Status changes are transaction-bound and addressed by exact item ID."""
+    first = store.create_item(draft_factory("project:test:fact:one"))
+    second = store.create_item(draft_factory("project:test:fact:two"))
+
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.set_item_status(first.id, ContextStatus.ARCHIVED)
+
+    with store.transaction():
+        assert store.set_item_status(first.id, ContextStatus.ARCHIVED) is True
+        assert store.set_item_status(9999, ContextStatus.ARCHIVED) is False
+
+    assert store.get_item(first.id, include_layers=False).status is ContextStatus.ARCHIVED
+    assert store.get_item(second.id, include_layers=False).status is ContextStatus.CANDIDATE
+
+
+def test_update_item_from_legacy_mirrors_only_supplied_metadata(store, draft_factory):
+    """Legacy metadata edits map onto the exact Context item, not the legacy ID."""
+    item = store.create_item(draft_factory())
+
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.update_item_from_legacy(item.id, LegacyProjectionUpdate(1, importance=8.0))
+
+    with store.transaction():
+        assert (
+            store.update_item_from_legacy(
+                item.id, LegacyProjectionUpdate(41, importance=8.5, tier="pinned")
+            )
+            is True
+        )
+        assert (
+            store.update_item_from_legacy(9999, LegacyProjectionUpdate(41, importance=1.0))
+            is False
+        )
+
+    updated = store.get_item(item.id, include_layers=False)
+    assert updated.importance == 8.5
+    assert updated.tier is ContextTier.PINNED
+
+
+def test_hard_delete_item_removes_the_mapping_before_the_item(store, draft_factory):
+    """The mapping must go first: the item is a foreign-key target of it."""
+    item = store.create_item(draft_factory())
+    with store.transaction():
+        store.record_legacy_mapping(41, item.id)
+
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.hard_delete_item(item.id)
+
+    with store.transaction():
+        assert store.hard_delete_item(item.id) is True
+        assert store.hard_delete_item(9999) is False
+
+    assert store.get_item(item.id) is None
+    assert store.resolve_legacy_mapping(41) is None
+    assert store._conn.execute(
+        "SELECT COUNT(*) FROM context_layers WHERE item_id=?", (item.id,)
+    ).fetchone()[0] == 0
+
+
+def test_delete_legacy_mapping_requires_transaction_and_reports_existence(
+    store, draft_factory
+):
+    """Mapping deletion is a transaction-bound primitive that leaves the item."""
+    item = store.create_item(draft_factory())
+    with store.transaction():
+        store.record_legacy_mapping(41, item.id)
+
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.delete_legacy_mapping(41)
+
+    with store.transaction():
+        assert store.delete_legacy_mapping(41) is True
+        assert store.delete_legacy_mapping(41) is False
+
+    assert store.resolve_legacy_mapping(41) is None
+    assert store.get_item(item.id) is not None
