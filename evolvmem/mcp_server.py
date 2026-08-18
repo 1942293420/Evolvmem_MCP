@@ -785,6 +785,11 @@ class MemoryMCPServer:
                     "legacy writes are rejected (fail-closed)")
         status = self._live_status()
         if status is None:
+            if self.context_mode is ContextMode.PRIMARY:
+                # 健康未知与读侧同向 fail-closed：primary 的瞬时评估
+                # 异常不得放行写；legacy/compat 不依赖 Context 健康
+                return ("context primary health is unknown; "
+                        "legacy writes are rejected (fail-closed)")
             return None
         if status.mode is ContextMode.PRIMARY and not status.ready:
             return ("context primary mode is degraded_legacy; "

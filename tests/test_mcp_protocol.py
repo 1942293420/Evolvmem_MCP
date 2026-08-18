@@ -525,6 +525,49 @@ class TestModeAdapterHealthMatrix:
         assert search["count"] == 1
         assert search["results"][0]["id"] == seeded_id
 
+    def test_primary_write_gate_fails_closed_when_status_is_unknown(
+            self, test_config, monkeypatch):
+        """status() 瞬时异常等于健康未知：primary 写门禁必须 fail-closed，
+        与读侧同向拒绝，而不是放行写。"""
+        server = _make_server(
+            test_config, mode="primary", adapter="codex", loaded_engine=True,
+        )
+        service = server.context_service
+        assert service.status().ready is True
+
+        def boom():
+            raise RuntimeError("synthetic transient status failure")
+
+        monkeypatch.setattr(service, "status", boom)
+
+        result, payload = _call(server, "memory_add", {
+            "key": "project:demo:fact:x", "value": "归档前必须完成双人复核并签字",
+        })
+        assert result["isError"] is True
+        assert "health is unknown" in payload["error"]
+
+        # 拒绝是真拒绝：投影与 Core 两侧都没有写入
+        with MemoryStore(test_config) as legacy_store:
+            assert legacy_store.count_active() == 0
+        assert service.store.count_by_status() == {}
+
+    @pytest.mark.parametrize("mode", ["legacy", "compat"])
+    def test_non_primary_write_gate_ignores_transient_status_failure(
+            self, test_config, monkeypatch, mode):
+        """legacy/compat 不受 Context 健康影响：status() 异常时写仍走门面。"""
+        server = _make_server(test_config, mode=mode, adapter="kimi")
+
+        def boom():
+            raise RuntimeError("synthetic transient status failure")
+
+        monkeypatch.setattr(server.context_service, "status", boom)
+
+        _, added = _call(server, "memory_add", {
+            "key": "project:demo:fact:archive",
+            "value": "归档前必须完成双人复核并签字",
+        })
+        assert added["status"] == "added"
+
     @pytest.mark.parametrize(
         "mode,adapter,loaded",
         [
