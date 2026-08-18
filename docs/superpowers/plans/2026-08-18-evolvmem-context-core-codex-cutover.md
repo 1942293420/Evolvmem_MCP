@@ -45,7 +45,7 @@
 - Read: `.gitignore`
 - No production files modified
 
-- [ ] **Step 1: Invoke the required worktree skill and verify the destination is ignored.**
+- [x] **Step 1: Invoke the required worktree skill and verify the destination is ignored.**
 
   From `/home/jiangli/hermes-memory-plugin`, invoke `superpowers-using-git-worktrees`, then run:
 
@@ -53,7 +53,7 @@
 
   Expected: exit 0. If it is not ignored, add only `.worktrees/` to `.gitignore`, commit that safety fix separately, and rerun the check before creating anything.
 
-- [ ] **Step 2: Create the worktree and branch without modifying the planning checkout.**
+- [x] **Step 2: Create the worktree and branch without modifying the planning checkout.**
 
   Use the worktree skill's native path or the equivalent guarded command:
 
@@ -70,7 +70,7 @@
 
   Expected: the named feature branch and no output from status.
 
-- [ ] **Step 3: Run the full deterministic baseline before editing.**
+- [x] **Step 3: Run the full deterministic baseline before editing.**
 
   Run from the new worktree:
 
@@ -78,7 +78,7 @@
 
   Expected: zero failures. Record the exact pass/skip counts in the execution notes. If an unrelated baseline failure exists, stop and diagnose it with `superpowers-systematic-debugging`; do not silently inherit it as a new expected result.
 
-- [ ] **Step 4: Confirm the design source and plan are present.**
+- [x] **Step 4: Confirm the design source and plan are present.**
 
   Run:
 
