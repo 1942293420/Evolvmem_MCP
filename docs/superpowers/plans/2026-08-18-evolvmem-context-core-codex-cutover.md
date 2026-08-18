@@ -479,7 +479,7 @@
 - Modify: `tests/test_memory_store.py`
 - Modify: `tests/test_context_migration.py`
 
-- [ ] **Step 1: Write failing atomic-schema tests.**
+- [x] **Step 1: Write failing atomic-schema tests.**
 
   Prove:
 
@@ -495,7 +495,7 @@
 
   Expected before implementation: unexpected Context tables after `create_schema=False`, missing API, and transaction assertions failing.
 
-- [ ] **Step 2: Refactor schema DDL into individually executed statements.**
+- [x] **Step 2: Refactor schema DDL into individually executed statements.**
 
   Change lifecycle to:
 
@@ -504,7 +504,7 @@
 
   Keep each complete table/index/virtual-table/trigger definition as one explicit string in an ordered tuple; do not split arbitrary SQL on semicolons. `initialize(create_schema=True)` opens the connection and wraps `create_schema_in_transaction()` in the existing outer transaction. `create_schema=False` opens through SQLite URI `mode=rw` so an existing database is required, and never calls `Config.ensure_dirs()`; a missing DB is an explicit error rather than an empty file creation.
 
-- [ ] **Step 3: Write failing borrowed-repository and legacy compatibility tests.**
+- [x] **Step 3: Write failing borrowed-repository and legacy compatibility tests.**
 
   Add tests that a `LegacyProjectionRepository`:
 
@@ -515,7 +515,7 @@
   - never commits an outer Context transaction and fully rolls back with it.
   - preserves legacy replace inheritance, CSV tags, timestamps, auto-increment IDs, nonexistent-remove compatibility, FTS triggers, and existing `MemoryStore` test behavior.
 
-- [ ] **Step 4: Extract legacy SQL once and keep MemoryStore API unchanged.**
+- [x] **Step 4: Extract legacy SQL once and keep MemoryStore API unchanged.**
 
   In `legacy_projection.py`, add:
 
@@ -548,7 +548,7 @@
 
   Move, do not fork, the SQL/normalization logic used by `MemoryStore`. Make `MemoryStore` an owning lifecycle/transaction wrapper that delegates and preserves every current public signature/return value. `ContextStore.legacy_projection()` may construct the repository only from its existing connection and transaction guard.
 
-- [ ] **Step 5: Add exact mapped Context mutation primitives.**
+- [x] **Step 5: Add exact mapped Context mutation primitives.**
 
   Add transaction-required methods:
 
@@ -564,7 +564,7 @@
 
   Exact supersession uses the mapped predecessor ID, updates both link directions, and never finds a predecessor only by identity. Hard delete requires mapping deletion before the ContextItem foreign-key target and is only a primitive; no automated lifecycle calls it.
 
-- [ ] **Step 6: Verify and commit Task 5.**
+- [x] **Step 6: Verify and commit Task 5.**
 
   Run:
 
