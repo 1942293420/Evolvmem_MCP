@@ -1,7 +1,15 @@
 """Local web memory management console: stdlib-only HTTP server + JSON API.
 
 Serves a single-page UI (evolvmem/web_static/index.html) and a JSON API on
-top of the existing MemoryStore — no third-party dependencies.
+top of a ContextService + legacy compatibility facade — no third-party
+dependencies. Lifecycle mutations (importance/tier update, archive, restore,
+soft delete, hard delete) route through the facade so compat/shadow/primary
+modes mirror them onto the mapped Context side in one transaction; list/read
+keep returning legacy rows through the facade.
+
+Residual bypass (to be removed once the typed legacy_update carries
+attribute/tags): the in-place attribute/tags projection edit still runs on a
+held MemoryStore — see `_update_classification`.
 
 Run:
     PYTHONPATH=. .venv/bin/python -m evolvmem.web_server --port 9377
@@ -15,6 +23,9 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 from evolvmem.config import Config
+from evolvmem.context_models import ContextMode, ContextServiceError
+from evolvmem.context_service import ContextService
+from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.memory_store import MemoryStore, _now_iso
 
 _STATIC_INDEX = Path(__file__).parent / "web_static" / "index.html"
@@ -28,57 +39,68 @@ _SORT_COLUMNS = {
 _VALID_TIERS = ("pinned", "normal", "reference")
 _VALID_STATUSES = ("active", "archived", "superseded", "deleted")
 
+# The exact column set/order of the old list query; extra projection columns
+# (supersedes/superseded_by) never leak into the JSON shape.
+_MEMORY_FIELDS = (
+    "id", "key", "value", "attribute", "tags", "tier", "importance",
+    "access_count", "last_accessed", "created_at", "updated_at",
+    "expires_at", "status",
+)
 
-def _escape_like(s: str) -> str:
-    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+def _bounded_error(exc: Exception) -> str:
+    """Bounded, content-free HTTP 500 surface: stable code or class name only."""
+    if isinstance(exc, ContextServiceError):
+        return f"context_error:{exc.code}"
+    return type(exc).__name__
 
 
-# ---- API logic (plain functions over a MemoryStore, unit-testable) ----
+# ---- API logic (plain functions over the facade, unit-testable) ----
 
-def api_stats(store: MemoryStore) -> dict:
-    """Aggregate stats over active memories."""
-    total_active = store.count_active()
+def api_stats(facade: LegacyCompatibilityFacade) -> dict:
+    """Aggregate stats over active memories.
+
+    Semantics preserved from the SQL version: total_active counts active and
+    unexpired rows; the breakdowns scan status='active' rows (including
+    not-yet-archived expired ones).
+    """
+    total_active = facade.count_active()
+    rows = [
+        r for r in facade.get_by_ids(facade.all_ids())
+        if r["status"] == "active"
+    ]
 
     by_tier: dict[str, int] = {}
-    for r in store._execute(
-        "SELECT tier, COUNT(*) AS cnt FROM memories "
-        "WHERE status='active' GROUP BY tier"
-    ):
-        by_tier[r["tier"]] = r["cnt"]
+    for r in rows:
+        by_tier[r["tier"]] = by_tier.get(r["tier"], 0) + 1
     for t in _VALID_TIERS:
         by_tier.setdefault(t, 0)
 
     by_attribute: dict[str, int] = {}
-    for r in store._execute(
-        "SELECT COALESCE(NULLIF(attribute, ''), '(未分类)') AS cat, "
-        "COUNT(*) AS cnt FROM memories WHERE status='active' GROUP BY cat"
-    ):
-        by_attribute[r["cat"]] = r["cnt"]
+    for r in rows:
+        cat = r["attribute"] or "(未分类)"
+        by_attribute[cat] = by_attribute.get(cat, 0) + 1
 
-    never_accessed = store._execute(
-        "SELECT COUNT(*) AS cnt FROM memories "
-        "WHERE status='active' AND access_count = 0"
-    )[0]["cnt"]
+    never_accessed = sum(1 for r in rows if r["access_count"] == 0)
 
     # 分类分布：tags 里以 "分类:" 开头的标签
     by_project: dict[str, int] = {}
-    for r in store._execute(
-        "SELECT tags FROM memories WHERE status='active' "
-        "AND tags LIKE '%分类:%'"
-    ):
-        for t in (r["tags"] or "").split(","):
+    for r in rows:
+        if "分类:" not in (r["tags"] or ""):
+            continue
+        for t in r["tags"].split(","):
             t = t.strip()
             if t.startswith("分类:"):
                 by_project[t] = by_project.get(t, 0) + 1
 
+    top = sorted(
+        rows,
+        key=lambda r: (-(r["importance"] * (r["access_count"] + 1)), r["id"]),
+    )[:10]
     top_accessed = [
         {"id": r["id"], "key": r["key"], "access_count": r["access_count"],
          "importance": r["importance"]}
-        for r in store._execute(
-            "SELECT id, key, access_count, importance FROM memories "
-            "WHERE status='active' "
-            "ORDER BY (importance * (access_count + 1)) DESC, id ASC LIMIT 10"
-        )
+        for r in top
     ]
 
     return {
@@ -91,10 +113,13 @@ def api_stats(store: MemoryStore) -> dict:
     }
 
 
-def api_memories(store: MemoryStore, params: dict) -> list[dict]:
+def api_memories(facade: LegacyCompatibilityFacade, params: dict) -> list[dict]:
     """List memories with filtering and sorting.
 
     params keys (from query string): status, tier, attribute, project, q, sort, order.
+
+    Reads go through the facade, whose surface excludes deleted rows:
+    status='deleted'/'all' therefore no longer list soft-deleted memories.
     """
     status = params.get("status", "active")
     tier = params.get("tier", "")
@@ -103,46 +128,49 @@ def api_memories(store: MemoryStore, params: dict) -> list[dict]:
     q = params.get("q", "").strip()
     sort = _SORT_COLUMNS.get(params.get("sort", "access_count"),
                              "access_count")
-    order = "ASC" if params.get("order", "desc").lower() == "asc" else "DESC"
+    desc = params.get("order", "desc").lower() != "asc"
 
-    where, args = [], []
+    rows = facade.get_by_ids(facade.all_ids())
     if status in _VALID_STATUSES:
-        where.append("status = ?")
-        args.append(status)
+        rows = [r for r in rows if r["status"] == status]
     elif status != "all":
-        where.append("status = 'active'")
+        rows = [r for r in rows if r["status"] == "active"]
     if tier in _VALID_TIERS:
-        where.append("tier = ?")
-        args.append(tier)
+        rows = [r for r in rows if r["tier"] == tier]
     if attribute:
-        where.append("attribute = ?")
-        args.append(attribute)
+        rows = [r for r in rows if r["attribute"] == attribute]
     if project:
         # tags 是逗号拼接串，用 ",tags," 形式精确匹配单个标签
-        where.append("(',' || tags || ',') LIKE ? ESCAPE '\\'")
-        args.append(f"%,{_escape_like(project)},%")
+        needle = f",{project},"
+        rows = [r for r in rows if needle in f",{r['tags'] or ''},"]
     if q:
-        pattern = f"%{_escape_like(q)}%"
-        where.append("(key LIKE ? ESCAPE '\\' OR value LIKE ? ESCAPE '\\')")
-        args.extend([pattern, pattern])
+        rows = [r for r in rows if q in r["key"] or q in r["value"]]
 
-    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    # NULLs last for both directions
-    order_sql = f"ORDER BY {sort} IS NULL, {sort} {order}, id {order}"
-
-    rows = store._execute(
-        "SELECT id, key, value, attribute, tags, tier, importance, "
-        "access_count, last_accessed, created_at, updated_at, expires_at, "
-        "status FROM memories "
-        f"{where_sql} {order_sql} LIMIT 500",
-        tuple(args),
-    )
-    return [dict(r) for r in rows]
+    rows = _sort_rows(rows, sort, desc)
+    return [{field: r.get(field) for field in _MEMORY_FIELDS}
+            for r in rows[:500]]
 
 
-def api_update(store: MemoryStore, mem_id: int, body: dict) -> dict:
-    """Update importance/tier via update_metadata; attribute/tags via SQL."""
-    if store.get_by_id(mem_id) is None:
+def _sort_rows(rows: list[dict], sort: str, desc: bool) -> list[dict]:
+    """Mirror `ORDER BY {sort} IS NULL, {sort} {order}, id {order}` — NULLs last."""
+    present = [r for r in rows if r[sort] is not None]
+    missing = [r for r in rows if r[sort] is None]
+    present.sort(key=lambda r: (r[sort], r["id"]), reverse=desc)
+    missing.sort(key=lambda r: r["id"], reverse=desc)
+    return present + missing
+
+
+def api_update(facade: LegacyCompatibilityFacade, legacy_store: MemoryStore,
+               mem_id: int, body: dict) -> dict:
+    """Update importance/tier via the facade; attribute/tags in place.
+
+    importance/tier mirror onto the mapped ContextItem inside the service
+    transaction. The attribute/tags edit is the residual projection-only
+    bypass documented at the top of this module: it keeps the legacy row's
+    id/history intact; the ContextItem's derived content_type/tags follow
+    once the typed legacy_update carries those fields.
+    """
+    if facade.get_by_id(mem_id) is None:
         return {"ok": False, "error": "not found"}
 
     importance = body.get("importance")
@@ -154,8 +182,16 @@ def api_update(store: MemoryStore, mem_id: int, body: dict) -> dict:
     if tier is not None and tier not in _VALID_TIERS:
         return {"ok": False, "error": "invalid tier"}
     if importance is not None or tier is not None:
-        store.update_metadata(mem_id, importance=importance, tier=tier)
+        facade.update_metadata(mem_id, importance=importance, tier=tier)
 
+    _update_classification(legacy_store, mem_id, body)
+
+    return {"ok": True, "memory": facade.get_by_id(mem_id)}
+
+
+def _update_classification(store: MemoryStore, mem_id: int,
+                           body: dict) -> None:
+    """Residual in-place attribute/tags projection edit (see api_update)."""
     sets, args = [], []
     if "attribute" in body:
         sets.append("attribute = ?")
@@ -166,53 +202,50 @@ def api_update(store: MemoryStore, mem_id: int, body: dict) -> dict:
             tags = ",".join(str(t) for t in tags)
         sets.append("tags = ?")
         args.append(str(tags))
-    if sets:
-        sets.append("updated_at = ?")
-        args.append(_now_iso())
-        args.append(mem_id)
-        store._execute(
-            f"UPDATE memories SET {', '.join(sets)} WHERE id = ?",
-            tuple(args),
-        )
-        store._conn.commit()
-
-    return {"ok": True, "memory": store.get_by_id(mem_id)}
-
-
-def api_archive(store: MemoryStore, mem_id: int) -> dict:
-    if store.get_by_id(mem_id) is None:
-        return {"ok": False, "error": "not found"}
-    store.archive(mem_id)
-    return {"ok": True}
-
-
-def api_restore(store: MemoryStore, mem_id: int) -> dict:
-    """archived -> active."""
-    if store.get_by_id(mem_id) is None:
-        return {"ok": False, "error": "not found"}
+    if not sets:
+        return
+    sets.append("updated_at = ?")
+    args.append(_now_iso())
+    args.append(mem_id)
     store._execute(
-        "UPDATE memories SET status='active', updated_at=? WHERE id=?",
-        (_now_iso(), mem_id),
+        f"UPDATE memories SET {', '.join(sets)} WHERE id = ?",
+        tuple(args),
     )
     store._conn.commit()
+
+
+def api_archive(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
+    if facade.get_by_id(mem_id) is None:
+        return {"ok": False, "error": "not found"}
+    facade.archive(mem_id)
     return {"ok": True}
 
 
-def api_delete(store: MemoryStore, mem_id: int) -> dict:
+def api_restore(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
+    """archived -> active."""
+    if facade.get_by_id(mem_id) is None:
+        return {"ok": False, "error": "not found"}
+    facade.restore(mem_id)
+    return {"ok": True}
+
+
+def api_delete(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
     """Soft delete (status -> deleted)."""
-    if store.get_by_id(mem_id) is None:
+    if facade.get_by_id(mem_id) is None:
         return {"ok": False, "error": "not found"}
-    store.remove(mem_id)
+    facade.remove(mem_id)
     return {"ok": True}
 
 
-def api_hard_delete(store: MemoryStore, mem_id: int) -> dict:
-    """Physically remove the row — irreversible. FTS triggers sync automatically;
-    the stale vector entry is dropped on the next index consistency rebuild."""
-    if store.get_by_id(mem_id) is None:
+def api_hard_delete(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
+    """Physically remove the exact mapping/projection/ContextItem triple —
+    irreversible. Only this explicit console action reaches hard delete;
+    forgetting/consolidation never trigger it. The stale vector entry is
+    dropped on the next index consistency rebuild.
+    """
+    if facade.get_by_id(mem_id) is None:
         return {"ok": False, "error": "not found"}
-    store._execute("DELETE FROM memories WHERE id = ?", (mem_id,))
-    store._conn.commit()
+    facade.hard_delete(mem_id)
     return {"ok": True}
 
 
@@ -221,7 +254,14 @@ def api_hard_delete(store: MemoryStore, mem_id: int) -> dict:
 _MEM_ACTION_RE = re.compile(r"^/api/memory/(\d+)/(update|archive|restore|delete|hard_delete)$")
 
 
-def make_handler(store: MemoryStore):
+def make_handler(service: ContextService, legacy_store: MemoryStore):
+    """Build the handler owning a ContextService facade (+ residual store).
+
+    legacy_store is used solely for the residual attribute/tags projection
+    edit in api_update; everything else goes through the facade.
+    """
+    facade = service.legacy_facade()
+
     class MemoryWebHandler(BaseHTTPRequestHandler):
         server_version = "EvolvMemWeb/1.0"
 
@@ -258,12 +298,12 @@ def make_handler(store: MemoryStore):
                                      "error": "index.html missing"}, 404)
                 return
             if path == "/api/stats":
-                self._send_json(api_stats(store))
+                self._send_json(api_stats(facade))
                 return
             if path == "/api/memories":
                 qs = parse_qs(parsed.query)
                 params = {k: v[0] for k, v in qs.items()}
-                self._send_json(api_memories(store, params))
+                self._send_json(api_memories(facade, params))
                 return
             self._send_json({"ok": False, "error": "unknown endpoint"}, 404)
 
@@ -292,17 +332,18 @@ def make_handler(store: MemoryStore):
 
             try:
                 if action == "update":
-                    result = api_update(store, mem_id, body)
+                    result = api_update(facade, legacy_store, mem_id, body)
                 elif action == "archive":
-                    result = api_archive(store, mem_id)
+                    result = api_archive(facade, mem_id)
                 elif action == "restore":
-                    result = api_restore(store, mem_id)
+                    result = api_restore(facade, mem_id)
                 elif action == "hard_delete":
-                    result = api_hard_delete(store, mem_id)
+                    result = api_hard_delete(facade, mem_id)
                 else:
-                    result = api_delete(store, mem_id)
-            except Exception as exc:  # surface store errors as JSON
-                self._send_json({"ok": False, "error": str(exc)}, 500)
+                    result = api_delete(facade, mem_id)
+            except Exception as exc:  # bounded surface; writes roll back whole
+                self._send_json({"ok": False, "error": _bounded_error(exc)},
+                                500)
                 return
             self._send_json(result,
                             200 if result.get("ok") else 400)
@@ -315,10 +356,16 @@ def run(port: int = 9377, data_dir: str | None = None,
     config = Config.from_file()
     if data_dir:
         config.data_dir = Path(data_dir)
-    store = MemoryStore(config)
-    store.initialize()
+    # 生产写入口：ContextService（按配置 mode）+ 兼容门面
+    service = ContextService(config)
+    service.initialize(
+        mode=ContextMode(config.context_mode), adapter=config.adapter or "web"
+    )
+    # 残留：attribute/tags 的就地投影编辑尚无类型化通道（见模块 docstring）
+    legacy_store = MemoryStore(config)
+    legacy_store.initialize()
     # 单线程服务：sqlite 连接不支持跨线程使用；本地单用户控制台无需并发
-    server = HTTPServer((host, port), make_handler(store))
+    server = HTTPServer((host, port), make_handler(service, legacy_store))
     print(f"EvolvMem web console: http://{host}:{port} "
           f"(data: {config.db_path})")
     try:
@@ -327,7 +374,8 @@ def run(port: int = 9377, data_dir: str | None = None,
         pass
     finally:
         server.server_close()
-        store.close()
+        service.close()
+        legacy_store.close()
 
 
 def main() -> None:

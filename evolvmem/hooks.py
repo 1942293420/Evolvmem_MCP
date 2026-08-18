@@ -7,9 +7,9 @@ import time
 from pathlib import Path
 
 from evolvmem.config import Config
-from evolvmem.memory_store import MemoryStore
 from evolvmem.auto_extractor import AutoExtractor
 from evolvmem.forgetting import ForgettingEngine
+from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.scoring import compute_score
 
 
@@ -17,10 +17,13 @@ def _last_forget_path(config: Config) -> Path:
     return config.data_dir / ".last_forget"
 
 
-def _maybe_run_forgetting(config: Config, store: MemoryStore) -> None:
+def _maybe_run_forgetting(config: Config,
+                          facade: LegacyCompatibilityFacade) -> None:
     """Run the forgetting engine at most once per forget_auto_run_hours.
 
-    Failures are swallowed — memory maintenance must never block session start.
+    Archive mutations route through the facade (ContextService), landing on
+    both mapped sides in compat/shadow/primary modes. Failures are swallowed
+    — memory maintenance must never block session start.
     """
     try:
         marker = _last_forget_path(config)
@@ -29,7 +32,7 @@ def _maybe_run_forgetting(config: Config, store: MemoryStore) -> None:
             last_run = marker.stat().st_mtime
             if time.time() - last_run < interval_s:
                 return
-        archived = ForgettingEngine(config, store).run()
+        archived = ForgettingEngine(config, facade).run()
         marker.touch()
         if archived:
             print(f"[evolvmem] auto-forgetting archived {archived} memories",
@@ -42,11 +45,14 @@ def _last_consolidate_path(config: Config) -> Path:
     return config.data_dir / ".last_consolidate"
 
 
-def _maybe_run_consolidation(config: Config, store: MemoryStore) -> None:
+def _maybe_run_consolidation(config: Config,
+                             facade: LegacyCompatibilityFacade) -> None:
     """Run auto-consolidation at most once per consolidate_auto_run_hours.
 
-    Conservative threshold (0.97) — only near-identical pairs merge.
-    Failures are swallowed — maintenance must never block session start.
+    Conservative threshold (0.97) — only near-identical pairs merge. The
+    kept pair's access and the dropped pair's archive go through the facade
+    onto both mapped sides. Failures are swallowed — maintenance must never
+    block session start.
     """
     if config.consolidate_auto_run_hours <= 0:
         return
@@ -67,7 +73,7 @@ def _maybe_run_consolidation(config: Config, store: MemoryStore) -> None:
             return  # 无 embedding 时跳过，marker 已记避免每次都尝试
         vidx = VectorIndex(config)
         vidx.initialize(dim=config.embedding_dim)
-        merged = Consolidator(config, store, vidx, engine).consolidate(
+        merged = Consolidator(config, facade, vidx, engine).consolidate(
             dry_run=False, threshold=0.97)
         if merged.get("merged"):
             print(f"[evolvmem] auto-consolidation merged {merged['merged']} pairs",
@@ -230,10 +236,23 @@ def get_session_start_block(config: Config | None = None) -> str:
     if config is None:
         config = Config.from_file()
 
-    with MemoryStore(config) as store:
-        _maybe_run_forgetting(config, store)
-        _maybe_run_consolidation(config, store)
-        memories = store.get_active()
+    # 维护与读取统一经 ContextService 兼容门面：archive/access 变更按配置
+    # mode 落到 legacy 投影或 Core 双侧；渲染仍用旧格式（读侧切换在后续切片）。
+    from evolvmem.context_models import ContextMode
+    from evolvmem.context_service import ContextService
+
+    service = ContextService(config)
+    service.initialize(
+        mode=ContextMode(config.context_mode),
+        adapter=config.adapter or "claude",
+    )
+    try:
+        facade = service.legacy_facade()
+        _maybe_run_forgetting(config, facade)
+        _maybe_run_consolidation(config, facade)
+        memories = facade.get_active()
+    finally:
+        service.close()
 
     # 会话摘要日志走独立的「最近项目动态」层，不参与 pinned/精选/索引三层
     logs = [m for m in memories if _is_session_log(m["key"])]

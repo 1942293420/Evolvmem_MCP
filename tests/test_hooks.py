@@ -1,7 +1,10 @@
 """hooks module tests."""
 
+import sqlite3
 import time
 
+from evolvmem.context_models import ContextMode, ContextStatus
+from evolvmem.context_service import ContextService
 from evolvmem.hooks import get_session_start_block, get_stop_prompt
 from evolvmem.memory_store import MemoryStore
 
@@ -227,6 +230,66 @@ class TestSessionStartHook:
             test_config.data_dir.name: "purchase"}
         result = get_session_start_block(config=test_config)
         assert result.index("采购记忆") < result.index("其他记忆")
+
+
+class TestSessionStartCutoverRouting:
+    """SessionStart 的维护写入经 ContextService 兼容门面路由。"""
+
+    @staticmethod
+    def _compat_seed_service(config):
+        """compat 模式的播种服务（legacy 投影 schema 先就位）。"""
+        with MemoryStore(config):
+            pass
+        service = ContextService(config)
+        service.initialize(mode=ContextMode.COMPAT, adapter="test-hooks")
+        return service
+
+    def test_compat_block_keeps_legacy_format_and_archives_both_sides(
+            self, test_config):
+        test_config.context_mode = "compat"
+        seed = self._compat_seed_service(test_config)
+        facade = seed.legacy_facade()
+        expired_id = facade.add(key="p:t:fact:expired", value="过期的规则",
+                                expires_at="2020-01-01 00:00:00")
+        facade.add(key="user:pref:language", value="Chinese",
+                   tags=["preference"])
+        expired_ctx = seed.store.resolve_legacy_mapping(expired_id)
+        assert expired_ctx is not None
+
+        result = get_session_start_block(config=test_config)
+
+        # 旧格式渲染不变
+        assert "Persistent Memory" in result
+        assert "- **user:pref:language** [preference]: Chinese" in result
+        # 过期记忆不注入
+        assert "过期的规则" not in result
+        # 自动遗忘按原节奏跑（marker 落盘），且经门面归档双侧
+        assert (test_config.data_dir / ".last_forget").exists()
+        assert facade.get_by_id(expired_id)["status"] == "archived"
+        assert seed.store.get_item(expired_ctx).status is ContextStatus.ARCHIVED
+        seed.close()
+
+    def test_legacy_mode_session_start_writes_legacy_only(self, test_config):
+        """切换前 legacy 模式：渲染与维护保持旧形状，Core 表保持空。"""
+        test_config.context_mode = "legacy"
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:expired", value="过期事实",
+                      expires_at="2020-01-01 00:00:00")
+            store.add(key="p:t:fact:fresh", value="现行事实")
+
+        result = get_session_start_block(config=test_config)
+
+        assert "现行事实" in result
+        assert "过期事实" not in result
+        with MemoryStore(test_config) as store:
+            rows = store.get_by_key("p:t:fact:expired")
+            assert rows[0]["status"] == "archived"  # 维护照旧归档 legacy 侧
+        conn = sqlite3.connect(test_config.db_path)
+        try:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM context_items").fetchone()[0] == 0
+        finally:
+            conn.close()
 
 
 class TestStopHook:

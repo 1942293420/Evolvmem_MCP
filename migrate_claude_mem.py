@@ -13,12 +13,24 @@ from datetime import datetime, timezone
 sys.path.insert(0, "/home/jiangli/hermes-memory-plugin")
 
 from evolvmem.config import Config
+from evolvmem.context_models import ContextMode
+from evolvmem.context_service import ContextService
 from evolvmem.memory_store import MemoryStore
 from evolvmem.vector_index import VectorIndex
 from evolvmem.embedding import EmbeddingEngine
 import numpy as np
 
 CHROMA_DB = "/home/jiangli/.claude-mem/chroma/chroma.sqlite3"
+
+
+def _ensure_legacy_schema(config: Config) -> None:
+    """Create the legacy projection schema if missing.
+
+    Migration utilities are explicitly allowed to use MemoryStore (计划约束:
+    MemoryStore 仍可用于迁移); production adapters never instantiate it.
+    """
+    with MemoryStore(config):
+        pass
 
 
 def extract_summaries() -> list[dict]:
@@ -56,6 +68,60 @@ def extract_summaries() -> list[dict]:
     return results
 
 
+def import_summaries(config: Config, summaries: list[dict]) -> dict:
+    """Import summaries through the mode-selected compatibility boundary.
+
+    Constructs a ContextService with the configured context_mode: pre-cutover
+    `legacy` keeps the old job (plain memories rows, no Core claims);
+    post-cutover `compat` creates the mapping and three layers for each row
+    instead of unmapped rows. The returned ids stay legacy IDs so the old
+    vector handling below keeps working unchanged.
+    """
+    _ensure_legacy_schema(config)
+    service = ContextService(config)
+    service.initialize(
+        mode=ContextMode(config.context_mode), adapter="migration"
+    )
+    try:
+        facade = service.legacy_facade()
+
+        # Check existing keys to avoid duplicates
+        existing_keys = {m["key"] for m in facade.get_active()}
+
+        new_ids = []
+        skipped = 0
+        for s in summaries:
+            key = f"claude-mem:summary:{s['chroma_id']}"
+            if key in existing_keys:
+                skipped += 1
+                continue
+
+            # Truncate very long docs for memory efficiency
+            value = s["doc"]
+            if len(value) > 2000:
+                value = value[:2000] + "\n\n[truncated from claude-mem migration]"
+
+            tags = ["migrated", "claude-mem", "session-summary",
+                    f"project:{s['project']}"]
+
+            new_ids.append(facade.add(
+                key=key,
+                value=value,
+                attribute="claude-mem-migration",
+                tags=tags,
+                source_session="claude-mem-migration",
+            ))
+
+        return {
+            "imported": len(new_ids),
+            "skipped": skipped,
+            "new_ids": new_ids,
+            "new_memories": facade.get_by_ids(new_ids),
+        }
+    finally:
+        service.close()
+
+
 def main():
     print("=" * 60)
     print("claude-mem → EvolvMem 数据迁移")
@@ -79,45 +145,15 @@ def main():
     for p, c in sorted(projects.items()):
         print(f"    {p}: {c} 条")
 
-    # Step 2: Import to EvolvMem SQLite
+    # Step 2: Import to EvolvMem SQLite (经 ContextService 兼容门面)
     print("\n[2/4] 导入 EvolvMem SQLite...")
     config = Config()
-    store = MemoryStore(config)
-    store.initialize()
-
-    # Check existing keys to avoid duplicates
-    existing_keys = set()
-    for mem in store.get_active():
-        existing_keys.add(mem["key"])
-
-    imported = 0
-    skipped = 0
-    new_ids = []
-
-    for s in summaries:
-        key = f"claude-mem:summary:{s['chroma_id']}"
-        if key in existing_keys:
-            skipped += 1
-            continue
-
-        # Truncate very long docs for memory efficiency
-        value = s["doc"]
-        if len(value) > 2000:
-            value = value[:2000] + "\n\n[truncated from claude-mem migration]"
-
-        tags = ["migrated", "claude-mem", "session-summary", f"project:{s['project']}"]
-
-        new_id = store.add(
-            key=key,
-            value=value,
-            attribute="claude-mem-migration",
-            tags=tags,
-            source_session="claude-mem-migration",
-        )
-        new_ids.append(new_id)
-        imported += 1
-
-    print(f"  新增: {imported} 条, 跳过(已存在): {skipped} 条")
+    # 门面写后同步可能在 legacy 向量索引留下 dirty 标记；记下迁移前的
+    # 既有漂移，步骤 4 全量补齐新向量后只清除本次自己造成的标记。
+    preexisting_vector_dirty = VectorIndex(config).is_dirty()
+    result = import_summaries(config, summaries)
+    new_ids = result["new_ids"]
+    print(f"  新增: {result['imported']} 条, 跳过(已存在): {result['skipped']} 条")
 
     # Step 3: Generate embeddings for new records
     print("\n[3/4] 生成向量嵌入...")
@@ -125,8 +161,7 @@ def main():
         engine = EmbeddingEngine(config)
         engine.initialize()
 
-        new_memories = store.get_by_ids(new_ids)
-        texts = [m["value"] for m in new_memories]
+        texts = [m["value"] for m in result["new_memories"]]
 
         print(f"  正在为 {len(texts)} 条记录生成嵌入向量(nomic-embed-text-v1.5)...")
         embeddings = engine.encode_batch(texts)
@@ -146,6 +181,8 @@ def main():
             vi.add(mem_id, np.array(emb, dtype=np.float32))
 
         vi.save()
+        if not preexisting_vector_dirty:
+            vi.clear_dirty()
         print(f"  更新后向量索引: {vi.count()} 条")
         vi.close()
 
@@ -156,10 +193,8 @@ def main():
         print(f"  ⚠ 嵌入生成失败: {e}")
         print(f"  数据已导入 SQLite，向量索引待重建")
 
-    store.close()
-
     print("\n" + "=" * 60)
-    print(f"迁移完成: 导入 {imported} 条, 跳过 {skipped} 条")
+    print(f"迁移完成: 导入 {result['imported']} 条, 跳过 {result['skipped']} 条")
     print("=" * 60)
 
 

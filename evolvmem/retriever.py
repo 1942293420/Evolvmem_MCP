@@ -2,6 +2,7 @@
 
 import numpy as np
 from evolvmem.config import Config
+from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.memory_store import MemoryStore, _now_iso
 from evolvmem.vector_index import VectorIndex
 
@@ -16,9 +17,15 @@ class Retriever:
     4. Fetch full records from SQLite (all merged results)
     5. Filter by status + expiry → sort by score → truncate to top_k
     6. Update access_count
+
+    The store is the legacy compatibility facade in production, so a returned
+    hit's access increment routes through ContextService and mirrors once onto
+    the mapped Context side; filtered/expired/truncated items stay untouched.
+    Isolated tests may still pass a raw MemoryStore.
     """
 
-    def __init__(self, config: Config, memory_store: MemoryStore,
+    def __init__(self, config: Config,
+                 memory_store: "MemoryStore | LegacyCompatibilityFacade",
                  vector_index: VectorIndex, embedding_engine=None):
         self.config = config
         self.store = memory_store

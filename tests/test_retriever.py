@@ -3,6 +3,9 @@
 import hashlib
 import pytest
 import numpy as np
+from evolvmem.config import Config
+from evolvmem.context_models import ContextMode
+from evolvmem.context_service import ContextService
 from evolvmem.memory_store import MemoryStore
 from evolvmem.vector_index import VectorIndex
 from evolvmem.retriever import Retriever
@@ -213,3 +216,138 @@ class TestRetriever:
 
         store.close()
         vidx.close()
+
+
+def _make_compat_facade(config):
+    """compat 模式的 ContextService + 兼容门面（legacy 投影 schema 先就位）。"""
+    with MemoryStore(config):
+        pass
+    service = ContextService(config)
+    service.initialize(mode=ContextMode.COMPAT, adapter="test")
+    return service, service.legacy_facade()
+
+
+class TestRetrieverFacadeAccessMirroring:
+    """旧 Retriever 经兼容门面检索：返回的命中在映射双侧各镜像一次 access。"""
+
+    def _env(self, test_config):
+        service, facade = _make_compat_facade(test_config)
+        vidx = VectorIndex(test_config)
+        vidx.initialize(dim=512)
+        return service, facade, vidx, FakeEmbeddingEngine()
+
+    def test_returned_hit_mirrors_access_once_to_both_sides(self, test_config):
+        service, facade, vidx, engine = self._env(test_config)
+        legacy_id = facade.add(key="p:t:1", value="破损商品直接退款",
+                               tags=["售后"])
+        context_id = service.store.resolve_legacy_mapping(legacy_id)
+        assert context_id is not None
+        retriever = Retriever(test_config, facade, vidx, engine)
+
+        results = retriever.search("退款", top_k=5)
+        assert [r["id"] for r in results] == [legacy_id]
+        assert facade.get_by_id(legacy_id)["access_count"] == 1
+        assert service.store.get_item(context_id).access_count == 1
+
+        # 再次命中只再 +1：单次检索对单侧只镜像一次
+        retriever.search("退款", top_k=5)
+        assert facade.get_by_id(legacy_id)["access_count"] == 2
+        assert service.store.get_item(context_id).access_count == 2
+
+        vidx.close()
+        service.close()
+
+    def test_expired_hit_untouched_on_both_sides(self, test_config):
+        service, facade, vidx, engine = self._env(test_config)
+        expired_id = facade.add(key="p:t:fact:expired", value="过期的退款规则",
+                                expires_at="2020-01-01 00:00:00")
+        fresh_id = facade.add(key="p:t:fact:fresh", value="现行的退款规则",
+                              expires_at="2099-01-01 00:00:00")
+        expired_ctx = service.store.resolve_legacy_mapping(expired_id)
+
+        retriever = Retriever(test_config, facade, vidx, engine)
+        results = retriever.search("退款", top_k=10)
+
+        assert {r["id"] for r in results} == {fresh_id}
+        assert facade.get_by_id(expired_id)["access_count"] == 0
+        assert service.store.get_item(expired_ctx).access_count == 0
+
+        vidx.close()
+        service.close()
+
+    def test_filtered_and_truncated_items_untouched(self, test_config):
+        """状态过滤（archived）与 top_k 截断的项都不增加访问计数。"""
+        service, facade, vidx, engine = self._env(test_config)
+        archived_id = facade.add(key="p:t:archived", value="旧的退款说明",
+                                 tags=["售后"])
+        facade.archive(archived_id)
+        archived_ctx = service.store.resolve_legacy_mapping(archived_id)
+        first_id = facade.add(key="p:t:active:a", value="退款政策甲",
+                              tags=["售后"])
+        second_id = facade.add(key="p:t:active:b", value="退款政策乙",
+                               tags=["售后"])
+        ctx_by_legacy = {
+            i: service.store.resolve_legacy_mapping(i)
+            for i in (first_id, second_id)
+        }
+
+        retriever = Retriever(test_config, facade, vidx, engine)
+        results = retriever.search("退款", top_k=1)
+
+        assert len(results) == 1
+        returned = results[0]["id"]
+        assert returned in (first_id, second_id)
+        truncated = second_id if returned == first_id else first_id
+        # archived 被过滤：双侧均 0
+        assert facade.get_by_id(archived_id)["access_count"] == 0
+        assert service.store.get_item(archived_ctx).access_count == 0
+        # 截断者双侧均 0，返回者双侧各 1
+        assert facade.get_by_id(truncated)["access_count"] == 0
+        assert service.store.get_item(ctx_by_legacy[truncated]).access_count == 0
+        assert facade.get_by_id(returned)["access_count"] == 1
+        assert service.store.get_item(ctx_by_legacy[returned]).access_count == 1
+
+        vidx.close()
+        service.close()
+
+    def test_legacy_read_shapes_match_raw_store(self, test_config, temp_dir):
+        """同一语料下，门面检索与裸 store 检索的旧读形状逐项一致。"""
+        raw_config = Config(data_dir=temp_dir / "raw")
+        raw = MemoryStore(raw_config)
+        raw.initialize()
+        service, facade = _make_compat_facade(test_config)
+        for key, value in (("p:t:1", "破损商品直接退款"),
+                           ("p:t:2", "退款流程与时效说明")):
+            raw.add(key=key, value=value, tags=["售后"])
+            facade.add(key=key, value=value, tags=["售后"])
+
+        engine = FakeEmbeddingEngine()
+        raw_vidx = VectorIndex(raw_config)
+        raw_vidx.initialize(dim=512)
+        facade_vidx = VectorIndex(test_config)
+        facade_vidx.initialize(dim=512)
+
+        from_raw = Retriever(raw_config, raw, raw_vidx, engine).search(
+            "退款", top_k=5)
+        via_facade = Retriever(test_config, facade, facade_vidx,
+                               engine).search("退款", top_k=5)
+
+        def shape(results):
+            return [
+                (r["id"], r["key"], r["value"], r["status"], r["attribute"],
+                 r["tags"], round(r["score"], 6), r["match_type"])
+                for r in results
+            ]
+
+        assert shape(via_facade) == shape(from_raw)
+        # 旧读字段集不缩水的证据
+        assert {
+            "id", "key", "value", "attribute", "tags", "tier", "importance",
+            "access_count", "last_accessed", "created_at", "updated_at",
+            "expires_at", "status", "score", "match_type",
+        } <= set(via_facade[0])
+
+        raw_vidx.close()
+        raw.close()
+        facade_vidx.close()
+        service.close()

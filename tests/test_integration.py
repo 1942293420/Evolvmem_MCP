@@ -1,13 +1,20 @@
 """端到端集成测试——从写入到检索的完整链路。"""
 
 import hashlib
+import sqlite3
 import pytest
 import numpy as np
 import evolvmem.kimi_hooks as hooks
 from evolvmem.config import Config
 from evolvmem.consolidator import Consolidator
-from evolvmem.context_models import ContextMode, ContextStatus, ContextTier
+from evolvmem.context_models import (
+    ContextLayer,
+    ContextMode,
+    ContextStatus,
+    ContextTier,
+)
 from evolvmem.context_service import ContextService
+from evolvmem.context_store import ContextStore
 from evolvmem.memory_store import MemoryStore
 from evolvmem.vector_index import VectorIndex
 from evolvmem.retriever import Retriever
@@ -834,3 +841,84 @@ class TestIntegration:
 
         store2.close()
         vidx.close()
+
+
+class TestMigrateClaudeMem:
+    """claude-mem 迁移工具：按配置 mode 经 ContextService 写入。"""
+
+    @staticmethod
+    def _summaries() -> list[dict]:
+        return [
+            {"chroma_id": 1, "created_at_epoch": 1700000000,
+             "project": "eva",
+             "doc": "EVA 部署了 TEI 嵌入服务并验证了中文检索效果"},
+            {"chroma_id": 2, "created_at_epoch": 1700000100,
+             "project": "hermes",
+             "doc": "hermes 插件改用 SQLite 存储记忆元数据与 FTS 索引"},
+        ]
+
+    def test_legacy_mode_import_preserves_old_job(self, test_config):
+        """切换前 legacy：只写 memories 行，返回 legacy ID，无映射无 Core。"""
+        test_config.context_mode = "legacy"
+        from migrate_claude_mem import import_summaries
+
+        result = import_summaries(test_config, self._summaries())
+
+        assert result["imported"] == 2
+        assert result["skipped"] == 0
+        assert len(result["new_ids"]) == 2  # 旧向量处理仍拿 legacy ID
+        with MemoryStore(test_config) as store:
+            row = store.get_by_key("claude-mem:summary:1")[0]
+            assert row["status"] == "active"
+            assert row["attribute"] == "claude-mem-migration"
+            assert "migrated" in row["tags"]
+            assert "project:eva" in row["tags"]
+        conn = sqlite3.connect(test_config.db_path)
+        try:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM context_items").fetchone()[0] == 0
+            assert conn.execute(
+                "SELECT COUNT(*) FROM legacy_memory_migrations"
+            ).fetchone()[0] == 0
+        finally:
+            conn.close()
+
+    def test_compat_mode_import_creates_mappings_and_layers(self, test_config):
+        """切换后 compat：每行同事务创建映射与三层，而不是未映射行。"""
+        test_config.context_mode = "compat"
+        from migrate_claude_mem import import_summaries
+
+        result = import_summaries(test_config, self._summaries())
+
+        assert result["imported"] == 2
+        ctx_store = ContextStore(test_config)
+        ctx_store.initialize()
+        try:
+            for legacy_id in result["new_ids"]:
+                context_id = ctx_store.resolve_legacy_mapping(legacy_id)
+                assert context_id is not None
+                item = ctx_store.get_item(context_id)
+                assert item.status is ContextStatus.ACTIVE
+                for layer in (ContextLayer.L0, ContextLayer.L1,
+                              ContextLayer.L2):
+                    assert ctx_store.get_layer(context_id, layer)
+        finally:
+            ctx_store.close()
+        # 投影行仍是旧形状
+        with MemoryStore(test_config) as store:
+            row = store.get_by_key("claude-mem:summary:2")[0]
+            assert row["attribute"] == "claude-mem-migration"
+
+    def test_import_skips_existing_keys(self, test_config):
+        """重复迁移幂等：已存在的 key 跳过，不产生重复行。"""
+        test_config.context_mode = "compat"
+        from migrate_claude_mem import import_summaries
+
+        first = import_summaries(test_config, self._summaries())
+        second = import_summaries(test_config, self._summaries())
+
+        assert first["imported"] == 2
+        assert second["imported"] == 0
+        assert second["skipped"] == 2
+        with MemoryStore(test_config) as store:
+            assert len(store.get_by_key("claude-mem:summary:1")) == 1
