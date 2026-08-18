@@ -1038,7 +1038,7 @@
 - Create: `scripts/accept_codex_cutover.py`
 - Create: `tests/test_codex_acceptance.py`
 
-- [ ] **Step 1: Write failing subprocess/event parser tests.**
+- [x] **Step 1: Write failing subprocess/event parser tests.**
 
   Feed synthetic Codex JSONL for success, missing session-start, response-before-session-start, wrong context ID on read, L2 leaked into automatic block, tool error, timeout, malformed event, and content-bearing diagnostic output. Assert the public report contains only process/session labels, ordered tool names, integer IDs, counts, durations, and pass/fail reason codes—never tool arguments, prompt/query, canary text, memory body, or filesystem path.
 
@@ -1048,7 +1048,7 @@
 
   Expected: script/parser import failure.
 
-- [ ] **Step 2: Implement a guarded temporary-library harness.**
+- [x] **Step 2: Implement a guarded temporary-library harness.**
 
   The script must:
 
@@ -1059,7 +1059,7 @@
   - invoke current authenticated Codex CLI without copying/printing credentials.
   - enforce process timeouts and terminate only child PIDs it started.
 
-- [ ] **Step 3: Implement the two independent Codex sessions.**
+- [x] **Step 3: Implement the two independent Codex sessions.**
 
   Session A uses `codex exec --ephemeral --approve-for-me --json` to ask EvolvMem to store the unique canary and captures returned legacy/context IDs. Session B is a fresh `codex exec --ephemeral --json`; its user prompt asks to recall the prior decision and then provide its details but does not name any tool. Parse events and require:
 
@@ -1071,7 +1071,7 @@
 
   On every exit path, close children/resources, then delete only the sentinel-verified exact temp directory. Do not run a post-delete search that could touch an unrelated result.
 
-- [ ] **Step 4: Run deterministic tests, then the real isolated behavior gate.**
+- [x] **Step 4: Run deterministic tests, then the real isolated behavior gate.**
 
   First run:
 
@@ -1083,7 +1083,7 @@
 
   Expected: JSON report `passed=true`, ordered safe tool names, matching integer context IDs, and `cleanup=complete`; no canary body/query/path. A model refusal or nondeterministic failure is reported honestly and blocks formal cutover—it is not converted into an automated pass.
 
-- [ ] **Step 5: Run the Slice 3 gate and commit.**
+- [x] **Step 5: Run the Slice 3 gate and commit.**
 
   Run:
 
