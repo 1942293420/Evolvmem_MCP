@@ -599,7 +599,7 @@
 - Modify: `tests/test_context_migration.py`
 - Modify: `tests/test_context_vector_sync.py`
 
-- [ ] **Step 1: Write failing typed single-mutation tests.**
+- [x] **Step 1: Write failing typed single-mutation tests.**
 
   Cover add, replace, remove, metadata update, archive, restore, hard delete, and batched access. For every operation assert:
 
@@ -620,7 +620,7 @@
 
   Expected: missing legacy models/facade and direct-store behavior.
 
-- [ ] **Step 2: Define the narrow typed mutation contract.**
+- [x] **Step 2: Define the narrow typed mutation contract.**
 
   In `legacy_models.py`, define immutable/validated `LegacyAddRequest`, `LegacyReplaceRequest`, `LegacyRemoveRequest`, `LegacyUpdateRequest`, `LegacyStatusRequest`, `LegacyHardDeleteRequest`, and `LegacyAccessRequest`. Freeze the common result:
 
@@ -635,11 +635,11 @@
 
   Add a `LegacyAccessResult(updated_legacy_ids, updated_context_ids)` and typed internal projection insert/update records. Tags normalize to tuples at the boundary; MCP/Web convert to and from their old shapes.
 
-- [ ] **Step 3: Reuse one public legacy conversion policy.**
+- [x] **Step 3: Reuse one public legacy conversion policy.**
 
   Refactor `LegacyMemoryMigrator` so its content-type, scope, tier, confidence, project, tags, timestamps, and `layers_from_legacy_value()` mapping are callable by ContextService without copying private methods. Historical migration output must remain byte-for-byte equivalent under existing tests. For a new production write, derive the Context draft from the just-written projection row so projection inheritance and Core metadata cannot diverge.
 
-- [ ] **Step 4: Implement the shared/exclusive cutover lock.**
+- [x] **Step 4: Implement the shared/exclusive cutover lock.**
 
   Public interface:
 
@@ -649,7 +649,7 @@
 
   Use `fcntl.flock` on `config.data_dir / "context-core-cutover.lock"`, open without truncation, validate the resolved file remains under the exact data directory, and release/close in `finally`. Tests use separate subprocesses to prove concurrent shared holders, exclusive blocking, bounded timeout, and release after exceptions. Never delete another process's lock file.
 
-- [ ] **Step 5: Implement service-owned transactions and the read-compatible facade.**
+- [x] **Step 5: Implement service-owned transactions and the read-compatible facade.**
 
   `LegacyCompatibilityFacade` exposes only the old read methods required by Retriever/ConflictDetector/maintenance code; every mutation delegates to ContextService typed methods. ContextService selects:
 
@@ -658,7 +658,7 @@
 
   The facade does not expose `_conn`, `_execute`, arbitrary SQL, or a transaction callback. Its `update_access`, `archive`, and metadata/status helpers are service calls, not repository writes.
 
-- [ ] **Step 6: Write failing post-commit vector tests, then implement dual sync.**
+- [x] **Step 6: Write failing post-commit vector tests, then implement dual sync.**
 
   Assert neither index changes before SQLite commit. After commit:
 
@@ -670,7 +670,7 @@
 
   Add a small post-commit coordinator in `context_service.py`; reuse `VectorIndex.mark_dirty()/preserve_dirty()` and `ContextVectorSynchronizer`, but do not rebuild an entire index per mutation.
 
-- [ ] **Step 7: Verify and commit Task 6.**
+- [x] **Step 7: Verify and commit Task 6.**
 
   Run:
 
