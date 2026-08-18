@@ -16,7 +16,7 @@ echo "[1/5] Data directory: $DATA_DIR"
 
 # 2. Install Python dependencies
 echo "[2/5] Installing Python dependencies..."
-pip install usearch llama-cpp-python
+pip install usearch llama-cpp-python "tomlkit>=0.13,<1"
 
 # 3. Download embedding model (if not present)
 if [ -f "$MODEL_DIR/$MODEL_FILE" ]; then
