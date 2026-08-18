@@ -400,6 +400,91 @@ def test_rollback_apply_returns_codex_to_explicit_legacy(test_config, tmp_path, 
         store.close()
 
 
+def _compat_persisted_journal(tmp_path: Path, codex_path: Path) -> Path:
+    """A durable journal parked at the persist/primary crash window."""
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+    journal = CutoverJournal.begin(
+        preflight_digest=hashlib.sha256(b"synthetic preflight").hexdigest(),
+        private={
+            "data_dir": str(tmp_path / "data"),
+            "codex_config_path": str(codex_path),
+        },
+    )
+    journal.bind(backup_dir)
+    for state in (
+        "locked",
+        "backed_up",
+        "migrated",
+        "vector_ready_or_approved_fts",
+        "shadow_passed",
+        "compat_persisted",
+    ):
+        journal.advance(state)
+    return backup_dir / JOURNAL_FILENAME
+
+
+def test_rollback_apply_from_compat_persisted_returns_codex_to_legacy(
+    tmp_path, capsys
+):
+    # The crash window after step 8: the journal sits at live
+    # ``compat_persisted`` while Codex may already run as primary.
+    codex_path = _write_codex_config(tmp_path)
+    editor = CodexConfigEditor(codex_path)
+    editor.apply_primary(editor.snapshot())
+    journal_path = _compat_persisted_journal(tmp_path, codex_path)
+
+    assert (
+        cutover_cli.main(
+            ["rollback", "--journal", str(journal_path), "--apply", "--json"]
+        )
+        == 0
+    )
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["ok"] is True
+    assert printed["applied"] is True
+    assert printed["state"] == "rolled_back"
+    assert printed["action"] == "cas_legacy"
+
+    stanza = CodexConfigEditor(codex_path).snapshot().stanza
+    assert stanza["env"]["EVOLVMEM_CONTEXT_MODE"] == "legacy"
+    journal = CutoverJournal.load(journal_path)
+    assert journal.state == "rolled_back"
+    assert journal.rolled_back_from == "compat_persisted"
+
+
+def test_rollback_apply_from_compat_persisted_with_compat_stanza_is_a_noop(
+    tmp_path, capsys
+):
+    codex_path = _write_codex_config(
+        tmp_path,
+        CODEX_CONFIG_TEXT.replace(
+            'EVOLVMEM_CONTEXT_MODE = "legacy"', 'EVOLVMEM_CONTEXT_MODE = "compat"'
+        ),
+    )
+    journal_path = _compat_persisted_journal(tmp_path, codex_path)
+    codex_before = codex_path.read_bytes()
+
+    assert (
+        cutover_cli.main(
+            ["rollback", "--journal", str(journal_path), "--apply", "--json"]
+        )
+        == 0
+    )
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["ok"] is True
+    assert printed["applied"] is True
+    assert printed["state"] == "rolled_back"
+    assert printed["action"] == "not_needed"
+    assert printed["reason_codes"] == ["codex_primary_not_applied"]
+
+    assert codex_path.read_bytes() == codex_before
+    journal = CutoverJournal.load(journal_path)
+    assert journal.state == "rolled_back"
+    assert journal.rolled_back_from == "compat_persisted"
+    assert journal.hashes["codex_rollback_stanza_sha256"] == ""
+
+
 def test_rollback_twice_is_a_terminal_error(test_config, tmp_path, capsys):
     journal_path = _applied_cutover(test_config, tmp_path, capsys)
     assert (

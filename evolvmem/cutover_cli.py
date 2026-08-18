@@ -61,7 +61,12 @@ from evolvmem.cutover_models import validate_public_summary
 _ENV_OVERRIDE_KEYS = ("EVOLVMEM_DATA_DIR", "EVOLVMEM_CONTEXT_MODE", "EVOLVMEM_ADAPTER")
 
 # Rollback can start only from a post-persist journal state.
-_ROLLBACKABLE_STATES = ("codex_primary", "awaiting_post_cutover_canary", "complete")
+_ROLLBACKABLE_STATES = (
+    "compat_persisted",
+    "codex_primary",
+    "awaiting_post_cutover_canary",
+    "complete",
+)
 _ROLLBACKABLE_FAILED_STEPS = (
     "persist_compat",
     "codex_primary",
