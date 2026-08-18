@@ -708,7 +708,7 @@
 - Modify: `tests/test_dsh_bridge.py`
 - Modify: `tests/test_integration.py`
 
-- [ ] **Step 1: Write failing extraction-batch behavior tests.**
+- [x] **Step 1: Write failing extraction-batch behavior tests.**
 
   Add `LegacyExtractionRequest(summary, candidates, max_writes, source_session)` and result with ordered `LegacyMutationResult`s. Prove:
 
@@ -724,7 +724,7 @@
 
   Expected: batch type/API missing and existing helpers writing `MemoryStore` directly.
 
-- [ ] **Step 2: Move persistence orchestration behind ContextService.**
+- [x] **Step 2: Move persistence orchestration behind ContextService.**
 
   Keep message parsing, redaction, ranking, and policy gates in Kimi/DSH. Move only summary equivalence, conflict resolution, semantic merge decision, transaction, and post-commit vector coordination into:
 
@@ -734,11 +734,11 @@
 
   The service owns the shared cutover lock and transaction. Do not accept a callback from Kimi and do not loop over public single-mutation methods that each commit.
 
-- [ ] **Step 3: Route Kimi and DSH while retaining observable contracts.**
+- [x] **Step 3: Route Kimi and DSH while retaining observable contracts.**
 
   Construct ContextService from the same `Config`/temporary data dir, call the batch once, and close owned resources. Kimi keeps `ExtractionResult` states/reasons/log redaction; DSH keeps `{persisted: n}`. Update their tests to inspect mappings/layers/statuses in the temp DB in addition to existing legacy assertions.
 
-- [ ] **Step 4: Write failing MCP legacy-shape tests, then route mutations.**
+- [x] **Step 4: Write failing MCP legacy-shape tests, then route mutations.**
 
   For `memory_add`, conflict/semantic replace, explicit `memory_replace`, `memory_remove`, and `memory_consolidate(dry_run=false)`, assert:
 
@@ -750,7 +750,7 @@
 
   Modify server construction for injected Config/ContextService/facade in tests. New `context_*` tools are deliberately deferred to Task 9.
 
-- [ ] **Step 5: Verify and commit Task 7.**
+- [x] **Step 5: Verify and commit Task 7.**
 
   Run:
 
