@@ -1,10 +1,23 @@
 """USearch HNSW vector index — stores only (id, embedding), acts as a read cache for SQLite."""
 
+from dataclasses import dataclass
+
 import numpy as np
 from pathlib import Path
 from usearch.index import Index, MetricKind, ScalarKind
 
 from evolvmem.config import Config
+
+IDS_INSPECTION_LIMIT = 1_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class VectorIndexMetadata:
+    """Read-only diagnostics for an initialized index; never vector payloads."""
+
+    count: int
+    dimension: int
+    dirty: bool
 
 
 class VectorIndex:
@@ -171,6 +184,39 @@ class VectorIndex:
     def check_consistency(self, expected_count: int) -> bool:
         """Check count and the durable incomplete-synchronization marker."""
         return not self.is_dirty() and self.count() == expected_count
+
+    # ---- inspection (read-only; valid only after initialization) ----
+
+    def ids(self, *, limit: int = IDS_INSPECTION_LIMIT) -> list[int]:
+        """Sorted integer IDs for exact-set verification.
+
+        Read-only and bounded: the inspection never exposes vectors, and an
+        index larger than ``limit`` fails loudly instead of being silently
+        truncated.
+        """
+        self._ensure_initialized()
+        if limit < 0:
+            raise ValueError("ids inspection limit must be non-negative")
+        keys = sorted(int(key) for key in self._index.keys)
+        if len(keys) > limit:
+            raise ValueError(
+                f"index holds {len(keys)} ids, above the inspection limit of {limit}"
+            )
+        return keys
+
+    def inspect_metadata(self) -> VectorIndexMetadata:
+        """Count/dimension/dirty diagnostics for a live, initialized index.
+
+        The dimension comes from the underlying index itself, so a restored
+        file whose dimension differs from the initialize() argument is
+        diagnosable.
+        """
+        self._ensure_initialized()
+        return VectorIndexMetadata(
+            count=len(self._index),
+            dimension=int(self._index.ndim),
+            dirty=self.is_dirty(),
+        )
 
     def _ensure_initialized(self):
         if self._index is None:
