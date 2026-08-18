@@ -123,13 +123,6 @@ def test_embedding_backend_error_is_not_logged_verbatim(temp_dir, monkeypatch):
     """Backend failures must not leak paths or credentials through startup logs."""
     from evolvmem import mcp_server
 
-    class Store:
-        def initialize(self):
-            pass
-
-        def all_ids(self):
-            return []
-
     class Index:
         def initialize(self, *, dim):
             assert dim == 768
@@ -142,9 +135,7 @@ def test_embedding_backend_error_is_not_logged_verbatim(temp_dir, monkeypatch):
         def initialize(self):
             raise RuntimeError("backend failed at /home/alice/secret.gguf token=secret")
 
-    server = mcp_server.MemoryMCPServer.__new__(mcp_server.MemoryMCPServer)
-    server.config = Config(data_dir=temp_dir)
-    server.store = Store()
+    server = mcp_server.MemoryMCPServer(config=Config(data_dir=temp_dir))
     server.vidx = Index()
     server.engine = FailingEngine()
     logs = []

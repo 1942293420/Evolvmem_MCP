@@ -28,34 +28,39 @@ def server(test_config):
     """MemoryMCPServer wired to a temp-dir store plus an injected compat-mode
     ContextService (embedding engine stays unloaded)."""
     from evolvmem.mcp_server import MemoryMCPServer
+    with MemoryStore(test_config):
+        pass  # legacy 投影 schema 引导；只有测试允许持有裸 store
     srv = MemoryMCPServer(config=test_config)
-    srv.store.initialize()
-    srv.conflict_detector = ConflictDetector(srv.store)
     service = ContextService(test_config, embedding_engine=srv.engine)
     service._legacy_vector = srv.vidx  # 共享 legacy 投影向量索引实例
     service.initialize(mode=ContextMode.COMPAT, adapter="test")
     srv.context_service = service
+    srv.conflict_detector = ConflictDetector(service.legacy_facade())
     yield srv
     service.close()
-    srv.store.close()
 
 
 @pytest.fixture
 def degraded_primary_server(test_config):
     """Server whose injected primary-mode service failed the invariant gate."""
     from evolvmem.mcp_server import MemoryMCPServer
+    with MemoryStore(test_config):
+        pass  # legacy 投影 schema 引导
     srv = MemoryMCPServer(config=test_config)
-    srv.store.initialize()
-    srv.conflict_detector = ConflictDetector(srv.store)
     service = ContextService(test_config, embedding_engine=srv.engine)
     service._legacy_vector = srv.vidx
     service.initialize(mode=ContextMode.PRIMARY, adapter="test")
     assert service.status().ready is False  # 未初始化 context 向量索引 → 降级
     assert service.status().reason_codes == ("degraded_legacy",)
     srv.context_service = service
+    srv.conflict_detector = ConflictDetector(service.legacy_facade())
     yield srv
     service.close()
-    srv.store.close()
+
+
+def _facade(server):
+    """测试读取断言统一走兼容门面（与生产读取同一路径）。"""
+    return server.context_service.legacy_facade()
 
 
 class FakeEmbeddingEngine:
@@ -233,7 +238,7 @@ class TestIntegration:
         # 可选增量字段：context_id 与 available_layers
         assert result["context_id"] is not None
         assert result["available_layers"] == ["l0", "l1", "l2"]
-        rec = server.store.get_by_id(result["id"])
+        rec = _facade(server).get_by_id(result["id"])
         assert rec["importance"] == 9.0
         assert rec["tier"] == "pinned"
         # 双侧：mapping + 三层 + 状态
@@ -256,7 +261,7 @@ class TestIntegration:
             "importance": float("nan"),
         })
         assert result["status"] == "added"
-        rec = server.store.get_by_id(result["id"])
+        rec = _facade(server).get_by_id(result["id"])
         assert rec["importance"] == 5.0
 
     def test_memory_add_rejects_overlong_value(self, server):
@@ -265,7 +270,7 @@ class TestIntegration:
         })
         assert "error" in result
         assert "too long" in result["error"]
-        assert server.store.count_active() == 0
+        assert _facade(server).count_active() == 0
 
     def test_memory_add_accepts_value_at_limit(self, server):
         result = server.handle_tool_call("memory_add", {
@@ -278,7 +283,7 @@ class TestIntegration:
             "key": "p:t:fact:trivial", "value": "等待用户指令。",
         })
         assert "error" in result
-        assert server.store.count_active() == 0
+        assert _facade(server).count_active() == 0
 
     def test_memory_add_rejects_too_short(self, server):
         result = server.handle_tool_call("memory_add", {
@@ -322,11 +327,11 @@ class TestIntegration:
             assert second["context_id"] is not None
             assert second["old_context_id"] == first["context_id"]
             assert second["available_layers"] == ["l0", "l1", "l2"]
-            assert server.store.count_active() == 1
-            active = server.store.get_active()[0]
+            assert _facade(server).count_active() == 1
+            active = _facade(server).get_active()[0]
             assert active["key"] == "p:t:decision:db"
             assert active["value"] == "数据库选用 MySQL"
-            assert server.store.get_by_id(first["id"])["status"] == "superseded"
+            assert _facade(server).get_by_id(first["id"])["status"] == "superseded"
             # 双侧：旧 ContextItem superseded，新两侧映射一致
             context_store = server.context_service.store
             assert context_store.get_item(first["context_id"]).status is (
@@ -360,7 +365,7 @@ class TestIntegration:
                 "tier": "reference",
             })
             assert second["status"] == "added"
-            assert server.store.count_active() == 2
+            assert _facade(server).count_active() == 2
         finally:
             server.vidx.close()
 
@@ -421,8 +426,8 @@ class TestIntegration:
         assert result["context_id"] is not None
         assert result["old_context_id"] == seed["context_id"]
         assert result["available_layers"] == ["l0", "l1", "l2"]
-        assert server.store.get_by_id(seed["id"])["status"] == "superseded"
-        assert server.store.get_by_id(result["new_id"])["status"] == "active"
+        assert _facade(server).get_by_id(seed["id"])["status"] == "superseded"
+        assert _facade(server).get_by_id(result["new_id"])["status"] == "active"
         context_store = server.context_service.store
         assert context_store.get_item(result["old_context_id"]).status is (
             ContextStatus.SUPERSEDED
@@ -449,7 +454,7 @@ class TestIntegration:
         assert result["existing_id"] == seed["id"]
         assert "reason" in result
         assert "context_id" not in result
-        assert server.store.count_active() == 1
+        assert _facade(server).count_active() == 1
         assert server.context_service.store.count_by_status() == {"active": 1}
 
     def test_memory_add_skip_duplicate_keeps_legacy_shape(self, server):
@@ -465,7 +470,7 @@ class TestIntegration:
         assert result["status"] == "skipped"
         assert "reason" in result
         assert "id" not in result
-        assert server.store.count_active() == 1
+        assert _facade(server).count_active() == 1
 
     def test_memory_replace_keeps_legacy_shape_and_writes_both_sides(self, server):
         seed = server.handle_tool_call("memory_add", {
@@ -484,8 +489,8 @@ class TestIntegration:
         assert "old_id" not in result
         assert result["old_context_id"] == seed["context_id"]
         assert result["context_id"] is not None
-        assert server.store.get_by_id(seed["id"])["status"] == "superseded"
-        assert server.store.get_by_id(result["new_id"])["value"] == (
+        assert _facade(server).get_by_id(seed["id"])["status"] == "superseded"
+        assert _facade(server).get_by_id(result["new_id"])["value"] == (
             "供应商合同必须双人复核并当场归档。"
         )
         context_store = server.context_service.store
@@ -507,7 +512,7 @@ class TestIntegration:
         assert result["status"] == "deleted"
         assert result["id"] == seed["id"]
         assert result["context_id"] == seed["context_id"]
-        assert server.store.get_by_id(seed["id"])["status"] == "deleted"
+        assert _facade(server).get_by_id(seed["id"])["status"] == "deleted"
         context_store = server.context_service.store
         assert context_store.get_item(seed["context_id"]).status is (
             ContextStatus.DELETED
@@ -557,9 +562,9 @@ class TestIntegration:
         assert pair["keep"]["id"] == second_id  # 高分者保留
         assert pair["drop"]["id"] == first_id
         # 纯诊断：两侧状态与访问计数一律不变
-        assert server.store.get_by_id(first_id)["status"] == "active"
-        assert server.store.get_by_id(second_id)["status"] == "active"
-        assert server.store.get_by_id(second_id)["access_count"] == 0
+        assert _facade(server).get_by_id(first_id)["status"] == "active"
+        assert _facade(server).get_by_id(second_id)["status"] == "active"
+        assert _facade(server).get_by_id(second_id)["access_count"] == 0
         assert context_store.count_by_status() == before_items
         assert context_store.get_item(first_context_id).access_count == 0
 
@@ -575,20 +580,22 @@ class TestIntegration:
         assert result["dry_run"] is False
         assert result["merged"] == 1
         # keep：access +1 双侧；drop：archived 双侧
-        assert server.store.get_by_id(second_id)["access_count"] == 1
+        assert _facade(server).get_by_id(second_id)["access_count"] == 1
         assert context_store.get_item(second_context_id).access_count == 1
-        assert server.store.get_by_id(first_id)["status"] == "archived"
+        assert _facade(server).get_by_id(first_id)["status"] == "archived"
         assert context_store.get_item(first_context_id).status is (
             ContextStatus.ARCHIVED
         )
-        assert server.store.count_active() == 1
+        assert _facade(server).count_active() == 1
 
     def test_degraded_primary_rejects_all_mutation_tools(
-            self, degraded_primary_server):
+            self, degraded_primary_server, test_config):
         server = degraded_primary_server
-        legacy_id = server.store.add(
-            key="p:t:fact:seed", value="既有的长期事实记录。"
-        )
+        with MemoryStore(test_config) as legacy_store:
+            # 未映射的旧行：投影在、Core 侧无（降级态不补迁移）
+            legacy_id = legacy_store.add(
+                key="p:t:fact:seed", value="既有的长期事实记录。"
+            )
 
         add = server.handle_tool_call("memory_add", {
             "key": "p:t:fact:x", "value": "供应商合同必须双人复核后归档",
@@ -602,8 +609,8 @@ class TestIntegration:
             assert "error" in outcome
             assert "degraded" in outcome["error"]
         # 全部拒绝，两侧均无变化
-        assert server.store.get_by_id(legacy_id)["status"] == "active"
-        assert server.store.count_active() == 1
+        assert _facade(server).get_by_id(legacy_id)["status"] == "active"
+        assert _facade(server).count_active() == 1
         assert server.context_service.store.count_by_status() == {}
 
     def test_degraded_primary_keeps_dry_run_consolidate_diagnostic(
@@ -616,9 +623,11 @@ class TestIntegration:
             server.vidx,
             server.engine,
         )
-        legacy_id = server.store.add(
-            key="p:t:fact:seed", value="既有的长期事实记录。"
-        )
+        with MemoryStore(test_config) as legacy_store:
+            # 未映射的旧行：投影在、Core 侧无（降级态不补迁移）
+            legacy_id = legacy_store.add(
+                key="p:t:fact:seed", value="既有的长期事实记录。"
+            )
 
         dry = server.handle_tool_call("memory_consolidate", {"dry_run": True})
         assert dry["dry_run"] is True
@@ -629,7 +638,7 @@ class TestIntegration:
         )
         assert "error" in applied
         assert "degraded" in applied["error"]
-        assert server.store.get_by_id(legacy_id)["status"] == "active"
+        assert _facade(server).get_by_id(legacy_id)["status"] == "active"
 
     def test_memory_add_vector_failure_returns_committed_id_and_degraded_state(
             self, server, test_config):
@@ -690,7 +699,7 @@ class TestIntegration:
         assert isinstance(result["id"], int)
         assert result["index_state"] == "degraded"
         assert result["context_id"] is not None
-        assert server.store.get_by_id(result["id"])["status"] == "active"
+        assert _facade(server).get_by_id(result["id"])["status"] == "active"
         context_store = server.context_service.store
         assert context_store.resolve_legacy_mapping(result["id"]) == (
             result["context_id"]
@@ -746,10 +755,10 @@ class TestIntegration:
 
         store.close()
 
-    def test_mcp_tool_schemas_match_design(self):
-        """验证 MCP Server 注册了全部 6 个工具。"""
+    def test_mcp_tool_schemas_match_design(self, test_config):
+        """legacy 默认仅注册 6 个旧工具；codex+shadow 追加四个 context 工具。"""
         from evolvmem.mcp_server import MemoryMCPServer
-        server = MemoryMCPServer()
+        server = MemoryMCPServer(config=test_config)
         # 伪造 initialize request 后直接查询工具列表
         response = server._handle_request({
             "method": "tools/list", "id": 1, "jsonrpc": "2.0",
@@ -761,6 +770,26 @@ class TestIntegration:
             "memory_replace", "memory_remove", "memory_consolidate",
         }
         assert tool_names == expected
+
+        # Codex shadow：同一注册表按 adapter/mode/health 暴露四个 context 工具
+        test_config.context_mode = "shadow"
+        test_config.adapter = "codex"
+        codex_server = MemoryMCPServer(config=test_config)
+        service = ContextService(test_config,
+                                 embedding_engine=codex_server.engine)
+        service.initialize(mode=ContextMode.SHADOW, adapter="codex")
+        codex_server.context_service = service
+        try:
+            response = codex_server._handle_request({
+                "method": "tools/list", "id": 2, "jsonrpc": "2.0",
+            })
+            codex_names = {t["name"] for t in response["result"]["tools"]}
+            assert codex_names == expected | {
+                "context_session_start", "context_search",
+                "context_read", "context_status",
+            }
+        finally:
+            service.close()
 
     def test_memory_consolidate_requires_embedding(self, server):
         result = server.handle_tool_call("memory_consolidate", {})

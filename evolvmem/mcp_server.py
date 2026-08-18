@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
 """EvolvMem memory plugin — stdio MCP Server.
 
-Tools:
+Tools (legacy, always registered):
   memory_search   — FTS5/trigram + HNSW hybrid search
   memory_status   — statistics
   memory_add      — manually add a memory
   memory_replace  — replace a memory (mark old as superseded)
   memory_remove   — soft-delete a memory
   memory_consolidate — find/merge near-duplicate memories
+
+Context tools (Codex shadow/primary with a ready ContextService):
+  context_session_start — bounded rendered L1 history block
+  context_search        — thresholded Core retrieval, L0 metadata only
+  context_read          — exact-ID L1/L2 read
+  context_status        — content-free diagnostic snapshot
+
+The exposed tool set comes from one registry (evolvmem.mcp_contract):
+tools/list and tools/call share it, so a hidden tool cannot still be
+called. MCP dictionaries are parsed only at this boundary; the Context
+side speaks the typed ContextService API.
 """
 
 import json
@@ -16,16 +27,31 @@ import select
 import sys
 import os
 import threading
+import time
 import traceback
 from evolvmem.config import Config
-from evolvmem.context_models import ContextMode
+from evolvmem.context_models import (
+    ContextContentType,
+    ContextLayer,
+    ContextMode,
+    ContextReadRequest,
+    ContextSearchRequest,
+    ContextServiceError,
+    ContextSessionStartRequest,
+    ContextValidationError,
+)
 from evolvmem.context_service import ContextService
+from evolvmem.cutover_checks import compare_shadow
 from evolvmem.legacy_models import (
     LegacyAddRequest,
     LegacyRemoveRequest,
     LegacyReplaceRequest,
 )
-from evolvmem.memory_store import MemoryStore
+from evolvmem.mcp_contract import (
+    CODEX_ADAPTER,
+    initialization_instructions,
+    tool_specs,
+)
 from evolvmem.vector_index import VectorIndex
 from evolvmem.embedding import EmbeddingEngine
 from evolvmem.retriever import Retriever
@@ -41,6 +67,27 @@ _LOW_INFO_PATTERNS = (
     "等待用户后续", "no action required",
 )
 
+# 分发层按次过写门禁的旧写工具；memory_consolidate 的 dry_run 是只读分支，
+# 其门禁留在处理器内部（仅 dry_run=False 拦截）
+_DISPATCH_WRITE_TOOLS = frozenset({
+    "memory_add", "memory_replace", "memory_remove",
+})
+
+# context 协议错误的稳定文案：不含 traceback、正文或路径
+_CONTEXT_ERROR_MESSAGES = {
+    "invalid_arguments": "invalid arguments for the context tool",
+    "not_found": "no context item with the exact given id",
+    "not_readable": "the exact context item is not readable",
+    "expired": "the exact context item has expired",
+    "invalid_layer": "the requested layer is unavailable for the exact id",
+    "context_not_enabled": "context reads are disabled in the current mode",
+    "degraded_legacy": "context primary mode is degraded; serving is fail-closed",
+    "not_initialized": "context service is not initialized yet",
+    "invalid_mode": "context mode is invalid; context features fail closed",
+    "invalid_config": "context configuration is invalid; context features fail closed",
+    "context_unavailable": "context tool failed; continue without memory",
+}
+
 
 def _is_low_info(value: str) -> bool:
     # 整句匹配语义：strip 后以模式开头才算低信息（句中出现不误伤）；casefold 兼容大小写变体
@@ -51,25 +98,69 @@ def _is_low_info(value: str) -> bool:
 class MemoryMCPServer:
     """stdio MCP Server — JSON-RPC protocol."""
 
+    # 握手等待轻量 Context 健康评估的上限；绝不等待 embedding 模型加载
+    _HEALTH_WAIT_TIMEOUT_S = 5
+
     def __init__(self, config: Config | None = None, context_service=None):
         self.config = config if config is not None else Config.from_file()
-        self.store = MemoryStore(self.config)
+        self.adapter = self.config.adapter or "mcp"
+        try:
+            self.context_mode: ContextMode | None = ContextMode(
+                self.config.context_mode
+            )
+        except ValueError:
+            # 未知 mode：Context 功能 fail-closed（只留 context_status 诊断）
+            self.context_mode = None
         self.vidx = VectorIndex(self.config)
         self.engine = EmbeddingEngine(self.config)
-        # 所有 mutation 经 ContextService 兼容边界；读取仍走旧组件（Task 8 再迁）
+        # 所有 legacy 读写都经 ContextService 兼容门面（access 计数也不例外）；
+        # 本模块不再持有裸 MemoryStore
         self.context_service = context_service
         self.retriever = None
         self.conflict_detector = None
         self.forgetting = None
         self.consolidator = None
         # 初始化门闩：run() 里由后台线程完成重初始化后置位，
-        # tools/call 等待它，握手（initialize/tools/list）不等
+        # 旧 tools/call 等待它；握手与 context_* 工具不等
         self._init_done = threading.Event()
         self._init_error: Exception | None = None
+        # 后台 initialize() 完成轻量 Context 健康评估（服务初始化）后置位；
+        # 握手最多有界等待它，绝不等待可选的 embedding 模型加载
+        self._service_evaluated = threading.Event()
 
     def initialize(self):
         """Initialize all components."""
-        self.store.initialize()
+        if self.context_mode is None:
+            # 非法 Context 配置：fail-closed。握手仍应答，注册表只剩
+            # context_status 诊断入口，写被分发层拒绝。
+            self._log("Invalid context_mode; context features fail closed")
+            return
+        try:
+            service = self.context_service
+            if service is None:
+                # 共享同一引擎与 legacy 投影向量索引：合并判定与写后同步看到
+                # 同一份内存态；服务生命周期由 shutdown() 统一关闭
+                service = ContextService(
+                    self.config, embedding_engine=self.engine
+                )
+                service._legacy_vector = self.vidx
+                service.initialize(
+                    mode=self.context_mode,
+                    adapter=self.adapter,
+                )
+                self.context_service = service
+            # 打开 context 向量缓存（mmap 恢复或空索引；不加载模型），让
+            # primary 的按次健康复查反映真实不变量
+            try:
+                service.vector_index.initialize(dim=self.config.embedding_dim)
+            except Exception:
+                pass  # 打不开的索引由健康评估如实报告为不可用
+            # legacy 投影 schema（memories 表）在任何 mode 下都必须存在；经服务
+            # 自有的 legacy 后端幂等引导（唯一允许实例化 MemoryStore 的位置）。
+            # 在健康评估置位前完成，握手看到的健康结论才是确定性的。
+            service._legacy_backend()
+        finally:
+            self._service_evaluated.set()
         self.vidx.initialize(dim=self.config.embedding_dim)
 
         # Try loading the embedding model (FTS5 search works without it)
@@ -80,31 +171,18 @@ class MemoryMCPServer:
             # 仅 FTS 搜索，而不是让整个会话的 tools/call 被 _init_error 堵死
             self._log("Embedding engine unavailable; FTS-only mode")
 
+        facade = service.legacy_facade()
         # Check USearch vs SQLite consistency (needs engine for rebuild)
-        sqlite_count = len(self.store.all_ids())
+        sqlite_count = len(facade.all_ids())
         if not self.vidx.check_consistency(sqlite_count):
             self._rebuild_under_lock()
 
-        service = getattr(self, "context_service", None)
-        if service is None:
-            # 共享同一引擎与 legacy 投影向量索引：合并判定与写后同步看到
-            # 同一份内存态；服务生命周期由 shutdown() 统一关闭
-            service = ContextService(self.config, embedding_engine=self.engine)
-            service._legacy_vector = self.vidx
-            service.initialize(
-                mode=ContextMode(self.config.context_mode),
-                adapter=self.config.adapter or "mcp",
-            )
-            self.context_service = service
-
-        self.retriever = Retriever(
-            self.config, self.store, self.vidx, self.engine
-        )
-        self.conflict_detector = ConflictDetector(self.store)
-        self.forgetting = ForgettingEngine(self.config, self.store)
+        self.retriever = Retriever(self.config, facade, self.vidx, self.engine)
+        self.conflict_detector = ConflictDetector(facade)
+        self.forgetting = ForgettingEngine(self.config, facade)
         self.consolidator = Consolidator(
             self.config,
-            self.context_service.legacy_facade(),
+            facade,
             self.vidx,
             self.engine,
         )
@@ -130,35 +208,54 @@ class MemoryMCPServer:
                 self.engine.close()
         except Exception:
             pass
-        try:
-            if self.store:
-                self.store.close()
-        except Exception:
-            pass
 
     # ---- tool handlers ----
 
     def handle_tool_call(self, tool_name: str, args: dict) -> dict:
         """Route tool calls."""
-        handlers = {
+        handler = self._tool_handlers().get(tool_name)
+        if handler is None:
+            return {"error": f"Unknown tool: {tool_name}"}
+        if tool_name in _DISPATCH_WRITE_TOOLS:
+            gate_error = self._write_gate_error()
+            if gate_error is not None:
+                return {"error": gate_error}
+        return handler(args)
+
+    def _tool_handlers(self):
+        return {
             "memory_search": self._memory_search,
             "memory_status": self._memory_status,
             "memory_add": self._memory_add,
             "memory_replace": self._memory_replace,
             "memory_remove": self._memory_remove,
             "memory_consolidate": self._memory_consolidate,
+            "context_session_start": self._context_session_start,
+            "context_search": self._context_search,
+            "context_read": self._context_read,
+            "context_status": self._context_status,
         }
-        handler = handlers.get(tool_name)
-        if handler is None:
-            return {"error": f"Unknown tool: {tool_name}"}
-        return handler(args)
 
     def _memory_search(self, args: dict) -> dict:
         query = args.get("query", "")
         top_k = int(args.get("top_k", 10))
         if not query:
             return {"error": "query parameter cannot be empty"}
+        status = self._live_status()
+        if (
+            status is not None
+            and status.mode is ContextMode.PRIMARY
+            and status.ready
+            and status.adapter == CODEX_ADAPTER
+        ):
+            return self._memory_search_primary(query, top_k)
+        if self.retriever is None:
+            # 非法配置/未初始化的 fail-closed 状态：只给诊断，不假装检索可用
+            return {"error": "memory_unavailable: context configuration is "
+                             "invalid or the service is not initialized"}
         results = self.retriever.search(query, top_k=top_k)
+        if status is not None and status.mode is ContextMode.SHADOW:
+            self._shadow_compare(query, results)
         return {
             "results": [
                 {
@@ -177,20 +274,156 @@ class MemoryMCPServer:
             "count": len(results),
         }
 
+    def _memory_search_primary(self, query: str, top_k: int) -> dict:
+        """Codex primary：Core 排序后把精确 ID 映射回投影行。
+
+        保留旧 `id/key/value/...` 字段，context 字段只做可选增量；没有
+        精确映射的 Core 邻居直接略过，绝不替换。
+        """
+        service = self.context_service
+        clamped_top_k = min(max(int(top_k), 1), 20)
+        try:
+            results = service.search(
+                ContextSearchRequest(
+                    query=query, top_k=clamped_top_k, cross_project=True
+                )
+            )
+        except ContextServiceError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        rows = []
+        for result in results:
+            row = self._projection_row_for_context(service, result)
+            if row is None:
+                continue
+            rows.append({
+                "id": row["id"],
+                "key": row["key"],
+                "value": row["value"],
+                "status": row["status"],
+                "attribute": row["attribute"],
+                "tags": row["tags"],
+                "score": result.score,
+                "match_type": "+".join(
+                    match.value for match in result.match_types
+                ) or None,
+                "created_at": row["created_at"],
+                "context_id": result.id,
+                "available_layers": [
+                    layer.value for layer in result.available_layers
+                ],
+            })
+        return {"results": rows, "count": len(rows)}
+
+    @staticmethod
+    def _projection_row_for_context(service, result):
+        """context→投影行的精确映射；无映射返回 None（绝不取近邻顶替）。"""
+        for row in service.legacy_facade().get_by_key(result.identity_key):
+            if (
+                row.get("status") == "active"
+                and service.store.resolve_legacy_mapping(row["id"]) == result.id
+            ):
+                return row
+        return None
+
+    def _shadow_compare(self, query: str, results: list) -> None:
+        """shadow：legacy 结果原样返回后，旁路跑一次 Core 检索比较。
+
+        只记录 overlap/计数/阈值排除/耗时等无正文指标；比较失败绝不
+        影响 legacy 响应。直接调 ContextRetriever（它不做 access 计数），
+        避免比较行为污染 Core 遥测。
+        """
+        if not results:
+            return
+        service = getattr(self, "context_service", None)
+        if service is None:
+            return
+        try:
+            store = service.store
+            mapping = {}
+            for row in results:
+                context_id = store.resolve_legacy_mapping(row["id"])
+                if context_id is not None:
+                    mapping[row["id"]] = context_id
+            started = time.monotonic()
+            core_results = service.retriever.search(
+                ContextSearchRequest(
+                    query=query,
+                    top_k=min(max(len(results), 1), 20),
+                    cross_project=True,
+                )
+            )
+            duration_ms = int((time.monotonic() - started) * 1000)
+            excluded = frozenset(
+                mapping[row["id"]]
+                for row in results
+                if row["id"] in mapping
+                and self._below_core_vector_threshold(row)
+            )
+            comparison = compare_shadow(
+                [row["id"] for row in results],
+                [result.id for result in core_results],
+                mapping,
+                expected_relevant=len(results),
+                below_threshold_core_ids=excluded,
+            )
+            self._log(
+                "shadow compare: "
+                f"legacy={comparison.legacy_count} "
+                f"core={comparison.core_count} "
+                f"mapped={comparison.mapped_legacy_count} "
+                f"unmapped={comparison.unmapped_legacy_count} "
+                f"threshold_excluded={comparison.below_threshold_excluded} "
+                f"top1_match={comparison.top1_match} "
+                f"overlap_at_5={comparison.overlap_at_5:.2f} "
+                f"duration_ms={duration_ms}"
+            )
+        except Exception:
+            pass  # 旁路指标失败不影响已返回的 legacy 结果
+
+    def _below_core_vector_threshold(self, row: dict) -> bool:
+        """legacy 纯向量命中且相似度低于 Core 阈值 → 合理阈值排除。"""
+        if row.get("match_type") != "vector":
+            return False
+        weight = self.config.vector_weight
+        if not weight:
+            return False
+        # legacy 向量通道得分 = similarity * vector_weight，可无损还原
+        similarity = (row.get("score") or 0.0) / weight
+        return similarity < self.config.context_vector_min_similarity
+
     def _memory_status(self, args: dict) -> dict:
-        total_active = self.store.count_active()
-        total_all = len(self.store.all_ids())
-        vector_count = self.vidx.count()
+        status = self._live_status()
+        if status is None:
+            # 无可用服务（非法配置/未初始化）：只给安全诊断，不伪造计数
+            return {
+                "available": False,
+                "reason": (
+                    "invalid_mode" if self.context_mode is None
+                    else "not_initialized"
+                ),
+                "embedding_loaded": self.engine.is_loaded,
+                "diagnostics": list(
+                    self.config.validate_runtime(require_model=True)
+                )[:8],
+            }
+        facade = self.context_service.legacy_facade()
         return {
-            "active_memories": total_active,
-            "total_records": total_all,
-            "vector_count": vector_count,
+            "active_memories": facade.count_active(),
+            "total_records": len(facade.all_ids()),
+            "vector_count": self.vidx.count(),
             "embedding_loaded": self.engine.is_loaded,
             "embedding_dim": self.config.embedding_dim,
             "embedding_diagnostics": list(
                 self.config.validate_runtime(require_model=True)
             )[:8],
-            "data_dir": str(self.config.data_dir),
+            # 安全的可用性/dirty 诊断；绝不输出绝对数据目录
+            "legacy_vector_dirty": status.legacy_vector_dirty,
+            "context_mode": status.mode.value,
+            "context_adapter": status.adapter,
+            "context_ready": status.ready,
+            "context_vector_dirty": status.context_vector_dirty,
         }
 
     def _memory_add(self, args: dict) -> dict:
@@ -225,6 +458,7 @@ class MemoryMCPServer:
             tier = None
         expires_at = args.get("expires_at")
 
+        facade = self.context_service.legacy_facade()
         # Conflict detection
         decision = self.conflict_detector.check(key, value)
         if decision.action == "skip":
@@ -235,9 +469,6 @@ class MemoryMCPServer:
                 "reason": decision.reason,
                 "existing_id": decision.existing_id,
             }
-        gate_error = self._write_gate_error()
-        if gate_error is not None:
-            return {"error": gate_error}
         if decision.action == "replace":
             # Conflict detector determined replace: use replace() to mark old as superseded
             old_id = decision.existing_id
@@ -261,7 +492,7 @@ class MemoryMCPServer:
             # （tier == "reference" 的新值同样不参与合并：永不 supersede 别人）
             if self.engine.is_loaded and tier != "reference":
                 match = find_semantic_match(
-                    self.store, self.vidx, self.engine, value,
+                    facade, self.vidx, self.engine, value,
                     self.config.add_merge_threshold)
                 if match:
                     result = self.context_service.legacy_replace(
@@ -314,9 +545,6 @@ class MemoryMCPServer:
             return {"error": "value looks like a low-information placeholder "
                              "(transitional/chatter); not persisting"}
 
-        gate_error = self._write_gate_error()
-        if gate_error is not None:
-            return {"error": gate_error}
         result = self.context_service.legacy_replace(
             LegacyReplaceRequest(key=key, new_value=new_value)
         )
@@ -329,9 +557,6 @@ class MemoryMCPServer:
         mem_id = int(args.get("id", 0))
         if not mem_id:
             return {"error": "id parameter cannot be empty"}
-        gate_error = self._write_gate_error()
-        if gate_error is not None:
-            return {"error": gate_error}
         result = self.context_service.legacy_remove(
             LegacyRemoveRequest(legacy_id=mem_id)
         )
@@ -359,16 +584,207 @@ class MemoryMCPServer:
                            "importance": m["importance"]}
         return result
 
-    # ---- mutation boundary helpers ----
+    # ---- context tool handlers (MCP dict ↔ typed API boundary) ----
 
-    def _write_gate_error(self) -> str | None:
-        """Refuse writes while primary mode reports degraded invariants."""
+    @staticmethod
+    def _context_error(code: str) -> dict:
+        """Stable, content-free protocol error: no traceback/content/path."""
+        return {"error": code,
+                "message": _CONTEXT_ERROR_MESSAGES.get(code, code)}
+
+    def _context_gate_error(self) -> dict | None:
+        """None when context reads may be served, else a stable error."""
+        if self.context_mode is None:
+            return self._context_error("invalid_config")
+        status = self._live_status()
+        if status is None:
+            return self._context_error("not_initialized")
+        if status.mode in (ContextMode.LEGACY, ContextMode.COMPAT):
+            return self._context_error("context_not_enabled")
+        if status.mode is ContextMode.PRIMARY and not status.ready:
+            return self._context_error("degraded_legacy")
+        return None
+
+    def _context_session_start(self, args: dict) -> dict:
+        try:
+            request = ContextSessionStartRequest(
+                project=args.get("project"),
+                query=args.get("query"),
+                max_chars=args.get("max_chars"),
+            )
+        except (ContextValidationError, TypeError):
+            return self._context_error("invalid_arguments")
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            result = self.context_service.session_start(request)
+        except ContextServiceError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            # Codex fail-open：绝不回退注入所有旧 active memory
+            return self._context_error("context_unavailable")
+        return {
+            "block": result.block,
+            "selected_ids": list(result.selected_ids),
+            "used_chars": result.used_chars,
+            "excluded_counts": [
+                {"reason": item.reason, "count": item.count}
+                for item in result.excluded_counts
+            ],
+        }
+
+    def _context_search(self, args: dict) -> dict:
+        try:
+            content_types = tuple(
+                ContextContentType(value)
+                for value in (args.get("content_types") or ())
+            )
+            request = ContextSearchRequest(
+                query=args.get("query"),
+                project=args.get("project", ""),
+                top_k=args.get("top_k", 10),
+                content_types=content_types,
+            )
+        except (ContextValidationError, ValueError, TypeError):
+            return self._context_error("invalid_arguments")
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            results = self.context_service.search(request)
+        except ContextServiceError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        return {
+            "results": [
+                {
+                    "id": r.id,
+                    "identity_key": r.identity_key,
+                    "l0": r.l0,
+                    "content_type": r.content_type.value,
+                    "scope": r.scope.value,
+                    "project": r.project,
+                    "status": r.status.value,
+                    "tier": r.tier.value,
+                    "confidence": r.confidence,
+                    "importance": r.importance,
+                    "score": r.score,
+                    "match_types": [m.value for m in r.match_types],
+                    "match_layers": [layer.value for layer in r.match_layers],
+                    "available_layers": [
+                        layer.value for layer in r.available_layers
+                    ],
+                }
+                for r in results
+            ],
+            "count": len(results),
+        }
+
+    def _context_read(self, args: dict) -> dict:
+        try:
+            layer = ContextLayer(args.get("layer", "l1"))
+            request = ContextReadRequest(id=args.get("id"), layer=layer)
+        except (ContextValidationError, ValueError, TypeError):
+            return self._context_error("invalid_arguments")
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            result = self.context_service.read(request)
+        except ContextServiceError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        if result.error_code is not None:
+            # 不存在/不可读/过期/层无效：稳定错误码，绝不回退相似项
+            return self._context_error(result.error_code)
+        return {
+            "id": result.id,
+            "layer": result.layer.value,
+            "content": result.content,
+        }
+
+    def _context_status(self, args: dict) -> dict:
+        status = self._live_status()
+        if status is None:
+            return {
+                "mode": self.config.context_mode,
+                "adapter": self.adapter,
+                "ready": False,
+                "reason_codes": [
+                    "invalid_mode" if self.context_mode is None
+                    else "not_initialized"
+                ],
+                "diagnostics": list(self.config.validate_runtime())[:8],
+            }
+        return {
+            "mode": status.mode.value,
+            "adapter": status.adapter,
+            "ready": status.ready,
+            "status_counts": dict(status.status_counts),
+            "mapping_count": status.mapping_count,
+            "projection_lag": status.projection_lag,
+            "context_vector_ready": status.context_vector_ready,
+            "context_vector_dirty": status.context_vector_dirty,
+            "legacy_vector_ready": status.legacy_vector_ready,
+            "legacy_vector_dirty": status.legacy_vector_dirty,
+            "diagnostics": list(status.diagnostics),
+            "reason_codes": list(status.reason_codes),
+        }
+
+    # ---- mode/health views and mutation boundary helpers ----
+
+    def _live_status(self):
+        """已初始化服务的健康快照；不可用返回 None。
+
+        PRIMARY 每次调用都用与设计门禁相同的评估器重新复查，服务在
+        早前 tools/list 之后降级也不能凭旧健康结论继续服务。
+        """
         service = getattr(self, "context_service", None)
         if service is None:
             return None
         try:
             status = service.status()
         except Exception:
+            return None
+        if status.mode is ContextMode.PRIMARY:
+            try:
+                service._refresh_health()  # 与正式门禁同一评估器，按次复查
+                status = service.status()
+            except Exception:
+                return None
+        return status
+
+    def _contract_view(self):
+        """(adapter, mode, health) 三元组，喂给单一工具注册表。"""
+        status = self._live_status()
+        if status is not None:
+            return status.adapter, status.mode, status
+        if self.context_mode is None:
+            return self.adapter, None, None
+        if (
+            self.adapter == CODEX_ADAPTER
+            and self.context_mode in (ContextMode.SHADOW, ContextMode.PRIMARY)
+            and not self._init_done.is_set()
+        ):
+            # 有界轻量等待：后台 initialize() 先完成 Context 健康评估并
+            # 置位 _service_evaluated，再加载可选的 embedding 模型；超时按
+            # health 未知 fail-closed，绝不等待模型加载。
+            self._service_evaluated.wait(timeout=self._HEALTH_WAIT_TIMEOUT_S)
+            status = self._live_status()
+            if status is not None:
+                return status.adapter, status.mode, status
+        return self.adapter, self.context_mode, None
+
+    def _write_gate_error(self) -> str | None:
+        """Refuse writes on invalid config or a degraded primary gate."""
+        if self.context_mode is None:
+            return ("context configuration is invalid; "
+                    "legacy writes are rejected (fail-closed)")
+        status = self._live_status()
+        if status is None:
             return None
         if status.mode is ContextMode.PRIMARY and not status.ready:
             return ("context primary mode is degraded_legacy; "
@@ -388,12 +804,8 @@ class MemoryMCPServer:
 
     def _index_degraded(self) -> bool:
         """True when a post-commit vector sync left an independent dirty marker."""
-        service = getattr(self, "context_service", None)
-        if service is None:
-            return False
-        try:
-            status = service.status()
-        except Exception:
+        status = self._live_status()
+        if status is None:
             return False
         return bool(status.legacy_vector_dirty or status.context_vector_dirty)
 
@@ -409,12 +821,13 @@ class MemoryMCPServer:
         锁在重建期间持有；持锁进程崩溃时 flock 随 fd 关闭自动释放。
         """
         import fcntl
+        facade = self.context_service.legacy_facade()
         lock_path = self.config.vector_path.with_suffix(
             f"{self.config.vector_path.suffix}.rebuild.lock")
         with open(lock_path, "a") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             try:
-                sqlite_count = len(self.store.all_ids())
+                sqlite_count = len(facade.all_ids())
                 if self.vidx.check_consistency(sqlite_count):
                     self._log("Index already rebuilt by another process, skipping")
                     return
@@ -425,7 +838,8 @@ class MemoryMCPServer:
     def _rebuild_vector_index(self):
         """Rebuild USearch index from SQLite."""
         self._log("Vector index out of sync with SQLite, rebuilding...")
-        all_ids = self.store.all_ids()
+        facade = self.context_service.legacy_facade()
+        all_ids = facade.all_ids()
         if not all_ids:
             self._log("No records in SQLite, skipping rebuild")
             return
@@ -433,7 +847,7 @@ class MemoryMCPServer:
             self._log("Embedding engine not loaded, cannot rebuild vector index")
             return
 
-        records = self.store.get_by_ids(all_ids)
+        records = facade.get_by_ids(all_ids)
         ids = []
         embeddings = []
         for r in records:
@@ -599,17 +1013,24 @@ class MemoryMCPServer:
         if method == "initialize":
             params = request.get("params") or {}
             protocol_version = params.get("protocolVersion", "2024-11-05")
+            result = {
+                "protocolVersion": protocol_version,
+                "capabilities": {"tools": {}},
+                "serverInfo": {
+                    "name": "evolvmem",
+                    "version": "0.1.0",
+                },
+            }
+            adapter, mode, health = self._contract_view()
+            instructions = initialization_instructions(
+                adapter=adapter, mode=mode, health=health
+            )
+            if instructions is not None:
+                result["instructions"] = instructions
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {
-                    "protocolVersion": protocol_version,
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {
-                        "name": "evolvmem",
-                        "version": "0.1.0",
-                    },
-                },
+                "result": result,
             }
 
         elif method == "ping":
@@ -620,123 +1041,21 @@ class MemoryMCPServer:
             }
 
         elif method == "tools/list":
+            adapter, mode, health = self._contract_view()
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "result": {
                     "tools": [
                         {
-                            "name": "memory_search",
-                            "description": "Hybrid memory search: FTS5/trigram exact match + HNSW vector semantic search. Supports Chinese substring matching and semantic similarity.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "query": {
-                                        "type": "string",
-                                        "description": "Search query",
-                                    },
-                                    "top_k": {
-                                        "type": "integer",
-                                        "description": "Number of results to return, default 10",
-                                        "default": 10,
-                                    },
-                                },
-                                "required": ["query"],
-                            },
-                        },
-                        {
-                            "name": "memory_status",
-                            "description": "View memory system status: active count, total records, vector index status.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {},
-                            },
-                        },
-                        {
-                            "name": "memory_add",
-                            "description": "Manually add a memory. Performs automatic conflict detection.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "key": {
-                                        "type": "string",
-                                        "description": "Stable key, format: project:domain:type:topic",
-                                    },
-                                    "value": {
-                                        "type": "string",
-                                        "description": "Memory content (value 至少 10 字符，低信息过渡语会被拒收)",
-                                    },
-                                    "attribute": {
-                                        "type": "string",
-                                        "description": "Category: decision|preference|fact|constraint|user_profile",
-                                        "default": "fact",
-                                    },
-                                    "tags": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                        "description": "List of tags",
-                                    },
-                                    "importance": {
-                                        "type": "number",
-                                        "description": "Importance 1-10 (default 5). 9-10 hard constraints, 7-8 key decisions, 5-6 ordinary facts",
-                                    },
-                                    "tier": {
-                                        "type": "string",
-                                        "enum": ["pinned", "normal", "reference"],
-                                        "description": "pinned = injected every session; normal = scored competition; reference = never injected, only searchable (for long documents)",
-                                    },
-                                    "expires_at": {
-                                        "type": "string",
-                                        "description": "Optional expiry, e.g. 2026-12-31; expired memories stop being injected and get archived",
-                                    },
-                                },
-                                "required": ["key", "value"],
-                            },
-                        },
-                        {
-                            "name": "memory_replace",
-                            "description": "Replace a memory. Old value marked as superseded, new value set to active. Full history preserved.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "key": {
-                                        "type": "string",
-                                        "description": "Stable key of the memory to replace",
-                                    },
-                                    "value": {
-                                        "type": "string",
-                                        "description": "New memory content (value 至少 10 字符，低信息过渡语会被拒收)",
-                                    },
-                                },
-                                "required": ["key", "value"],
-                            },
-                        },
-                        {
-                            "name": "memory_remove",
-                            "description": "Soft-delete a memory (status marked as deleted, data retained).",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "id": {
-                                        "type": "integer",
-                                        "description": "Memory ID",
-                                    },
-                                },
-                                "required": ["id"],
-                            },
-                        },
-                        {
-                            "name": "memory_consolidate",
-                            "description": "Find and merge near-duplicate memories (vector similarity). dry_run=true (default) only reports candidates.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "dry_run": {"type": "boolean", "default": True},
-                                    "threshold": {"type": "number",
-                                                  "description": "similarity threshold, default from config (0.92)"},
-                                },
-                            },
-                        },
+                            "name": spec.name,
+                            "description": spec.description,
+                            "inputSchema": spec.input_schema,
+                            "annotations": spec.annotations,
+                        }
+                        for spec in tool_specs(
+                            adapter=adapter, mode=mode, health=health
+                        )
                     ]
                 },
             }
@@ -745,11 +1064,17 @@ class MemoryMCPServer:
             params = request.get("params", {})
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
-            known_tools = {
-                "memory_search", "memory_status", "memory_add",
-                "memory_replace", "memory_remove", "memory_consolidate",
+            adapter, mode, health = self._contract_view()
+            exposed = {
+                spec.name
+                for spec in tool_specs(adapter=adapter, mode=mode, health=health)
             }
-            if tool_name not in known_tools:
+            if tool_name not in exposed:
+                # 与 tools/list 同一注册表：隐藏工具不能被调用；
+                # 未知工具也无需等待初始化门闩
+                result = {"error": f"Unknown tool: {tool_name}"}
+            elif tool_name.startswith("context_"):
+                # context_* 不等重初始化门闩：服务未就绪即 fail-open 错误
                 result = self.handle_tool_call(tool_name, tool_args)
             else:
                 gate_error = self._init_gate_error()
