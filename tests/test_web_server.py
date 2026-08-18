@@ -15,7 +15,9 @@ from http.server import HTTPServer
 import pytest
 
 from evolvmem.context_models import (
+    ContextContentType,
     ContextMode,
+    ContextScope,
     ContextServiceError,
     ContextStatus,
     ContextTier,
@@ -25,6 +27,7 @@ from evolvmem.context_store import ContextStore
 from evolvmem.memory_store import MemoryStore
 from evolvmem.web_server import (
     _bounded_error,
+    _context_mode,
     api_archive,
     api_delete,
     api_hard_delete,
@@ -71,10 +74,10 @@ def _seed(facade):
 
 @pytest.fixture
 def backend(test_config):
-    """Compat-mode facade + residual legacy store + service, seeded."""
+    """Compat-mode facade + service, seeded; legacy store for read checks."""
     service = _make_service(test_config)
     facade = service.legacy_facade()
-    legacy = MemoryStore(test_config)  # attribute/tags 残留写入与校验读
+    legacy = MemoryStore(test_config)  # 独立连接校验投影行内容
     legacy.initialize()
     ids = _seed(facade)
     yield facade, legacy, service, ids
@@ -172,11 +175,22 @@ def test_memories_filters(backend):
     assert api_memories(facade, {"q": "%"}) == []
 
 
+def test_memories_q_filter_is_case_insensitive(backend):
+    """SQL LIKE 时代的大小写不敏感语义在 Python 过滤下保持不变。"""
+    facade, _, _, _ = backend
+    mem_id = facade.add("proj:ABC:deploy", "Production DEPLOY notes",
+                        attribute="fact")
+    rows = api_memories(facade, {"q": "abc"})
+    assert [r["id"] for r in rows] == [mem_id]
+    rows = api_memories(facade, {"q": "deploy notes"})
+    assert [r["id"] for r in rows] == [mem_id]
+
+
 # ---- update / archive / restore / delete ----
 
 def test_update_metadata_fields(backend):
     facade, legacy, _, ids = backend
-    res = api_update(facade, legacy, ids["warm"], {
+    res = api_update(facade, ids["warm"], {
         "importance": 9.0, "tier": "pinned",
         "attribute": "user_profile", "tags": ["ui", "color"],
     })
@@ -191,7 +205,7 @@ def test_update_metadata_fields(backend):
 def test_update_mirrors_importance_tier_to_context(backend):
     """importance/tier 经门面在同事务同步到映射的 ContextItem。"""
     facade, legacy, service, ids = backend
-    res = api_update(facade, legacy, ids["warm"],
+    res = api_update(facade, ids["warm"],
                      {"importance": 9.0, "tier": "pinned"})
     assert res["ok"]
     context_id = service.store.resolve_legacy_mapping(ids["warm"])
@@ -205,9 +219,9 @@ def test_update_mirrors_importance_tier_to_context(backend):
 
 
 def test_update_attribute_tags_projection_consistent(backend):
-    """attribute/tags 就地更新投影行且 id 不变；Core 映射与条目保持一致。"""
+    """attribute/tags 就地更新投影行且 id 不变；派生字段同事务镜像到 Core。"""
     facade, legacy, service, ids = backend
-    res = api_update(facade, legacy, ids["warm"],
+    res = api_update(facade, ids["warm"],
                      {"attribute": "user_profile", "tags": ["ui", "color"]})
     assert res["ok"]
     m = res["memory"]
@@ -219,14 +233,45 @@ def test_update_attribute_tags_projection_consistent(backend):
     item = service.store.get_item(context_id)
     assert item is not None
     assert item.status is ContextStatus.ACTIVE
+    # content_type/scope/tags 由迁移器公开策略从新投影行推导
+    assert item.content_type is ContextContentType.USER_PROFILE
+    assert item.scope is ContextScope.GLOBAL
+    assert item.tags == ("ui", "color")
+
+
+def test_update_attribute_tags_failure_rolls_back_projection_and_context(
+    test_config,
+):
+    """Core 侧失败时投影行的 attribute/tags 编辑一并回滚（不再两连接两提交）。"""
+
+    class FailingStore(ContextStore):
+        def update_item_from_legacy(self, *args, **kwargs):
+            raise RuntimeError("injected failure with /abs/path detail")
+
+    service = _make_service(test_config, store=FailingStore(test_config))
+    facade = service.legacy_facade()
+    mem_id = facade.add("user:pref:color", "喜欢柔和紫色界面",
+                        attribute="preference", tags=["ui"])
+    context_id = service.store.resolve_legacy_mapping(mem_id)
+
+    with pytest.raises(RuntimeError, match="injected failure"):
+        api_update(facade, mem_id, {"attribute": "decision", "tags": ["x"]})
+
+    row = facade.get_by_id(mem_id)
+    assert row["attribute"] == "preference"
+    assert row["tags"] == "ui"
+    item = service.store.get_item(context_id)
+    assert item.content_type is ContextContentType.PREFERENCE
+    assert item.tags == ("ui",)
+    service.close()
 
 
 def test_update_validation(backend):
     facade, legacy, _, ids = backend
-    assert not api_update(facade, legacy, ids["warm"],
+    assert not api_update(facade, ids["warm"],
                           {"importance": 99})["ok"]
-    assert not api_update(facade, legacy, ids["warm"], {"tier": "bogus"})["ok"]
-    assert not api_update(facade, legacy, 9999, {"importance": 5})["ok"]
+    assert not api_update(facade, ids["warm"], {"tier": "bogus"})["ok"]
+    assert not api_update(facade, 9999, {"importance": 5})["ok"]
     # 校验失败后数据未变
     m = legacy.get_by_id(ids["warm"])
     assert m["importance"] == 6.0 and m["tier"] == "normal"
@@ -310,11 +355,9 @@ def test_legacy_mode_writes_stay_legacy_only(test_config):
     """切换前 legacy 模式：Web 写保持旧行为，Core 表保持空。"""
     service = _make_service(test_config, mode=ContextMode.LEGACY)
     facade = service.legacy_facade()
-    legacy = MemoryStore(test_config)
-    legacy.initialize()
     mem_id = facade.add("p:t:legacy", "旧模式记忆", attribute="fact")
 
-    assert api_update(facade, legacy, mem_id,
+    assert api_update(facade, mem_id,
                       {"importance": 8.0, "attribute": "decision",
                        "tags": ["x"]})["ok"]
     m = facade.get_by_id(mem_id)
@@ -329,7 +372,25 @@ def test_legacy_mode_writes_stay_legacy_only(test_config):
     # legacy 模式不声称 Core 变化
     assert service.store.count_by_status() == {}
     service.close()
-    legacy.close()
+
+
+def test_invalid_context_mode_fails_closed_to_legacy(test_config):
+    """非法 context_mode（如 typo）：handler 可构造，读写全部走 legacy 后端。"""
+    test_config.context_mode = "compatt"
+    assert _context_mode(test_config) is ContextMode.LEGACY
+
+    service = ContextService(test_config)
+    service.initialize(mode=_context_mode(test_config), adapter="web")
+    handler = make_handler(service)
+    assert handler is not None
+    facade = service.legacy_facade()
+    mem_id = facade.add("p:t:legacy", "旧模式记忆", attribute="fact")
+    assert facade.get_by_id(mem_id)["value"] == "旧模式记忆"
+    assert api_update(facade, mem_id,
+                      {"importance": 8.0, "attribute": "decision"})["ok"]
+    assert facade.get_by_id(mem_id)["attribute"] == "decision"
+    assert service.store.count_by_status() == {}
+    service.close()
 
 
 # ---- bounded 500 surface ----
@@ -346,7 +407,7 @@ def test_bounded_error_surface():
 
 @pytest.fixture
 def http_server(test_config):
-    """Serving thread owns its own service + residual store (SQLite threads)."""
+    """Serving thread owns its own service (SQLite connections are per-thread)."""
     service = _make_service(test_config)  # 外层：播种 + Core 侧断言
     facade = service.legacy_facade()
     ids = _seed(facade)
@@ -355,16 +416,13 @@ def http_server(test_config):
     ready = threading.Event()
 
     def serve():
-        # sqlite 连接不能跨线程使用：服务线程内独立持有 service 与 store
+        # sqlite 连接不能跨线程使用：服务线程内独立持有 service
         inner = _make_service(test_config)
-        inner_legacy = MemoryStore(test_config)
-        inner_legacy.initialize()
-        srv = HTTPServer(("127.0.0.1", 0), make_handler(inner, inner_legacy))
+        srv = HTTPServer(("127.0.0.1", 0), make_handler(inner))
         holder["srv"] = srv
         ready.set()
         srv.serve_forever()
         inner.close()
-        inner_legacy.close()
 
     t = threading.Thread(target=serve, daemon=True)
     t.start()
@@ -420,6 +478,24 @@ def test_http_write_flow(http_server):
         assert e.code == 404
 
 
+def test_http_update_attribute_tags_mirrors_context(http_server):
+    """HTTP shape 不变：attribute/tags 更新经类型化边界同事务镜像到 Core。"""
+    base, ids, service = http_server
+    warm_ctx = service.store.resolve_legacy_mapping(ids["warm"])
+
+    res = _post(f"{base}/api/memory/{ids['warm']}/update",
+                {"attribute": "decision", "tags": ["ui", "color"]})
+
+    assert res["ok"]
+    assert res["memory"]["id"] == ids["warm"]
+    assert res["memory"]["attribute"] == "decision"
+    assert res["memory"]["tags"] == "ui,color"
+    item = service.store.get_item(warm_ctx)
+    assert item.content_type is ContextContentType.DECISION
+    assert item.scope is ContextScope.PROJECT
+    assert item.tags == ("ui", "color")
+
+
 def test_http_hard_delete_removes_both_sides(http_server):
     base, ids, service = http_server
     context_id = service.store.resolve_legacy_mapping(ids["warm"])
@@ -460,14 +536,11 @@ def test_http_context_failure_500_bounded_no_partial_state(test_config):
 
     def serve():
         inner = _make_service(test_config, store=FailingStore(test_config))
-        inner_legacy = MemoryStore(test_config)
-        inner_legacy.initialize()
-        srv = HTTPServer(("127.0.0.1", 0), make_handler(inner, inner_legacy))
+        srv = HTTPServer(("127.0.0.1", 0), make_handler(inner))
         holder["srv"] = srv
         ready.set()
         srv.serve_forever()
         inner.close()
-        inner_legacy.close()
 
     t = threading.Thread(target=serve, daemon=True)
     t.start()

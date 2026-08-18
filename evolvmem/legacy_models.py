@@ -191,11 +191,18 @@ class LegacyRemoveRequest:
 
 @dataclass(frozen=True, slots=True)
 class LegacyUpdateRequest:
-    """In-place importance/tier edit; None fields keep their stored values."""
+    """In-place metadata edit; None fields keep their stored values.
+
+    attribute/tags follow the LegacyReplaceRequest optional-field
+    conventions; when present they move the mapped ContextItem's derived
+    content_type/scope/tags along in the same transaction.
+    """
 
     legacy_id: int
     importance: float | None = None
     tier: str | None = None
+    attribute: str | None = None
+    tags: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         _validate_positive_int(self.legacy_id, "legacy_id")
@@ -207,6 +214,12 @@ class LegacyUpdateRequest:
             ),
         )
         object.__setattr__(self, "tier", _validate_optional_tier(self.tier))
+        if self.attribute is not None:
+            object.__setattr__(
+                self, "attribute", _normalize_text(self.attribute, "attribute")
+            )
+        if self.tags is not None:
+            object.__setattr__(self, "tags", _normalize_tags(self.tags))
 
 
 @dataclass(frozen=True, slots=True)

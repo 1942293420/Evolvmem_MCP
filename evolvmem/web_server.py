@@ -2,14 +2,10 @@
 
 Serves a single-page UI (evolvmem/web_static/index.html) and a JSON API on
 top of a ContextService + legacy compatibility facade — no third-party
-dependencies. Lifecycle mutations (importance/tier update, archive, restore,
-soft delete, hard delete) route through the facade so compat/shadow/primary
-modes mirror them onto the mapped Context side in one transaction; list/read
-keep returning legacy rows through the facade.
-
-Residual bypass (to be removed once the typed legacy_update carries
-attribute/tags): the in-place attribute/tags projection edit still runs on a
-held MemoryStore — see `_update_classification`.
+dependencies. Every lifecycle mutation (importance/tier/attribute/tags
+update, archive, restore, soft delete, hard delete) routes through the typed
+facade so compat/shadow/primary modes mirror it onto the mapped Context side
+in one transaction; list/read keep returning legacy rows through the facade.
 
 Run:
     PYTHONPATH=. .venv/bin/python -m evolvmem.web_server --port 9377
@@ -23,10 +19,9 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 from evolvmem.config import Config
-from evolvmem.context_models import ContextMode, ContextServiceError
+from evolvmem.context_models import ContextMode, ContextServiceError, parse_context_mode
 from evolvmem.context_service import ContextService
 from evolvmem.legacy_compat import LegacyCompatibilityFacade
-from evolvmem.memory_store import MemoryStore, _now_iso
 
 _STATIC_INDEX = Path(__file__).parent / "web_static" / "index.html"
 
@@ -53,6 +48,15 @@ def _bounded_error(exc: Exception) -> str:
     if isinstance(exc, ContextServiceError):
         return f"context_error:{exc.code}"
     return type(exc).__name__
+
+
+def _context_mode(config: Config) -> ContextMode:
+    """Parse the configured mode; unknown values fail closed to legacy serving.
+
+    mcp_server 对非法 mode 置 None 并关闭 Context 功能；Web 控制台本质是
+    legacy 管理界面，按 legacy 继续服务（Core 不写不读）。
+    """
+    return parse_context_mode(config.context_mode) or ContextMode.LEGACY
 
 
 # ---- API logic (plain functions over the facade, unit-testable) ----
@@ -144,7 +148,12 @@ def api_memories(facade: LegacyCompatibilityFacade, params: dict) -> list[dict]:
         needle = f",{project},"
         rows = [r for r in rows if needle in f",{r['tags'] or ''},"]
     if q:
-        rows = [r for r in rows if q in r["key"] or q in r["value"]]
+        # 恢复 SQL LIKE 时代的大小写不敏感语义
+        needle = q.casefold()
+        rows = [
+            r for r in rows
+            if needle in r["key"].casefold() or needle in r["value"].casefold()
+        ]
 
     rows = _sort_rows(rows, sort, desc)
     return [{field: r.get(field) for field in _MEMORY_FIELDS}
@@ -160,15 +169,14 @@ def _sort_rows(rows: list[dict], sort: str, desc: bool) -> list[dict]:
     return present + missing
 
 
-def api_update(facade: LegacyCompatibilityFacade, legacy_store: MemoryStore,
-               mem_id: int, body: dict) -> dict:
-    """Update importance/tier via the facade; attribute/tags in place.
+def api_update(facade: LegacyCompatibilityFacade, mem_id: int, body: dict) -> dict:
+    """Update importance/tier/attribute/tags in place through the typed facade.
 
-    importance/tier mirror onto the mapped ContextItem inside the service
-    transaction. The attribute/tags edit is the residual projection-only
-    bypass documented at the top of this module: it keeps the legacy row's
-    id/history intact; the ContextItem's derived content_type/tags follow
-    once the typed legacy_update carries those fields.
+    All four fields share the service's single transaction, which also mirrors
+    the edit onto the mapped ContextItem (content_type/scope/tags re-derive
+    from the new projection row through the migrator's public policy). The
+    legacy row keeps its id/history; the HTTP request/response shape is
+    unchanged.
     """
     if facade.get_by_id(mem_id) is None:
         return {"ok": False, "error": "not found"}
@@ -181,37 +189,32 @@ def api_update(facade: LegacyCompatibilityFacade, legacy_store: MemoryStore,
             return {"ok": False, "error": "importance must be 0-10"}
     if tier is not None and tier not in _VALID_TIERS:
         return {"ok": False, "error": "invalid tier"}
-    if importance is not None or tier is not None:
-        facade.update_metadata(mem_id, importance=importance, tier=tier)
 
-    _update_classification(legacy_store, mem_id, body)
+    # Web 侧把 JSON 形状换算成类型化边界形状（legacy_models 的边界只进不出）
+    attribute = str(body["attribute"]) if "attribute" in body else None
+    tags = None
+    if "tags" in body:
+        raw_tags = body["tags"]
+        if isinstance(raw_tags, list):
+            tags = tuple(str(tag) for tag in raw_tags)
+        else:
+            tags = tuple(str(raw_tags).split(","))
+
+    if (
+        importance is not None
+        or tier is not None
+        or attribute is not None
+        or tags is not None
+    ):
+        facade.update_metadata(
+            mem_id,
+            importance=importance,
+            tier=tier,
+            attribute=attribute,
+            tags=tags,
+        )
 
     return {"ok": True, "memory": facade.get_by_id(mem_id)}
-
-
-def _update_classification(store: MemoryStore, mem_id: int,
-                           body: dict) -> None:
-    """Residual in-place attribute/tags projection edit (see api_update)."""
-    sets, args = [], []
-    if "attribute" in body:
-        sets.append("attribute = ?")
-        args.append(str(body["attribute"]))
-    if "tags" in body:
-        tags = body["tags"]
-        if isinstance(tags, list):
-            tags = ",".join(str(t) for t in tags)
-        sets.append("tags = ?")
-        args.append(str(tags))
-    if not sets:
-        return
-    sets.append("updated_at = ?")
-    args.append(_now_iso())
-    args.append(mem_id)
-    store._execute(
-        f"UPDATE memories SET {', '.join(sets)} WHERE id = ?",
-        tuple(args),
-    )
-    store._conn.commit()
 
 
 def api_archive(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
@@ -254,12 +257,8 @@ def api_hard_delete(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
 _MEM_ACTION_RE = re.compile(r"^/api/memory/(\d+)/(update|archive|restore|delete|hard_delete)$")
 
 
-def make_handler(service: ContextService, legacy_store: MemoryStore):
-    """Build the handler owning a ContextService facade (+ residual store).
-
-    legacy_store is used solely for the residual attribute/tags projection
-    edit in api_update; everything else goes through the facade.
-    """
+def make_handler(service: ContextService):
+    """Build the handler owning a ContextService compatibility facade."""
     facade = service.legacy_facade()
 
     class MemoryWebHandler(BaseHTTPRequestHandler):
@@ -332,7 +331,7 @@ def make_handler(service: ContextService, legacy_store: MemoryStore):
 
             try:
                 if action == "update":
-                    result = api_update(facade, legacy_store, mem_id, body)
+                    result = api_update(facade, mem_id, body)
                 elif action == "archive":
                     result = api_archive(facade, mem_id)
                 elif action == "restore":
@@ -356,16 +355,14 @@ def run(port: int = 9377, data_dir: str | None = None,
     config = Config.from_file()
     if data_dir:
         config.data_dir = Path(data_dir)
-    # 生产写入口：ContextService（按配置 mode）+ 兼容门面
+    # 生产写入口：ContextService（按配置 mode，非法值 fail-closed 到 legacy）
+    # + 兼容门面；legacy 投影 schema 经服务自有后端幂等引导（与 mcp_server
+    # 相同），本模块不再持有裸 MemoryStore
     service = ContextService(config)
-    service.initialize(
-        mode=ContextMode(config.context_mode), adapter=config.adapter or "web"
-    )
-    # 残留：attribute/tags 的就地投影编辑尚无类型化通道（见模块 docstring）
-    legacy_store = MemoryStore(config)
-    legacy_store.initialize()
+    service.initialize(mode=_context_mode(config), adapter=config.adapter or "web")
+    service._legacy_backend()
     # 单线程服务：sqlite 连接不支持跨线程使用；本地单用户控制台无需并发
-    server = HTTPServer((host, port), make_handler(service, legacy_store))
+    server = HTTPServer((host, port), make_handler(service))
     print(f"EvolvMem web console: http://{host}:{port} "
           f"(data: {config.db_path})")
     try:
@@ -375,7 +372,6 @@ def run(port: int = 9377, data_dir: str | None = None,
     finally:
         server.server_close()
         service.close()
-        legacy_store.close()
 
 
 def main() -> None:

@@ -7,8 +7,11 @@ import numpy as np
 import pytest
 
 from evolvmem.context_models import (
+    ContextContentType,
     ContextLayer,
     ContextMode,
+    ContextScope,
+    ContextServiceError,
     ContextStatus,
     ContextTier,
     ContextValidationError,
@@ -357,6 +360,23 @@ def test_id_requests_require_positive_integer_ids():
     assert LegacyUpdateRequest(legacy_id=1).importance is None
 
 
+def test_update_request_normalizes_optional_classification_fields():
+    """attribute/tags follow the ReplaceRequest optional-field conventions."""
+    request = LegacyUpdateRequest(
+        legacy_id=1, attribute=" Decision ", tags=[" b ", "a", "b", ""]
+    )
+    assert request.attribute == "Decision"
+    assert request.tags == ("b", "a")
+    # 缺省 None = 不变更该字段
+    plain = LegacyUpdateRequest(legacy_id=1)
+    assert plain.attribute is None
+    assert plain.tags is None
+    with pytest.raises(ContextValidationError):
+        LegacyUpdateRequest(legacy_id=1, attribute=1)
+    with pytest.raises(ContextValidationError):
+        LegacyUpdateRequest(legacy_id=1, tags="not-a-sequence")
+
+
 def test_access_request_dedupes_and_validates_ids():
     request = LegacyAccessRequest(legacy_ids=[3, 1, 3, 1])
     assert request.legacy_ids == (3, 1)
@@ -693,6 +713,105 @@ def test_update_of_a_nonexistent_id_or_empty_change_is_a_noop(test_config, store
     service.close()
 
 
+def test_update_mirrors_attribute_tags_and_derived_fields_on_both_sides(
+    test_config, store
+):
+    """attribute/tags 与 importance/tier 一样同事务镜像到映射的 ContextItem。
+
+    content_type 由迁移器公开策略 content_type_for 从刚落库的投影行重新推导，
+    scope 作为 content_type 的纯派生一并跟随，两侧不再能悄悄分叉。
+    """
+    _create_legacy_schema(test_config)
+    service = _make_service(test_config, store)
+    legacy_id, context_id = _seed_pair(service, attribute="fact", tags=["a"])
+
+    result = service.legacy_update(
+        LegacyUpdateRequest(legacy_id=legacy_id, attribute="decision", tags=("x", "y"))
+    )
+
+    assert result.changed is True
+    assert result.context_id == context_id
+    row = _legacy_row(test_config, legacy_id)
+    assert row["attribute"] == "decision"
+    assert row["tags"] == "x,y"
+    item = store.get_item(context_id)
+    assert item.content_type is ContextContentType.DECISION
+    assert item.scope is ContextScope.PROJECT
+    assert item.tags == ("x", "y")
+    # 未指定字段保持原值
+    assert item.importance == 5.0
+    assert item.tier is ContextTier.NORMAL
+    service.close()
+
+
+def test_update_attribute_to_global_type_moves_scope_with_content_type(
+    test_config, store
+):
+    _create_legacy_schema(test_config)
+    service = _make_service(test_config, store)
+    legacy_id, context_id = _seed_pair(service, attribute="fact")
+    assert store.get_item(context_id).scope is ContextScope.PROJECT
+
+    service.legacy_update(
+        LegacyUpdateRequest(legacy_id=legacy_id, attribute="preference")
+    )
+
+    item = store.get_item(context_id)
+    assert item.content_type is ContextContentType.PREFERENCE
+    assert item.scope is ContextScope.GLOBAL
+    service.close()
+
+
+def test_update_classification_rolls_back_both_sides_on_core_failure(test_config):
+    """Core 侧写入失败时投影行的 attribute/tags 编辑一并回滚，无部分更新。"""
+    _create_legacy_schema(test_config)
+
+    class FailingStore(ContextStore):
+        def update_item_from_legacy(self, *args, **kwargs):
+            raise InjectedFailure("update_item_from_legacy")
+
+    store = FailingStore(test_config)
+    store.initialize()
+    service = _make_service(test_config, store)
+    legacy_id, context_id = _seed_pair(service, attribute="fact", tags=["a"])
+    before_row = _legacy_row(test_config, legacy_id)
+
+    with pytest.raises(InjectedFailure):
+        service.legacy_update(
+            LegacyUpdateRequest(legacy_id=legacy_id, attribute="decision", tags=("x",))
+        )
+
+    assert _legacy_row(test_config, legacy_id) == before_row
+    item = store.get_item(context_id)
+    assert item.content_type is ContextContentType.FACT
+    assert item.tags == ("a",)
+    service.close()
+
+
+def test_legacy_mode_update_applies_attribute_and_tags_in_place(test_config, store):
+    """legacy 模式：四字段就地更新 memories 行（旧行为等价），Core 保持空。"""
+    _create_legacy_schema(test_config)
+    service = _make_service(test_config, store, mode=ContextMode.LEGACY)
+    added = service.legacy_add(
+        LegacyAddRequest(
+            key="alpha", value="old mode value", attribute="fact", tags=("a",)
+        )
+    )
+    legacy_id = added.legacy_id
+
+    result = service.legacy_update(
+        LegacyUpdateRequest(legacy_id=legacy_id, attribute="decision", tags=("x", "y"))
+    )
+
+    assert result.changed is True
+    assert result.context_id is None
+    row = _legacy_row(test_config, legacy_id)
+    assert row["attribute"] == "decision"
+    assert row["tags"] == "x,y"
+    assert store.count_by_status() == {}
+    service.close()
+
+
 # ---- archive / restore ----
 
 
@@ -715,6 +834,49 @@ def test_archive_and_restore_move_both_sides_together(test_config, store):
     missing = service.legacy_archive(LegacyStatusRequest(legacy_id=31337))
     assert missing.changed is False
     assert missing.context_id is None
+    service.close()
+
+
+def _delete_item_leaving_dangling_mapping(config, context_id):
+    """Physically drop a mapped ContextItem, leaving a dangling mapping behind.
+
+    A fresh SQLite connection defaults to foreign_keys=OFF, so the delete
+    succeeds where the store's own FK-enforcing connection would refuse it.
+    """
+    conn = sqlite3.connect(config.db_path)
+    try:
+        conn.execute("DELETE FROM context_items WHERE id=?", (context_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("mutation", ["archive", "update", "remove"])
+def test_dangling_mapping_rolls_back_the_whole_mutation(test_config, store, mutation):
+    """映射目标已消失时不得静默半提交：整体抛错回滚，投影与映射保持原样。"""
+    _create_legacy_schema(test_config)
+    service = _make_service(test_config, store)
+    legacy_id, context_id = _seed_pair(service, importance=5.0)
+    _delete_item_leaving_dangling_mapping(test_config, context_id)
+    before_row = _legacy_row(test_config, legacy_id)
+
+    if mutation == "archive":
+        def call():
+            return service.legacy_archive(LegacyStatusRequest(legacy_id=legacy_id))
+    elif mutation == "update":
+        def call():
+            return service.legacy_update(
+                LegacyUpdateRequest(legacy_id=legacy_id, importance=8.0)
+            )
+    else:
+        def call():
+            return service.legacy_remove(LegacyRemoveRequest(legacy_id=legacy_id))
+
+    with pytest.raises(ContextServiceError):
+        call()
+
+    assert _legacy_row(test_config, legacy_id) == before_row
+    assert store.resolve_legacy_mapping(legacy_id) == context_id
     service.close()
 
 
@@ -1304,4 +1466,37 @@ def test_unavailable_engine_commits_sqlite_and_marks_both_indexes_dirty(
     status = service.status()
     assert status.legacy_vector_dirty is True
     assert status.context_vector_dirty is True
+    service.close()
+
+
+def test_exploding_context_synchronizer_keeps_commit_and_marks_context_dirty(
+    test_config, store
+):
+    """同步器自身爆炸（区别于单条同步失败）：mutation 正常返回已提交的 ID，
+    Context 侧如实置 dirty 等待重建，绝不向调用方抛错（retry 会造成重复写）。"""
+    _create_legacy_schema(test_config)
+    test_config.embedding_dim = 3
+    service, legacy_index, context_index = _make_real_vector_service(
+        test_config, store, engine=FixedVectorEngine()
+    )
+
+    class ExplodingSynchronizer:
+        def remove_l0(self, item_id):
+            raise RuntimeError("synchronizer exploded")
+
+        def upsert_active_l0(self, item_id, l0):
+            raise RuntimeError("synchronizer exploded")
+
+    service._synchronizer = ExplodingSynchronizer()
+    result = service.legacy_add(LegacyAddRequest(key="alpha", value="vectorized value"))
+
+    assert result.changed is True
+    assert result.legacy_id is not None and result.context_id is not None
+    assert _legacy_row(test_config, result.legacy_id)["status"] == "active"
+    assert store.get_item(result.context_id).status is ContextStatus.ACTIVE
+    assert context_index.is_dirty() is True
+    assert legacy_index.is_dirty() is False
+    status = service.status()
+    assert status.context_vector_dirty is True
+    assert status.legacy_vector_dirty is False
     service.close()

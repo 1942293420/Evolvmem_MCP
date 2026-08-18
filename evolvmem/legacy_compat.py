@@ -122,10 +122,18 @@ class LegacyCompatibilityFacade:
         mem_id: int,
         importance: float | None = None,
         tier: str | None = None,
+        attribute: str | None = None,
+        tags: list[str] | tuple[str, ...] | None = None,
     ) -> None:
-        """Update importance/tier in place on both mapped sides."""
+        """Update importance/tier/attribute/tags in place on both mapped sides."""
         self._service.legacy_update(
-            LegacyUpdateRequest(legacy_id=mem_id, importance=importance, tier=tier)
+            LegacyUpdateRequest(
+                legacy_id=mem_id,
+                importance=importance,
+                tier=tier,
+                attribute=attribute,
+                tags=None if tags is None else tuple(tags),
+            )
         )
 
     def archive(self, mem_id: int) -> None:

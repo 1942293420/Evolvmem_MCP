@@ -13,9 +13,8 @@ Parses production adapter modules and fails on new raw-store write bypasses:
    assigned from ``MemoryStore(...)`` (no exemptions, ever).
 
 Exemptions are function-scoped and document known residuals only:
-web_server keeps the in-place attribute/tags projection edit until the typed
-legacy_update carries those fields; the migration utility may bootstrap the
-legacy schema (the plan allows MemoryStore in migration utilities).
+the migration utility may bootstrap the legacy schema (the plan allows
+MemoryStore in migration utilities).
 """
 
 import ast
@@ -50,10 +49,6 @@ _PRIVATE_ATTRS = frozenset({"_conn", "_execute"})
 
 # Function-scoped residuals; each entry must name its removal condition.
 _EXEMPTIONS = {
-    # attribute/tags 就地投影编辑：待 legacy_update 类型化携带这两个字段后移除
-    ("evolvmem/web_server.py", "private_access"): {"_update_classification"},
-    ("evolvmem/web_server.py", "raw_sql"): {"_update_classification"},
-    ("evolvmem/web_server.py", "instantiate"): {"run"},
     # 迁移工具获准使用 MemoryStore 建 legacy schema（不进行任何 mutation 调用）
     ("migrate_claude_mem.py", "instantiate"): {"_ensure_legacy_schema"},
 }
@@ -257,11 +252,8 @@ class TestGuardSelfCheck:
         assert _violations(src, "evolvmem/consolidator.py") == []
 
     def test_exemptions_stay_function_scoped(self):
-        # 同一个文件里，豁免函数之外的 ._execute 仍然违规
-        src = "def helper(store):\n    store._execute('SELECT 1')\n"
-        assert _violations(src, "evolvmem/web_server.py")
-        src_ok = (
-            "def _update_classification(store, mem_id, body):\n"
-            "    store._execute('UPDATE memories SET tags=? WHERE id=?', ())"
-        )
-        assert _violations(src_ok, "evolvmem/web_server.py") == []
+        # 同一个文件里，豁免函数之外的 MemoryStore 实例化仍然违规
+        src = "def helper(config):\n    store = MemoryStore(config)\n"
+        assert _violations(src, "migrate_claude_mem.py")
+        src_ok = "def _ensure_legacy_schema(config):\n    store = MemoryStore(config)\n"
+        assert _violations(src_ok, "migrate_claude_mem.py") == []

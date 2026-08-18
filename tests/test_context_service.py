@@ -2,6 +2,8 @@
 
 from contextlib import contextmanager
 from dataclasses import fields
+import fcntl
+import os
 from pathlib import Path
 import sqlite3
 
@@ -30,6 +32,7 @@ from evolvmem.context_models import (
 from evolvmem.context_renderer import ContextRenderResult
 from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
+from evolvmem.cutover_lock import CutoverLock
 from evolvmem.legacy_models import (
     LegacyAddRequest,
     LegacyExtractionItem,
@@ -105,9 +108,36 @@ class RecordingStore(ContextStore):
         )
 
 
+class LockProbeStore(RecordingStore):
+    """Records whether update_access ran while the cutover lock was held shared."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.lock_states: list[bool] = []
+
+    def update_access(self, item_ids):
+        self.lock_states.append(self._shared_lock_held())
+        super().update_access(item_ids)
+
+    def _shared_lock_held(self) -> bool:
+        # flock locks are per open file description: while the service holds
+        # the shared lock, a non-blocking exclusive acquire on a fresh fd of
+        # the same file must fail even within this process.
+        path = CutoverLock(self.config)._lock_path()
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return False
+        finally:
+            os.close(fd)
+
+
 class FakeVectorIndex:
     """Canned vector state with the same duck-typed surface as VectorIndex."""
-
     def __init__(self, config, *, count=0, dirty=False, path=None):
         self.path = (path or config.context_vector_path).resolve()
         self._count = count
@@ -803,6 +833,66 @@ def test_search_never_loads_pinned_policy_seeds(test_config, store):
     service.close()
 
 
+def test_search_updates_access_under_the_shared_cutover_lock(test_config):
+    with LockProbeStore(test_config) as store:
+        item = add_item(store, "alpha", l0="zebra alpha summary")
+        service = make_service(
+            test_config,
+            store,
+            retriever=FakeRetriever(results=(_result(id=item.id),)),
+        )
+
+        service.search(_search_request())
+
+        assert store.update_access_calls == [[item.id]]
+        assert store.lock_states == [True]  # 更新发生在共享锁内
+        service.close()
+
+
+def test_search_mirrors_access_to_mapped_legacy_rows(test_config, store):
+    """Core 命中在同一事务把 access +1 镜像到映射的 legacy 投影行。
+
+    遗忘引擎读的是 legacy 投影计数；只动 Core 侧会让 Codex 热项看起来闲置。
+    """
+    with MemoryStore(test_config):
+        pass  # legacy projection schema, mirroring a pre-cutover database
+    service = make_service(test_config, store)
+    hit = service.legacy_add(LegacyAddRequest(key="alpha", value="zebra alpha"))
+    miss = service.legacy_add(LegacyAddRequest(key="beta", value="unrelated note"))
+    service.retriever = FakeRetriever(results=(_result(id=hit.context_id),))
+
+    results = service.search(_search_request())
+
+    assert [result.id for result in results] == [hit.context_id]
+    assert store.get_item(hit.context_id).access_count == 1
+    assert (
+        store.legacy_projection().get_by_id(hit.legacy_id)["access_count"] == 1
+    )
+    # 未命中项双侧都不动
+    assert store.get_item(miss.context_id).access_count == 0
+    assert (
+        store.legacy_projection().get_by_id(miss.legacy_id)["access_count"] == 0
+    )
+    service.close()
+
+
+def test_search_skips_legacy_mirror_for_unmapped_core_items(test_config, store):
+    with MemoryStore(test_config):
+        pass
+    native = add_item(store, "native", l0="zebra native summary")
+    service = make_service(
+        test_config,
+        store,
+        retriever=FakeRetriever(results=(_result(id=native.id),)),
+    )
+
+    service.search(_search_request())
+
+    assert store.get_item(native.id).access_count == 1  # Core 侧照常
+    assert store.legacy_ids_mapped_to_items([native.id]) == ()
+    service.close()
+
+
 # ---- session_start orchestration ----
 
 
@@ -907,6 +997,40 @@ def test_session_start_renderer_failure_or_empty_block_skips_access_update(
     assert store.update_access_calls == []
     failing.close()
     empty.close()
+
+
+def test_session_start_updates_access_under_the_shared_cutover_lock(test_config):
+    with LockProbeStore(test_config) as store:
+        item = add_item(store, "alpha", l0="zebra alpha summary")
+        service = make_service(
+            test_config,
+            store,
+            retriever=FakeRetriever(results=(_result(id=item.id),)),
+        )
+
+        result = service.session_start(_session_request())
+
+        assert result.selected_ids == (item.id,)
+        assert store.update_access_calls == [[item.id]]
+        assert store.lock_states == [True]  # 更新发生在共享锁内
+        service.close()
+
+
+def test_session_start_mirrors_access_to_mapped_legacy_rows(test_config, store):
+    with MemoryStore(test_config):
+        pass  # legacy projection schema, mirroring a pre-cutover database
+    service = make_service(test_config, store)
+    hit = service.legacy_add(LegacyAddRequest(key="alpha", value="zebra alpha"))
+    service.retriever = FakeRetriever(results=(_result(id=hit.context_id),))
+
+    result = service.session_start(_session_request())
+
+    assert hit.context_id in result.selected_ids
+    assert store.get_item(hit.context_id).access_count == 1
+    assert (
+        store.legacy_projection().get_by_id(hit.legacy_id)["access_count"] == 1
+    )
+    service.close()
 
 
 def test_workspace_paths_normalize_to_basename_and_alias(test_config, store):

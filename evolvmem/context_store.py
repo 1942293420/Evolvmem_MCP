@@ -237,7 +237,12 @@ _FTS_TRIGRAM_TRIGGER_STATEMENTS: tuple[str, ...] = (
 
 
 class ContextStore:
-    """SQLite store that owns context tables without changing legacy memories."""
+    """SQLite store owning the context tables and the shared connection.
+
+    Legacy memories rows change only through the borrowed-connection
+    projection repository and the typed classification mirror, always inside
+    the caller's transaction; the store never owns legacy schema or history.
+    """
 
     def __init__(self, config: Config):
         self.config = config
@@ -656,6 +661,18 @@ class ContextStore:
         ).fetchone()
         return None if row is None else int(row["context_item_id"])
 
+    def legacy_ids_mapped_to_items(self, item_ids: list[int]) -> tuple[int, ...]:
+        """Legacy projection ids mapped to any of the given Context items, sorted."""
+        if not item_ids:
+            return ()
+        placeholders = ",".join("?" for _ in item_ids)
+        rows = self._connection().execute(
+            "SELECT legacy_memory_id FROM legacy_memory_migrations "
+            f"WHERE context_item_id IN ({placeholders}) ORDER BY legacy_memory_id",
+            tuple(item_ids),
+        ).fetchall()
+        return tuple(int(row["legacy_memory_id"]) for row in rows)
+
     def set_supersession_links(
         self,
         item_id: int,
@@ -713,9 +730,22 @@ class ContextStore:
         return cursor.rowcount > 0
 
     def update_item_from_legacy(
-        self, item_id: int, request: LegacyProjectionUpdate
+        self,
+        item_id: int,
+        request: LegacyProjectionUpdate,
+        *,
+        content_type: ContextContentType | None = None,
+        scope: ContextScope | None = None,
+        tags: tuple[str, ...] | None = None,
     ) -> bool:
-        """Mirror a legacy metadata edit onto the exact mapped Context item."""
+        """Mirror a legacy metadata edit onto the exact mapped Context item.
+
+        importance/tier ride the projection update; attribute-driven
+        derivations (content_type and its scope) and tags arrive already
+        resolved through the migrator's public policy, so Core inherits
+        exactly what the projection stored. Returns False when the mapped
+        item does not exist.
+        """
         self._require_transaction("update_item_from_legacy")
         conn = self._connection()
         updated = False
@@ -729,6 +759,56 @@ class ContextStore:
             cursor = conn.execute(
                 "UPDATE context_items SET tier=?, updated_at=? WHERE id=?",
                 (request.tier, _now_iso(), item_id),
+            )
+            updated = cursor.rowcount > 0 or updated
+        if content_type is not None:
+            cursor = conn.execute(
+                "UPDATE context_items SET content_type=?, updated_at=? WHERE id=?",
+                (content_type.value, _now_iso(), item_id),
+            )
+            updated = cursor.rowcount > 0 or updated
+        if scope is not None:
+            cursor = conn.execute(
+                "UPDATE context_items SET scope=?, updated_at=? WHERE id=?",
+                (scope.value, _now_iso(), item_id),
+            )
+            updated = cursor.rowcount > 0 or updated
+        if tags is not None:
+            cursor = conn.execute(
+                "UPDATE context_items SET tags=?, updated_at=? WHERE id=?",
+                (self._encode_tags(tags), _now_iso(), item_id),
+            )
+            updated = cursor.rowcount > 0 or updated
+        return updated
+
+    def update_legacy_projection_classification(
+        self,
+        legacy_id: int,
+        *,
+        attribute: str | None = None,
+        tags: tuple[str, ...] | None = None,
+    ) -> bool:
+        """In-place attribute/tags edit on one legacy projection row.
+
+        Joins the caller's transaction like every projection write (the
+        repository shares this connection); None fields keep their stored
+        values. Returns False when the id does not exist.
+        """
+        self._require_transaction("update_legacy_projection_classification")
+        if attribute is None and tags is None:
+            return True  # no classification change requested
+        conn = self._connection()
+        updated = False
+        if attribute is not None:
+            cursor = conn.execute(
+                "UPDATE memories SET attribute=?, updated_at=? WHERE id=?",
+                (attribute, _now_iso(), legacy_id),
+            )
+            updated = cursor.rowcount > 0
+        if tags is not None:
+            cursor = conn.execute(
+                "UPDATE memories SET tags=?, updated_at=? WHERE id=?",
+                (",".join(tags), _now_iso(), legacy_id),
             )
             updated = cursor.rowcount > 0 or updated
         return updated

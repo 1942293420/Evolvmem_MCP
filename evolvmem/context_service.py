@@ -40,6 +40,7 @@ from evolvmem.config import Config
 from evolvmem.conflict_detector import ConflictDetector
 from evolvmem.context_migration import LegacyMemoryMigrator
 from evolvmem.context_models import (
+    ContextContentType,
     ContextLayer,
     ContextMatchType,
     ContextMode,
@@ -423,7 +424,7 @@ class ContextService:
         if results:
             # One batch, only after the final result tuple exists; neighbors
             # dropped by thresholds never reach this update.
-            self.store.update_access([result.id for result in results])
+            self._record_served_access([result.id for result in results])
         return results
 
     def session_start(
@@ -448,7 +449,7 @@ class ContextService:
         )
         if rendered.selected_ids:
             # A renderer exception or an empty block never reaches this update.
-            self.store.update_access(list(rendered.selected_ids))
+            self._record_served_access(list(rendered.selected_ids))
         return ContextSessionStartResult(
             block=rendered.block,
             selected_ids=rendered.selected_ids,
@@ -517,6 +518,25 @@ class ContextService:
             if isinstance(mapped, str) and mapped.strip():
                 return mapped.strip()
         return name
+
+    def _record_served_access(self, context_ids: list[int]) -> None:
+        """Batch access increments for served Core hits under the shared lock.
+
+        One transaction increments each served ContextItem exactly once and
+        mirrors the same +1 onto its mapped legacy projection row: the
+        forgetting engine reads the legacy counters, so a Codex-served hit
+        must refresh both sides or hot items look idle. Unmapped
+        (Core-native) items move only their own counter.
+        """
+        ids = list(dict.fromkeys(context_ids))
+        if not ids:
+            return
+        with self._cutover_lock.shared():
+            with self.store.transaction():
+                self.store.update_access(ids)
+                legacy_ids = self.store.legacy_ids_mapped_to_items(ids)
+                if legacy_ids:
+                    self.store.legacy_projection().update_access(legacy_ids)
 
     # ---- typed legacy mutations ----
 
@@ -722,7 +742,12 @@ class ContextService:
                     if context_id is None:
                         context_id = self._legacy_migrator().migrate_projection_row(row)
                     repository.soft_delete(request.legacy_id)
-                    self.store.set_item_status(context_id, ContextStatus.DELETED)
+                    if not self.store.set_item_status(context_id, ContextStatus.DELETED):
+                        raise ContextServiceError(
+                            "degraded_legacy",
+                            "legacy mapping points at a missing ContextItem; "
+                            "the whole mutation rolled back",
+                        )
         if changed:
             self._apply_vector_aftermath(
                 _VectorAftermath(
@@ -740,10 +765,23 @@ class ContextService:
         )
 
     def legacy_update(self, request: LegacyUpdateRequest) -> LegacyMutationResult:
-        """Mirror an importance/tier edit onto the projection and its ContextItem."""
+        """Mirror an in-place metadata edit onto the projection and its ContextItem.
+
+        importance/tier/attribute/tags share one transaction. When attribute
+        or tags move, the mapped item's derived fields move with them:
+        content_type/scope re-derive from the just-written projection row
+        through the migrator's public policy (``content_type_for`` /
+        ``scope_for`` / ``tags_for``), so the two sides cannot drift apart
+        invisibly.
+        """
         self._require_request(request, LegacyUpdateRequest)
         self._require_initialized()
-        has_changes = request.importance is not None or request.tier is not None
+        has_changes = (
+            request.importance is not None
+            or request.tier is not None
+            or request.attribute is not None
+            or request.tags is not None
+        )
         if self._mode is ContextMode.LEGACY:
             with self._cutover_lock.shared():
                 backend = self._legacy_backend()
@@ -752,11 +790,21 @@ class ContextService:
                     and backend.get_by_id(request.legacy_id) is not None
                 )
                 if changed:
-                    backend.update_metadata(
-                        request.legacy_id,
+                    update = LegacyProjectionUpdate(
+                        legacy_id=request.legacy_id,
                         importance=request.importance,
                         tier=request.tier,
                     )
+                    # 旧行为等价（就地编辑、id/历史不变），但四个字段共享一个
+                    # 事务。backend 的窄更新面只携带 importance/tier；投影写经
+                    # 服务自有 ContextStore 的借用连接，绝无第二连接第二提交。
+                    with self.store.transaction():
+                        self.store.legacy_projection().update_metadata(update)
+                        self.store.update_legacy_projection_classification(
+                            request.legacy_id,
+                            attribute=request.attribute,
+                            tags=request.tags,
+                        )
             return LegacyMutationResult(
                 legacy_id=request.legacy_id,
                 context_id=None,
@@ -782,7 +830,39 @@ class ContextService:
                         tier=request.tier,
                     )
                     repository.update_metadata(update)
-                    self.store.update_item_from_legacy(context_id, update)
+                    self.store.update_legacy_projection_classification(
+                        request.legacy_id,
+                        attribute=request.attribute,
+                        tags=request.tags,
+                    )
+                    content_type: ContextContentType | None = None
+                    scope: ContextScope | None = None
+                    tags: tuple[str, ...] | None = None
+                    if request.attribute is not None or request.tags is not None:
+                        # Core 派生字段取自刚落库的投影行，与
+                        # draft_from_projection_row 共用同一套迁移器公开策略
+                        updated_row = repository.get_by_id(request.legacy_id)
+                        if request.attribute is not None:
+                            content_type = self._legacy_migrator().content_type_for(
+                                updated_row
+                            )
+                            scope = LegacyMemoryMigrator.scope_for(content_type)
+                        if request.tags is not None:
+                            tags = LegacyMemoryMigrator.tags_for(
+                                updated_row.get("tags")
+                            )
+                    if not self.store.update_item_from_legacy(
+                        context_id,
+                        update,
+                        content_type=content_type,
+                        scope=scope,
+                        tags=tags,
+                    ):
+                        raise ContextServiceError(
+                            "degraded_legacy",
+                            "legacy mapping points at a missing ContextItem; "
+                            "the whole update rolled back",
+                        )
         return LegacyMutationResult(
             legacy_id=request.legacy_id,
             context_id=context_id,
@@ -1264,7 +1344,12 @@ class ContextService:
                     if context_id is None:
                         context_id = self._legacy_migrator().migrate_projection_row(row)
                     repository.set_status(request.legacy_id, legacy_status)
-                    self.store.set_item_status(context_id, context_status)
+                    if not self.store.set_item_status(context_id, context_status):
+                        raise ContextServiceError(
+                            "degraded_legacy",
+                            "legacy mapping points at a missing ContextItem; "
+                            "the whole mutation rolled back",
+                        )
                     l0 = self.store.get_layer(context_id, ContextLayer.L0) or ""
         if changed:
             self._apply_vector_aftermath(
@@ -1393,11 +1478,21 @@ class ContextService:
     ) -> None:
         if not upserts and not removals:
             return
-        synchronizer = self._context_synchronizer()
-        for context_id in removals:
-            synchronizer.remove_l0(context_id)
-        for context_id, l0 in upserts:
-            synchronizer.upsert_active_l0(context_id, l0)
+        try:
+            synchronizer = self._context_synchronizer()
+            for context_id in removals:
+                synchronizer.remove_l0(context_id)
+            for context_id, l0 in upserts:
+                synchronizer.upsert_active_l0(context_id, l0)
+        except Exception:
+            # 同步器自身爆炸（区别于单条同步失败——那些同步器内部已捕获并
+            # 保留 dirty）：SQLite 早已提交，绝不能向调用方抛错（调用方会
+            # retry 造成重复写）；与 legacy 侧对称，如实留下 durable 重试标记
+            try:
+                self.vector_index.mark_dirty()
+                self.vector_index.preserve_dirty()
+            except Exception:
+                pass  # even the retry marker is unwritable; nothing safe remains
 
     def _ensure_vector_index_ready(self, index: VectorIndex) -> None:
         """Open the existing cache or start an empty one for per-item updates."""
