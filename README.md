@@ -104,6 +104,10 @@ The worker scans sessions idle for at least 30 minutes and processes at most thr
 | `memory_replace` | Replace a memory (old value marked as superseded) |
 | `memory_remove` | Soft-delete a memory |
 | `memory_consolidate` | Find and merge near-duplicate memories by vector similarity; `dry_run=true` (default) only reports candidates |
+| `context_session_start` | Codex shadow/primary only: one bounded, rendered L1 history block per session; the result is untrusted history, never current instructions (read-only) |
+| `context_search` | Codex shadow/primary only: thresholded Context Core hybrid search returning context IDs, identity keys, L0 summaries, and scores — never L1/L2 bodies (read-only) |
+| `context_read` | Codex shadow/primary only: reads one layer (`l1` default, or `l2`) by exact context ID; missing/deleted IDs return a structured error and are never substituted (read-only) |
+| `context_status` | Content-free Context Core diagnostic snapshot: mode, readiness, counts, projection lag, vector flags, reason codes (read-only) |
 
 Deletion is two-staged: `memory_remove` soft-deletes (recoverable via restore), while the Web Console's `POST /api/memory/<id>/hard_delete` permanently removes the row — irreversible, intended for confirmed junk. The quality gate above applies to every live `memory_add`/`memory_replace` call, so rejected values never enter the store in the first place.
 
@@ -123,15 +127,40 @@ All data is stored under `~/.claude/evolvmem/`:
 | `vectors.usearch` | USearch HNSW vector index |
 | `context_vectors.usearch` | Separate, explicitly rebuilt Context Core L0 vector cache (not created by bootstrap) |
 | `models/nomic-embed-text-v1.5.f16.gguf` | Canonical Nomic GGUF embedding model (768 dimensions) |
+| `backups/context-core-cutover-<UTC>/` | Verified cutover backups (database snapshot, config copies, Codex stanza snapshot, cutover journal); never deleted automatically |
 | `config.json` | Retrieval, embedding runtime, forgetting, and other parameters |
 
-## Context Core 2.0 Foundation
+## Context Core
 
-The Context Core tables, typed `ContextItem` storage, idempotent legacy migration, and explicit vector-cache rebuild are available now as an opt-in foundation. Existing hooks, Kimi/DSH adapters, the Web Console, MCP routing, and all `memory_*` tools still use `MemoryStore`; running the migration does not switch those compatibility paths or delete or rewrite their legacy `memories` rows.
+Context Core is the canonical EvolvMem store once the run mode leaves `legacy`: every memory is one typed `ContextItem` and SQLite remains the content source of truth. In `compat`/`shadow`/`primary` modes the legacy `memories` table becomes a transactional legacy projection — one outer `BEGIN IMMEDIATE` writes the `ContextItem`, its three layers, the legacy projection row, and their ID mapping — so adapters that have not switched keep reading their old shapes while every canonical write lands in Context Core. Both vector indexes stay derived, independently dirty-able caches updated only after the SQLite commit; the Context Core cache is `context_vectors.usearch`, separate from the legacy `vectors.usearch` throughout the transition.
 
-Context Core's L0/L1/L2 names describe three representations of one `ContextItem`, not the legacy stack's active/history/vector labels. L0 is the compact retrieval representation, L1 is the bounded detailed representation, and L2 retains the complete source/evidence representation. SQLite remains the content source of truth: default FTS/trigram indexes contain only L0 and L1, while an explicit vector rebuild uses active, unexpired L0 only. The disposable Context Core cache is `context_vectors.usearch`, separate from the active legacy cache in `vectors.usearch` throughout the transition.
+Context Core's L0/L1/L2 names describe three bounded representations of one `ContextItem`, not the legacy stack's active/history/vector labels: L0 is the compact retrieval representation served by search, L1 is the bounded detailed representation rendered into session-start injection, and L2 retains the complete source/evidence representation, disclosed only by exact context ID. Default FTS/trigram indexes contain only L0 and L1; an explicit vector rebuild uses active, unexpired L0 only.
 
-A later feature-gated release will add layered injection and candidate/promotion behavior after the compatibility facade and rendering contract are verified. To create the Context Core schema and safely migrate local legacy rows now, run this from the repository with its environment active:
+### Run modes
+
+`context_mode` (persisted in `config.json`, overridable per process via `EVOLVMEM_CONTEXT_MODE`) selects one of four modes; an unknown value fails closed to a diagnostic tool set:
+
+| Mode | Behavior |
+|---|---|
+| `legacy` | Code default. Context reads are disabled (`context_not_enabled`); all reads/writes use the service-owned legacy backend. |
+| `compat` | Persisted only by a successful formal cutover. Context Core is the canonical write store and the legacy projection is kept in sync transactionally; Context reads stay disabled for the process. |
+| `shadow` | Codex only. Explicit `context_*` reads are served while legacy reads still come from the legacy retriever, with a shadow comparison for gate measurement; no automatic injection instructions are issued. |
+| `primary` | Codex only. Core reads/writes with automatic L1 session-start recall plus explicit search/read. A degraded primary fails closed: only `context_status` remains, writes are rejected, and the instructions state that memory is unavailable. |
+
+### Adapter matrix
+
+| Adapter | Writes | Reads / injection |
+|---|---|---|
+| Codex | Context Core (canonical) | In `primary`: automatic L1 injection at session start plus explicit `context_search`/`context_read` against Core |
+| Claude / Kimi / DSH / Web | Context Core (canonical) through the compatibility boundary | Unchanged legacy projection reads with their existing shapes; no Context automatic injection yet |
+
+Switching Claude/Kimi/DSH/Web to `primary` reads remains future work — each adapter needs its own session-start, search/read, and fail-open behavior acceptance first. This cutover never deletes or rewrites legacy `memories` rows, and stopping the legacy projection is a separate later decision.
+
+### Context tools and recall contract
+
+In `shadow`/`primary` mode Codex exposes four read-only `context_*` tools next to the six legacy `memory_*` tools (see the Tools table). Automatic recall has one hard limitation: it depends on Codex following the MCP server `instructions`. Every automatic call is fail-open — if a context tool is unavailable, errors, or times out, Codex continues the current task without memory — and the server never claims an injection happened when it did not.
+
+The operator procedure for the formal Codex cutover (preflight, backup, apply, verification, rollback) lives in [docs/codex-context-core-runbook.md](docs/codex-context-core-runbook.md). To create the Context Core schema and safely migrate local legacy rows ahead of time, run this from the repository with its environment active:
 
 ```bash
 python - <<'PY'
@@ -160,6 +189,19 @@ Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 - `embedding_model_filename`: GGUF filename to load; the canonical default is `nomic-embed-text-v1.5.f16.gguf`
 - `embedding_dim`: Vector dimension, must match model, default 768 for the canonical Nomic model
 - `embedding_query_prefix` / `embedding_doc_prefix`: Task prefixes applied when embedding queries/documents (nomic defaults `search_query: ` / `search_document: `, set to `""` to disable)
+- `context_mode`: Context Core run mode — `legacy` (default), `compat`, `shadow`, or `primary`; an unknown value fails Context features closed. `EVOLVMEM_CONTEXT_MODE` overrides the persisted value per process
+- `adapter`: Current adapter identity (`codex`, `claude`, `kimi`, `dsh`, `web`), default empty (unspecified); `EVOLVMEM_ADAPTER` overrides it per process
+- `context_l0_max_chars` / `context_l1_max_chars` / `context_l2_max_chars`: Character caps for one `ContextItem`'s L0/L1/L2 representations, defaults 240 / 1200 / 6000; must satisfy L0 ≤ L1 ≤ L2
+- `context_inject_max_chars`: Total character budget of one Context session-start injection, default 6000
+- `context_inject_max_items`: Max items in one Context injection, default 12
+- `context_inject_pinned_max_chars` / `context_inject_project_max_chars` / `context_inject_related_max_chars`: Character budgets of the pinned, current-project, and related injection pools, defaults 1500 / 3000 / 1500
+- `context_min_confidence`: Minimum confidence for Context retrieval and injection, default 0.55
+- `context_vector_min_similarity`: Minimum normalized similarity for pure-vector Context candidates, default 0.80
+- `context_fts_weight` / `context_vector_weight`: Fusion weights of the lexical and vector Context retrieval channels, defaults 0.60 / 0.40; must sum to 1.0
+- `context_score_relevance_weight` / `context_score_project_weight` / `context_score_type_weight` / `context_score_confidence_weight` / `context_score_importance_weight` / `context_score_evidence_weight` / `context_score_recency_weight` / `context_score_frequency_weight`: Context ranking weights, defaults 0.35 / 0.15 / 0.10 / 0.10 / 0.10 / 0.05 / 0.10 / 0.05; must sum to 1.0
+- `context_recency_tau_days`: Recency decay time constant in days for Context scoring, default 30.0
+- `context_frequency_cap`: Access-count normalization cap for Context frequency scoring, default 20
+- `context_project_aliases`: Map of workspace directory name → project name for Context project matching, default `{}`
 - `inject_max_count`: Max memories injected on SessionStart, default 50
 - `inject_max_chars`: Total character budget for SessionStart injection, default 8000
 - `inject_pinned_max_count` / `inject_pinned_max_chars`: Max count and character budget for the pinned layer, default 10 / 2000
@@ -196,4 +238,4 @@ The old installer wrote only a 512-dimensional setting while downloading its BGE
 
 ## Architecture
 
-The active compatibility stack has three layers: active-memory injection (L0, SessionStart system prompt), exact retrieval (L1, SQLite + FTS5/trigram), and semantic retrieval (L2, USearch HNSW). Context Core's independently stored, bounded L0/L1/L2 representations are available as the opt-in foundation described above, but they are not yet routed into that active retrieval path. Memories self-iterate through auto-extraction, conflict detection, and access-decay forgetting. All data is stored locally, no external services required.
+The active compatibility stack has three layers: active-memory injection (L0, SessionStart system prompt), exact retrieval (L1, SQLite + FTS5/trigram), and semantic retrieval (L2, USearch HNSW). Context Core routing is mode-driven as described above: in `compat`/`shadow`/`primary` modes Context Core is the source of truth and the legacy stack becomes its transactional projection, while `legacy` mode keeps serving the pre-cutover path unchanged. Memories self-iterate through auto-extraction, conflict detection, and access-decay forgetting. All data is stored locally, no external services required.

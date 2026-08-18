@@ -83,3 +83,6 @@ echo '      }'
 echo '    ]'
 echo '  }'
 echo ""
+echo "Codex users: switching Codex to Context Core is a separate dry-run-first"
+echo "operator procedure; see docs/codex-context-core-runbook.md. The preflight"
+echo "step is side-effect-free and never overwrites your database or config."
