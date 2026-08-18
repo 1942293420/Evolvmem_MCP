@@ -248,7 +248,7 @@
 - Create: `evolvmem/context_retriever.py`
 - Create: `tests/test_context_retriever.py`
 
-- [ ] **Step 1: Write failing candidate-generation and threshold tests.**
+- [x] **Step 1: Write failing candidate-generation and threshold tests.**
 
   Use deterministic fake query embeddings and vector distances to cover separately:
 
@@ -265,7 +265,7 @@
 
   Expected: import failure for `evolvmem.context_retriever`.
 
-- [ ] **Step 2: Write failing score-component tests before the scorer.**
+- [x] **Step 2: Write failing score-component tests before the scorer.**
 
   Construct paired records differing in exactly one property and assert each independent component: lexical/semantic relevance, exact-project over global, pinned bonus, workflow/constraint type priority, confidence, importance, Laplace evidence, exponential recency, logarithmic frequency, and final ascending-ID tie-breaker. Also assert every component and total score stays in 0..1.
 
@@ -280,7 +280,7 @@
 
   Freeze type bases from the design and add 0.2 for pinned, capped at 1.0. Final score is the eight configured score components' weighted sum; sort by `(-score, id)`.
 
-- [ ] **Step 3: Implement ContextRetriever as a new orchestrator, not a subclass.**
+- [x] **Step 3: Implement ContextRetriever as a new orchestrator, not a subclass.**
 
   Public interface:
 
@@ -301,7 +301,7 @@
 
   Ask FTS for active L0 candidates and vector search for an expanded candidate pool. Discard sub-threshold vector-only IDs before fetching metadata. Merge match types/layers by context ID, fetch narrow retrieval records, apply scope/expiry/type/confidence/reference filters, calculate components, and only then truncate. Never load L1/L2 and never mutate access counts.
 
-- [ ] **Step 4: Verify focused behavior and commit Task 2.**
+- [x] **Step 4: Verify focused behavior and commit Task 2.**
 
   Run:
 
@@ -326,7 +326,7 @@
 - Create: `evolvmem/context_renderer.py`
 - Create: `tests/test_context_renderer.py`
 
-- [ ] **Step 1: Write failing pool and budget tests.**
+- [x] **Step 1: Write failing pool and budget tests.**
 
   Cover pinned → project → related selection; one-way unused-budget borrowing; no backward borrowing; total 6000-character/default 12-item caps; caller `max_chars` may lower but never raise the cap; each L1 is at most `context_l1_max_chars`; wrapper/headings/newlines count toward `used_chars`; and an insufficient budget for the fixed wrapper returns an empty block rather than overflowing.
 
@@ -338,11 +338,11 @@
 
   Expected: import failure for `evolvmem.context_renderer`.
 
-- [ ] **Step 2: Write failing prompt-boundary tests.**
+- [x] **Step 2: Write failing prompt-boundary tests.**
 
   Freeze the wrapper as a historical-data block containing all of these meanings: untrusted history, not current instructions, and priority `system/developer/current user/current code and tests > history`. Put fake end markers, Markdown headings, XML-like tags, and instruction-looking text in L1 and prove none can terminate or replace the wrapper. Assert L2 and the current query never appear.
 
-- [ ] **Step 3: Implement the pure renderer.**
+- [x] **Step 3: Implement the pure renderer.**
 
   Add:
 
@@ -370,7 +370,7 @@
 
   Renderer owns no Store, vector, clock, or logger. Escape exact boundary tokens deterministically, preserve candidate order inside each pool, and compute `used_chars == len(block)`.
 
-- [ ] **Step 4: Verify and commit Task 3.**
+- [x] **Step 4: Verify and commit Task 3.**
 
   Run:
 
