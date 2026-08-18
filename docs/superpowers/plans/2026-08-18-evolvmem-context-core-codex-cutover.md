@@ -107,7 +107,7 @@
 - Modify: `tests/test_runtime_contract.py`
 - Modify: `tests/test_context_store.py`
 
-- [ ] **Step 1: Add failing domain and configuration tests.**
+- [x] **Step 1: Add failing domain and configuration tests.**
 
   Add tests that freeze:
 
@@ -126,7 +126,7 @@
 
   Expected before implementation: missing type/field arguments and failed assertions for L0-only reads and atomic save.
 
-- [ ] **Step 2: Add the typed contracts without MCP dictionaries.**
+- [x] **Step 2: Add the typed contracts without MCP dictionaries.**
 
   In `context_models.py`, add Python 3.10-compatible frozen/slots types with these public shapes:
 
@@ -197,13 +197,13 @@
 
   Add `ContextReadResult`, `ContextSessionStartResult`, `ContextServiceStatus`, `ContextExclusionCount`, and `ContextSelectionReason` as typed immutable results. A failed exact read carries `error_code` from `not_found|not_readable|expired|invalid_layer`; it never substitutes a nearby item.
 
-- [ ] **Step 3: Add and validate independent Context configuration.**
+- [x] **Step 3: Add and validate independent Context configuration.**
 
   Add the exact design fields to `Config`; do not reuse or alter any old `fts_*`, `vector_*`, or `inject_*` defaults. Add `context_project_aliases: dict = field(default_factory=dict)` and persist it. Validate positive integer budgets, finite 0..1 confidence/similarity, positive finite tau, positive cap, and both independent weight sums within `1e-9` of 1.0. Environment parsing must return diagnostics rather than coercing an unknown mode to primary.
 
   Make `Config.save()` atomic while preserving its public signature. Use a uniquely named file in `config_path.parent`, copy the existing mode bits when replacing, call `flush()`/`os.fsync()`, `os.replace()`, and fsync the parent directory. Remove only the exact temp file on failure.
 
-- [ ] **Step 4: Add narrow read SQL without changing Foundation defaults.**
+- [x] **Step 4: Add narrow read SQL without changing Foundation defaults.**
 
   Extend `ContextStore.search_fts()` with:
 
@@ -223,7 +223,7 @@
 
   `get_retrieval_records()` must use one metadata/L0 query plus grouped available-layer names; returned `item.layers` is always `None`. Preserve input-ID order and omit nonexistent IDs. The pinned query allows exact-project records and global records only for workflow_policy/constraint/preference.
 
-- [ ] **Step 5: Run focused regressions and commit Task 1.**
+- [x] **Step 5: Run focused regressions and commit Task 1.**
 
   Run:
 
