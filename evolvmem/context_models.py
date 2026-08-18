@@ -47,6 +47,25 @@ class ContextLayer(str, Enum):
     L2 = "l2"
 
 
+class ContextMode(str, Enum):
+    LEGACY = "legacy"
+    COMPAT = "compat"
+    SHADOW = "shadow"
+    PRIMARY = "primary"
+
+
+class ContextMatchType(str, Enum):
+    LEXICAL = "lexical"
+    VECTOR = "vector"
+    PINNED_POLICY = "pinned_policy"
+
+
+class ContextSelectionReason(str, Enum):
+    PINNED_POLICY = "pinned_policy"
+    LEXICAL = "lexical"
+    VECTOR = "vector"
+
+
 @dataclass(frozen=True, slots=True)
 class ContextLayers:
     l0: str
@@ -137,6 +156,297 @@ class ContextVectorDocument:
     l0: str
 
 
+@dataclass(frozen=True, slots=True)
+class ContextScoreComponents:
+    """Normalized 0..1 ranking components for one search candidate."""
+
+    relevance: float
+    project: float
+    type_priority: float
+    confidence: float
+    importance: float
+    evidence: float
+    recency: float
+    frequency: float
+
+    def __post_init__(self) -> None:
+        for name in (
+            "relevance",
+            "project",
+            "type_priority",
+            "confidence",
+            "importance",
+            "evidence",
+            "recency",
+            "frequency",
+        ):
+            _validate_number(
+                getattr(self, name), f"score component {name}", lower=0.0, upper=1.0
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextRetrievalRecord:
+    """Metadata plus L0 for one candidate; never carries L1/L2 text."""
+
+    item: ContextItem
+    l0: str
+    available_layers: tuple[ContextLayer, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.item, ContextItem):
+            raise ContextValidationError("item must be a ContextItem instance")
+        if not isinstance(self.l0, str):
+            raise ContextValidationError("l0 must be a string")
+        object.__setattr__(
+            self,
+            "available_layers",
+            _normalize_layers(self.available_layers, "available_layers"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSearchRequest:
+    query: str
+    project: str = ""
+    top_k: int = 10
+    content_types: tuple[ContextContentType, ...] = ()
+    cross_project: bool = False
+
+    def __post_init__(self) -> None:
+        query = _normalize_text(self.query, "query")
+        if not query:
+            raise ContextValidationError("query must not be empty")
+        object.__setattr__(self, "query", query)
+        if not isinstance(self.project, str):
+            raise ContextValidationError("project must be a string")
+        object.__setattr__(self, "project", self.project.strip())
+        if type(self.top_k) is not int or not 1 <= self.top_k <= 20:
+            raise ContextValidationError("top_k must be between 1 and 20")
+        object.__setattr__(
+            self, "content_types", _normalize_content_types(self.content_types)
+        )
+        if type(self.cross_project) is not bool:
+            raise ContextValidationError("cross_project must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSearchResult:
+    id: int
+    identity_key: str
+    l0: str
+    content_type: ContextContentType
+    scope: ContextScope
+    project: str
+    status: ContextStatus
+    tier: ContextTier
+    confidence: float
+    importance: float
+    score: float
+    score_components: ContextScoreComponents
+    match_types: tuple[ContextMatchType, ...]
+    match_layers: tuple[ContextLayer, ...]
+    available_layers: tuple[ContextLayer, ...]
+
+    def __post_init__(self) -> None:
+        _validate_positive_int(self.id, "id")
+        if not isinstance(self.identity_key, str) or not self.identity_key.strip():
+            raise ContextValidationError("identity_key must not be empty")
+        if not isinstance(self.l0, str):
+            raise ContextValidationError("l0 must be a string")
+        if not isinstance(self.content_type, ContextContentType):
+            raise ContextValidationError("content_type must be a ContextContentType")
+        if not isinstance(self.scope, ContextScope):
+            raise ContextValidationError("scope must be a ContextScope")
+        if not isinstance(self.project, str):
+            raise ContextValidationError("project must be a string")
+        if not isinstance(self.status, ContextStatus):
+            raise ContextValidationError("status must be a ContextStatus")
+        if not isinstance(self.tier, ContextTier):
+            raise ContextValidationError("tier must be a ContextTier")
+        _validate_number(self.confidence, "confidence", lower=0.0, upper=1.0)
+        _validate_number(self.importance, "importance", lower=1.0, upper=10.0)
+        _validate_number(self.score, "score", lower=0.0, upper=1.0)
+        if not isinstance(self.score_components, ContextScoreComponents):
+            raise ContextValidationError(
+                "score_components must be a ContextScoreComponents instance"
+            )
+        object.__setattr__(
+            self, "match_types", _normalize_match_types(self.match_types)
+        )
+        object.__setattr__(
+            self, "match_layers", _normalize_layers(self.match_layers, "match_layers")
+        )
+        object.__setattr__(
+            self,
+            "available_layers",
+            _normalize_layers(self.available_layers, "available_layers"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextReadRequest:
+    id: int
+    layer: ContextLayer = ContextLayer.L1
+
+    def __post_init__(self) -> None:
+        _validate_positive_int(self.id, "id")
+        if not isinstance(self.layer, ContextLayer) or self.layer not in (
+            ContextLayer.L1,
+            ContextLayer.L2,
+        ):
+            raise ContextValidationError(
+                "layer must be ContextLayer.L1 or ContextLayer.L2"
+            )
+
+
+_CONTEXT_READ_ERROR_CODES = frozenset(
+    {"not_found", "not_readable", "expired", "invalid_layer"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextReadResult:
+    """One exact layer or a structured failure; never a nearby substitute."""
+
+    id: int
+    layer: ContextLayer
+    content: str
+    error_code: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_positive_int(self.id, "id")
+        if not isinstance(self.layer, ContextLayer):
+            raise ContextValidationError("layer must be a ContextLayer")
+        if not isinstance(self.content, str):
+            raise ContextValidationError("content must be a string")
+        if self.error_code is not None and self.error_code not in _CONTEXT_READ_ERROR_CODES:
+            raise ContextValidationError(
+                "error_code must be one of "
+                + ", ".join(sorted(_CONTEXT_READ_ERROR_CODES))
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSessionStartRequest:
+    project: str
+    query: str
+    max_chars: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.project, str):
+            raise ContextValidationError("project must be a string")
+        object.__setattr__(self, "project", self.project.strip())
+        query = _normalize_text(self.query, "query")
+        if not query:
+            raise ContextValidationError("query must not be empty")
+        object.__setattr__(self, "query", query)
+        if self.max_chars is not None:
+            _validate_positive_int(self.max_chars, "max_chars")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextExclusionCount:
+    reason: str
+    count: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ContextValidationError("reason must not be empty")
+        _validate_non_negative_int(self.count, "count")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSessionStartResult:
+    block: str
+    selected_ids: tuple[int, ...]
+    used_chars: int
+    excluded_counts: tuple[ContextExclusionCount, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.block, str):
+            raise ContextValidationError("block must be a string")
+        try:
+            selected_ids = tuple(self.selected_ids)
+        except TypeError as exc:
+            raise ContextValidationError(
+                "selected_ids must be an iterable of positive integers"
+            ) from exc
+        for selected_id in selected_ids:
+            _validate_positive_int(selected_id, "selected_ids")
+        object.__setattr__(self, "selected_ids", selected_ids)
+        _validate_non_negative_int(self.used_chars, "used_chars")
+        try:
+            excluded_counts = tuple(self.excluded_counts)
+        except TypeError as exc:
+            raise ContextValidationError(
+                "excluded_counts must be an iterable of ContextExclusionCount"
+            ) from exc
+        if any(not isinstance(item, ContextExclusionCount) for item in excluded_counts):
+            raise ContextValidationError(
+                "excluded_counts must be an iterable of ContextExclusionCount"
+            )
+        object.__setattr__(self, "excluded_counts", excluded_counts)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextServiceStatus:
+    """Content-free service snapshot: modes, counts, flags, and diagnostics."""
+
+    mode: ContextMode
+    adapter: str
+    ready: bool
+    status_counts: dict[str, int]
+    mapping_count: int
+    projection_lag: int
+    context_vector_ready: bool
+    context_vector_dirty: bool
+    legacy_vector_ready: bool
+    legacy_vector_dirty: bool
+    diagnostics: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mode, ContextMode):
+            raise ContextValidationError("mode must be a ContextMode")
+        if not isinstance(self.adapter, str):
+            raise ContextValidationError("adapter must be a string")
+        if type(self.ready) is not bool:
+            raise ContextValidationError("ready must be a boolean")
+        try:
+            status_counts = dict(self.status_counts)
+        except (TypeError, ValueError) as exc:
+            raise ContextValidationError(
+                "status_counts must map strings to non-negative integers"
+            ) from exc
+        if any(
+            not isinstance(key, str) or type(count) is not int or count < 0
+            for key, count in status_counts.items()
+        ):
+            raise ContextValidationError(
+                "status_counts must map strings to non-negative integers"
+            )
+        object.__setattr__(self, "status_counts", status_counts)
+        _validate_non_negative_int(self.mapping_count, "mapping_count")
+        _validate_non_negative_int(self.projection_lag, "projection_lag")
+        for name in (
+            "context_vector_ready",
+            "context_vector_dirty",
+            "legacy_vector_ready",
+            "legacy_vector_dirty",
+        ):
+            if type(getattr(self, name)) is not bool:
+                raise ContextValidationError(f"{name} must be a boolean")
+        try:
+            diagnostics = tuple(self.diagnostics)
+        except TypeError as exc:
+            raise ContextValidationError(
+                "diagnostics must be an iterable of strings"
+            ) from exc
+        if any(not isinstance(message, str) for message in diagnostics):
+            raise ContextValidationError("diagnostics must be an iterable of strings")
+        object.__setattr__(self, "diagnostics", diagnostics)
+
+
 def _normalize_text(value: object, field_name: str) -> str:
     if not isinstance(value, str):
         raise ContextValidationError(f"{field_name} must be a string")
@@ -156,3 +466,46 @@ def _normalize_tags(tags: object) -> tuple[str, ...]:
 def _validate_number(value: object, field_name: str, *, lower: float, upper: float) -> None:
     if type(value) not in (int, float) or not math.isfinite(value) or not lower <= value <= upper:
         raise ContextValidationError(f"{field_name} must be between {lower:g} and {upper:g}")
+
+
+def _validate_positive_int(value: object, field_name: str) -> None:
+    """Reject booleans even though Python models them as integers."""
+    if type(value) is not int or value <= 0:
+        raise ContextValidationError(f"{field_name} must be a positive integer")
+
+
+def _validate_non_negative_int(value: object, field_name: str) -> None:
+    if type(value) is not int or value < 0:
+        raise ContextValidationError(f"{field_name} must be a non-negative integer")
+
+
+def _normalize_enum_tuple(
+    value: object, enum_type: type, field_name: str
+) -> tuple:
+    if isinstance(value, (str, bytes)):
+        raise ContextValidationError(
+            f"{field_name} must be an iterable of {enum_type.__name__}"
+        )
+    try:
+        members = tuple(value)  # type: ignore[arg-type]
+    except TypeError as exc:
+        raise ContextValidationError(
+            f"{field_name} must be an iterable of {enum_type.__name__}"
+        ) from exc
+    if any(not isinstance(member, enum_type) for member in members):
+        raise ContextValidationError(
+            f"{field_name} must be an iterable of {enum_type.__name__}"
+        )
+    return members
+
+
+def _normalize_content_types(value: object) -> tuple[ContextContentType, ...]:
+    return _normalize_enum_tuple(value, ContextContentType, "content_types")  # type: ignore[return-value]
+
+
+def _normalize_match_types(value: object) -> tuple[ContextMatchType, ...]:
+    return _normalize_enum_tuple(value, ContextMatchType, "match_types")  # type: ignore[return-value]
+
+
+def _normalize_layers(value: object, field_name: str) -> tuple[ContextLayer, ...]:
+    return _normalize_enum_tuple(value, ContextLayer, field_name)  # type: ignore[return-value]

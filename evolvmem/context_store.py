@@ -16,6 +16,7 @@ from evolvmem.context_models import (
     ContextItemDraft,
     ContextLayer,
     ContextLayers,
+    ContextRetrievalRecord,
     ContextScope,
     ContextSearchHit,
     ContextStatus,
@@ -647,6 +648,77 @@ class ContextStore:
         ).fetchall()
         return [ContextVectorDocument(item_id=row["item_id"], l0=row["l0"]) for row in rows]
 
+    def get_retrieval_records(
+        self, item_ids: list[int]
+    ) -> tuple[ContextRetrievalRecord, ...]:
+        """Load metadata, L0 text, and available layer names without L1/L2.
+
+        One metadata/L0 query plus one grouped layer-name query; input-ID
+        order is preserved and nonexistent IDs are omitted.
+        """
+        unique_ids = list(dict.fromkeys(item_ids))
+        if not unique_ids:
+            return ()
+        placeholders = ",".join("?" for _ in unique_ids)
+        params = tuple(unique_ids)
+        rows = self._connection().execute(
+            "SELECT i.*, l.content AS l0 FROM context_items i "
+            "JOIN context_layers l ON l.item_id=i.id AND l.layer='l0' "
+            f"WHERE i.id IN ({placeholders})",
+            params,
+        ).fetchall()
+        layer_rows = self._connection().execute(
+            "SELECT item_id, layer FROM context_layers "
+            f"WHERE item_id IN ({placeholders}) "
+            "GROUP BY item_id, layer",
+            params,
+        ).fetchall()
+        layers_by_item: dict[int, set[str]] = {}
+        for row in layer_rows:
+            layers_by_item.setdefault(int(row["item_id"]), set()).add(row["layer"])
+        canonical = (ContextLayer.L0, ContextLayer.L1, ContextLayer.L2)
+        by_id = {int(row["id"]): row for row in rows}
+        records: list[ContextRetrievalRecord] = []
+        for item_id in unique_ids:
+            row = by_id.get(item_id)
+            if row is None:
+                continue
+            present = layers_by_item.get(item_id, set())
+            records.append(
+                ContextRetrievalRecord(
+                    item=self._row_to_item(row, None),
+                    l0=str(row["l0"]),
+                    available_layers=tuple(
+                        layer for layer in canonical if layer.value in present
+                    ),
+                )
+            )
+        return tuple(records)
+
+    def get_layer(self, item_id: int, layer: ContextLayer) -> str | None:
+        """Return the exact stored content of one layer, or None when absent."""
+        row = self._connection().execute(
+            "SELECT content FROM context_layers WHERE item_id=? AND layer=?",
+            (item_id, layer.value),
+        ).fetchone()
+        return None if row is None else str(row["content"])
+
+    def list_pinned_policy_records(
+        self, *, project: str, min_confidence: float
+    ) -> tuple[ContextRetrievalRecord, ...]:
+        """Active, unexpired pinned policy seeds for a project plus applicable globals."""
+        rows = self._connection().execute(
+            "SELECT id FROM context_items "
+            "WHERE status='active' AND tier='pinned' "
+            "AND content_type IN ('workflow_policy', 'constraint', 'preference') "
+            "AND confidence >= ? "
+            "AND (expires_at IS NULL OR expires_at > ?) "
+            "AND (project = ? OR scope = 'global') "
+            "ORDER BY id",
+            (min_confidence, _now_iso(), project),
+        ).fetchall()
+        return self.get_retrieval_records([int(row["id"]) for row in rows])
+
     def count_by_status(self) -> dict[str, int]:
         rows = self._connection().execute(
             "SELECT status, COUNT(*) AS count FROM context_items GROUP BY status"
@@ -724,19 +796,21 @@ class ContextStore:
         *,
         top_k: int = 20,
         statuses: tuple[ContextStatus, ...] | None = None,
+        layers: tuple[ContextLayer, ...] = (ContextLayer.L0, ContextLayer.L1),
     ) -> list[ContextSearchHit]:
-        if top_k <= 0 or not query.strip() or statuses == ():
+        if top_k <= 0 or not query.strip() or statuses == () or not layers:
             return []
 
+        layer_sql, layer_params = self._layer_filter(layers)
         has_cjk = self._has_cjk(query)
         table = (
             "context_layers_fts_trigram"
             if self._has_trigram and has_cjk
             else "context_layers_fts"
         )
-        rows = self._search_fts5(table, query, top_k, statuses)
+        rows = self._search_fts5(table, query, top_k, statuses, layer_sql, layer_params)
         if has_cjk:
-            rows.extend(self._search_like(query, top_k, statuses))
+            rows.extend(self._search_like(query, top_k, statuses, layer_sql, layer_params))
 
         merged: dict[int, dict[str, object]] = {}
         for row in rows:
@@ -762,7 +836,7 @@ class ContextStore:
                 score=float(data["score"]),
                 match_layers=tuple(
                     layer
-                    for layer in (ContextLayer.L0, ContextLayer.L1)
+                    for layer in (ContextLayer.L0, ContextLayer.L1, ContextLayer.L2)
                     if layer in data["layers"]
                 ),
                 content_type=data["content_type"],  # type: ignore[arg-type]
@@ -780,6 +854,8 @@ class ContextStore:
         query: str,
         top_k: int,
         statuses: tuple[ContextStatus, ...] | None,
+        layer_sql: str,
+        layer_params: tuple[str, ...],
     ) -> list[dict[str, object]]:
         status_sql, status_params = self._status_filter(statuses)
         safe_query = self._sanitize_fts5_query(query)
@@ -790,9 +866,9 @@ class ContextStore:
                 f"FROM {table} f "
                 "JOIN context_layers l ON l.id=f.rowid "
                 "JOIN context_items i ON i.id=l.item_id "
-                f"WHERE {table} MATCH ? AND {status_sql} "
+                f"WHERE {table} MATCH ? AND {status_sql} AND {layer_sql} "
                 "ORDER BY rank, i.id, l.layer LIMIT ?",
-                (safe_query, *status_params, top_k * 2),
+                (safe_query, *status_params, *layer_params, top_k * 2),
             ).fetchall()
             selected_ids = tuple(
                 dict.fromkeys(row["item_id"] for row in ranked_rows)
@@ -806,10 +882,10 @@ class ContextStore:
                 f"FROM {table} f "
                 "JOIN context_layers l ON l.id=f.rowid "
                 "JOIN context_items i ON i.id=l.item_id "
-                f"WHERE {table} MATCH ? AND {status_sql} "
+                f"WHERE {table} MATCH ? AND {status_sql} AND {layer_sql} "
                 f"AND i.id IN ({placeholders}) "
                 "ORDER BY rank, i.id, l.layer",
-                (safe_query, *status_params, *selected_ids),
+                (safe_query, *status_params, *layer_params, *selected_ids),
             ).fetchall()
         except sqlite3.OperationalError:
             return []
@@ -820,6 +896,8 @@ class ContextStore:
         query: str,
         top_k: int,
         statuses: tuple[ContextStatus, ...] | None,
+        layer_sql: str,
+        layer_params: tuple[str, ...],
     ) -> list[dict[str, object]]:
         status_sql, status_params = self._status_filter(statuses)
         rows = self._connection().execute(
@@ -827,12 +905,20 @@ class ContextStore:
             "i.status, 0.0 AS score "
             "FROM context_layers l "
             "JOIN context_items i ON i.id=l.item_id "
-            "WHERE l.layer IN ('l0', 'l1') AND l.content LIKE ? "
+            f"WHERE {layer_sql} AND l.content LIKE ? "
             f"AND {status_sql} "
             "ORDER BY i.id, l.layer LIMIT ?",
-            (f"%{query}%", *status_params, top_k * 2),
+            (*layer_params, f"%{query}%", *status_params, top_k * 2),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    @staticmethod
+    def _layer_filter(
+        layers: tuple[ContextLayer, ...],
+    ) -> tuple[str, tuple[str, ...]]:
+        values = tuple(dict.fromkeys(layer.value for layer in layers))
+        placeholders = ",".join("?" for _ in values)
+        return f"l.layer IN ({placeholders})", values
 
     @staticmethod
     def _status_filter(

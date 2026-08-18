@@ -617,3 +617,190 @@ def test_nested_transaction_rolls_back_all_context_writes(store, draft_factory):
 
     assert store.get_by_identity("project:test:fact:first", project="test") == []
     assert store.get_by_identity("project:test:fact:second", project="test") == []
+
+
+def test_search_fts_layers_filter_excludes_l1_only_matches(store, draft_factory):
+    """L0-only candidate generation must never be fed by an L1-only match."""
+    l1_only = store.create_item(
+        draft_factory(
+            "project:test:fact:l1-only",
+            l0="ordinary summary",
+            l1="layeroneterm supporting detail",
+            l2="ordinary complete source",
+            status=ContextStatus.ACTIVE,
+        )
+    )
+    both = store.create_item(
+        draft_factory(
+            "project:test:fact:both",
+            l0="layeroneterm summary",
+            l1="layeroneterm supporting detail",
+            l2="ordinary complete source",
+            status=ContextStatus.ACTIVE,
+        )
+    )
+
+    default_hits = store.search_fts("layeroneterm")
+    l0_hits = store.search_fts("layeroneterm", layers=(ContextLayer.L0,))
+
+    assert {hit.item_id for hit in default_hits} == {l1_only.id, both.id}
+    assert [(hit.item_id, hit.match_layers) for hit in l0_hits] == [
+        (both.id, (ContextLayer.L0,))
+    ]
+
+
+def test_search_fts_empty_layers_returns_nothing_without_changing_the_default(
+    store, draft_factory
+):
+    """An empty layer set is an explicit no-result request, not a default."""
+    store.create_item(
+        draft_factory(l0="emptylayertoken summary", status=ContextStatus.ACTIVE)
+    )
+
+    assert store.search_fts("emptylayertoken", layers=()) == []
+    assert store.search_fts("emptylayertoken")
+
+
+def test_search_fts_layers_filter_applies_to_the_cjk_like_fallback(
+    store, draft_factory
+):
+    """The LIKE path must honor the same layer condition as the FTS5 path."""
+    item = store.create_item(
+        draft_factory(
+            l0="售后规则",
+            l1="破损商品可以直接退款，不再补发。",
+            l2="完整原文",
+            status=ContextStatus.ACTIVE,
+        )
+    )
+    store._has_trigram = False
+
+    assert store.search_fts("退款", layers=(ContextLayer.L0,)) == []
+    assert [
+        (hit.item_id, hit.match_layers)
+        for hit in store.search_fts("退款", layers=(ContextLayer.L1,))
+    ] == [(item.id, (ContextLayer.L1,))]
+    assert [hit.item_id for hit in store.search_fts("退款")] == [item.id]
+
+
+def test_get_retrieval_records_returns_metadata_l0_and_layers_without_l1_l2(
+    store, draft_factory
+):
+    """Candidate metadata reads must not pay for undisclosed L1/L2 text."""
+    first = store.create_item(draft_factory("project:test:fact:first", l0="first l0"))
+    second = store.create_item(draft_factory("project:test:fact:second", l0="second l0"))
+
+    statements: list[str] = []
+    store._conn.set_trace_callback(statements.append)
+    records = store.get_retrieval_records([second.id, 9999, first.id])
+    store._conn.set_trace_callback(None)
+
+    assert [record.item.id for record in records] == [second.id, first.id]
+    assert [record.l0 for record in records] == ["second l0", "first l0"]
+    for record in records:
+        assert record.item.layers is None
+        assert record.available_layers == (
+            ContextLayer.L0, ContextLayer.L1, ContextLayer.L2,
+        )
+    assert record.item.identity_key == first.identity_key
+    assert record.item.status is ContextStatus.CANDIDATE
+    assert len(statements) == 2
+    assert not any("layer='l1'" in sql or "layer='l2'" in sql for sql in statements)
+
+    assert store.get_retrieval_records([]) == ()
+
+
+def test_get_layer_returns_only_the_requested_exact_layer(store, draft_factory):
+    """Exact disclosure must return the addressed layer and nothing else."""
+    item = store.create_item(draft_factory())
+
+    assert store.get_layer(item.id, ContextLayer.L0) == item.layers.l0
+    assert store.get_layer(item.id, ContextLayer.L1) == item.layers.l1
+    assert store.get_layer(item.id, ContextLayer.L2) == item.layers.l2
+    assert store.get_layer(9999, ContextLayer.L1) is None
+
+
+def test_list_pinned_policy_records_applies_seed_filters_without_l1_l2(
+    store, draft_factory
+):
+    """Only active, confident, unexpired pinned policy records may seed injection."""
+
+    def pinned(identity, content_type, **kwargs):
+        return replace(
+            draft_factory(identity, status=ContextStatus.ACTIVE, **kwargs),
+            content_type=content_type,
+            tier=ContextTier.PINNED,
+        )
+
+    seed_project = store.create_item(
+        pinned("project:test:workflow_policy:seed", ContextContentType.WORKFLOW_POLICY)
+    )
+    seed_global = store.create_item(
+        pinned(
+            "global:constraint:seed",
+            ContextContentType.CONSTRAINT,
+            scope=ContextScope.GLOBAL,
+        )
+    )
+    seed_global_preference = store.create_item(
+        pinned(
+            "global:preference:seed",
+            ContextContentType.PREFERENCE,
+            scope=ContextScope.GLOBAL,
+        )
+    )
+    store.create_item(  # pinned but not a policy type
+        pinned("project:test:fact:pinned", ContextContentType.FACT)
+    )
+    store.create_item(  # policy type but not pinned
+        replace(
+            draft_factory("project:test:workflow_policy:normal", status=ContextStatus.ACTIVE),
+            content_type=ContextContentType.WORKFLOW_POLICY,
+        )
+    )
+    store.create_item(  # pinned policy but still a candidate
+        replace(
+            pinned("project:test:workflow_policy:candidate", ContextContentType.WORKFLOW_POLICY),
+            status=ContextStatus.CANDIDATE,
+        )
+    )
+    store.create_item(  # expired
+        pinned(
+            "project:test:workflow_policy:expired",
+            ContextContentType.WORKFLOW_POLICY,
+            expires_at="2000-01-01 00:00:00",
+        )
+    )
+    store.create_item(  # below the confidence gate
+        replace(
+            pinned("project:test:workflow_policy:weak", ContextContentType.WORKFLOW_POLICY),
+            confidence=0.3,
+        )
+    )
+    store.create_item(  # pinned policy of another project
+        pinned(
+            "project:other:workflow_policy:seed",
+            ContextContentType.WORKFLOW_POLICY,
+            project="other",
+        )
+    )
+    store.create_item(  # global but not an applicable policy type
+        pinned(
+            "global:session_summary:pinned",
+            ContextContentType.SESSION_SUMMARY,
+            scope=ContextScope.GLOBAL,
+        )
+    )
+
+    records = store.list_pinned_policy_records(project="test", min_confidence=0.55)
+
+    assert [record.item.id for record in records] == [
+        seed_project.id, seed_global.id, seed_global_preference.id,
+    ]
+    for record in records:
+        assert record.item.layers is None
+        assert record.item.tier is ContextTier.PINNED
+        assert record.l0
+        assert record.available_layers == (
+            ContextLayer.L0, ContextLayer.L1, ContextLayer.L2,
+        )
