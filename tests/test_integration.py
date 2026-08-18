@@ -5,6 +5,9 @@ import pytest
 import numpy as np
 import evolvmem.kimi_hooks as hooks
 from evolvmem.config import Config
+from evolvmem.consolidator import Consolidator
+from evolvmem.context_models import ContextMode, ContextStatus, ContextTier
+from evolvmem.context_service import ContextService
 from evolvmem.memory_store import MemoryStore
 from evolvmem.vector_index import VectorIndex
 from evolvmem.retriever import Retriever
@@ -15,14 +18,36 @@ from evolvmem.auto_extractor import AutoExtractor
 
 @pytest.fixture
 def server(test_config):
-    """MemoryMCPServer wired to a temp-dir store (embedding engine stays unloaded)."""
+    """MemoryMCPServer wired to a temp-dir store plus an injected compat-mode
+    ContextService (embedding engine stays unloaded)."""
     from evolvmem.mcp_server import MemoryMCPServer
-    srv = MemoryMCPServer()
-    srv.config = test_config
-    srv.store = MemoryStore(test_config)
+    srv = MemoryMCPServer(config=test_config)
     srv.store.initialize()
     srv.conflict_detector = ConflictDetector(srv.store)
+    service = ContextService(test_config, embedding_engine=srv.engine)
+    service._legacy_vector = srv.vidx  # 共享 legacy 投影向量索引实例
+    service.initialize(mode=ContextMode.COMPAT, adapter="test")
+    srv.context_service = service
     yield srv
+    service.close()
+    srv.store.close()
+
+
+@pytest.fixture
+def degraded_primary_server(test_config):
+    """Server whose injected primary-mode service failed the invariant gate."""
+    from evolvmem.mcp_server import MemoryMCPServer
+    srv = MemoryMCPServer(config=test_config)
+    srv.store.initialize()
+    srv.conflict_detector = ConflictDetector(srv.store)
+    service = ContextService(test_config, embedding_engine=srv.engine)
+    service._legacy_vector = srv.vidx
+    service.initialize(mode=ContextMode.PRIMARY, adapter="test")
+    assert service.status().ready is False  # 未初始化 context 向量索引 → 降级
+    assert service.status().reason_codes == ("degraded_legacy",)
+    srv.context_service = service
+    yield srv
+    service.close()
     srv.store.close()
 
 
@@ -198,9 +223,23 @@ class TestIntegration:
             "tier": "pinned",
         })
         assert result["status"] == "added"
+        # 可选增量字段：context_id 与 available_layers
+        assert result["context_id"] is not None
+        assert result["available_layers"] == ["l0", "l1", "l2"]
         rec = server.store.get_by_id(result["id"])
         assert rec["importance"] == 9.0
         assert rec["tier"] == "pinned"
+        # 双侧：mapping + 三层 + 状态
+        context_store = server.context_service.store
+        assert context_store.resolve_legacy_mapping(result["id"]) == (
+            result["context_id"]
+        )
+        item = context_store.get_item(result["context_id"])
+        assert item.status is ContextStatus.ACTIVE
+        assert item.layers is not None
+        assert item.layers.l1 == "禁止直接操作生产数据库"
+        assert item.importance == 9.0
+        assert item.tier is ContextTier.PINNED
 
     def test_memory_add_nan_importance_uses_default(self, server):
         """min(10.0, nan) 返回 10.0 —— NaN importance 必须走默认值路径落库为 5.0。"""
@@ -254,9 +293,13 @@ class TestIntegration:
 
     def test_memory_add_merges_semantic_duplicate(self, server, test_config):
         """跨 key 语义合并：不同 key、同 value → merged，active 只剩一条，旧记录 supersede。"""
+        test_config.embedding_dim = 512  # 与 FakeEmbeddingEngine/索引维度一致
         server.vidx = VectorIndex(test_config)
         server.vidx.initialize(dim=512)
         server.engine = FakeEmbeddingEngine()
+        # 服务与处理器共享同一 legacy 索引/引擎实例，合并命中才能彼此可见
+        server.context_service._legacy_vector = server.vidx
+        server.context_service.embedding_engine = server.engine
         try:
             first = server.handle_tool_call("memory_add", {
                 "key": "p:t:decision:db", "value": "数据库选用 MySQL",
@@ -268,19 +311,38 @@ class TestIntegration:
             assert second["status"] == "merged"
             assert second["merged_into"] == first["id"]
             assert second["key"] == "p:t:decision:db"
+            # 可选增量字段
+            assert second["context_id"] is not None
+            assert second["old_context_id"] == first["context_id"]
+            assert second["available_layers"] == ["l0", "l1", "l2"]
             assert server.store.count_active() == 1
             active = server.store.get_active()[0]
             assert active["key"] == "p:t:decision:db"
             assert active["value"] == "数据库选用 MySQL"
             assert server.store.get_by_id(first["id"])["status"] == "superseded"
+            # 双侧：旧 ContextItem superseded，新两侧映射一致
+            context_store = server.context_service.store
+            assert context_store.get_item(first["context_id"]).status is (
+                ContextStatus.SUPERSEDED
+            )
+            assert context_store.get_item(second["context_id"]).status is (
+                ContextStatus.ACTIVE
+            )
+            assert context_store.resolve_legacy_mapping(second["new_id"]) == (
+                second["context_id"]
+            )
         finally:
             server.vidx.close()
 
     def test_memory_add_reference_tier_skips_merge(self, server, test_config):
         """tier="reference" 的新值不参与语义合并——永不 supersede 别人。"""
+        test_config.embedding_dim = 512  # 与 FakeEmbeddingEngine/索引维度一致
         server.vidx = VectorIndex(test_config)
         server.vidx.initialize(dim=512)
         server.engine = FakeEmbeddingEngine()
+        # 服务与处理器共享同一 legacy 索引/引擎实例
+        server.context_service._legacy_vector = server.vidx
+        server.context_service.embedding_engine = server.engine
         try:
             first = server.handle_tool_call("memory_add", {
                 "key": "p:t:decision:db", "value": "数据库选用 MySQL",
@@ -332,6 +394,304 @@ class TestIntegration:
             "key": "p:t:fact:r", "value": "y" * 501,
         })
         assert "error" in result
+
+    def test_memory_add_conflict_replace_keeps_legacy_shape(self, server):
+        """冲突检测判定 replace：旧 new_id/old_id 字段不变，old_context_id 仅增量。"""
+        seed = server.handle_tool_call("memory_add", {
+            "key": "p:t:decision:api", "value": "采用旧接口实现方案。",
+        })
+        assert seed["status"] == "added"
+
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:decision:api",
+            "value": "采用统一接口，因为它能够长期减少重复实现。",
+        })
+
+        assert result["status"] == "replaced"
+        assert result["new_id"] != seed["id"]
+        assert result["old_id"] == seed["id"]
+        # 可选增量字段
+        assert result["context_id"] is not None
+        assert result["old_context_id"] == seed["context_id"]
+        assert result["available_layers"] == ["l0", "l1", "l2"]
+        assert server.store.get_by_id(seed["id"])["status"] == "superseded"
+        assert server.store.get_by_id(result["new_id"])["status"] == "active"
+        context_store = server.context_service.store
+        assert context_store.get_item(result["old_context_id"]).status is (
+            ContextStatus.SUPERSEDED
+        )
+        assert context_store.get_item(result["context_id"]).status is (
+            ContextStatus.ACTIVE
+        )
+        assert context_store.resolve_legacy_mapping(result["new_id"]) == (
+            result["context_id"]
+        )
+
+    def test_memory_add_undecidable_conflict_reports_without_writing(self, server):
+        """不可判定的同 key 冲突：旧 conflict 形状不变，不写任何一侧。"""
+        seed = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:c", "value": "供应商合同必须双人复核后归档",
+        })
+        assert seed["status"] == "added"
+
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:c", "value": "供应商合同改为三人复核后归档",
+        })
+
+        assert result["status"] == "conflict"
+        assert result["existing_id"] == seed["id"]
+        assert "reason" in result
+        assert "context_id" not in result
+        assert server.store.count_active() == 1
+        assert server.context_service.store.count_by_status() == {"active": 1}
+
+    def test_memory_add_skip_duplicate_keeps_legacy_shape(self, server):
+        seed = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:s", "value": "供应商合同必须双人复核后归档",
+        })
+        assert seed["status"] == "added"
+
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:s", "value": "供应商合同必须双人复核后归档",
+        })
+
+        assert result["status"] == "skipped"
+        assert "reason" in result
+        assert "id" not in result
+        assert server.store.count_active() == 1
+
+    def test_memory_replace_keeps_legacy_shape_and_writes_both_sides(self, server):
+        seed = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:rl", "value": "供应商合同必须双人复核后归档",
+        })
+        assert seed["status"] == "added"
+
+        result = server.handle_tool_call("memory_replace", {
+            "key": "p:t:fact:rl", "value": "供应商合同必须双人复核并当场归档。",
+        })
+
+        # 旧形状只有 status/new_id；context_id/old_context_id 为可选增量
+        assert result["status"] == "replaced"
+        assert isinstance(result["new_id"], int)
+        assert result["new_id"] != seed["id"]
+        assert "old_id" not in result
+        assert result["old_context_id"] == seed["context_id"]
+        assert result["context_id"] is not None
+        assert server.store.get_by_id(seed["id"])["status"] == "superseded"
+        assert server.store.get_by_id(result["new_id"])["value"] == (
+            "供应商合同必须双人复核并当场归档。"
+        )
+        context_store = server.context_service.store
+        assert context_store.get_item(seed["context_id"]).status is (
+            ContextStatus.SUPERSEDED
+        )
+        assert context_store.resolve_legacy_mapping(result["new_id"]) == (
+            result["context_id"]
+        )
+
+    def test_memory_remove_marks_both_sides_deleted(self, server):
+        seed = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:rm", "value": "供应商合同必须双人复核后归档",
+        })
+        assert seed["status"] == "added"
+
+        result = server.handle_tool_call("memory_remove", {"id": seed["id"]})
+
+        assert result["status"] == "deleted"
+        assert result["id"] == seed["id"]
+        assert result["context_id"] == seed["context_id"]
+        assert server.store.get_by_id(seed["id"])["status"] == "deleted"
+        context_store = server.context_service.store
+        assert context_store.get_item(seed["context_id"]).status is (
+            ContextStatus.DELETED
+        )
+        # 映射保留，供历史追溯
+        assert context_store.resolve_legacy_mapping(seed["id"]) == (
+            seed["context_id"]
+        )
+
+    def _seed_consolidate_pair(self, server, test_config):
+        """经兼容边界写入一对近重复，并把向量直接加进共享 legacy 索引。"""
+        server.vidx.initialize(dim=512)
+        server.engine = FakeEmbeddingEngine()
+        server.context_service._legacy_vector = server.vidx
+        server.context_service.embedding_engine = server.engine
+        facade = server.context_service.legacy_facade()
+        first_id = facade.add(
+            key="p:t:fact:dup-a", value="完全相同的内容", importance=3.0
+        )
+        second_id = facade.add(
+            key="p:t:fact:dup-b", value="完全相同的内容", importance=9.0
+        )
+        vector = np.array(
+            server.engine.encode_document("完全相同的内容"), dtype=np.float32
+        )
+        server.vidx.add(first_id, vector)
+        server.vidx.add(second_id, vector)
+        server.consolidator = Consolidator(
+            test_config, facade, server.vidx, server.engine
+        )
+        return first_id, second_id
+
+    def test_memory_consolidate_dry_run_remains_pure_diagnostic(
+            self, server, test_config):
+        first_id, second_id = self._seed_consolidate_pair(server, test_config)
+        context_store = server.context_service.store
+        first_context_id = context_store.resolve_legacy_mapping(first_id)
+        before_items = context_store.count_by_status()
+
+        result = server.handle_tool_call("memory_consolidate", {"dry_run": True})
+
+        assert result["dry_run"] is True
+        assert result["merged"] == 0
+        assert len(result["pairs"]) == 1
+        pair = result["pairs"][0]
+        assert set(pair["keep"]) == {"id", "key", "preview", "importance"}
+        assert pair["keep"]["id"] == second_id  # 高分者保留
+        assert pair["drop"]["id"] == first_id
+        # 纯诊断：两侧状态与访问计数一律不变
+        assert server.store.get_by_id(first_id)["status"] == "active"
+        assert server.store.get_by_id(second_id)["status"] == "active"
+        assert server.store.get_by_id(second_id)["access_count"] == 0
+        assert context_store.count_by_status() == before_items
+        assert context_store.get_item(first_context_id).access_count == 0
+
+    def test_memory_consolidate_apply_changes_both_sides_per_pair(
+            self, server, test_config):
+        first_id, second_id = self._seed_consolidate_pair(server, test_config)
+        context_store = server.context_service.store
+        first_context_id = context_store.resolve_legacy_mapping(first_id)
+        second_context_id = context_store.resolve_legacy_mapping(second_id)
+
+        result = server.handle_tool_call("memory_consolidate", {"dry_run": False})
+
+        assert result["dry_run"] is False
+        assert result["merged"] == 1
+        # keep：access +1 双侧；drop：archived 双侧
+        assert server.store.get_by_id(second_id)["access_count"] == 1
+        assert context_store.get_item(second_context_id).access_count == 1
+        assert server.store.get_by_id(first_id)["status"] == "archived"
+        assert context_store.get_item(first_context_id).status is (
+            ContextStatus.ARCHIVED
+        )
+        assert server.store.count_active() == 1
+
+    def test_degraded_primary_rejects_all_mutation_tools(
+            self, degraded_primary_server):
+        server = degraded_primary_server
+        legacy_id = server.store.add(
+            key="p:t:fact:seed", value="既有的长期事实记录。"
+        )
+
+        add = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:x", "value": "供应商合同必须双人复核后归档",
+        })
+        replace = server.handle_tool_call("memory_replace", {
+            "key": "p:t:fact:seed", "value": "尝试改写既有的长期事实记录。",
+        })
+        remove = server.handle_tool_call("memory_remove", {"id": legacy_id})
+
+        for outcome in (add, replace, remove):
+            assert "error" in outcome
+            assert "degraded" in outcome["error"]
+        # 全部拒绝，两侧均无变化
+        assert server.store.get_by_id(legacy_id)["status"] == "active"
+        assert server.store.count_active() == 1
+        assert server.context_service.store.count_by_status() == {}
+
+    def test_degraded_primary_keeps_dry_run_consolidate_diagnostic(
+            self, degraded_primary_server, test_config):
+        server = degraded_primary_server
+        server.engine = FakeEmbeddingEngine()
+        server.consolidator = Consolidator(
+            test_config,
+            server.context_service.legacy_facade(),
+            server.vidx,
+            server.engine,
+        )
+        legacy_id = server.store.add(
+            key="p:t:fact:seed", value="既有的长期事实记录。"
+        )
+
+        dry = server.handle_tool_call("memory_consolidate", {"dry_run": True})
+        assert dry["dry_run"] is True
+        assert dry["merged"] == 0
+
+        applied = server.handle_tool_call(
+            "memory_consolidate", {"dry_run": False}
+        )
+        assert "error" in applied
+        assert "degraded" in applied["error"]
+        assert server.store.get_by_id(legacy_id)["status"] == "active"
+
+    def test_memory_add_vector_failure_returns_committed_id_and_degraded_state(
+            self, server, test_config):
+        test_config.embedding_dim = 2
+
+        class FailingIndex:
+            """add 即失败的 legacy 索引 fake；dirty 标记如实存活。"""
+
+            def __init__(self):
+                self.dirty = False
+
+            def is_dirty(self):
+                return self.dirty
+
+            def mark_dirty(self):
+                self.dirty = True
+
+            def preserve_dirty(self):
+                pass
+
+            def clear_dirty(self):
+                self.dirty = False
+
+            def count(self):
+                return 0
+
+            def initialize(self, dim=2):
+                pass
+
+            def add(self, mem_id, embedding):
+                raise RuntimeError("synthetic vector failure")
+
+            def remove(self, mem_id):
+                return False
+
+            def save(self):
+                raise AssertionError("save must not run after add failure")
+
+            def close(self):
+                pass
+
+        class LoadedEngine:
+            is_loaded = True
+
+            def encode_document(self, value):
+                return [0.0, 1.0]
+
+        service = server.context_service
+        service._legacy_vector = FailingIndex()
+        service.embedding_engine = LoadedEngine()
+
+        result = server.handle_tool_call("memory_add", {
+            "key": "p:t:fact:v", "value": "供应商合同必须双人复核后归档",
+        })
+
+        # 返回已提交 legacy ID + 非敏感降级状态，而不是假回滚
+        assert result["status"] == "added"
+        assert isinstance(result["id"], int)
+        assert result["index_state"] == "degraded"
+        assert result["context_id"] is not None
+        assert server.store.get_by_id(result["id"])["status"] == "active"
+        context_store = server.context_service.store
+        assert context_store.resolve_legacy_mapping(result["id"]) == (
+            result["context_id"]
+        )
+        assert context_store.get_item(result["context_id"]).status is (
+            ContextStatus.ACTIVE
+        )
+        assert service.status().legacy_vector_dirty is True
 
     def test_auto_extractor_realistic_conversation(self):
         """从真实对话中提取记忆。"""

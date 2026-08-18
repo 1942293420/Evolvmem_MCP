@@ -1,6 +1,8 @@
 """Behavioral contracts for the typed ContextService read boundary."""
 
+from contextlib import contextmanager
 from dataclasses import fields
+from pathlib import Path
 import sqlite3
 
 import pytest
@@ -27,7 +29,15 @@ from evolvmem.context_models import (
 from evolvmem.context_renderer import ContextRenderResult
 from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
-from evolvmem.legacy_models import LegacyAddRequest, LegacyRemoveRequest
+from evolvmem.legacy_models import (
+    LegacyAddRequest,
+    LegacyExtractionItem,
+    LegacyExtractionRequest,
+    LegacyExtractionResult,
+    LegacyMutationResult,
+    LegacyRemoveRequest,
+)
+from evolvmem.memory_store import MemoryStore
 
 
 # The frozen wrapper literals: tests must not import renderer internals, so the
@@ -1071,3 +1081,787 @@ def test_close_releases_the_service_owned_legacy_backend(test_config, store):
     assert backend is not None
     service.close()
     assert backend._conn is None
+
+
+# ---- extraction batch boundary ----
+
+
+class InjectedBatchFailure(RuntimeError):
+    """Raised by ExtractionFailureStore at the chosen batch write."""
+
+
+class BatchVectorIndex:
+    """Duck-typed VectorIndex fake: canned search hits and recorded calls."""
+
+    def __init__(self, config, *, path, events=None, label="index", hits=()):
+        self.config = config
+        self.path = Path(path).expanduser().resolve()
+        self.events = events
+        self.label = label
+        self.hits = list(hits)
+        self.calls: list[tuple] = []
+        self.dirty = False
+        self.initialized = False
+
+    def _record(self, action, *args):
+        entry = (self.label, action, *args)
+        self.calls.append(entry)
+        if self.events is not None:
+            self.events.append(entry)
+
+    def is_dirty(self):
+        return self.dirty
+
+    def mark_dirty(self):
+        self._record("mark_dirty")
+        self.dirty = True
+
+    def preserve_dirty(self):
+        self._record("preserve_dirty")
+
+    def clear_dirty(self):
+        self._record("clear_dirty")
+        self.dirty = False
+
+    def initialize(self, dim=512):
+        self._record("initialize", dim)
+        self.initialized = True
+
+    def count(self):
+        if not self.initialized:
+            raise RuntimeError("index is not initialized")
+        return 0
+
+    def search(self, embedding, k):
+        return list(self.hits)
+
+    def add(self, mem_id, embedding):
+        self._record("add", mem_id)
+
+    def remove(self, mem_id):
+        self._record("remove", mem_id)
+        return False
+
+    def save(self):
+        self._record("save")
+
+    def close(self):
+        pass
+
+
+class BatchVectorEngine:
+    """Deterministic loaded engine: one constant vector per encoded document."""
+
+    is_loaded = True
+
+    def __init__(self, dim=3):
+        self._dim = dim
+        self.encoded: list[str] = []
+
+    def encode_document(self, text):
+        self.encoded.append(text)
+        return [1.0] + [0.0] * (self._dim - 1)
+
+
+class ExtractionFailureStore(ContextStore):
+    """ContextStore spy that fails on the Nth projection insert of a batch."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.fail_on_insert = 0
+        self.insert_calls = 0
+
+    def legacy_projection(self):
+        repository = super().legacy_projection()
+        insert = repository.insert
+
+        def counted_insert(request):
+            self.insert_calls += 1
+            if self.insert_calls == self.fail_on_insert:
+                raise InjectedBatchFailure("injected candidate write failure")
+            return insert(request)
+
+        repository.insert = counted_insert
+        return repository
+
+
+class BatchCommitStore(ContextStore):
+    """ContextStore spy that records every outermost commit into a shared log."""
+
+    def __init__(self, config, events):
+        super().__init__(config)
+        self._events = events
+
+    @contextmanager
+    def transaction(self):
+        outermost = self._transaction_depth == 0
+        with super().transaction():
+            yield self
+        if outermost:
+            self._events.append("sqlite-committed")
+
+
+def _extraction_service(
+    config,
+    store,
+    *,
+    engine=None,
+    legacy_hits=(),
+    events=None,
+    mode=ContextMode.COMPAT,
+):
+    context_index = BatchVectorIndex(
+        config, path=config.context_vector_path, events=events, label="context"
+    )
+    legacy_index = BatchVectorIndex(
+        config, path=config.vector_path, events=events, label="legacy",
+        hits=legacy_hits,
+    )
+    service = ContextService(
+        config, store=store, vector_index=context_index, embedding_engine=engine
+    )
+    service._legacy_vector = legacy_index
+    service.initialize(mode=mode, adapter="test")
+    service._test_context_index = context_index
+    service._test_legacy_index = legacy_index
+    return service
+
+
+def _legacy_schema(config):
+    with MemoryStore(config):
+        pass
+
+
+def _summary_item(**overrides):
+    fields = dict(
+        key="project:test:progress:log:2026-08-18-1000",
+        value="本次确认了长期架构约束并完成安全检查。",
+        attribute="fact",
+        tags=("日志", "分类:test"),
+        confidence=1.0,
+    )
+    fields.update(overrides)
+    return LegacyExtractionItem(**fields)
+
+
+def _extraction_item(key, value, **overrides):
+    return LegacyExtractionItem(key=key, value=value, **overrides)
+
+
+def _extraction_request(summary=None, candidates=(), *, max_writes=8,
+                        source_session="session_test"):
+    return LegacyExtractionRequest(
+        summary=summary if summary is not None else _summary_item(),
+        candidates=candidates,
+        max_writes=max_writes,
+        source_session=source_session,
+    )
+
+
+def _mutation_result(legacy_id, context_id, **overrides):
+    values = dict(
+        legacy_id=legacy_id,
+        context_id=context_id,
+        old_legacy_id=None,
+        old_context_id=None,
+        available_layers=(ContextLayer.L0, ContextLayer.L1, ContextLayer.L2),
+        changed=True,
+    )
+    values.update(overrides)
+    return LegacyMutationResult(**values)
+
+
+def _db_snapshot(config):
+    conn = sqlite3.connect(config.db_path)
+    try:
+        return {
+            table: conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            for table in (
+                "memories",
+                "context_items",
+                "context_layers",
+                "context_sources",
+                "legacy_memory_migrations",
+            )
+        }
+    finally:
+        conn.close()
+
+
+def _memory_row(config, legacy_id):
+    conn = sqlite3.connect(config.db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM memories WHERE id=?", (legacy_id,)
+        ).fetchone()
+        return None if row is None else dict(row)
+    finally:
+        conn.close()
+
+
+def test_extraction_request_validates_and_normalizes_typed_fields():
+    item = LegacyExtractionItem(
+        key=" project:test:decision:api ",
+        value=" 采用统一接口。\r\n",
+        attribute=" Decision ",
+        tags=[" 架构 ", "架构", ""],
+        importance=8,
+        tier="PINNED",
+        confidence=1,
+    )
+    assert item.key == "project:test:decision:api"
+    assert item.value == "采用统一接口。"
+    assert item.attribute == "Decision"
+    assert item.tags == ("架构",)
+    assert item.importance == 8
+    assert item.tier == "pinned"
+    assert item.expires_at is None
+    assert item.confidence == 1
+
+    request = LegacyExtractionRequest(
+        summary=_summary_item(),
+        candidates=[item],
+        max_writes=8,
+        source_session=" session_a ",
+    )
+    assert request.candidates == (item,)
+    assert request.source_session == "session_a"
+
+    with pytest.raises(ContextValidationError):
+        LegacyExtractionRequest(summary="not-an-item")
+    with pytest.raises(ContextValidationError):
+        LegacyExtractionRequest(
+            summary=_summary_item(), candidates=[_summary_item(), "x"]
+        )
+    with pytest.raises(ContextValidationError):
+        LegacyExtractionRequest(summary=_summary_item(), candidates="oops")
+    with pytest.raises(ContextValidationError):
+        LegacyExtractionRequest(summary=_summary_item(), max_writes=0)
+    with pytest.raises(ContextValidationError):
+        LegacyExtractionRequest(summary=_summary_item(), max_writes=True)
+    with pytest.raises(ContextValidationError):
+        LegacyExtractionItem(key="  ", value="一些长期内容")
+    with pytest.raises(ContextValidationError):
+        LegacyExtractionItem(key="k", value="v", confidence=1.5)
+    with pytest.raises(ContextValidationError):
+        LegacyExtractionItem(key="k", value="v", tier="durable")
+
+
+def test_extraction_result_requires_ordered_results_and_an_honest_count():
+    summary_result = _mutation_result(1, 2)
+    candidate_result = _mutation_result(3, 4)
+
+    result = LegacyExtractionResult(
+        summary=summary_result, candidates=[candidate_result], persisted=2
+    )
+    assert result.summary is summary_result
+    assert result.candidates == (candidate_result,)
+    assert result.persisted == 2
+    with pytest.raises(AttributeError):
+        result.persisted = 0
+
+    with pytest.raises(ContextValidationError, match="persisted"):
+        LegacyExtractionResult(
+            summary=summary_result, candidates=[candidate_result], persisted=1
+        )
+    with pytest.raises(ContextValidationError, match="summary"):
+        LegacyExtractionResult(summary="x", candidates=(), persisted=0)
+    with pytest.raises(ContextValidationError, match="candidates"):
+        LegacyExtractionResult(summary=None, candidates=["x"], persisted=1)
+    with pytest.raises(ContextValidationError, match="persisted"):
+        LegacyExtractionResult(summary=None, candidates=(), persisted=-1)
+
+
+def test_extraction_batch_requires_initialized_service_and_typed_request(
+    test_config, store
+):
+    service = ContextService(test_config, store=store)
+    with pytest.raises(ContextServiceError) as excinfo:
+        service.persist_legacy_extraction(_extraction_request())
+    assert excinfo.value.code == "not_initialized"
+
+    initialized = _extraction_service(test_config, store)
+    with pytest.raises(ContextValidationError, match="request"):
+        initialized.persist_legacy_extraction({"summary": "x"})
+    initialized.close()
+
+
+def test_extraction_batch_commits_summary_and_candidates_in_one_outer_transaction(
+    test_config,
+):
+    _legacy_schema(test_config)
+    events: list = []
+    store = BatchCommitStore(test_config, events)
+    store.initialize()
+    service = _extraction_service(test_config, store, events=events)
+    before = _db_snapshot(test_config)
+    events.clear()
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=(
+                _extraction_item(
+                    "project:test:decision:first", "采用第一项长期架构决定。"
+                ),
+                _extraction_item(
+                    "project:test:decision:second", "采用第二项长期架构决定。"
+                ),
+            ),
+            source_session="session_batch",
+        )
+    )
+
+    assert events.count("sqlite-committed") == 1  # one outer transaction
+    assert result.persisted == 3
+    assert result.summary is not None and result.summary.changed is True
+    assert result.summary.available_layers == (
+        ContextLayer.L0,
+        ContextLayer.L1,
+        ContextLayer.L2,
+    )
+    assert [mutation.legacy_id for mutation in result.candidates] == [
+        result.summary.legacy_id + 1,
+        result.summary.legacy_id + 2,
+    ]
+
+    after = _db_snapshot(test_config)
+    assert len(after["memories"]) == len(before["memories"]) + 3
+    assert len(after["context_items"]) == len(before["context_items"]) + 3
+    assert len(after["context_layers"]) == len(before["context_layers"]) + 9
+    assert (
+        len(after["legacy_memory_migrations"])
+        == len(before["legacy_memory_migrations"]) + 3
+    )
+    for mutation in (result.summary, *result.candidates):
+        row = _memory_row(test_config, mutation.legacy_id)
+        assert row["status"] == "active"
+        assert row["source_session"] == "session_batch"
+        assert store.resolve_legacy_mapping(mutation.legacy_id) == (
+            mutation.context_id
+        )
+        item = store.get_item(mutation.context_id)
+        assert item.status is ContextStatus.ACTIVE
+        assert item.layers is not None
+    service.close()
+    store.close()
+
+
+def test_extraction_batch_summary_equivalence_skips_write_and_repairs_drift(
+    test_config,
+):
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store)
+
+    first = service.persist_legacy_extraction(
+        _extraction_request(source_session="session_a")
+    )
+    assert first.persisted == 1
+    before = _db_snapshot(test_config)
+
+    repeat = service.persist_legacy_extraction(
+        _extraction_request(source_session="session_b")
+    )
+    assert repeat.summary is None  # equivalent summary: nothing written
+    assert repeat.candidates == ()
+    assert repeat.persisted == 0
+    assert _db_snapshot(test_config) == before
+
+    # Same key/value with drifted metadata is repaired through one replace.
+    drift_key = "project:test:progress:log:2026-08-18-1100"
+    drift_value = "本次确认了长期可观测性基线。"
+    seeded = service.legacy_add(
+        LegacyAddRequest(
+            key=drift_key,
+            value=drift_value,
+            attribute="constraint",
+            tags=["漂移元数据"],
+            importance=10.0,
+            tier="pinned",
+        )
+    )
+    repaired = service.persist_legacy_extraction(
+        _extraction_request(
+            summary=_summary_item(key=drift_key, value=drift_value),
+            source_session="session_c",
+        )
+    )
+    assert repaired.persisted == 1
+    assert repaired.summary is not None
+    assert repaired.summary.old_legacy_id == seeded.legacy_id
+    assert repaired.summary.old_context_id == seeded.context_id
+    assert _memory_row(test_config, seeded.legacy_id)["status"] == "superseded"
+    new_row = _memory_row(test_config, repaired.summary.legacy_id)
+    assert new_row["status"] == "active"
+    assert new_row["attribute"] == "fact"
+    assert new_row["tags"] == "日志,分类:test"
+    assert new_row["importance"] == 5.0
+    assert new_row["tier"] == "normal"
+    assert new_row["source_session"] == "session_c"
+    assert store.get_item(seeded.context_id).status is ContextStatus.SUPERSEDED
+    new_item = store.get_item(repaired.summary.context_id)
+    assert new_item.status is ContextStatus.ACTIVE
+    assert new_item.tier is ContextTier.NORMAL
+    assert new_item.confidence == 1.0
+    service.close()
+    store.close()
+
+
+def test_extraction_batch_same_key_replace_and_conflict_paths_stay_consistent(
+    test_config,
+):
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store)
+    seeded_replace = service.legacy_add(
+        LegacyAddRequest(
+            key="project:test:decision:api",
+            value="采用旧接口。",
+            source_session="old-session",
+        )
+    )
+    seeded_conflict = service.legacy_add(
+        LegacyAddRequest(
+            key="project:test:decision:storage",
+            value="采用旧存储方案，因为它当时足够好。",
+            source_session="old-session",
+        )
+    )
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=(
+                # significantly more specific → same-key replace
+                _extraction_item(
+                    "project:test:decision:api",
+                    "采用统一接口，因为它能够长期减少重复实现。",
+                ),
+                # same key, undecidable → conflict; still persisted exactly once
+                _extraction_item(
+                    "project:test:decision:storage",
+                    "采用新存储方案，因为它现在更稳。",
+                ),
+            ),
+            source_session="session_replace",
+        )
+    )
+
+    assert result.persisted == 3
+    replaced, conflicted = result.candidates
+    assert replaced.old_legacy_id == seeded_replace.legacy_id
+    assert replaced.old_context_id == seeded_replace.context_id
+    assert _memory_row(test_config, seeded_replace.legacy_id)["status"] == (
+        "superseded"
+    )
+    new_row = _memory_row(test_config, replaced.legacy_id)
+    assert new_row["status"] == "active"
+    assert new_row["source_session"] == "session_replace"
+    assert store.get_item(seeded_replace.context_id).status is (
+        ContextStatus.SUPERSEDED
+    )
+    assert store.get_item(replaced.context_id).status is ContextStatus.ACTIVE
+    # The conflict candidate supersedes its rival: one active row per key.
+    assert conflicted.old_legacy_id == seeded_conflict.legacy_id
+    assert conflicted.old_context_id == seeded_conflict.context_id
+    storage_rows = store.legacy_projection().get_by_key(
+        "project:test:decision:storage"
+    )
+    active_storage = [row for row in storage_rows if row["status"] == "active"]
+    assert len(active_storage) == 1
+    assert active_storage[0]["value"] == "采用新存储方案，因为它现在更稳。"
+    assert active_storage[0]["source_session"] == "session_replace"
+    service.close()
+    store.close()
+
+
+def test_extraction_batch_semantic_merge_preserves_pinned_tier(test_config):
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    engine = BatchVectorEngine()
+    service = _extraction_service(test_config, store, engine=engine)
+    target = service.legacy_add(
+        LegacyAddRequest(
+            key="project:test:decision:db",
+            value="数据库选用 MySQL。",
+            tier="pinned",
+            source_session="old-session",
+        )
+    )
+    service._test_legacy_index.hits = [
+        {"id": target.legacy_id, "distance": 0.0}
+    ]
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=(
+                _extraction_item(
+                    "project:test:fact:db-alias",
+                    "数据库长期选用 MySQL，因为它稳定。",
+                    importance=7.0,
+                    confidence=0.9,
+                ),
+            ),
+            source_session="session_merge",
+        )
+    )
+
+    merged = result.candidates[0]
+    assert merged.old_legacy_id == target.legacy_id
+    assert merged.old_context_id == target.context_id
+    new_row = _memory_row(test_config, merged.legacy_id)
+    assert new_row["key"] == "project:test:decision:db"  # merged onto the match
+    assert new_row["value"] == "数据库长期选用 MySQL，因为它稳定。"
+    assert new_row["tier"] == "pinned"  # never silently downgraded
+    assert new_row["importance"] == 7.0
+    assert new_row["source_session"] == "session_merge"
+    assert _memory_row(test_config, target.legacy_id)["status"] == "superseded"
+    assert store.get_item(target.context_id).status is ContextStatus.SUPERSEDED
+    new_item = store.get_item(merged.context_id)
+    assert new_item.status is ContextStatus.ACTIVE
+    assert new_item.tier is ContextTier.PINNED
+    assert new_item.confidence == 0.9  # candidate confidence survives
+    service.close()
+    store.close()
+
+
+def test_extraction_batch_reference_candidate_never_merges(test_config):
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store, engine=BatchVectorEngine())
+    target = service.legacy_add(
+        LegacyAddRequest(key="project:test:decision:db", value="数据库选用 MySQL。")
+    )
+    service._test_legacy_index.hits = [
+        {"id": target.legacy_id, "distance": 0.0}
+    ]
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=(
+                _extraction_item(
+                    "project:test:reference:db-doc",
+                    "数据库选用 MySQL 的完整参考文档。",
+                    tier="reference",
+                ),
+            ),
+        )
+    )
+
+    reference = result.candidates[0]
+    assert reference.old_legacy_id is None  # plain add, never a supersede
+    assert reference.old_context_id is None
+    assert _memory_row(test_config, reference.legacy_id)["tier"] == "reference"
+    assert _memory_row(test_config, target.legacy_id)["status"] == "active"
+    assert store.get_item(target.context_id).status is ContextStatus.ACTIVE
+    service.close()
+    store.close()
+
+
+def test_extraction_batch_metadata_survives_into_projection_and_core(test_config):
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store)
+    value = "采用统一接口，因为它能够长期减少重复实现。"
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=(
+                _extraction_item(
+                    "project:test:decision:meta",
+                    value,
+                    attribute="decision",
+                    tags=("架构", "接口"),
+                    importance=8.5,
+                    tier="pinned",
+                    expires_at="2031-01-02 03:04:05",
+                    confidence=0.9,
+                ),
+            ),
+            source_session="session_meta",
+        )
+    )
+
+    mutation = result.candidates[0]
+    row = _memory_row(test_config, mutation.legacy_id)
+    assert row["attribute"] == "decision"
+    assert row["tags"] == "架构,接口"
+    assert row["importance"] == 8.5
+    assert row["tier"] == "pinned"
+    assert row["expires_at"] == "2031-01-02 03:04:05"
+    assert row["source_session"] == "session_meta"
+    item = store.get_item(mutation.context_id)
+    assert item.content_type is ContextContentType.DECISION
+    assert item.tags == ("架构", "接口")
+    assert item.importance == 8.5
+    assert item.tier is ContextTier.PINNED
+    assert item.confidence == 0.9
+    assert item.expires_at == "2031-01-02 03:04:05"
+    assert item.layers is not None
+    assert item.layers.l2 == value
+    assert store.get_layer(mutation.context_id, ContextLayer.L1) == value
+    service.close()
+    store.close()
+
+
+def test_extraction_batch_rolls_back_summary_and_earlier_candidates_on_failure(
+    test_config,
+):
+    _legacy_schema(test_config)
+    store = ExtractionFailureStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store)
+    before = _db_snapshot(test_config)
+
+    store.fail_on_insert = 3  # summary + first candidate persist, second fails
+    with pytest.raises(InjectedBatchFailure):
+        service.persist_legacy_extraction(
+            _extraction_request(
+                candidates=(
+                    _extraction_item(
+                        "project:test:decision:first", "采用第一项长期架构决定。"
+                    ),
+                    _extraction_item(
+                        "project:test:decision:second", "采用第二项长期架构决定。"
+                    ),
+                ),
+                source_session="session_atomic",
+            )
+        )
+
+    assert _db_snapshot(test_config) == before  # both sides fully rolled back
+    assert service._test_context_index.calls == []  # no vector work at all
+    assert service._test_legacy_index.calls == []
+    service.close()
+    store.close()
+
+
+def test_extraction_batch_vector_writes_start_only_after_the_commit(test_config):
+    _legacy_schema(test_config)
+    test_config.embedding_dim = 3
+    events: list = []
+    store = BatchCommitStore(test_config, events)
+    store.initialize()
+    engine = BatchVectorEngine()
+    service = _extraction_service(test_config, store, engine=engine, events=events)
+    events.clear()
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=(
+                _extraction_item(
+                    "project:test:decision:first", "采用第一项长期架构决定。"
+                ),
+            ),
+        )
+    )
+
+    committed_at = events.index("sqlite-committed")
+    data_actions = {"add", "remove", "save", "mark_dirty", "preserve_dirty",
+                    "clear_dirty"}
+    vector_positions = [
+        index
+        for index, event in enumerate(events)
+        if isinstance(event, tuple) and event[1] in data_actions
+    ]
+    assert vector_positions
+    assert all(position > committed_at for position in vector_positions)
+    legacy_adds = [
+        event[2] for event in events
+        if isinstance(event, tuple) and event[:2] == ("legacy", "add")
+    ]
+    context_adds = [
+        event[2] for event in events
+        if isinstance(event, tuple) and event[:2] == ("context", "add")
+    ]
+    assert legacy_adds == [
+        result.summary.legacy_id,
+        result.candidates[0].legacy_id,
+    ]
+    assert context_adds == [
+        result.summary.context_id,
+        result.candidates[0].context_id,
+    ]
+    service.close()
+    store.close()
+
+
+def test_extraction_batch_max_writes_counts_only_actual_writes(test_config):
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store)
+    existing = service.legacy_add(
+        LegacyAddRequest(
+            key="project:test:decision:existing",
+            value="采用既有长期决定，因为它能够减少重复写入。",
+            attribute="decision",
+        )
+    )
+    candidates = [
+        _extraction_item(  # identical value → skip, never consumes the quota
+            "project:test:decision:existing",
+            "采用既有长期决定，因为它能够减少重复写入。",
+        )
+    ]
+    candidates.extend(
+        _extraction_item(
+            f"project:test:decision:uncapped_{index}",
+            f"这是需要长期保留的架构决定第{index}条。",
+        )
+        for index in range(9)
+    )
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=tuple(candidates),
+            max_writes=8,
+            source_session="session_quota",
+        )
+    )
+
+    assert result.persisted == 9  # summary + eight actual candidate writes
+    assert len(result.candidates) == 8
+    assert [mutation.legacy_id for mutation in result.candidates] == list(
+        range(existing.legacy_id + 2, existing.legacy_id + 10)
+    )
+    assert store.legacy_projection().get_by_key(
+        "project:test:decision:uncapped_8"
+    ) == []
+    service.close()
+    store.close()
+
+
+def test_extraction_batch_legacy_mode_writes_only_the_legacy_backend(test_config):
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store, mode=ContextMode.LEGACY)
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=(
+                _extraction_item(
+                    "project:test:decision:first", "采用第一项长期架构决定。"
+                ),
+            ),
+            source_session="session_legacy",
+        )
+    )
+
+    assert result.persisted == 2
+    mutations = (result.summary, *result.candidates)
+    assert all(mutation is not None for mutation in mutations)
+    assert all(mutation.context_id is None for mutation in mutations)
+    assert all(mutation.available_layers == () for mutation in mutations)
+    assert store.count_by_status() == {}  # no Core claims in legacy mode
+    with MemoryStore(test_config) as legacy:
+        rows = legacy.get_active()
+    assert len(rows) == 2
+    assert all(row["source_session"] == "session_legacy" for row in rows)
+    service.close()
+    store.close()

@@ -487,58 +487,6 @@ def _extract_candidates(messages: list[dict[str, str]],
         return _keep_latest_summary(candidates)
 
 
-def _persist_candidates(
-        config, store, vidx, engine, candidates, session_id: str,
-        *, max_writes: int | None = None,
-) -> list[int]:
-    """Persist extraction candidates: gate checks → conflict detection → write.
-
-    The add branch (no same-key conflict) also checks for a semantically
-    identical active memory: a hit supersedes the old record instead of
-    coexisting as a fragmented duplicate. vidx/engine may be None (embedding
-    unavailable) — semantic merge is then skipped. Returns the IDs written to
-    SQLite; vector synchronization is deliberately handled after commit.
-    """
-    from evolvmem.conflict_detector import ConflictDetector
-    from evolvmem.semantic_merge import find_semantic_match
-
-    detector = ConflictDetector(store)
-    added_ids: list[int] = []
-    for c in candidates:
-        if max_writes is not None and len(added_ids) >= max_writes:
-            break
-        value = c.value.strip()
-        decision = detector.check(c.key, value)
-        if decision.action == "skip":
-            continue
-        if decision.action == "replace":
-            new_id = store.replace(key=c.key, new_value=value,
-                                   importance=c.importance, tier=c.tier,
-                                   source_session=session_id)
-        else:
-            # 同 key 无冲突或 conflict → 再做跨 key 语义合并
-            # （tier == "reference" 的候选不参与合并：永不 supersede 别人，
-            #   与 mcp_server._memory_add 的守卫一致）
-            if (engine is not None and getattr(engine, "is_loaded", False)
-                    and c.tier != "reference"):
-                match = find_semantic_match(store, vidx, engine, value,
-                                            config.add_merge_threshold)
-                if match:
-                    # 合并目标是 pinned 记忆时保留 pinned tier，避免被候选的
-                    # 默认 "normal" 静默降级、掉出每会话必注入层
-                    merged_tier = "pinned" if match.get("tier") == "pinned" else c.tier
-                    added_ids.append(store.replace(
-                        key=match["key"], new_value=value,
-                        importance=c.importance, tier=merged_tier,
-                        source_session=session_id))
-                    continue
-            new_id = store.add(key=c.key, value=value, attribute=c.attribute,
-                               tags=c.tags, importance=c.importance, tier=c.tier,
-                               source_session=session_id)
-        added_ids.append(new_id)
-    return added_ids
-
-
 def _summary_value_is_persistable(config, value: str) -> bool:
     """Apply the summary-specific deterministic value bounds."""
     from evolvmem.mcp_server import _is_low_info
@@ -548,46 +496,6 @@ def _summary_value_is_persistable(config, value: str) -> bool:
         config.value_min_chars <= len(stripped) <= config.value_max_chars
         and not _is_low_info(stripped)
     )
-
-
-def _persist_summary(store, summary, session_id: str) -> tuple[list[int], bool]:
-    """Write a locally constructed summary or accept an existing equivalent."""
-    active = next(
-        (
-            record
-            for record in store.get_by_key(summary.key)
-            if record["status"] == "active"
-        ),
-        None,
-    )
-    if active is not None:
-        metadata_equivalent = (
-            active["attribute"] == summary.attribute
-            and active["tags"] == ",".join(summary.tags)
-            and active["importance"] == summary.importance
-            and active["tier"] == summary.tier
-        )
-        if (
-            active["value"].strip() == summary.value.strip()
-            and metadata_equivalent
-        ):
-            return [], True
-    metadata = {
-        "attribute": summary.attribute,
-        "tags": summary.tags,
-        "importance": summary.importance,
-        "tier": summary.tier,
-        "source_session": session_id,
-    }
-    if active is None:
-        memory_id = store.add(summary.key, summary.value.strip(), **metadata)
-    else:
-        memory_id = store.replace(
-            summary.key,
-            summary.value.strip(),
-            **metadata,
-        )
-    return [memory_id], True
 
 
 def _sync_candidate_vectors(store, vidx, engine,
@@ -621,7 +529,6 @@ def _sync_candidate_vectors(store, vidx, engine,
 def session_end(payload: dict) -> ExtractionResult:
     """Distill the closed session into memories via the extractor + live gate."""
     from evolvmem.config import Config
-    from evolvmem.memory_store import MemoryStore
 
     session_id = payload.get("session_id", "")
     wire = _find_wire(session_id)
@@ -738,50 +645,68 @@ def session_end(payload: dict) -> ExtractionResult:
         )
         return ExtractionResult("retry", reason="candidate policy failed")
 
-    # embedding/向量索引先就绪：事务内只读索引做跨 key 语义合并；
+    # embedding 引擎先就绪：服务在事务内用共享 legacy 索引做跨 key 语义合并；
     # 加载失败则传 None，退化为纯 SQLite 写入（不阻塞持久化）
     engine = None
-    vidx = None
     try:
         from evolvmem.embedding import EmbeddingEngine
-        from evolvmem.vector_index import VectorIndex
         eng = EmbeddingEngine(config)
         eng.initialize()
         if eng.is_loaded:
             engine = eng
-            vidx = VectorIndex(config)
-            vidx.initialize(dim=config.embedding_dim)
     except Exception as e:
         _log(f"embedding init failed, semantic merge/vector sync skipped: {e}")
-        engine, vidx = None, None
+        engine = None
 
+    from evolvmem.context_models import ContextMode
+    from evolvmem.context_service import ContextService
+    from evolvmem.legacy_models import (
+        LegacyExtractionItem,
+        LegacyExtractionRequest,
+    )
+
+    service = None
     try:
-        with MemoryStore(config) as store:
-            with store.transaction():
-                summary_ids, summary_satisfied = _persist_summary(
-                    store, summary, source_session,
-                )
-                if not summary_satisfied:
-                    raise RuntimeError("SESSION_SUMMARY was not persisted")
-                atomic_ids = _persist_candidates(
-                    config,
-                    store,
-                    vidx,
-                    engine,
-                    ranked,
-                    source_session,
-                    max_writes=_MAX_MEMORIES_PER_SESSION,
-                )
-                memory_ids = [*summary_ids, *atomic_ids]
-            _sync_candidate_vectors(store, vidx, engine, memory_ids)
-            n = len(memory_ids)
+        service = ContextService(config, embedding_engine=engine)
+        service.initialize(
+            mode=ContextMode(config.context_mode), adapter="kimi"
+        )
+        extraction = service.persist_legacy_extraction(
+            LegacyExtractionRequest(
+                summary=LegacyExtractionItem(
+                    key=summary.key,
+                    value=summary.value,
+                    attribute=summary.attribute,
+                    tags=tuple(summary.tags),
+                    importance=summary.importance,
+                    tier=summary.tier,
+                    confidence=summary.confidence,
+                ),
+                candidates=tuple(
+                    LegacyExtractionItem(
+                        key=candidate.key,
+                        value=candidate.value,
+                        attribute=candidate.attribute,
+                        tags=tuple(candidate.tags),
+                        importance=candidate.importance,
+                        tier=candidate.tier,
+                        confidence=candidate.confidence,
+                    )
+                    for candidate in ranked
+                ),
+                max_writes=_MAX_MEMORIES_PER_SESSION,
+                source_session=source_session,
+            )
+        )
+        atomic_ids = [m.legacy_id for m in extraction.candidates]
+        n = extraction.persisted
     except Exception as error:
         _log(f"persistence failed: {type(error).__name__}")
         return ExtractionResult("retry", reason="persistence failed")
     finally:
-        if vidx is not None:
-            vidx.close()
-        if engine is not None:
+        if service is not None:
+            service.close()
+        elif engine is not None:
             engine.close()
     _log(
         f"provider={llm_config.provider} redacted={redacted_count} "

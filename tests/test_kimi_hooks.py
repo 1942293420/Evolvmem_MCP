@@ -764,8 +764,9 @@ class TestSessionEndOutcome:
 
     def test_session_end_syncs_vectors_after_commit_and_keeps_completed_on_failure(
             self, monkeypatch, tmp_path, test_config):
-        from evolvmem import embedding, vector_index
+        from evolvmem import context_service, embedding
 
+        test_config.embedding_dim = 2  # LoadedEngine 的 [0.0, 1.0] 与契约维度一致
         self._wire_session(monkeypatch, tmp_path, test_config)
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
         monkeypatch.setattr(
@@ -785,6 +786,7 @@ class TestSessionEndOutcome:
             ]}, ensure_ascii=False),
         )
         committed_batches = []
+        preserve_calls = []
 
         class LoadedEngine:
             is_loaded = True
@@ -802,11 +804,27 @@ class TestSessionEndOutcome:
                 pass
 
         class FailingIndex:
-            def __init__(self, config):
+            def __init__(self, config, path=None):
                 self.config = config
+                self.path = path
 
-            def initialize(self, dim):
+            def initialize(self, dim=512):
                 pass
+
+            def count(self):
+                return 0
+
+            def is_dirty(self):
+                return False
+
+            def mark_dirty(self):
+                pass
+
+            def preserve_dirty(self):
+                preserve_calls.append("preserve_dirty")
+
+            def search(self, embedding_value, k):
+                return []
 
             def add(self, memory_id, embedding_value):
                 connection = sqlite3.connect(str(self.config.db_path))
@@ -823,6 +841,9 @@ class TestSessionEndOutcome:
                 committed_batches.append((active_count, row[0] if row else None))
                 raise RuntimeError("synthetic vector failure")
 
+            def remove(self, memory_id):
+                return False
+
             def save(self):
                 raise AssertionError("save must not run after add failure")
 
@@ -830,7 +851,7 @@ class TestSessionEndOutcome:
                 pass
 
         monkeypatch.setattr(embedding, "EmbeddingEngine", LoadedEngine)
-        monkeypatch.setattr(vector_index, "VectorIndex", FailingIndex)
+        monkeypatch.setattr(context_service, "VectorIndex", FailingIndex)
         logs = []
         monkeypatch.setattr(hooks, "_log", logs.append)
 
@@ -838,12 +859,12 @@ class TestSessionEndOutcome:
 
         assert result.status == "completed"
         assert result.persisted == 2
-        assert committed_batches == [(2, "active")]
+        assert committed_batches == [(2, "active")]  # 向量写入发生在提交之后
+        assert preserve_calls  # 失败留下独立 dirty 重试标记，而非假回滚
         with MemoryStore(test_config) as store:
             records = store.get_active()
         assert len(records) == 2
         assert all(record["status"] == "active" for record in records)
-        assert "vector sync skipped: RuntimeError" in logs
 
     def test_session_end_redacts_before_llm_without_mutating_wire(
             self, monkeypatch, tmp_path, test_config):
@@ -1061,44 +1082,6 @@ class TestSessionEndOutcome:
             records = store.get_active()
         assert len(records) == 1
         assert records[0]["tier"] == "normal"
-
-    def test_persist_summary_repairs_equivalent_active_metadata(
-            self, test_config):
-        key = "project:test:progress:log:2026-08-04-1200"
-        value = "本次确认了长期架构约束并完成安全检查。"
-        local_summary = CandidateMemory(
-            key=key,
-            value=value,
-            attribute="fact",
-            tags=["日志", "分类:test"],
-            confidence=1.0,
-            importance=5.0,
-            tier="normal",
-        )
-        with MemoryStore(test_config) as store:
-            old_id = store.add(
-                key,
-                value,
-                attribute="constraint",
-                tags=['password="Synthetic-Legacy-Summary-Metadata"'],
-                importance=10.0,
-                tier="pinned",
-            )
-
-            memory_ids, satisfied = hooks._persist_summary(
-                store,
-                local_summary,
-                "session_synthetic",
-            )
-
-            assert satisfied is True
-            assert len(memory_ids) == 1
-            assert store.get_by_id(old_id)["status"] == "superseded"
-            active = store.get_by_id(memory_ids[0])
-        assert active["attribute"] == "fact"
-        assert active["tags"] == "日志,分类:test"
-        assert active["importance"] == 5.0
-        assert active["tier"] == "normal"
 
     def test_session_end_filters_before_dedupe_and_fills_actual_write_quota(
             self, monkeypatch, tmp_path, test_config):
@@ -1389,91 +1372,6 @@ class TestSessionEndOutcome:
         )
         assert "Synthetic-Pass" not in "\n".join(logs)
 
-    def test_persist_candidates_stops_after_eight_actual_writes(
-            self, test_config):
-        existing_key = "project:test:decision:existing"
-        existing_value = "采用既有长期决定，因为它能够减少重复写入。"
-        candidates = [CandidateMemory(
-            key=existing_key,
-            value=existing_value,
-            attribute="decision",
-            tier="pinned",
-        )]
-        candidates.extend([
-            CandidateMemory(
-                key=f"project:test:decision:uncapped_{index}",
-                value=f"这是调用方已经筛选完成的长期决定第{index}条。",
-                attribute="decision",
-            )
-            for index in range(9)
-        ])
-
-        with MemoryStore(test_config) as store:
-            store.add(existing_key, existing_value, attribute="decision")
-            memory_ids = hooks._persist_candidates(
-                test_config, store, None, None, candidates, "synthetic",
-                max_writes=8,
-            )
-            records = store.get_active()
-
-        assert memory_ids == list(range(2, 10))
-        assert len(records) == 9
-
-    def test_persist_candidates_preserves_source_session_on_replace_paths(
-            self, monkeypatch, test_config):
-        from evolvmem import semantic_merge
-
-        same_key = "project:test:decision:api"
-        semantic_key = "project:test:decision:storage"
-        with MemoryStore(test_config) as store:
-            old_same_key_id = store.add(
-                same_key,
-                "采用旧接口。",
-                source_session="old-session",
-            )
-            old_semantic_id = store.add(
-                semantic_key,
-                "采用旧存储方案。",
-                source_session="old-session",
-            )
-            monkeypatch.setattr(
-                semantic_merge,
-                "find_semantic_match",
-                lambda *_args, **_kwargs: store.get_by_id(old_semantic_id),
-            )
-
-            same_key_ids = hooks._persist_candidates(
-                test_config,
-                store,
-                None,
-                None,
-                [CandidateMemory(
-                    key=same_key,
-                    value="采用统一接口，因为它能够长期减少重复实现。",
-                )],
-                "replacement-session",
-            )
-            semantic_ids = hooks._persist_candidates(
-                test_config,
-                store,
-                object(),
-                type("LoadedEngine", (), {"is_loaded": True})(),
-                [CandidateMemory(
-                    key="project:test:fact:storage-alias",
-                    value="采用统一存储方案，因为它能够长期减少维护成本。",
-                )],
-                "semantic-session",
-            )
-
-            assert store.get_by_id(old_same_key_id)["status"] == "superseded"
-            assert store.get_by_id(same_key_ids[0])["source_session"] == (
-                "replacement-session"
-            )
-            assert store.get_by_id(old_semantic_id)["status"] == "superseded"
-            assert store.get_by_id(semantic_ids[0])["source_session"] == (
-                "semantic-session"
-            )
-
     def test_completed_extraction_returns_count_and_persists(
             self, monkeypatch, tmp_path, test_config):
         self._wire_session(monkeypatch, tmp_path, test_config)
@@ -1502,6 +1400,111 @@ class TestSessionEndOutcome:
         assert result.persisted == 2
         with MemoryStore(test_config) as store:
             assert store.count_active() == 2
+
+    def test_session_end_compat_mode_writes_projection_and_core_atomically(
+            self, monkeypatch, tmp_path, test_config):
+        from evolvmem.context_models import ContextStatus
+        from evolvmem.context_store import ContextStore
+
+        test_config.context_mode = "compat"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        # compat 模式以既有 legacy 库为前提（正式切换在迁移后才开启）
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks,
+            "_extract_candidates",
+            lambda _messages, _token: [
+                CandidateMemory(
+                    key="project:test:decision:dual",
+                    value="采用双侧原子写入，因为它能够长期保持一致。",
+                    attribute="decision",
+                    confidence=0.9,
+                    importance=8.0,
+                ),
+                CandidateMemory(
+                    key="SESSION_SUMMARY",
+                    value="本次确认了双侧原子写入的长期价值。",
+                    confidence=0.9,
+                    tags=["日志"],
+                ),
+            ],
+        )
+
+        result = hooks.session_end({"session_id": "session_dual"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2
+        with MemoryStore(test_config) as store:
+            records = store.get_active()
+        assert len(records) == 2
+        with ContextStore(test_config) as context_store:
+            for record in records:
+                context_id = context_store.resolve_legacy_mapping(record["id"])
+                assert context_id is not None
+                item = context_store.get_item(context_id)
+                assert item.status is ContextStatus.ACTIVE
+                assert item.layers is not None  # L0/L1/L2 三层齐备
+                assert item.layers.l1 == record["value"]
+                assert item.layers.l2 == record["value"]
+                if record["key"] == "project:test:decision:dual":
+                    assert item.confidence == 0.9
+                    assert item.importance == 8.0
+
+    def test_session_end_compat_mode_rolls_back_both_sides_on_write_failure(
+            self, monkeypatch, tmp_path, test_config):
+        test_config.context_mode = "compat"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        # compat 模式以既有 legacy 库为前提（正式切换在迁移后才开启）
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+            CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次确认了三项长期架构规则。",
+                tags=["日志"],
+            ),
+            CandidateMemory(
+                key="project:x:decision:first",
+                value="采用第一项长期架构决定。",
+            ),
+            CandidateMemory(
+                key="project:x:decision:second",
+                value="采用第二项长期架构决定。",
+            ),
+            CandidateMemory(
+                key="project:x:constraint:third",
+                value="必须遵守第三项长期安全约束。",
+            ),
+        ])
+        from evolvmem.context_store import ContextStore
+        from evolvmem.legacy_projection import LegacyProjectionRepository
+        real_insert = LegacyProjectionRepository.insert
+        calls = 0
+
+        def fail_on_third(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise sqlite3.OperationalError(
+                    "synthetic third write failure"
+                )
+            return real_insert(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            LegacyProjectionRepository, "insert", fail_on_third
+        )
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "retry"
+        with MemoryStore(test_config) as store:
+            assert store.count_active() == 0
+        with ContextStore(test_config) as context_store:
+            assert context_store.count_by_status() == {}
+
 
 
 class TestExtractionBackoff:

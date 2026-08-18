@@ -96,6 +96,49 @@ class TestExtract:
             by_key = store.get_by_key("test:memory:conclusion:对比")
             assert by_key[0]["source_session"].startswith("dsh:")
 
+    def test_happy_path_compat_mode_writes_projection_and_core(
+            self, monkeypatch, _isolated_data_dir):
+        from evolvmem.kimi_hooks import LLMConfig
+
+        monkeypatch.setenv("EVOLVMEM_CONTEXT_MODE", "compat")
+        # compat 模式以既有 legacy 库为前提（正式切换在迁移后才开启）
+        from evolvmem.config import Config
+        from evolvmem.memory_store import MemoryStore
+        with MemoryStore(Config()):
+            pass
+        monkeypatch.setattr(
+            kh, "_load_llm_config",
+            lambda: LLMConfig(provider="deepseek", api_key="k",
+                              base_url="https://example.invalid",
+                              model="deepseek-v4-flash"),
+        )
+        monkeypatch.setattr(
+            kh, "_extract_candidates",
+            lambda messages, llm_config: [_summary_candidate(),
+                                          _atomic_candidate()],
+        )
+        status, details = extract_from_messages(
+            _long_messages(), "dsh-compat-session", "testproj")
+        assert status == "completed"
+        assert details["persisted"] == 2
+
+        from evolvmem.context_models import ContextStatus
+        from evolvmem.context_store import ContextStore
+        with MemoryStore(Config()) as store:
+            records = store.get_active()
+        assert len(records) == 2
+        with ContextStore(Config()) as context_store:
+            for record in records:
+                context_id = context_store.resolve_legacy_mapping(record["id"])
+                assert context_id is not None
+                item = context_store.get_item(context_id)
+                assert item.status is ContextStatus.ACTIVE
+                assert item.layers is not None  # L0/L1/L2 三层齐备
+                assert item.layers.l1 == record["value"]
+                if record["key"] == "test:memory:conclusion:对比":
+                    assert item.confidence == 0.9
+                    assert item.importance == 6.0
+
     def test_extract_fails_open_never_raises(self, monkeypatch,
                                              _isolated_data_dir):
         def boom(*a, **kw):

@@ -67,8 +67,6 @@ def extract_from_messages(
         redact_messages,
         sanitize_summary,
     )
-    from evolvmem.memory_store import MemoryStore
-    from evolvmem.vector_index import VectorIndex
 
     reason = ""
     conversation_chars = sum(len(str(m.get("content", ""))) for m in messages)
@@ -169,45 +167,64 @@ def extract_from_messages(
         return "retry", {"reason": "candidate policy failed"}
 
     engine = None
-    vidx = None
     try:
         eng = EmbeddingEngine(config)
         eng.initialize()
         if eng.is_loaded:
             engine = eng
-            vidx = VectorIndex(config)
-            vidx.initialize(dim=config.embedding_dim)
     except Exception as e:
         _log(f"embedding init failed, semantic merge/vector sync skipped: {e}")
-        engine, vidx = None, None
+        engine = None
 
+    from evolvmem.context_models import ContextMode
+    from evolvmem.context_service import ContextService
+    from evolvmem.legacy_models import (
+        LegacyExtractionItem,
+        LegacyExtractionRequest,
+    )
+
+    service = None
     try:
-        with MemoryStore(config) as store:
-            with store.transaction():
-                summary_ids, summary_satisfied = kh._persist_summary(
-                    store, summary, source_session,
-                )
-                if not summary_satisfied:
-                    raise RuntimeError("SESSION_SUMMARY was not persisted")
-                atomic_ids = kh._persist_candidates(
-                    config,
-                    store,
-                    vidx,
-                    engine,
-                    ranked,
-                    source_session,
-                    max_writes=kh._MAX_MEMORIES_PER_SESSION,
-                )
-                memory_ids = [*summary_ids, *atomic_ids]
-            kh._sync_candidate_vectors(store, vidx, engine, memory_ids)
-            n = len(memory_ids)
+        service = ContextService(config, embedding_engine=engine)
+        service.initialize(
+            mode=ContextMode(config.context_mode), adapter="dsh"
+        )
+        extraction = service.persist_legacy_extraction(
+            LegacyExtractionRequest(
+                summary=LegacyExtractionItem(
+                    key=summary.key,
+                    value=summary.value,
+                    attribute=summary.attribute,
+                    tags=tuple(summary.tags),
+                    importance=summary.importance,
+                    tier=summary.tier,
+                    confidence=summary.confidence,
+                ),
+                candidates=tuple(
+                    LegacyExtractionItem(
+                        key=candidate.key,
+                        value=candidate.value,
+                        attribute=candidate.attribute,
+                        tags=tuple(candidate.tags),
+                        importance=candidate.importance,
+                        tier=candidate.tier,
+                        confidence=candidate.confidence,
+                    )
+                    for candidate in ranked
+                ),
+                max_writes=kh._MAX_MEMORIES_PER_SESSION,
+                source_session=source_session,
+            )
+        )
+        atomic_ids = [m.legacy_id for m in extraction.candidates]
+        n = extraction.persisted
     except Exception as error:
         _log(f"persistence failed: {type(error).__name__}")
         return "retry", {"reason": "persistence failed"}
     finally:
-        if vidx is not None:
-            vidx.close()
-        if engine is not None:
+        if service is not None:
+            service.close()
+        elif engine is not None:
             engine.close()
 
     _log(

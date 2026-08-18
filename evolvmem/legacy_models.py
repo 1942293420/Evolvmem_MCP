@@ -71,6 +71,45 @@ def _validate_id_tuple(value: object, field_name: str) -> tuple[int, ...]:
     return ids  # type: ignore[return-value]
 
 
+def _normalize_write_payload(instance: object) -> None:
+    """Shared key/value/metadata normalization for write payloads.
+
+    Covers the fields LegacyAddRequest and LegacyExtractionItem have in
+    common; callers normalize any remaining fields (e.g. source_session)
+    themselves.
+    """
+    key = _normalize_text(instance.key, "key")  # type: ignore[attr-defined]
+    if not key:
+        raise ContextValidationError("key must not be empty")
+    object.__setattr__(instance, "key", key)
+    value = _normalize_text(instance.value, "value")  # type: ignore[attr-defined]
+    if not value:
+        raise ContextValidationError("value must not be empty")
+    object.__setattr__(instance, "value", value)
+    object.__setattr__(
+        instance,
+        "attribute",
+        _normalize_text(instance.attribute, "attribute"),  # type: ignore[attr-defined]
+    )
+    object.__setattr__(
+        instance, "tags", _normalize_tags(instance.tags)  # type: ignore[attr-defined]
+    )
+    _validate_number(
+        instance.importance, "importance", lower=1.0, upper=10.0  # type: ignore[attr-defined]
+    )
+    object.__setattr__(
+        instance, "tier", _validate_tier(instance.tier)  # type: ignore[attr-defined]
+    )
+    object.__setattr__(
+        instance,
+        "expires_at",
+        _validate_expires_at(instance.expires_at),  # type: ignore[attr-defined]
+    )
+    _validate_optional_number(
+        instance.confidence, "confidence", lower=0.0, upper=1.0  # type: ignore[attr-defined]
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class LegacyAddRequest:
     """One legacy memory_add payload plus optional extractor confidence."""
@@ -86,27 +125,12 @@ class LegacyAddRequest:
     confidence: float | None = None
 
     def __post_init__(self) -> None:
-        key = _normalize_text(self.key, "key")
-        if not key:
-            raise ContextValidationError("key must not be empty")
-        object.__setattr__(self, "key", key)
-        value = _normalize_text(self.value, "value")
-        if not value:
-            raise ContextValidationError("value must not be empty")
-        object.__setattr__(self, "value", value)
-        object.__setattr__(
-            self, "attribute", _normalize_text(self.attribute, "attribute")
-        )
-        object.__setattr__(self, "tags", _normalize_tags(self.tags))
+        _normalize_write_payload(self)
         object.__setattr__(
             self,
             "source_session",
             _normalize_text(self.source_session, "source_session"),
         )
-        _validate_number(self.importance, "importance", lower=1.0, upper=10.0)
-        object.__setattr__(self, "tier", _validate_tier(self.tier))
-        object.__setattr__(self, "expires_at", _validate_expires_at(self.expires_at))
-        _validate_optional_number(self.confidence, "confidence", lower=0.0, upper=1.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,3 +284,111 @@ class LegacyAccessResult:
             "updated_context_ids",
             _validate_id_tuple(self.updated_context_ids, "updated_context_ids"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyExtractionItem:
+    """One extraction-batch payload: the session summary or one candidate."""
+
+    key: str
+    value: str
+    attribute: str = ""
+    tags: tuple[str, ...] = ()
+    importance: float = 5.0
+    tier: str = "normal"
+    expires_at: str | None = None
+    confidence: float | None = None
+
+    def __post_init__(self) -> None:
+        _normalize_write_payload(self)
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyExtractionRequest:
+    """One extraction batch: the summary plus policy-gated atomic candidates.
+
+    Message parsing, redaction, ranking, and the deterministic policy gates
+    stay in the adapters; everything listed here is already safe to write.
+    ``max_writes`` bounds actual candidate writes — skipped duplicates never
+    consume the quota.
+    """
+
+    summary: LegacyExtractionItem
+    candidates: tuple[LegacyExtractionItem, ...] = ()
+    max_writes: int = 8
+    source_session: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.summary, LegacyExtractionItem):
+            raise ContextValidationError(
+                "summary must be a LegacyExtractionItem instance"
+            )
+        if isinstance(self.candidates, (str, bytes)):
+            raise ContextValidationError(
+                "candidates must be an iterable of LegacyExtractionItem"
+            )
+        try:
+            candidates = tuple(self.candidates)
+        except TypeError as exc:
+            raise ContextValidationError(
+                "candidates must be an iterable of LegacyExtractionItem"
+            ) from exc
+        for candidate in candidates:
+            if not isinstance(candidate, LegacyExtractionItem):
+                raise ContextValidationError(
+                    "candidates must be an iterable of LegacyExtractionItem"
+                )
+        object.__setattr__(self, "candidates", candidates)
+        _validate_positive_int(self.max_writes, "max_writes")
+        object.__setattr__(
+            self,
+            "source_session",
+            _normalize_text(self.source_session, "source_session"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyExtractionResult:
+    """Ordered batch outcome; ``persisted`` counts actual new legacy IDs.
+
+    ``summary`` is None when an equivalent active summary already satisfied
+    the batch; ``candidates`` holds one result per candidate actually written,
+    in request order — skipped duplicates never appear.
+    """
+
+    summary: LegacyMutationResult | None
+    candidates: tuple[LegacyMutationResult, ...]
+    persisted: int
+
+    def __post_init__(self) -> None:
+        if self.summary is not None and not isinstance(
+            self.summary, LegacyMutationResult
+        ):
+            raise ContextValidationError(
+                "summary must be a LegacyMutationResult or None"
+            )
+        if isinstance(self.candidates, (str, bytes)):
+            raise ContextValidationError(
+                "candidates must be an iterable of LegacyMutationResult"
+            )
+        try:
+            candidates = tuple(self.candidates)
+        except TypeError as exc:
+            raise ContextValidationError(
+                "candidates must be an iterable of LegacyMutationResult"
+            ) from exc
+        for candidate in candidates:
+            if not isinstance(candidate, LegacyMutationResult):
+                raise ContextValidationError(
+                    "candidates must be an iterable of LegacyMutationResult"
+                )
+        object.__setattr__(self, "candidates", candidates)
+        if type(self.persisted) is not int or self.persisted < 0:
+            raise ContextValidationError(
+                "persisted must be a non-negative integer"
+            )
+        written = (1 if self.summary is not None else 0) + len(candidates)
+        if self.persisted != written:
+            raise ContextValidationError(
+                "persisted must equal the number of actual writes"
+            )

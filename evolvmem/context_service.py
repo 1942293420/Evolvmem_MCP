@@ -34,6 +34,7 @@ from pathlib import PurePosixPath
 import numpy as np
 
 from evolvmem.config import Config
+from evolvmem.conflict_detector import ConflictDetector
 from evolvmem.context_migration import LegacyMemoryMigrator
 from evolvmem.context_models import (
     ContextLayer,
@@ -65,6 +66,9 @@ from evolvmem.legacy_models import (
     LegacyAccessRequest,
     LegacyAccessResult,
     LegacyAddRequest,
+    LegacyExtractionItem,
+    LegacyExtractionRequest,
+    LegacyExtractionResult,
     LegacyHardDeleteRequest,
     LegacyMutationResult,
     LegacyRemoveRequest,
@@ -78,6 +82,7 @@ from evolvmem.legacy_projection import (
     LegacyProjectionUpdate,
 )
 from evolvmem.memory_store import MemoryStore
+from evolvmem.semantic_merge import find_semantic_match
 from evolvmem.vector_index import VectorIndex
 
 
@@ -511,41 +516,49 @@ class ContextService:
             )
         with self._cutover_lock.shared():
             with self.store.transaction():
-                repository = self.store.legacy_projection()
-                legacy_id = repository.insert(
-                    LegacyProjectionInsert(
-                        key=request.key,
-                        value=request.value,
-                        attribute=request.attribute,
-                        tags=request.tags,
-                        source_session=request.source_session,
-                        importance=request.importance,
-                        tier=request.tier,
-                        expires_at=request.expires_at,
-                    )
-                )
-                row = repository.get_by_id(legacy_id)
-                # The Context draft derives from the just-written projection
-                # row so projection inheritance and Core metadata cannot diverge.
-                draft = self._legacy_migrator().draft_from_projection_row(
-                    row, confidence=request.confidence
-                )
-                item = self.store._create_legacy_item(draft)
-                self.store.record_legacy_mapping(legacy_id, item.id)
-                new_l0 = item.layers.l0 if item.layers is not None else ""
-        self._apply_vector_aftermath(
+                result, aftermath = self._add_dual_in_transaction(request)
+        self._apply_vector_aftermath(aftermath)
+        return result
+
+    def _add_dual_in_transaction(
+        self, request: LegacyAddRequest
+    ) -> tuple[LegacyMutationResult, "_VectorAftermath"]:
+        """legacy_add write steps; the caller holds the lock and outer transaction."""
+        repository = self.store.legacy_projection()
+        legacy_id = repository.insert(
+            LegacyProjectionInsert(
+                key=request.key,
+                value=request.value,
+                attribute=request.attribute,
+                tags=request.tags,
+                source_session=request.source_session,
+                importance=request.importance,
+                tier=request.tier,
+                expires_at=request.expires_at,
+            )
+        )
+        row = repository.get_by_id(legacy_id)
+        # The Context draft derives from the just-written projection
+        # row so projection inheritance and Core metadata cannot diverge.
+        draft = self._legacy_migrator().draft_from_projection_row(
+            row, confidence=request.confidence
+        )
+        item = self.store._create_legacy_item(draft)
+        self.store.record_legacy_mapping(legacy_id, item.id)
+        new_l0 = item.layers.l0 if item.layers is not None else ""
+        return (
+            LegacyMutationResult(
+                legacy_id=legacy_id,
+                context_id=item.id,
+                old_legacy_id=None,
+                old_context_id=None,
+                available_layers=_ALL_LAYERS,
+                changed=True,
+            ),
             _VectorAftermath(
                 legacy_upserts=((legacy_id, request.value),),
                 context_upserts=((item.id, new_l0),),
-            )
-        )
-        return LegacyMutationResult(
-            legacy_id=legacy_id,
-            context_id=item.id,
-            old_legacy_id=None,
-            old_context_id=None,
-            available_layers=_ALL_LAYERS,
-            changed=True,
+            ),
         )
 
     def legacy_replace(self, request: LegacyReplaceRequest) -> LegacyMutationResult:
@@ -577,40 +590,54 @@ class ContextService:
             )
         with self._cutover_lock.shared():
             with self.store.transaction():
-                repository = self.store.legacy_projection()
-                old_legacy_id, new_id = repository.replace(
-                    LegacyProjectionReplace(
-                        key=request.key,
-                        new_value=request.new_value,
-                        attribute=request.attribute,
-                        tags=request.tags,
-                        source_session=request.source_session,
-                        importance=request.importance,
-                        tier=request.tier,
-                        expires_at=request.expires_at,
-                    )
+                result, aftermath = self._replace_dual_in_transaction(request)
+        self._apply_vector_aftermath(aftermath)
+        return result
+
+    def _replace_dual_in_transaction(
+        self, request: LegacyReplaceRequest
+    ) -> tuple[LegacyMutationResult, "_VectorAftermath"]:
+        """legacy_replace write steps; the caller holds the lock and outer transaction."""
+        repository = self.store.legacy_projection()
+        old_legacy_id, new_id = repository.replace(
+            LegacyProjectionReplace(
+                key=request.key,
+                new_value=request.new_value,
+                attribute=request.attribute,
+                tags=request.tags,
+                source_session=request.source_session,
+                importance=request.importance,
+                tier=request.tier,
+                expires_at=request.expires_at,
+            )
+        )
+        new_row = repository.get_by_id(new_id)
+        draft = self._legacy_migrator().draft_from_projection_row(
+            new_row, confidence=request.confidence
+        )
+        old_context_id = None
+        if old_legacy_id is None:
+            item = self.store._create_legacy_item(draft)
+        else:
+            old_context_id = self.store.resolve_legacy_mapping(old_legacy_id)
+            if old_context_id is None:
+                # An unmapped legacy row is migrated inside this same
+                # outer transaction before the mutation continues.
+                old_context_id = self._legacy_migrator().migrate_projection_row(
+                    repository.get_by_id(old_legacy_id)
                 )
-                new_row = repository.get_by_id(new_id)
-                draft = self._legacy_migrator().draft_from_projection_row(
-                    new_row, confidence=request.confidence
-                )
-                old_context_id = None
-                if old_legacy_id is None:
-                    item = self.store._create_legacy_item(draft)
-                else:
-                    old_context_id = self.store.resolve_legacy_mapping(old_legacy_id)
-                    if old_context_id is None:
-                        # An unmapped legacy row is migrated inside this same
-                        # outer transaction before the mutation continues.
-                        old_context_id = (
-                            self._legacy_migrator().migrate_projection_row(
-                                repository.get_by_id(old_legacy_id)
-                            )
-                        )
-                    item = self.store.supersede_item(old_context_id, draft)
-                self.store.record_legacy_mapping(new_id, item.id)
-                new_l0 = item.layers.l0 if item.layers is not None else ""
-        self._apply_vector_aftermath(
+            item = self.store.supersede_item(old_context_id, draft)
+        self.store.record_legacy_mapping(new_id, item.id)
+        new_l0 = item.layers.l0 if item.layers is not None else ""
+        return (
+            LegacyMutationResult(
+                legacy_id=new_id,
+                context_id=item.id,
+                old_legacy_id=old_legacy_id,
+                old_context_id=old_context_id,
+                available_layers=_ALL_LAYERS,
+                changed=True,
+            ),
             _VectorAftermath(
                 legacy_upserts=((new_id, request.new_value),),
                 legacy_removals=(
@@ -620,15 +647,7 @@ class ContextService:
                 context_removals=(
                     (old_context_id,) if old_context_id is not None else ()
                 ),
-            )
-        )
-        return LegacyMutationResult(
-            legacy_id=new_id,
-            context_id=item.id,
-            old_legacy_id=old_legacy_id,
-            old_context_id=old_context_id,
-            available_layers=_ALL_LAYERS,
-            changed=True,
+            ),
         )
 
     def legacy_remove(self, request: LegacyRemoveRequest) -> LegacyMutationResult:
@@ -853,6 +872,308 @@ class ContextService:
         return LegacyAccessResult(
             updated_legacy_ids=updated_legacy_ids,
             updated_context_ids=context_ids,
+        )
+
+    # ---- extraction batch ----
+
+    def persist_legacy_extraction(
+        self, request: LegacyExtractionRequest
+    ) -> LegacyExtractionResult:
+        """Persist one extraction batch as all-or-nothing under the cutover lock.
+
+        The summary equivalence check/repair and at most ``max_writes``
+        actual candidate writes share one outer SQLite transaction; a failure
+        on any write rolls the summary and every earlier candidate back on
+        both sides. Both derived vector batches start only after the commit.
+        """
+        self._require_request(request, LegacyExtractionRequest)
+        self._require_initialized()
+        engine = self.embedding_engine
+        engine_ready = engine is not None and getattr(engine, "is_loaded", False)
+        if engine_ready:
+            try:
+                # The semantic-merge search needs an open legacy index; when it
+                # cannot be opened the batch degrades to pure SQLite writes.
+                self._ensure_vector_index_ready(self._legacy_vector_index())
+            except Exception:
+                engine_ready = False
+        if self._mode is ContextMode.LEGACY:
+            return self._persist_extraction_legacy(request, engine_ready=engine_ready)
+        return self._persist_extraction_dual(request, engine_ready=engine_ready)
+
+    def _persist_extraction_dual(
+        self, request: LegacyExtractionRequest, *, engine_ready: bool
+    ) -> LegacyExtractionResult:
+        source_session = request.source_session
+
+        def write_add(
+            item: LegacyExtractionItem,
+        ) -> tuple[LegacyMutationResult, _VectorAftermath]:
+            return self._add_dual_in_transaction(
+                LegacyAddRequest(
+                    key=item.key,
+                    value=item.value,
+                    attribute=item.attribute,
+                    tags=item.tags,
+                    source_session=source_session,
+                    importance=item.importance,
+                    tier=item.tier,
+                    expires_at=item.expires_at,
+                    confidence=item.confidence,
+                )
+            )
+
+        def write_replace(
+            item: LegacyExtractionItem,
+            *,
+            key: str | None = None,
+            tier: str | None = None,
+            repair: bool = False,
+        ) -> tuple[LegacyMutationResult, _VectorAftermath]:
+            # repair (the summary path) rewrites metadata explicitly; candidate
+            # replaces inherit attribute/tags from the superseded row instead.
+            return self._replace_dual_in_transaction(
+                LegacyReplaceRequest(
+                    key=key if key is not None else item.key,
+                    new_value=item.value,
+                    attribute=item.attribute if repair else None,
+                    tags=item.tags if repair else None,
+                    source_session=source_session,
+                    importance=item.importance,
+                    tier=item.tier if tier is None else tier,
+                    expires_at=item.expires_at,
+                    confidence=item.confidence,
+                )
+            )
+
+        with self._cutover_lock.shared():
+            with self.store.transaction():
+                summary_result, candidate_results, aftermath = (
+                    self._extraction_batch_writes(
+                        request,
+                        self.store.legacy_projection(),
+                        engine_ready=engine_ready,
+                        conflict_as_replace=True,
+                        write_add=write_add,
+                        write_replace=write_replace,
+                    )
+                )
+        self._apply_vector_aftermath(aftermath)
+        return LegacyExtractionResult(
+            summary=summary_result,
+            candidates=candidate_results,
+            persisted=(1 if summary_result is not None else 0)
+            + len(candidate_results),
+        )
+
+    def _persist_extraction_legacy(
+        self, request: LegacyExtractionRequest, *, engine_ready: bool
+    ) -> LegacyExtractionResult:
+        """Legacy emergency mode: the same policy over the old backend only."""
+        source_session = request.source_session
+        backend = self._legacy_backend()
+
+        def write_add(
+            item: LegacyExtractionItem,
+        ) -> tuple[LegacyMutationResult, _VectorAftermath]:
+            new_id = backend.add(
+                key=item.key,
+                value=item.value,
+                attribute=item.attribute,
+                tags=list(item.tags) or None,
+                source_session=source_session,
+                importance=item.importance,
+                tier=item.tier,
+                expires_at=item.expires_at,
+            )
+            return (
+                LegacyMutationResult(
+                    legacy_id=new_id,
+                    context_id=None,
+                    old_legacy_id=None,
+                    old_context_id=None,
+                    available_layers=(),
+                    changed=True,
+                ),
+                _VectorAftermath(legacy_upserts=((new_id, item.value),)),
+            )
+
+        def write_replace(
+            item: LegacyExtractionItem,
+            *,
+            key: str | None = None,
+            tier: str | None = None,
+            repair: bool = False,
+        ) -> tuple[LegacyMutationResult, _VectorAftermath]:
+            new_id = backend.replace(
+                key=key if key is not None else item.key,
+                new_value=item.value,
+                attribute=item.attribute if repair else None,
+                tags=list(item.tags) if repair else None,
+                source_session=source_session,
+                importance=item.importance,
+                tier=item.tier if tier is None else tier,
+                expires_at=item.expires_at,
+            )
+            return (
+                LegacyMutationResult(
+                    legacy_id=new_id,
+                    context_id=None,
+                    old_legacy_id=None,
+                    old_context_id=None,
+                    available_layers=(),
+                    changed=True,
+                ),
+                _VectorAftermath(legacy_upserts=((new_id, item.value),)),
+            )
+
+        with self._cutover_lock.shared():
+            with backend.transaction():
+                summary_result, candidate_results, aftermath = (
+                    self._extraction_batch_writes(
+                        request,
+                        backend,
+                        engine_ready=engine_ready,
+                        conflict_as_replace=False,
+                        write_add=write_add,
+                        write_replace=write_replace,
+                    )
+                )
+        self._apply_vector_aftermath(aftermath)
+        return LegacyExtractionResult(
+            summary=summary_result,
+            candidates=candidate_results,
+            persisted=(1 if summary_result is not None else 0)
+            + len(candidate_results),
+        )
+
+    def _extraction_batch_writes(
+        self,
+        request: LegacyExtractionRequest,
+        reader,
+        *,
+        engine_ready: bool,
+        conflict_as_replace: bool,
+        write_add,
+        write_replace,
+    ) -> tuple[
+        LegacyMutationResult | None, tuple[LegacyMutationResult, ...], _VectorAftermath
+    ]:
+        """Shared extraction policy; the caller owns the lock and transaction.
+
+        ``reader`` is the mode-selected legacy read backend (projection
+        repository or MemoryStore); the writers perform one add or replace
+        each and return its result plus post-commit vector work.
+        ``conflict_as_replace`` is set in dual modes, where the Core's one
+        active item per identity makes a legacy-style dual-active add
+        impossible; an undecidable same-key conflict converges to a replace.
+        """
+        detector = ConflictDetector(reader)
+        engine = self.embedding_engine if engine_ready else None
+        aftermaths: list[_VectorAftermath] = []
+        summary_result = self._extraction_summary_write(
+            request.summary, reader, write_add, write_replace, aftermaths
+        )
+        candidate_results: list[LegacyMutationResult] = []
+        for item in request.candidates:
+            if len(candidate_results) >= request.max_writes:
+                break
+            decision = detector.check(item.key, item.value)
+            if decision.action == "skip":
+                continue
+            if decision.action == "replace":
+                result, aftermath = write_replace(item)
+            else:
+                # 同 key 无冲突或 conflict → 再做跨 key 语义合并
+                # （tier == "reference" 的候选不参与合并：永不 supersede 别人）
+                match = None
+                if engine is not None and item.tier != "reference":
+                    match = find_semantic_match(
+                        reader,
+                        self._legacy_vector_index(),
+                        engine,
+                        item.value,
+                        self.config.add_merge_threshold,
+                    )
+                if match:
+                    # 合并目标是 pinned 记忆时保留 pinned tier，避免被候选的
+                    # 默认 "normal" 静默降级、掉出每会话必注入层
+                    merged_tier = (
+                        "pinned" if match.get("tier") == "pinned" else item.tier
+                    )
+                    result, aftermath = write_replace(
+                        item, key=match["key"], tier=merged_tier
+                    )
+                elif decision.action == "conflict" and conflict_as_replace:
+                    result, aftermath = write_replace(item)
+                else:
+                    result, aftermath = write_add(item)
+            candidate_results.append(result)
+            aftermaths.append(aftermath)
+        return (
+            summary_result,
+            tuple(candidate_results),
+            self._merge_aftermaths(tuple(aftermaths)),
+        )
+
+    def _extraction_summary_write(
+        self,
+        summary: LegacyExtractionItem,
+        reader,
+        write_add,
+        write_replace,
+        aftermaths: list,
+    ) -> LegacyMutationResult | None:
+        """Write the summary, or accept an already equivalent active one."""
+        active = next(
+            (
+                record
+                for record in reader.get_by_key(summary.key)
+                if record["status"] == "active"
+            ),
+            None,
+        )
+        if active is not None:
+            metadata_equivalent = (
+                active["attribute"] == summary.attribute
+                and active["tags"] == ",".join(summary.tags)
+                and active["importance"] == summary.importance
+                and active["tier"] == summary.tier
+            )
+            if (
+                active["value"].strip() == summary.value.strip()
+                and metadata_equivalent
+            ):
+                return None
+        if active is None:
+            result, aftermath = write_add(summary)
+        else:
+            result, aftermath = write_replace(summary, repair=True)
+        aftermaths.append(aftermath)
+        return result
+
+    @staticmethod
+    def _merge_aftermaths(aftermaths: tuple) -> "_VectorAftermath":
+        """Concatenate per-write vector work, preserving the write order."""
+        return _VectorAftermath(
+            legacy_upserts=tuple(
+                entry for aftermath in aftermaths for entry in aftermath.legacy_upserts
+            ),
+            legacy_removals=tuple(
+                entry
+                for aftermath in aftermaths
+                for entry in aftermath.legacy_removals
+            ),
+            context_upserts=tuple(
+                entry
+                for aftermath in aftermaths
+                for entry in aftermath.context_upserts
+            ),
+            context_removals=tuple(
+                entry
+                for aftermath in aftermaths
+                for entry in aftermath.context_removals
+            ),
         )
 
     def _legacy_set_status(

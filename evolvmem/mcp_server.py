@@ -18,6 +18,13 @@ import os
 import threading
 import traceback
 from evolvmem.config import Config
+from evolvmem.context_models import ContextMode
+from evolvmem.context_service import ContextService
+from evolvmem.legacy_models import (
+    LegacyAddRequest,
+    LegacyRemoveRequest,
+    LegacyReplaceRequest,
+)
 from evolvmem.memory_store import MemoryStore
 from evolvmem.vector_index import VectorIndex
 from evolvmem.embedding import EmbeddingEngine
@@ -44,11 +51,13 @@ def _is_low_info(value: str) -> bool:
 class MemoryMCPServer:
     """stdio MCP Server — JSON-RPC protocol."""
 
-    def __init__(self):
-        self.config = Config.from_file()
+    def __init__(self, config: Config | None = None, context_service=None):
+        self.config = config if config is not None else Config.from_file()
         self.store = MemoryStore(self.config)
         self.vidx = VectorIndex(self.config)
         self.engine = EmbeddingEngine(self.config)
+        # 所有 mutation 经 ContextService 兼容边界；读取仍走旧组件（Task 8 再迁）
+        self.context_service = context_service
         self.retriever = None
         self.conflict_detector = None
         self.forgetting = None
@@ -76,19 +85,40 @@ class MemoryMCPServer:
         if not self.vidx.check_consistency(sqlite_count):
             self._rebuild_under_lock()
 
+        service = getattr(self, "context_service", None)
+        if service is None:
+            # 共享同一引擎与 legacy 投影向量索引：合并判定与写后同步看到
+            # 同一份内存态；服务生命周期由 shutdown() 统一关闭
+            service = ContextService(self.config, embedding_engine=self.engine)
+            service._legacy_vector = self.vidx
+            service.initialize(
+                mode=ContextMode(self.config.context_mode),
+                adapter=self.config.adapter or "mcp",
+            )
+            self.context_service = service
+
         self.retriever = Retriever(
             self.config, self.store, self.vidx, self.engine
         )
         self.conflict_detector = ConflictDetector(self.store)
         self.forgetting = ForgettingEngine(self.config, self.store)
         self.consolidator = Consolidator(
-            self.config, self.store, self.vidx, self.engine
+            self.config,
+            self.context_service.legacy_facade(),
+            self.vidx,
+            self.engine,
         )
 
     def shutdown(self):
         """Clean up resources."""
         # 等后台初始化结束，避免关闭与初始化并发操作同一资源
         self._init_done.wait()
+        try:
+            service = getattr(self, "context_service", None)
+            if service:
+                service.close()
+        except Exception:
+            pass
         try:
             if self.vidx:
                 self.vidx.save()
@@ -193,14 +223,7 @@ class MemoryMCPServer:
         tier = args.get("tier")
         if tier not in ("pinned", "normal", "reference"):
             tier = None
-        extra = {}
-        if importance is not None:
-            extra["importance"] = importance
-        if tier is not None:
-            extra["tier"] = tier
         expires_at = args.get("expires_at")
-        if expires_at is not None:
-            extra["expires_at"] = expires_at
 
         # Conflict detection
         decision = self.conflict_detector.check(key, value)
@@ -212,22 +235,27 @@ class MemoryMCPServer:
                 "reason": decision.reason,
                 "existing_id": decision.existing_id,
             }
-        elif decision.action == "replace":
+        gate_error = self._write_gate_error()
+        if gate_error is not None:
+            return {"error": gate_error}
+        if decision.action == "replace":
             # Conflict detector determined replace: use replace() to mark old as superseded
             old_id = decision.existing_id
-            new_id = self.store.replace(key=key, new_value=value, **extra)
+            result = self.context_service.legacy_replace(
+                LegacyReplaceRequest(
+                    key=key,
+                    new_value=value,
+                    importance=importance,
+                    tier=tier,
+                    expires_at=expires_at,
+                )
+            )
 
-            # Update vector index
-            if self.engine.is_loaded:
-                try:
-                    vec = self.engine.encode_document(value)
-                    import numpy as np
-                    self.vidx.add(new_id, np.array(vec, dtype=np.float32))
-                    self.vidx.save()
-                except Exception as e:
-                    self._log(f"Vector update failed (id={new_id}): {e}")
-
-            return {"status": "replaced", "new_id": new_id, "old_id": old_id}
+            return self._mutation_response(
+                {"status": "replaced", "new_id": result.legacy_id,
+                 "old_id": old_id},
+                result,
+            )
         else:
             # decision.action == "add": 同 key 无冲突 → 再做跨 key 语义合并
             # （tier == "reference" 的新值同样不参与合并：永不 supersede 别人）
@@ -236,36 +264,37 @@ class MemoryMCPServer:
                     self.store, self.vidx, self.engine, value,
                     self.config.add_merge_threshold)
                 if match:
-                    new_id = self.store.replace(
-                        key=match["key"], new_value=value, **extra)
-                    if self.engine.is_loaded:
-                        try:
-                            vec = self.engine.encode_document(value)
-                            import numpy as np
-                            self.vidx.add(new_id, np.array(vec, dtype=np.float32))
-                            self.vidx.save()
-                        except Exception as e:
-                            self._log(f"Vector update failed (id={new_id}): {e}")
-                    return {"status": "merged", "merged_into": match["id"],
-                            "key": match["key"],
-                            "similarity": match["similarity"],
-                            "new_id": new_id}
+                    result = self.context_service.legacy_replace(
+                        LegacyReplaceRequest(
+                            key=match["key"],
+                            new_value=value,
+                            importance=importance,
+                            tier=tier,
+                            expires_at=expires_at,
+                        )
+                    )
+                    return self._mutation_response(
+                        {"status": "merged", "merged_into": match["id"],
+                         "key": match["key"],
+                         "similarity": match["similarity"],
+                         "new_id": result.legacy_id},
+                        result,
+                    )
             # no existing key and no semantic match, insert directly
-            mem_id = self.store.add(
-                key=key, value=value, attribute=attribute, tags=tags, **extra
+            result = self.context_service.legacy_add(
+                LegacyAddRequest(
+                    key=key,
+                    value=value,
+                    attribute=attribute,
+                    tags=tuple(tags) if tags else (),
+                    importance=importance if importance is not None else 5.0,
+                    tier=tier if tier is not None else "normal",
+                    expires_at=expires_at,
+                )
             )
 
-        # Update vector index
-        if self.engine.is_loaded:
-            try:
-                vec = self.engine.encode_document(value)
-                import numpy as np
-                self.vidx.add(mem_id, np.array(vec, dtype=np.float32))
-                self.vidx.save()
-            except Exception as e:
-                self._log(f"Vector update failed (id={mem_id}): {e}")
-
-        return {"status": "added", "id": mem_id}
+        return self._mutation_response({"status": "added", "id": result.legacy_id},
+                                       result)
 
     def _memory_replace(self, args: dict) -> dict:
         key = args.get("key", "")
@@ -285,39 +314,38 @@ class MemoryMCPServer:
             return {"error": "value looks like a low-information placeholder "
                              "(transitional/chatter); not persisting"}
 
-        new_id = self.store.replace(key=key, new_value=new_value)
+        gate_error = self._write_gate_error()
+        if gate_error is not None:
+            return {"error": gate_error}
+        result = self.context_service.legacy_replace(
+            LegacyReplaceRequest(key=key, new_value=new_value)
+        )
 
-        # Update vector index
-        if self.engine.is_loaded:
-            try:
-                vec = self.engine.encode_document(new_value)
-                import numpy as np
-                self.vidx.add(new_id, np.array(vec, dtype=np.float32))
-                self.vidx.save()
-            except Exception as e:
-                self._log(f"Vector update failed (id={new_id}): {e}")
-
-        return {"status": "replaced", "new_id": new_id}
+        return self._mutation_response(
+            {"status": "replaced", "new_id": result.legacy_id}, result
+        )
 
     def _memory_remove(self, args: dict) -> dict:
         mem_id = int(args.get("id", 0))
         if not mem_id:
             return {"error": "id parameter cannot be empty"}
-        self.store.remove(mem_id)
-        # Keep the vector index in sync so counts stay consistent with SQLite
-        if self.vidx is not None:
-            try:
-                self.vidx.remove(mem_id)
-                self.vidx.save()
-            except Exception as e:
-                self._log(f"Vector removal failed (id={mem_id}): {e}")
-        return {"status": "deleted", "id": mem_id}
+        gate_error = self._write_gate_error()
+        if gate_error is not None:
+            return {"error": gate_error}
+        result = self.context_service.legacy_remove(
+            LegacyRemoveRequest(legacy_id=mem_id)
+        )
+        return self._mutation_response({"status": "deleted", "id": mem_id}, result)
 
     def _memory_consolidate(self, args: dict) -> dict:
         if not self.engine.is_loaded:
             return {"error": "embedding engine not loaded"}
         dry_run = bool(args.get("dry_run", True))
         threshold = args.get("threshold")
+        if not dry_run:
+            gate_error = self._write_gate_error()
+            if gate_error is not None:
+                return {"error": gate_error}
         result = self.consolidator.consolidate(
             dry_run=dry_run,
             threshold=float(threshold) if threshold is not None else None,
@@ -330,6 +358,44 @@ class MemoryMCPServer:
                            "preview": m["value"][:80],
                            "importance": m["importance"]}
         return result
+
+    # ---- mutation boundary helpers ----
+
+    def _write_gate_error(self) -> str | None:
+        """Refuse writes while primary mode reports degraded invariants."""
+        service = getattr(self, "context_service", None)
+        if service is None:
+            return None
+        try:
+            status = service.status()
+        except Exception:
+            return None
+        if status.mode is ContextMode.PRIMARY and not status.ready:
+            return ("context primary mode is degraded_legacy; "
+                    "legacy writes are rejected until the gate recovers")
+        return None
+
+    def _mutation_response(self, base: dict, result) -> dict:
+        """Attach optional context fields and a non-secret degraded index flag."""
+        base["context_id"] = result.context_id
+        base["old_context_id"] = result.old_context_id
+        base["available_layers"] = [
+            layer.value for layer in result.available_layers
+        ]
+        if self._index_degraded():
+            base["index_state"] = "degraded"
+        return base
+
+    def _index_degraded(self) -> bool:
+        """True when a post-commit vector sync left an independent dirty marker."""
+        service = getattr(self, "context_service", None)
+        if service is None:
+            return False
+        try:
+            status = service.status()
+        except Exception:
+            return False
+        return bool(status.legacy_vector_dirty or status.context_vector_dirty)
 
     # ---- internals ----
 
