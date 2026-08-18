@@ -1190,7 +1190,7 @@
 - Create: `tests/test_cutover_vector.py`
 - Modify: `evolvmem/vector_index.py`
 
-- [ ] **Step 1: Write failing WAL backup and privacy tests.**
+- [x] **Step 1: Write failing WAL backup and privacy tests.**
 
   Create a WAL database with uncheckpointed committed rows. Require `sqlite3.Connection.backup()` to produce a separately openable `quick_check=ok` snapshot containing them; a direct file-copy fake must fail the test. Assert:
 
@@ -1206,7 +1206,7 @@
 
   Expected: module missing.
 
-- [ ] **Step 2: Implement backup creation and independent verification.**
+- [x] **Step 2: Implement backup creation and independent verification.**
 
   Public interface:
 
@@ -1222,15 +1222,15 @@
 
   Open source DB read-only where possible and destination normally, invoke Backup API, close both, fsync files/directory, write last the canonical manifest, then independently reopen/check/hash every entry. Copy config and old vector only if present; do not invent empty files. Never delete an earlier backup automatically.
 
-- [ ] **Step 3: Write failing atomic-vector staging tests.**
+- [x] **Step 3: Write failing atomic-vector staging tests.**
 
   Test active/unexpired L0 exact ID set, embedding dimension, index count, and dirty handling. Inject encode, rebuild, validation, close, fsync, and replace failures; the old formal index bytes must remain unchanged, while the formal Context dirty marker remains present because migrated SQLite truth is newer. A successful stage closes/fsyncs the temp index, atomically replaces the target, fsyncs its parent, verifies reopen IDs/count/dimension, then clears only the Context dirty marker.
 
-- [ ] **Step 4: Add read-only vector identity inspection.**
+- [x] **Step 4: Add read-only vector identity inspection.**
 
   Extend `VectorIndex` with a bounded `ids()`/metadata inspection used only after initialization, without changing search or legacy defaults. It must return sorted integer IDs and never expose vectors. Tests cover empty index and corrupt/wrong-dimension index diagnostics.
 
-- [ ] **Step 5: Implement the staging builder.**
+- [x] **Step 5: Implement the staging builder.**
 
   Public interface:
 
@@ -1244,7 +1244,7 @@
 
   Allocate a unique same-directory temp index, use only `store.list_vector_documents()`, and verify IDs exactly. `allow_fts_only=True` records an explicit reason and preserves the formal dirty marker; it never reports vector healthy or clears the marker. The real CLI may accept it only with a separate human-approved flag.
 
-- [ ] **Step 6: Verify and commit Task 13.**
+- [x] **Step 6: Verify and commit Task 13.**
 
   Run:
 
