@@ -705,7 +705,7 @@ class CutoverJournal:
         ):
             raise CutoverJournalError("journal failed step is malformed")
         if not isinstance(rolled_back_from, str) or (
-            rolled_back_from and rolled_back_from not in JOURNAL_STATES
+            rolled_back_from and rolled_back_from not in JOURNAL_STATES + ("failed",)
         ):
             raise CutoverJournalError("journal rollback origin is malformed")
         if state == "failed" and not failed_step:
@@ -806,7 +806,12 @@ class CutoverJournal:
         for entry in history[1:]:
             current = entry["state"]
             if current in TERMINAL_STATES:
-                if previous in TERMINAL_STATES:
+                # ``failed -> rolled_back`` is the one valid terminal chain:
+                # the write side allows it for post-persist failure steps.
+                if previous in TERMINAL_STATES and (previous, current) != (
+                    "failed",
+                    "rolled_back",
+                ):
                     raise CutoverJournalError("terminal journal states cannot chain")
             elif previous in TERMINAL_STATES or index[current] != index[previous] + 1:
                 raise CutoverJournalError("journal history is not monotonic")

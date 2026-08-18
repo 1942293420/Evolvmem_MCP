@@ -1249,6 +1249,35 @@ def test_journal_terminal_branches_carry_the_exact_failed_step(tmp_path):
         other.mark_rolled_back()  # nothing past the persist boundary yet
 
 
+@pytest.mark.parametrize(
+    "failed_step",
+    ("persist_compat", "codex_primary", "release_and_await_canary"),
+)
+def test_journal_rolled_back_from_a_failed_step_reloads(tmp_path, failed_step):
+    """A failed -> rolled_back terminal branch must survive the load round trip."""
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+    journal = _begun_journal(tmp_path)
+    journal.bind(backup_dir)
+    journal.advance("locked")
+    journal.mark_failed(step=failed_step, reason_codes=("step_failed",))
+    journal.mark_rolled_back(reason_codes=("operational_rollback",))
+    assert journal.state == "rolled_back"
+    assert journal.rolled_back_from == "failed"
+
+    loaded = CutoverJournal.load(backup_dir / JOURNAL_FILENAME)
+    assert loaded.state == "rolled_back"
+    assert loaded.rolled_back_from == "failed"
+    assert loaded.failed_step == failed_step
+    assert [entry["state"] for entry in loaded.history] == [
+        "planned",
+        "locked",
+        "failed",
+        "rolled_back",
+    ]
+    assert loaded.reason_codes == ("step_failed", "operational_rollback")
+
+
 def test_journal_persists_every_step_atomically_and_reloads(tmp_path):
     backup_dir = tmp_path / "backup"
     backup_dir.mkdir()
