@@ -103,11 +103,21 @@ class ContextService:
     def legacy_add(self, request: LegacyAddRequest) -> LegacyMutationResult: ...
     def legacy_replace(self, request: LegacyReplaceRequest) -> LegacyMutationResult: ...
     def legacy_remove(self, request: LegacyRemoveRequest) -> LegacyMutationResult: ...
+    def legacy_update(self, request: LegacyUpdateRequest) -> LegacyMutationResult: ...
+    def legacy_archive(self, request: LegacyStatusRequest) -> LegacyMutationResult: ...
+    def legacy_restore(self, request: LegacyStatusRequest) -> LegacyMutationResult: ...
+    def legacy_hard_delete(self, request: LegacyHardDeleteRequest) -> LegacyMutationResult: ...
+    def legacy_access(self, request: LegacyAccessRequest) -> LegacyAccessResult: ...
+    def persist_legacy_extraction(
+        self, request: LegacyExtractionRequest
+    ) -> LegacyExtractionResult: ...
     def status(self) -> ContextServiceStatus: ...
     def close(self) -> None: ...
 ```
 
-`initialize()` 可重复调用且不得重复迁移。ContextService 是唯一协调边界；Retriever、Renderer、MCP 和 Adapter 都不能绕过它直接组合事务。
+`initialize()` 可重复调用且不得重复迁移。ContextService 是唯一协调边界；Retriever、Renderer、MCP 和 Adapter 都不能绕过它直接组合事务。`persist_legacy_extraction()` 是 Kimi/DSH 的窄批处理边界：summary 与原子候选在一个最外层事务中全成或全退，不向 Adapter 暴露任意 transaction callback。
+
+LegacyCompatibilityFacade 可提供旧 Reader/维护引擎所需的窄只读 shape，但所有 mutation 最终委托上述 typed ContextService API。`legacy` 紧急模式也必须经 ContextService 选择旧实现；生产 Adapter 不得自行实例化 MemoryStore 来绕过模式路由。
 
 ## 数据主权与兼容投影
 
@@ -140,6 +150,7 @@ class ContextService:
 - 新 API 只接受和返回 context ID。
 - `memory_replace` 同时创建新的 legacy 行和 superseding ContextItem；两个旧项都进入 superseded。
 - `memory_remove` 对两侧执行软删除，不进行物理删除。
+- Web Console 的显式 `hard_delete` 保留原有不可逆语义，但在 compat/shadow/primary 中必须在同一事务内依次删除 mapping、legacy projection 和对应 ContextItem；任一步失败全部回滚。它不暴露为 MCP 工具，也不能由遗忘或 consolidation 自动触发。
 - 遇到尚无映射的旧行时，兼容门面必须先在同一事务内迁移该行，再执行操作。
 
 ### 生产写入口
@@ -147,10 +158,12 @@ class ContextService:
 本次必须把以下生产写入口改为 ContextService/LegacyCompatibilityFacade：
 
 - MCP `memory_add`、`memory_replace`、`memory_remove`。
-- Claude SessionEnd/相关 hook 写入。
+- MCP `memory_consolidate(dry_run=false)` 的 access/archive 写入。
+- Claude 现有 hook 的遗忘与 consolidation 维护写入。当前仓库没有 Claude SessionEnd 持久化入口，本次不凭空新增；未来若增加也必须只调用 ContextService。
 - Kimi 提炼和会话摘要写入。
 - DSH extraction 写入。
-- Web Console 的新增、替换、删除。
+- Web Console 的 metadata 更新、archive、restore、soft delete 和 hard delete。
+- 旧 Retriever 与新 ContextRetriever 的成功命中 access-count 更新。
 
 `MemoryStore` 仍可用于迁移、只读兼容和隔离测试；生产 Adapter 不得直接调用其 mutation 方法。
 
@@ -179,6 +192,29 @@ class ContextService:
 6. 最终以 context ID 作为稳定 tie-breaker。
 
 每个分量在进入加权前归一化到 0..1。实施计划必须为每个排序分量写独立测试，不能只断言“结果看起来合理”。
+
+为避免实现阶段临时猜权重，默认独立配置冻结如下。`context_fts_weight + context_vector_weight` 必须为 1.0；八个 `context_score_*_weight` 也必须单独合计为 1.0：
+
+| 配置 | 默认值 |
+|---|---:|
+| `context_fts_weight` | 0.60 |
+| `context_vector_weight` | 0.40 |
+| `context_score_relevance_weight` | 0.35 |
+| `context_score_project_weight` | 0.15 |
+| `context_score_type_weight` | 0.10 |
+| `context_score_confidence_weight` | 0.10 |
+| `context_score_importance_weight` | 0.10 |
+| `context_score_evidence_weight` | 0.05 |
+| `context_score_recency_weight` | 0.10 |
+| `context_score_frequency_weight` | 0.05 |
+| `context_recency_tau_days` | 30.0 |
+| `context_frequency_cap` | 20 |
+
+词法分数在本批候选内归一化，只有 LIKE/CJK fallback 时仍视为有效的 1.0 词法命中；向量使用 `max(0, 1-distance/2)`。relevance 为两者按 0.60/0.40 相加，缺失通道记 0，不重新放大。evidence 使用 `(success_count + 1) / (success_count + failure_count + 2)`；recency 使用 `exp(-age_days / 30)`；frequency 使用 `min(log1p(access_count) / log1p(20), 1)`。
+
+exact project 的 project 分量为 1.0，适用 global 为 0.5；其他项目在排序前过滤。普通 global 只允许 `workflow_policy`、`constraint`、`preference`、`user_profile`、`playbook`，避免跨项目事实、决策和会话摘要串扰。
+
+type priority 基础值固定为：`workflow_policy/constraint=0.8`、`preference/user_profile/playbook=0.6`、`decision=0.5`、`fact/experience/session_summary=0.4`、`reference=0.2`；pinned 再加 0.2 并截断到 1.0。该表与每个权重都必须由独立测试冻结。
 
 ### 渐进披露
 
@@ -224,6 +260,8 @@ Codex 主模式的 MCP 初始化响应包含服务器级 `instructions`。前 51
 - L2。
 - 低于向量阈值的纯近邻。
 - 不能通过项目或任务相关性门控的 global 内容。
+
+`context_session_start` 有一个明确例外：当前 project 或适用 global 的 pinned `workflow_policy`、`constraint`、`preference` 可在没有 query 命中时作为 `pinned_policy` 种子进入 pinned 池，仍须满足 active、未过期和 confidence 门禁。其他内容必须有 L0 lexical 命中或达到阈值的 L0 vector 命中；`context_search` 没有此例外。
 
 ### 默认预算
 
@@ -312,7 +350,7 @@ EVOLVMEM_CONTEXT_MODE=primary
 
 环境覆盖优先于配置文件，但必须经过枚举校验。未知值使 Context 功能 fail-closed，不得默认为 primary。
 
-修改 Codex 配置前先保存目标 MCP stanza 的结构化快照。更新只能触及 `mcp_servers.evolvmem` 的环境和审批字段，必须保留其他服务器和用户设置；写入采用临时文件加原子替换。写后用 `codex mcp get evolvmem --json` 验证 command、args、env、工具策略和 timeout。回滚使用记录的 stanza 做 compare-and-swap 恢复，不能用整份旧 config 覆盖安装期间用户新增的设置。
+修改 Codex 配置前先保存目标 MCP stanza 的结构化快照。更新只能触及 `mcp_servers.evolvmem` 的环境和审批字段，必须保留其他服务器和用户设置；写入采用临时文件加原子替换。写后用 `codex mcp get evolvmem --json` 验证其实际回显的 command、args、env、enabled/disabled tools 和 timeout；当前 CLI 不回显的 approval 字段必须用目标 TOML stanza 结构校验，并由真实行为验收兜底。回滚使用记录的 stanza 做 compare-and-swap 恢复，不能用整份旧 config 覆盖安装期间用户新增的设置。
 
 primary 启动不能只信任环境变量。ContextService 必须重新验证 schema、mapping 完整性、三层完整性和 projection lag；不满足门禁时不得暴露可工作的 primary 结果。服务可保留 `context_status` 和旧只读工具用于诊断，但状态必须明确为 `degraded_legacy`，不能静默伪装成 primary。
 
@@ -331,7 +369,7 @@ primary 启动不能只信任环境变量。ContextService 必须重新验证 sc
 
 ### 预检
 
-1. 验证配置、模型契约、SQLite 可读写空间和备份目录权限。
+1. 使用只读 SQLite 连接验证配置、模型契约、数据库可读性、可写空间和备份目录权限；preflight 不得调用会建表或建目录的 ContextStore.initialize()。
 2. 检查当前 schema、legacy 行数、状态分布、重复 active identity 和向量一致性；不输出正文。
 3. 使用 SQLite Backup API 创建一致性备份，不直接复制可能带 WAL 的数据库文件。
 4. 备份目录权限设为 owner-only，并生成包含数据库、配置和旧向量校验值的 manifest。
@@ -342,7 +380,7 @@ primary 启动不能只信任环境变量。ContextService 必须重新验证 sc
 ### 迁移
 
 1. 获取专用 cutover 文件锁。
-2. 在 `BEGIN IMMEDIATE` 中初始化 Context schema 并运行幂等 LegacyMemoryMigrator。
+2. 在同一个 `BEGIN IMMEDIATE` 中逐条初始化 Context schema 并运行幂等 LegacyMemoryMigrator；现有 `executescript` schema 路径必须先改成可加入外层事务的逐语句执行，禁止 schema 隐式提交后再迁移。
 3. 验证 legacy 每行恰有一个 mapping，映射的 ContextItem 有且仅有三层。
 4. 再运行一次 migrator，要求创建数为零。
 5. 从 active、未过期 L0 在临时文件重建 Context 向量索引，验证维度/ID 后原子替换。
