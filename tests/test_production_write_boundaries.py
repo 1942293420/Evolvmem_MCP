@@ -14,9 +14,8 @@ Parses production adapter modules and fails on new raw-store write bypasses:
 
 Exemptions are function-scoped and document known residuals only:
 web_server keeps the in-place attribute/tags projection edit until the typed
-legacy_update carries those fields; mcp_server still owns its legacy read
-side until Task 9 rewires it; the migration utility may bootstrap the legacy
-schema (the plan allows MemoryStore in migration utilities).
+legacy_update carries those fields; the migration utility may bootstrap the
+legacy schema (the plan allows MemoryStore in migration utilities).
 """
 
 import ast
@@ -55,8 +54,6 @@ _EXEMPTIONS = {
     ("evolvmem/web_server.py", "private_access"): {"_update_classification"},
     ("evolvmem/web_server.py", "raw_sql"): {"_update_classification"},
     ("evolvmem/web_server.py", "instantiate"): {"run"},
-    # legacy 读侧（含 Retriever/Forgetting 的裸 store 入参）待 Task 9 改线
-    ("evolvmem/mcp_server.py", "instantiate"): {"MemoryMCPServer.__init__"},
     # 迁移工具获准使用 MemoryStore 建 legacy schema（不进行任何 mutation 调用）
     ("migrate_claude_mem.py", "instantiate"): {"_ensure_legacy_schema"},
 }
