@@ -859,7 +859,7 @@
 - Modify: `tests/test_integration.py`
 - Modify: `tests/test_runtime_contract.py`
 
-- [ ] **Step 1: Write the failing mode/adapter/health matrix.**
+- [x] **Step 1: Write the failing mode/adapter/health matrix.**
 
   Parameterize these exact observable states:
 
@@ -879,7 +879,7 @@
 
   Expected: missing module and fixed-six-tool assertions fail.
 
-- [ ] **Step 2: Define one registry with schemas and annotations.**
+- [x] **Step 2: Define one registry with schemas and annotations.**
 
   Add:
 
@@ -900,7 +900,7 @@
 
   Freeze `context_session_start` required project/query and optional integer max_chars; `context_search` required query with top_k 1..20 and content-type enum; `context_read` required positive integer id and `l1|l2`; `context_status` empty object. Mark `context_session_start/search/read/status` and `memory_search/status` with `readOnlyHint=true`. Every tool with any write branch—including consolidate—must not claim read-only.
 
-- [ ] **Step 3: Freeze the primary instructions inside the first 512 characters.**
+- [x] **Step 3: Freeze the primary instructions inside the first 512 characters.**
 
   Use this exact self-contained prefix and test all requirements in `text[:512]`:
 
@@ -908,19 +908,19 @@
 
   Shadow/compat/legacy never issue the automatic-call instruction. Degraded primary text says memory is unavailable and does not claim injection happened.
 
-- [ ] **Step 4: Add dict↔typed handlers and protocol errors.**
+- [x] **Step 4: Add dict↔typed handlers and protocol errors.**
 
   `mcp_server.py` may parse MCP dictionaries only at its boundary. Add `_context_session_start`, `_context_search`, `_context_read`, and `_context_status`. Validation errors and not-readable exact IDs return `isError=true` with stable error codes; they never include traceback/content/path. A session-start failure is fail-open for Codex—no legacy all-active injection fallback.
 
   Remove duplicate hard-coded tool-name sets. Inject Config/ContextService in the server constructor for tests. Recheck health on each primary tool call so a service that becomes degraded cannot continue writes merely because it appeared in an earlier list.
 
-- [ ] **Step 5: Implement shadow and primary legacy search behavior.**
+- [x] **Step 5: Implement shadow and primary legacy search behavior.**
 
   In shadow, return the untouched legacy `memory_search` result, run Core retrieval separately, map legacy IDs to context IDs, and record only overlap/count/threshold-exclusion/duration metrics. In primary, rank through ContextRetriever, then map exact IDs to projection rows to preserve legacy `id/key/value/...` fields; add context fields only as optional extensions. Never substitute an unmapped neighbor or return L2 through `context_search`.
 
   Remove absolute `data_dir` from public status output; provide safe availability/dirty diagnostics instead.
 
-- [ ] **Step 6: Verify the Slice 3 protocol half and commit Task 9.**
+- [x] **Step 6: Verify the Slice 3 protocol half and commit Task 9.**
 
   Run:
 
