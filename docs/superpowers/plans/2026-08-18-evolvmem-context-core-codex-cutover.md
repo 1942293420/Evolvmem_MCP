@@ -1380,13 +1380,13 @@
 - Modify: `install.sh`
 - Modify: `/home/jiangli/fix-records/records/2026-08-18-evolvmem-context-core-codex-cutover.md`
 
-- [ ] **Step 1: Write documentation tests/checks before editing prose.**
+- [x] **Step 1: Write documentation tests/checks before editing prose.**
 
   Add or extend an existing lightweight documentation assertion to require README/runbook mention: Context source of truth; legacy projection; current Adapter matrix; modes; four Context tools; L0 search/L1 injection/exact L2 disclosure; default budgets/threshold; automatic-call limitation; side-effect-free preflight; backup; writer restart; config scope/CAS; operational rollback; FTS-only degraded meaning; and that other Adapter primary migration remains future work.
 
   Run the focused assertion and observe failure before updating docs.
 
-- [ ] **Step 2: Update README and create the operator runbook.**
+- [x] **Step 2: Update README and create the operator runbook.**
 
   Replace the statement that Context Core is unrouted. Document:
 
@@ -1399,7 +1399,7 @@
 
   Cite the official Codex MCP documentation URL in the runbook for instructions/env/tool policy/approval configuration. State that CLI 0.147 does not echo approval fields and explain dual verification.
 
-- [ ] **Step 3: Run every deterministic suite and packaging check fresh.**
+- [x] **Step 3: Run every deterministic suite and packaging check fresh.**
 
   Run:
 
@@ -1414,7 +1414,7 @@
 
   Run Task 11's exact temporary command again after the final code shape. Require safe `passed=true` and cleanup complete. If live model behavior is nondeterministic, retry only after diagnosing the event evidence; do not change deterministic assertions merely to obtain a pass.
 
-- [ ] **Step 5: Perform privacy/bypass/placeholder reviews.**
+- [x] **Step 5: Perform privacy/bypass/placeholder reviews.**
 
   Run:
 
@@ -1423,15 +1423,15 @@
 
   Expected: tests pass and the scan returns no implementation placeholders. Manually inspect public JSON/log formatters for content/query/path/env leakage.
 
-- [ ] **Step 6: Request and rigorously process code review.**
+- [x] **Step 6: Request and rigorously process code review.**
 
   Invoke `superpowers-requesting-code-review` against the full feature diff. Give the reviewer the design source and ask specifically about transaction boundaries, exact-ID safety, access side effects, lock coverage, config CAS, backup correctness, vector atomicity, MCP mode matrix, and rollback. Handle feedback using `superpowers-receiving-code-review`, reproduce every claimed bug, add a failing test, fix, and rerun affected plus full suites. Commit each verified review fix with a scoped message.
 
-- [ ] **Step 7: Create the required truthful fix record.**
+- [x] **Step 7: Create the required truthful fix record.**
 
   Read `/home/jiangli/fix-records/README.md` completely, then update the required record with sections 症状 / 排查过程 / 根因 / 修复内容 / 验证 / 遗留事项. At this point explicitly mark the real database/Codex stanza cutover as pending Task 16; list actual deterministic and isolated behavior results only. Do not stage this external record into the plugin repository.
 
-- [ ] **Step 8: Commit documentation and confirm a clean feature branch.**
+- [x] **Step 8: Commit documentation and confirm a clean feature branch.**
 
   Run:
 
