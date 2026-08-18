@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from evolvmem.config import Config
 from evolvmem.context_models import (
+    ContextContentType,
     ContextExclusionCount,
     ContextMatchType,
     ContextScope,
@@ -48,6 +49,16 @@ _REASON_EXPIRED = "expired"
 _REASON_L2_PAYLOAD = "l2_payload"
 _REASON_NO_MATCH = "no_match"
 _REASON_OVER_BUDGET = "over_budget"
+
+# 无命中豁免只覆盖设计允许的三类 pinned 种子；其他 pinned 类型必须有
+# 真实词法/向量命中才能注入（store 种子查询已限定，此处是纵深防御）。
+_PINNED_NO_MATCH_TYPES = frozenset(
+    {
+        ContextContentType.WORKFLOW_POLICY,
+        ContextContentType.CONSTRAINT,
+        ContextContentType.PREFERENCE,
+    }
+)
 
 # Canonical reporting order: pipeline stage order, so counts stay comparable
 # across releases. Status reasons reuse the persisted ContextStatus values.
@@ -240,9 +251,13 @@ class ContextRenderer:
             return _REASON_EXPIRED
         if len(l1) > self._config.context_l1_max_chars:
             return _REASON_L2_PAYLOAD
-        if result.tier is not ContextTier.PINNED and not (
+        if not (
             ContextMatchType.LEXICAL in result.match_types
             or ContextMatchType.VECTOR in result.match_types
+            or (
+                result.tier is ContextTier.PINNED
+                and result.content_type in _PINNED_NO_MATCH_TYPES
+            )
         ):
             return _REASON_NO_MATCH
         return None

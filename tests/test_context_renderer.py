@@ -456,6 +456,62 @@ def test_non_pinned_without_any_match_signal_is_excluded(test_config):
     )
 
 
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        ContextContentType.WORKFLOW_POLICY,
+        ContextContentType.CONSTRAINT,
+        ContextContentType.PREFERENCE,
+    ],
+)
+def test_pinned_policy_types_enter_without_any_match(test_config, content_type):
+    """设计的三类 pinned 种子可无 query 命中进入 pinned 池。"""
+    result = ContextRenderer(test_config).render(
+        (_pinned(1, "policy body", content_type=content_type,
+                 match_types=(ContextMatchType.PINNED_POLICY,)),),
+        project="proj",
+    )
+
+    assert result.selected_ids == (1,)
+    assert result.excluded_counts == ()
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        ContextContentType.FACT,
+        ContextContentType.DECISION,
+        ContextContentType.SESSION_SUMMARY,
+        ContextContentType.USER_PROFILE,
+        ContextContentType.REFERENCE,
+    ],
+)
+def test_pinned_non_policy_types_without_any_match_are_excluded(
+        test_config, content_type):
+    """pinned 事实/决策等无命中不享受豁免：纵深防御收窄到设计的三类型。"""
+    result = ContextRenderer(test_config).render(
+        (_pinned(1, "pinned fact body", content_type=content_type,
+                 match_types=(ContextMatchType.PINNED_POLICY,)),),
+        project="proj",
+    )
+
+    assert result.selected_ids == ()
+    assert result.excluded_counts == (
+        ContextExclusionCount(reason="no_match", count=1),
+    )
+
+
+def test_pinned_fact_with_a_real_match_is_still_injected(test_config):
+    """类型限定只收窄无命中豁免：pinned fact 有词法命中照常注入。"""
+    result = ContextRenderer(test_config).render(
+        (_pinned(1, "pinned fact body", content_type=ContextContentType.FACT,
+                 match_types=(ContextMatchType.LEXICAL,)),),
+        project="proj",
+    )
+
+    assert result.selected_ids == (1,)
+
+
 def test_excluded_reason_counts_are_stable_and_cover_every_candidate(test_config):
     """Every candidate is selected or counted in exactly one stable reason."""
     candidates = (
