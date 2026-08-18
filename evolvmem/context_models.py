@@ -9,6 +9,30 @@ class ContextValidationError(ValueError):
     """Raised when caller-provided context data violates its domain contract."""
 
 
+_CONTEXT_SERVICE_ERROR_CODES = frozenset(
+    {
+        "not_initialized",
+        "invalid_mode",
+        "initialize_conflict",
+        "context_not_enabled",
+        "degraded_legacy",
+    }
+)
+
+
+class ContextServiceError(RuntimeError):
+    """Typed service-boundary failure with a stable, content-free reason code."""
+
+    def __init__(self, code: str, message: str = "") -> None:
+        if code not in _CONTEXT_SERVICE_ERROR_CODES:
+            raise ContextValidationError(
+                "code must be one of "
+                + ", ".join(sorted(_CONTEXT_SERVICE_ERROR_CODES))
+            )
+        self.code = code
+        super().__init__(message or code)
+
+
 class ContextContentType(str, Enum):
     DECISION = "decision"
     FACT = "fact"
@@ -404,6 +428,7 @@ class ContextServiceStatus:
     legacy_vector_ready: bool
     legacy_vector_dirty: bool
     diagnostics: tuple[str, ...] = ()
+    reason_codes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.mode, ContextMode):
@@ -445,6 +470,20 @@ class ContextServiceStatus:
         if any(not isinstance(message, str) for message in diagnostics):
             raise ContextValidationError("diagnostics must be an iterable of strings")
         object.__setattr__(self, "diagnostics", diagnostics)
+        try:
+            reason_codes = tuple(self.reason_codes)
+        except TypeError as exc:
+            raise ContextValidationError(
+                "reason_codes must be an iterable of known service codes"
+            ) from exc
+        if any(
+            not isinstance(code, str) or code not in _CONTEXT_SERVICE_ERROR_CODES
+            for code in reason_codes
+        ):
+            raise ContextValidationError(
+                "reason_codes must be an iterable of known service codes"
+            )
+        object.__setattr__(self, "reason_codes", reason_codes)
 
 
 def _normalize_text(value: object, field_name: str) -> str:
