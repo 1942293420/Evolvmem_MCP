@@ -1274,7 +1274,7 @@
 - Create: `tests/test_cutover_canary.py`
 - Create: `tests/test_cutover_cli.py`
 
-- [ ] **Step 1: Write failing dry-run, lock, and gate-order tests.**
+- [x] **Step 1: Write failing dry-run, lock, and gate-order tests.**
 
   With all collaborators injected/faked, prove a command without `--apply` performs no write. The apply path must execute in this exact order:
 
@@ -1297,7 +1297,7 @@
 
   Expected: orchestrator/CLI modules missing.
 
-- [ ] **Step 2: Implement an owner-only monotonic cutover journal.**
+- [x] **Step 2: Implement an owner-only monotonic cutover journal.**
 
   Store the journal inside the verified backup directory with mode 0600. It contains operation UUID, preflight/backup/stanza/config hashes, gate states, counts, reason codes, timestamps, and rollback hashes; sensitive snapshots remain separate owner-only files. Each step writes temp+fsync+atomic replace. State can move only forward through:
 
@@ -1307,7 +1307,7 @@
 
   Failure/rollback are terminal side branches with the exact failed step. Public JSON omits paths, content, query, snapshots, and env values.
 
-- [ ] **Step 3: Implement CLI commands with explicit paths and output files.**
+- [x] **Step 3: Implement CLI commands with explicit paths and output files.**
 
   Support:
 
@@ -1329,7 +1329,7 @@
 
   The paths shown above describe required absolute argument kinds, not defaults: tests assert omission is an error and the program never guesses. `backup` is optional verification tooling; `cutover` always makes a new verified backup under lock even if a prior standalone backup exists. `--allow-fts-only` requires a second explicit flag and is recorded as degraded, never vector healthy.
 
-- [ ] **Step 4: Write failing canary exactness and cleanup tests.**
+- [x] **Step 4: Write failing canary exactness and cleanup tests.**
 
   Add a cutover canary service that creates one high-entropy, global pinned preference through ContextService without semantic merge, writes an owner-only canary journal containing body/query privately plus legacy/context IDs and hashes, and returns only hashes/IDs publicly. Assert it is eligible for session-start L1, exact FTS search, and exact-ID L2.
 
@@ -1337,15 +1337,15 @@
 
   The real cutover's shadow step uses this same service to create one explicitly authorized high-entropy canary after migration, requires mapped top-1 in both legacy and Core for exact/CJK probes, and exact-cleans it before any config switch. Semantic overlap@5 remains the already-passed isolated-corpus gate; unrelated real-library queries contribute counts/latency only and never enter the report as text.
 
-- [ ] **Step 5: Implement the real-Codex post-switch runner without weakening the temp harness.**
+- [x] **Step 5: Implement the real-Codex post-switch runner without weakening the temp harness.**
 
   `scripts/accept_real_codex_cutover.py` requires explicit cutover journal and Codex binary. It prepares the exact canary, launches one fresh `codex exec --ephemeral --json` whose prompt does not name tools, and requires session-start before answer, search, then same-ID L2 read. It reuses Task 11's privacy-safe event parser but never accepts Task 11's isolated FTS flag for real data. In `finally`, it exact-cleans the canary. On behavioral failure it invokes operational Codex legacy rollback by journal CAS after cleanup; it does not restore the DB.
 
-- [ ] **Step 6: Test complete mode round-trips and concurrency.**
+- [x] **Step 6: Test complete mode round-trips and concurrency.**
 
   On temp data/config, assert `legacy -> shadow -> primary -> legacy` preserves a write made in primary through its projection. Hold shared writer locks in subprocesses and prove cutover waits; hold exclusive and prove new writes wait/time out cleanly. A stale preflight digest, old-writer acknowledgement omission, target-stanza drift, projection lag, shadow miss, dirty unexplained vector, or post-canary failure must block/rollback exactly as designed.
 
-- [ ] **Step 7: Verify and commit Task 14.**
+- [x] **Step 7: Verify and commit Task 14.**
 
   Run:
 
