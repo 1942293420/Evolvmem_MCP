@@ -396,7 +396,7 @@
 - Create: `tests/test_context_service.py`
 - Modify: `evolvmem/context_models.py`
 
-- [ ] **Step 1: Write failing service lifecycle and exact-read tests.**
+- [x] **Step 1: Write failing service lifecycle and exact-read tests.**
 
   Test dependency injection and owned-resource cleanup; repeated initialize with the same mode/adapter; conflicting reinitialize rejection; invalid mode fail-closed; exact L1/L2 reads; not-found/deleted/candidate/archived/superseded/expired errors; no call to Retriever from `read()`; and no L0 similarity fallback. Assert status exposes only mode, adapter, readiness, counts, mapping count, projection-lag count, vector state/dirty flags, reason codes, and bounded diagnostics—never content, query, or absolute paths.
 
@@ -406,7 +406,7 @@
 
   Expected: import failure for `evolvmem.context_service`.
 
-- [ ] **Step 2: Write failing search/session-start access tests.**
+- [x] **Step 2: Write failing search/session-start access tests.**
 
   Establish:
 
@@ -418,7 +418,7 @@
   - Caller max budget can reduce but not exceed configured max.
   - Pinned workflow_policy/constraint/preference can enter with `pinned_policy` even without a query match; normal records cannot.
 
-- [ ] **Step 3: Implement the service with explicit injected dependencies.**
+- [x] **Step 3: Implement the service with explicit injected dependencies.**
 
   Constructor:
 
@@ -436,7 +436,7 @@
 
   In this slice, `initialize()` opens existing Context schema but never invokes `LegacyMemoryMigrator`, never rebuilds a vector, never edits config, and never routes a production writer. Context operations in legacy/compat return typed `context_not_enabled`; shadow permits explicit reads; primary requires the currently testable schema/layer/vector invariants and reports `degraded_legacy` when they fail.
 
-- [ ] **Step 4: Run the Slice 1 gate and commit.**
+- [x] **Step 4: Run the Slice 1 gate and commit.**
 
   Run:
 
@@ -947,7 +947,7 @@
 - Modify: `pyproject.toml`
 - Modify: `install.sh`
 
-- [ ] **Step 1: Add the round-trip TOML dependency and observe the failing import.**
+- [x] **Step 1: Add the round-trip TOML dependency and observe the failing import.**
 
   Add `tomlkit>=0.13,<1` to project dependencies and make `install.sh` install it with the existing runtime dependencies. Install the updated project into the repository venv during execution:
 
@@ -959,7 +959,7 @@
 
   Expected: a version in the declared range.
 
-- [ ] **Step 2: Write failing round-trip and scope tests.**
+- [x] **Step 2: Write failing round-trip and scope tests.**
 
   Use synthetic TOML containing comments, another MCP server, unknown tables, preserved environment values, fake sensitive strings, allow/deny lists, and timeouts. Prove `apply_primary()` changes only:
 
@@ -975,7 +975,7 @@
 
   Expected: module/API missing.
 
-- [ ] **Step 3: Implement snapshots and target-stanza CAS.**
+- [x] **Step 3: Implement snapshots and target-stanza CAS.**
 
   Public API:
 
@@ -1003,17 +1003,17 @@
 
   Require the config path explicitly in the editor constructor; never guess user/project config precedence. On apply, re-read current TOML, compare only the target stanza hash, mutate that current document, and thereby preserve concurrent unrelated-stanza changes. A target-stanza drift fails with no write.
 
-- [ ] **Step 4: Implement durable atomic replace and private snapshot handling.**
+- [x] **Step 4: Implement durable atomic replace and private snapshot handling.**
 
   Write a unique same-directory temp file, preserve owner/mode, flush/fsync, `os.replace`, fsync the parent, reparse, and verify the target hash. An injected write/replace/fsync failure leaves the original parseable and removes only the exact temp file. Snapshot serialization may contain secrets: mode 0600, never stdout/log, and public results show hashes only.
 
   `apply_legacy()` is fast operational rollback: it sets the target env mode explicitly to `legacy`. `restore_snapshot()` is a distinct exact installation-stanza restore; do not conflate it with operational rollback when persistent EvolvMem mode is compat.
 
-- [ ] **Step 5: Test two-source verification.**
+- [x] **Step 5: Test two-source verification.**
 
   Add a parser for mocked `codex mcp get evolvmem --json` and verify transport command/args/env/enabled-tools/disabled-tools/startup/tool timeouts. Separately reparse TOML for `default_tools_approval_mode`, because CLI 0.147 does not return it. Never assert the CLI verified a field it did not emit.
 
-- [ ] **Step 6: Verify and commit Task 10.**
+- [x] **Step 6: Verify and commit Task 10.**
 
   Run:
 
