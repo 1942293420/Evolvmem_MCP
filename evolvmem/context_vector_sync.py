@@ -69,6 +69,83 @@ class ContextVectorSynchronizer:
             )
         return ContextVectorSyncReport("synchronized", document_count)
 
+    def upsert_active_l0(self, item_id: int, l0: str) -> ContextVectorSyncReport:
+        """Insert or replace one active item's L0 vector after a SQLite commit.
+
+        Per-item synchronization never rebuilds the index; a pre-existing
+        dirty marker survives even a successful update, because earlier
+        failures may still be unsynchronized.
+        """
+        try:
+            was_dirty = bool(self.vector_index.is_dirty())
+        except Exception:
+            was_dirty = True
+        try:
+            self._mark_context_dirty()
+        except Exception as exc:
+            return ContextVectorSyncReport("failed", 0, exc.__class__.__name__)
+        if self.vector_index.path != self.config.context_vector_path.resolve():
+            return ContextVectorSyncReport("failed", 0, "ValueError")
+        try:
+            self._ensure_index_ready()
+            self.vector_index.remove(item_id)
+        except Exception as exc:
+            self.vector_index.preserve_dirty()
+            return ContextVectorSyncReport("failed", 0, exc.__class__.__name__)
+        if self.embedding_engine is None or not self.embedding_engine.is_loaded:
+            self.vector_index.preserve_dirty()
+            try:
+                self.vector_index.save()
+            except Exception:
+                pass  # the preserved marker already records the stale state
+            return ContextVectorSyncReport(
+                "unavailable", 0, "embedding engine unavailable"
+            )
+        try:
+            embedding = np.asarray(
+                self.embedding_engine.encode_document(l0), dtype=np.float32
+            )
+            if embedding.ndim != 1 or embedding.shape[0] != self.config.embedding_dim:
+                raise ValueError("embedding dimension mismatch")
+            self.vector_index.add(item_id, embedding)
+            self.vector_index.save()
+        except Exception as exc:
+            self.vector_index.preserve_dirty()
+            return ContextVectorSyncReport("failed", 1, exc.__class__.__name__)
+        if not was_dirty:
+            self.vector_index.clear_dirty()
+        return ContextVectorSyncReport("synchronized", 1)
+
+    def remove_l0(self, item_id: int) -> ContextVectorSyncReport:
+        """Remove one item's L0 vector after a SQLite commit; engine-independent."""
+        try:
+            was_dirty = bool(self.vector_index.is_dirty())
+        except Exception:
+            was_dirty = True
+        try:
+            self._mark_context_dirty()
+        except Exception as exc:
+            return ContextVectorSyncReport("failed", 0, exc.__class__.__name__)
+        if self.vector_index.path != self.config.context_vector_path.resolve():
+            return ContextVectorSyncReport("failed", 0, "ValueError")
+        try:
+            self._ensure_index_ready()
+            self.vector_index.remove(item_id)
+            self.vector_index.save()
+        except Exception as exc:
+            self.vector_index.preserve_dirty()
+            return ContextVectorSyncReport("failed", 0, exc.__class__.__name__)
+        if not was_dirty:
+            self.vector_index.clear_dirty()
+        return ContextVectorSyncReport("synchronized", 0)
+
+    def _ensure_index_ready(self) -> None:
+        """Open the existing cache or start an empty one for per-item updates."""
+        try:
+            self.vector_index.count()
+        except Exception:
+            self.vector_index.initialize(dim=self.config.embedding_dim)
+
     def _mark_context_dirty(self) -> None:
         """Leave a durable retry marker without ever marking the legacy cache."""
         marker_index = self.vector_index

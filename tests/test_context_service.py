@@ -27,6 +27,7 @@ from evolvmem.context_models import (
 from evolvmem.context_renderer import ContextRenderResult
 from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
+from evolvmem.legacy_models import LegacyAddRequest, LegacyRemoveRequest
 
 
 # The frozen wrapper literals: tests must not import renderer internals, so the
@@ -1036,3 +1037,37 @@ def test_pinned_policy_seeds_enter_without_a_query_match_but_others_cannot(
     assert "pinned fact detail" not in result.block
     assert "weak policy detail" not in result.block
     service.close()
+
+
+# ---- typed legacy mutation boundary ----
+
+
+def test_legacy_mutations_require_an_initialized_service(test_config, store):
+    service = ContextService(test_config, store=store)
+    with pytest.raises(ContextServiceError) as excinfo:
+        service.legacy_remove(LegacyRemoveRequest(legacy_id=1))
+    assert excinfo.value.code == "not_initialized"
+
+
+def test_legacy_mutations_reject_foreign_request_types(service):
+    with pytest.raises(ContextValidationError):
+        service.legacy_remove(LegacyAddRequest(key="alpha", value="some value"))
+    with pytest.raises(ContextValidationError):
+        service.legacy_add(LegacyRemoveRequest(legacy_id=1))
+
+
+def test_legacy_facade_is_cached_and_hides_storage_internals(service):
+    facade = service.legacy_facade()
+    assert facade is service.legacy_facade()
+    for forbidden in ("_conn", "_execute", "transaction"):
+        assert not hasattr(facade, forbidden)
+
+
+def test_close_releases_the_service_owned_legacy_backend(test_config, store):
+    service = make_service(test_config, store, mode=ContextMode.LEGACY)
+    result = service.legacy_add(LegacyAddRequest(key="alpha", value="legacy value"))
+    assert result.context_id is None
+    backend = service._legacy_store
+    assert backend is not None
+    service.close()
+    assert backend._conn is None

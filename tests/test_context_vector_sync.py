@@ -229,3 +229,161 @@ def test_context_rebuild_does_not_overwrite_a_readable_legacy_vector_file(test_c
     assert reopened_context.search(np.array([1, 0, 0], dtype=np.float32), k=1)[0]["id"] == item.id
     reopened_legacy.close()
     reopened_context.close()
+
+
+# ---- per-item post-commit synchronization ----
+
+
+def test_upsert_adds_one_item_without_rebuilding_existing_entries(test_config):
+    """A single-item sync must not disturb entries already in the cache."""
+    test_config.embedding_dim = 3
+    engine = DocumentEmbeddingEngine({"new l0": [1, 0, 0], "old l0": [0, 1, 0]})
+    with ContextStore(test_config) as store:
+        synchronizer, context_index = make_synchronizer(test_config, store, engine)
+        context_index.initialize(dim=3)
+        context_index.add(999, np.array([0, 1, 0], dtype=np.float32))
+        context_index.save()
+
+        report = synchronizer.upsert_active_l0(7, "new l0")
+
+        assert report.status == "synchronized"
+        assert report.document_count == 1
+        assert context_index.count() == 2
+        assert context_index.is_dirty() is False
+        context_index.close()
+
+
+def test_upsert_twice_keeps_a_single_entry(test_config):
+    """Re-syncing the same item replaces its vector instead of duplicating it."""
+    test_config.embedding_dim = 3
+    engine = DocumentEmbeddingEngine({"l0": [1, 0, 0]})
+    with ContextStore(test_config) as store:
+        synchronizer, context_index = make_synchronizer(test_config, store, engine)
+
+        assert synchronizer.upsert_active_l0(7, "l0").status == "synchronized"
+        assert synchronizer.upsert_active_l0(7, "l0").status == "synchronized"
+
+        assert context_index.count() == 1
+        assert context_index.is_dirty() is False
+        context_index.close()
+
+
+def test_remove_deletes_only_the_target_entry(test_config):
+    test_config.embedding_dim = 3
+    engine = DocumentEmbeddingEngine({"a l0": [1, 0, 0], "b l0": [0, 1, 0]})
+    with ContextStore(test_config) as store:
+        synchronizer, context_index = make_synchronizer(test_config, store, engine)
+        assert synchronizer.upsert_active_l0(1, "a l0").status == "synchronized"
+        assert synchronizer.upsert_active_l0(2, "b l0").status == "synchronized"
+
+        report = synchronizer.remove_l0(1)
+
+        assert report.status == "synchronized"
+        assert context_index.count() == 1
+        assert context_index.is_dirty() is False
+        context_index.close()
+
+
+def test_remove_of_an_absent_item_is_a_clean_noop(test_config):
+    test_config.embedding_dim = 3
+    engine = DocumentEmbeddingEngine({})
+    with ContextStore(test_config) as store:
+        synchronizer, context_index = make_synchronizer(test_config, store, engine)
+
+        report = synchronizer.remove_l0(12345)
+
+        assert report.status == "synchronized"
+        assert context_index.is_dirty() is False
+        context_index.close()
+
+
+def test_upsert_without_engine_reports_unavailable_and_stays_dirty(test_config):
+    """An unavailable engine must leave a truthful retry marker."""
+    test_config.embedding_dim = 3
+    with ContextStore(test_config) as store:
+        synchronizer, context_index = make_synchronizer(test_config, store, None)
+
+        report = synchronizer.upsert_active_l0(7, "new l0")
+
+        assert report.status == "unavailable"
+        assert context_index.is_dirty() is True
+        assert context_index.count() == 0
+        context_index.close()
+
+
+def test_remove_works_without_an_engine(test_config):
+    """Removals need no embeddings and must not be blocked by an absent engine."""
+    test_config.embedding_dim = 3
+    engine = DocumentEmbeddingEngine({"l0": [1, 0, 0]})
+    with ContextStore(test_config) as store:
+        synchronizer, context_index = make_synchronizer(test_config, store, engine)
+        assert synchronizer.upsert_active_l0(7, "l0").status == "synchronized"
+        synchronizer_no_engine = ContextVectorSynchronizer(
+            test_config, store, context_index, None
+        )
+
+        report = synchronizer_no_engine.remove_l0(7)
+
+        assert report.status == "synchronized"
+        assert context_index.count() == 0
+        assert context_index.is_dirty() is False
+        context_index.close()
+
+
+def test_failed_upsert_preserves_the_dirty_marker_and_old_entry(test_config):
+    test_config.embedding_dim = 3
+
+    class FailingEngine:
+        is_loaded = True
+
+        def encode_document(self, text: str) -> list[float]:
+            raise RuntimeError("cannot encode sensitive L0")
+
+    with ContextStore(test_config) as store:
+        synchronizer, context_index = make_synchronizer(
+            test_config, store, DocumentEmbeddingEngine({"old l0": [1, 0, 0]})
+        )
+        assert synchronizer.upsert_active_l0(7, "old l0").status == "synchronized"
+        failing = ContextVectorSynchronizer(
+            test_config, store, context_index, FailingEngine()
+        )
+
+        report = failing.upsert_active_l0(8, "sensitive new l0")
+
+        assert report.status == "failed"
+        assert report.detail == "RuntimeError"
+        assert context_index.is_dirty() is True
+        assert context_index.count() == 1  # the earlier entry survives untouched
+        context_index.close()
+
+
+def test_successful_upsert_preserves_a_preexisting_dirty_marker(test_config):
+    """One successful item sync must not declare an earlier failure recovered."""
+    test_config.embedding_dim = 3
+    engine = DocumentEmbeddingEngine({"l0": [1, 0, 0]})
+    with ContextStore(test_config) as store:
+        synchronizer, context_index = make_synchronizer(test_config, store, engine)
+        context_index.initialize(dim=3)
+        context_index.mark_dirty()  # an earlier failure still awaits a rebuild
+        context_index.preserve_dirty()
+
+        report = synchronizer.upsert_active_l0(7, "l0")
+
+        assert report.status == "synchronized"
+        assert context_index.count() == 1
+        assert context_index.is_dirty() is True
+        context_index.close()
+
+
+def test_upsert_on_a_wrong_path_index_marks_the_context_cache_dirty(test_config):
+    legacy_index = VectorIndex(test_config)
+    with ContextStore(test_config) as store:
+        synchronizer = ContextVectorSynchronizer(test_config, store, legacy_index, None)
+
+        report = synchronizer.upsert_active_l0(7, "new l0")
+
+        assert report.status == "failed"
+        assert report.detail == "ValueError"
+        assert test_config.context_vector_path.with_suffix(".usearch.dirty").exists()
+        assert legacy_index.is_dirty() is False
+    legacy_index.close()

@@ -669,3 +669,140 @@ def test_whitespace_only_legacy_value_bounds_sentinels_at_minimum_limits(test_co
     assert 0 < len(item.layers.l1) <= test_config.context_l1_max_chars
     assert item.layers.l2 == " \n\t "
     assert _legacy_snapshot(test_config) == before
+
+
+# ---- public conversion policy reused by production writes ----
+
+
+def test_public_conversion_policy_freezes_the_legacy_mapping_rules(test_config):
+    """ContextService must reuse one conversion policy, never a private copy."""
+    with ContextStore(test_config) as store:
+        migrator = LegacyMemoryMigrator(store, test_config)
+
+        assert migrator.content_type_for({"attribute": "constraint"}) is ContextContentType.CONSTRAINT
+        assert migrator.content_type_for({"attribute": "preference"}) is ContextContentType.PREFERENCE
+        assert migrator.content_type_for({"attribute": "user_profile"}) is ContextContentType.USER_PROFILE
+        assert migrator.content_type_for({"attribute": "decision"}) is ContextContentType.DECISION
+        assert (
+            migrator.content_type_for(
+                {"attribute": "fact", "key": "project:x:progress:log:1"}
+            )
+            is ContextContentType.SESSION_SUMMARY
+        )
+        assert migrator.content_type_for({"attribute": "fact", "key": "fact:key"}) is ContextContentType.FACT
+        assert migrator.content_type_for({"attribute": "unrecognized"}) is ContextContentType.REFERENCE
+
+        assert migrator.scope_for(ContextContentType.CONSTRAINT) is ContextScope.GLOBAL
+        assert migrator.scope_for(ContextContentType.PREFERENCE) is ContextScope.GLOBAL
+        assert migrator.scope_for(ContextContentType.USER_PROFILE) is ContextScope.GLOBAL
+        assert migrator.scope_for(ContextContentType.DECISION) is ContextScope.PROJECT
+
+        assert migrator.status_for("ACTIVE") is ContextStatus.ACTIVE
+        assert migrator.status_for("bogus") is ContextStatus.ARCHIVED
+        assert migrator.tier_for("PINNED") is ContextTier.PINNED
+        assert migrator.tier_for("bogus") is ContextTier.NORMAL
+        assert migrator.importance_for("7.5") == 7.5
+        assert migrator.importance_for(0.5) == 5.0
+        assert migrator.importance_for(None) == 5.0
+        assert migrator.confidence_for(ContextStatus.ACTIVE, ContextTier.NORMAL, None) == 1.0
+        assert (
+            migrator.confidence_for(
+                ContextStatus.ACTIVE, ContextTier.NORMAL, "2031-01-01 00:00:00"
+            )
+            == 0.5
+        )
+        assert migrator.confidence_for(ContextStatus.ARCHIVED, ContextTier.PINNED, None) == 1.0
+        assert migrator.confidence_for(ContextStatus.ARCHIVED, ContextTier.NORMAL, None) == 0.5
+        assert migrator.project_for({"key": "anything"}) == ""
+        assert migrator.tags_for("b, a, b, ,c") == ("b", "a", "c")
+        assert migrator.timestamps_for({"created_at": "2026-01-01 00:00:00"}) == (
+            "2026-01-01 00:00:00",
+            "2026-01-01 00:00:00",
+        )
+        assert migrator.timestamps_for({}) == (
+            "1970-01-01 00:00:00",
+            "1970-01-01 00:00:00",
+        )
+        assert migrator.identity_key_for("  a\n b  ", 7) == "a b"
+        assert migrator.identity_key_for("   ", 7) == "legacy:memory:7:missing-key"
+        layers = migrator.layers_for("some legacy value", ContextContentType.FACT)
+        assert layers.l2 == "some legacy value"
+        assert migrator.layers_for("", ContextContentType.FACT).l2 == "[empty legacy value]"
+
+
+def test_draft_from_projection_row_derives_core_metadata_from_the_stored_row(test_config):
+    """Production writes inherit exactly what the projection stored."""
+    legacy_id = _create_legacy_rows(
+        test_config,
+        [
+            {
+                "key": "decision:database",
+                "value": "Use SQLite first.",
+                "attribute": "decision",
+                "tags": ["storage"],
+                "importance": 8.0,
+                "tier": "pinned",
+                "expires_at": "2031-01-02 03:04:05",
+            }
+        ],
+    )[0]
+
+    with ContextStore(test_config) as store:
+        migrator = LegacyMemoryMigrator(store, test_config)
+        row = store.legacy_projection().get_by_id(legacy_id)
+
+        draft = migrator.draft_from_projection_row(row, confidence=0.9)
+        assert draft.identity_key == "decision:database"
+        assert draft.content_type is ContextContentType.DECISION
+        assert draft.status is ContextStatus.ACTIVE
+        assert draft.tier is ContextTier.PINNED
+        assert draft.tags == ("storage",)
+        assert draft.importance == 8.0
+        assert draft.confidence == 0.9
+        assert draft.expires_at == "2031-01-02 03:04:05"
+        assert draft.layers.l2 == "Use SQLite first."
+
+        default = migrator.draft_from_projection_row(row)
+        # expiring rows are not durable, so the policy default is 0.5
+        assert default.confidence == 0.5
+
+
+def test_migrate_projection_row_runs_inside_the_caller_transaction(test_config):
+    """One-row migration preserves history and composes with the full migrator."""
+    with MemoryStore(test_config) as legacy:
+        legacy_id = legacy.add(
+            key="alpha", value="historical value", source_session="s-1"
+        )
+        legacy._conn.execute(
+            "UPDATE memories SET access_count=4, created_at=?, updated_at=? WHERE id=?",
+            ("2025-01-02 03:04:05", "2026-01-02 03:04:05", legacy_id),
+        )
+        legacy._conn.commit()
+
+    with ContextStore(test_config) as store:
+        migrator = LegacyMemoryMigrator(store, test_config)
+        row = store.legacy_projection().get_by_id(legacy_id)
+
+        with pytest.raises(RuntimeError):
+            migrator.migrate_projection_row(row)
+
+        with store.transaction():
+            context_id = migrator.migrate_projection_row(row)
+
+        assert store.resolve_legacy_mapping(legacy_id) == context_id
+        item = store.get_item(context_id)
+        assert item.status is ContextStatus.ACTIVE
+        assert item.layers.l2 == "historical value"
+        assert item.access_count == 4
+        assert item.created_at == "2025-01-02 03:04:05"
+        assert item.updated_at == "2026-01-02 03:04:05"
+        source = store._conn.execute(
+            "SELECT source_kind, source_ref, extraction_version "
+            "FROM context_sources WHERE item_id=?",
+            (context_id,),
+        ).fetchone()
+        assert tuple(source) == ("migration", "s-1", "legacy-v1")
+
+        report = LegacyMemoryMigrator(store, test_config).migrate()
+        assert report.created == 0
+        assert report.already_migrated == 1
