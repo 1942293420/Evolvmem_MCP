@@ -790,23 +790,23 @@
 - Modify: `tests/test_web_server.py`
 - Modify: `tests/test_integration.py`
 
-- [ ] **Step 1: Write failing legacy-read access and maintenance tests.**
+- [x] **Step 1: Write failing legacy-read access and maintenance tests.**
 
   Prove returned old Retriever hits mirror access once to mapped Context; filtered/expired/vector-only filler items are untouched. Forgetting expiration/decay archives both sides. Consolidation keeps the winning pair's access and archives the loser on both sides; a failure rolls back the pair. Existing legacy read ranking/rendering output must remain unchanged.
 
   Replace `ForgettingEngine`'s private `_execute` query with the facade's `get_expired_ids()`. Accept a read/write protocol or facade rather than concrete `MemoryStore` in type annotations; do not add a raw SQL escape hatch.
 
-- [ ] **Step 2: Write failing Web lifecycle tests.**
+- [x] **Step 2: Write failing Web lifecycle tests.**
 
   Preserve every current HTTP response/status behavior while asserting Core projection consistency for importance/tier/attribute/tags update, archive, restore, soft delete, and hard delete. Hard delete must require exact existence/mapping, delete both sides in one transaction, and never run from forgetting/consolidation. A Context/legacy failure returns HTTP 500 with a bounded error class/code and no partial state.
 
   Change `make_handler`/`run` to own ContextService + facade, not a raw MemoryStore. Web list/read can continue returning legacy rows through the facade.
 
-- [ ] **Step 3: Route hooks and the legacy migration utility.**
+- [x] **Step 3: Route hooks and the legacy migration utility.**
 
   `get_session_start_block()` still renders the old memory format for Claude and still runs maintenance on its existing cadence, but all access/archive mutations use the facade. `migrate_claude_mem.py` constructs ContextService using configured mode: pre-cutover `legacy` preserves its old job; post-cutover `compat` creates mappings/layers instead of unmapped rows. It continues returning legacy IDs for old vector handling.
 
-- [ ] **Step 4: Add an AST-based boundary regression test.**
+- [x] **Step 4: Add an AST-based boundary regression test.**
 
   Parse production modules and fail if Adapter modules instantiate `MemoryStore`, access `._conn`/`._execute`, execute `UPDATE/DELETE memories`, or directly call `add/replace/remove/archive/update_metadata/transaction` on a raw store. Allowlist only:
 
@@ -817,7 +817,7 @@
 
   Include MCP, hooks, Kimi, DSH, Web, Retriever, forgetting, consolidator, stale-session script, and migration utility in the scan.
 
-- [ ] **Step 5: Run the Slice 2 gate and commit.**
+- [x] **Step 5: Run the Slice 2 gate and commit.**
 
   Run:
 
@@ -1113,7 +1113,7 @@
 - Modify: `evolvmem/context_service.py`
 - Modify: `tests/test_context_service.py`
 
-- [ ] **Step 1: Write a failing no-side-effect preflight test.**
+- [x] **Step 1: Write a failing no-side-effect preflight test.**
 
   Snapshot a temporary directory tree, database table/trigger list, row/access counts, config bytes/mode bits, and vector bytes/dirty markers. Run preflight against a legacy-only WAL database, then assert every snapshot is unchanged and no Context table, backup directory, model directory, lock file, vector file, or temp file appeared.
 
@@ -1125,7 +1125,7 @@
 
   Expected: module missing.
 
-- [ ] **Step 2: Define private-detail/public-summary report models.**
+- [x] **Step 2: Define private-detail/public-summary report models.**
 
   Add frozen types for `CutoverPreflightReport`, `ProjectionLagReport`, `ShadowComparison`, `ShadowGateReport`, and `PrimaryGateReport`. Each exposes `public_dict()` and a canonical JSON SHA-256. Public serialization may contain schema/version, counts, booleans, reason codes, sizes, checksum prefixes, and durations; it rejects keys/values matching memory content, query, archive payload, secret, or absolute path fixtures.
 
@@ -1137,13 +1137,13 @@
   - Codex target stanza existence, command/args/env/allow-deny/timeouts, and whether all four context tools can be enabled without policy edits.
   - free space at least `2 * db_size + old_vector_size + 64 MiB` and owner-writable backup parent, without creating it.
 
-- [ ] **Step 3: Write failing projection-lag tests for every mismatch class.**
+- [x] **Step 3: Write failing projection-lag tests for every mismatch class.**
 
   Independently inject and count: missing mapping, duplicate mapping target, missing/extra layer, active/superseded/archived/deleted state mismatch, derived L1 mismatch against `layers_from_legacy_value`, old/new supersession-link mismatch, orphan mapping, and mapping to nonexistent ContextItem. A healthy migrated fixture returns zero.
 
   Exclude legitimate legacy rows physically removed by an explicit dual hard delete. Do not compare vector caches as projection truth; report their health separately.
 
-- [ ] **Step 4: Implement pure shadow comparison and thresholds.**
+- [x] **Step 4: Implement pure shadow comparison and thresholds.**
 
   Interface:
 
@@ -1158,11 +1158,11 @@
 
   Tests freeze exact/CJK mapped top-1 at 100%, semantic overlap@5 >= 0.80 when at least five relevant items are expected, exclusion of sub-0.80 pure-vector IDs from failure accounting, empty/unknown mapping behavior, and no query/body fields in reports. Use isolated synthetic corpora; real-query execution is deferred to Task 16.
 
-- [ ] **Step 5: Implement the reusable primary invariant gate.**
+- [x] **Step 5: Implement the reusable primary invariant gate.**
 
   `verify_primary_gate()` requires: quick-check okay; every remaining legacy row exactly mapped; exactly three layers per mapped item; second migration `created=0`; projection lag zero; vector healthy or an explicit, journaled FTS-only approval; shadow thresholds met; and no unknown config diagnostic. Return `ready_primary` only when all required booleans pass. ContextService reuses this invariant evaluator at startup and reports `degraded_legacy` otherwise; it cannot accept a caller-supplied fake ready flag.
 
-- [ ] **Step 6: Verify and commit Task 12.**
+- [x] **Step 6: Verify and commit Task 12.**
 
   Run:
 
