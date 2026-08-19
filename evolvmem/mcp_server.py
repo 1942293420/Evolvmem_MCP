@@ -14,6 +14,10 @@ Context tools (Codex/Kimi shadow/primary with a ready ContextService):
   context_search        — thresholded Core retrieval, L0 metadata only
   context_read          — exact-ID L1/L2 read
   context_status        — content-free diagnostic snapshot
+  context_confirm       — promote one candidate to active (review path)
+  context_record_outcome — record success/failure/confirmed/contradicted evidence
+  context_archive_project — immediately purge one project's session archives
+  context_sweep         — TTL purge sweep over expired session archives
 
 The exposed tool set comes from one registry (evolvmem.mcp_contract):
 tools/list and tools/call share it, so a hidden tool cannot still be
@@ -30,6 +34,7 @@ import threading
 import time
 import traceback
 from evolvmem.config import Config
+from evolvmem.context_lifecycle import ContextLifecycleError
 from evolvmem.context_models import (
     ContextContentType,
     ContextLayer,
@@ -80,6 +85,11 @@ _CONTEXT_ERROR_MESSAGES = {
     "not_readable": "the exact context item is not readable",
     "expired": "the exact context item has expired",
     "invalid_layer": "the requested layer is unavailable for the exact id",
+    "item_not_found": "no context item with the exact given id",
+    "invalid_item_state": "the context item state does not allow this operation",
+    "invalid_source": "the outcome source is invalid for the context item",
+    "sensitive_note": "the note was rejected by the sensitive-content policy",
+    "identity_conflict": "an active item already owns this identity",
     "context_not_enabled": "context reads are disabled in the current mode",
     "degraded_legacy": "context primary mode is degraded; serving is fail-closed",
     "not_initialized": "context service is not initialized yet",
@@ -234,6 +244,10 @@ class MemoryMCPServer:
             "context_search": self._context_search,
             "context_read": self._context_read,
             "context_status": self._context_status,
+            "context_confirm": self._context_confirm,
+            "context_record_outcome": self._context_record_outcome,
+            "context_archive_project": self._context_archive_project,
+            "context_sweep": self._context_sweep,
         }
 
     def _memory_search(self, args: dict) -> dict:
@@ -732,6 +746,105 @@ class MemoryMCPServer:
             "legacy_vector_dirty": status.legacy_vector_dirty,
             "diagnostics": list(status.diagnostics),
             "reason_codes": list(status.reason_codes),
+        }
+
+    # ---- lifecycle/archive write tools (same gate, same stable errors) ----
+
+    def _context_confirm(self, args: dict) -> dict:
+        if not isinstance(args, dict) or set(args) - {"id"}:
+            return self._context_error("invalid_arguments")
+        item_id = args.get("id")
+        if type(item_id) is not int or item_id <= 0:
+            return self._context_error("invalid_arguments")
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            report = self.context_service.confirm(item_id)
+        except (ContextServiceError, ContextLifecycleError) as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        return {
+            "id": report.item_id,
+            "status": report.status.value,
+            "confidence": report.confidence,
+            "evidence_id": report.evidence_id,
+        }
+
+    def _context_record_outcome(self, args: dict) -> dict:
+        if not isinstance(args, dict) or set(args) - {"id", "outcome", "note"}:
+            return self._context_error("invalid_arguments")
+        item_id = args.get("id")
+        outcome = args.get("outcome")
+        note = args.get("note", "")
+        if (
+            type(item_id) is not int
+            or item_id <= 0
+            or outcome not in ("success", "failure", "confirmed", "contradicted")
+            or not isinstance(note, str)
+        ):
+            return self._context_error("invalid_arguments")
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            report = self.context_service.record_outcome(
+                item_id, outcome, note=note
+            )
+        except (ContextServiceError, ContextLifecycleError) as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        return {
+            "id": report.item_id,
+            "evidence_id": report.evidence_id,
+            "outcome": report.outcome,
+            "status": report.status.value,
+            "confidence": report.confidence,
+            "archived": report.archived,
+            "demoted_playbook_ids": list(report.demoted_playbook_ids),
+        }
+
+    def _context_archive_project(self, args: dict) -> dict:
+        if not isinstance(args, dict) or set(args) - {"project"}:
+            return self._context_error("invalid_arguments")
+        project = args.get("project")
+        if not isinstance(project, str) or not project.strip():
+            return self._context_error("invalid_arguments")
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            report = self.context_service.archive_project(project)
+        except (ContextServiceError, ContextLifecycleError) as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        return self._purge_response(report)
+
+    def _context_sweep(self, args: dict) -> dict:
+        if not isinstance(args, dict) or args:
+            return self._context_error("invalid_arguments")
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            report = self.context_service.sweep_archives()
+        except (ContextServiceError, ContextLifecycleError) as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        return self._purge_response(report)
+
+    @staticmethod
+    def _purge_response(report) -> dict:
+        """Purge counts plus archive ids; never paths or payload content."""
+        return {
+            "purged": len(report.purged_archive_ids),
+            "failed": len(report.failed_archive_ids),
+            "purged_archive_ids": list(report.purged_archive_ids),
+            "failed_archive_ids": list(report.failed_archive_ids),
         }
 
     # ---- mode/health views and mutation boundary helpers ----

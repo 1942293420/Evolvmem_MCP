@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from dataclasses import fields
+from datetime import datetime, timezone
 import fcntl
 import os
 from pathlib import Path
@@ -9,6 +10,11 @@ import sqlite3
 
 import pytest
 
+from evolvmem.context_lifecycle import (
+    CandidateSummary,
+    ContextLifecycleError,
+    EvidenceReport,
+)
 from evolvmem.context_migration import LegacyMemoryMigrator
 from evolvmem.context_models import (
     ContextContentType,
@@ -30,7 +36,7 @@ from evolvmem.context_models import (
     ContextValidationError,
 )
 from evolvmem.context_renderer import ContextRenderResult
-from evolvmem.context_service import ContextService
+from evolvmem.context_service import ConsolidationReport, ContextService
 from evolvmem.context_store import ContextStore
 from evolvmem.cutover_lock import CutoverLock
 from evolvmem.legacy_models import (
@@ -42,6 +48,7 @@ from evolvmem.legacy_models import (
     LegacyRemoveRequest,
 )
 from evolvmem.memory_store import MemoryStore
+from evolvmem.session_archive import SessionArchiver, SessionPurgeReport
 
 
 # The frozen wrapper literals: tests must not import renderer internals, so the
@@ -107,18 +114,6 @@ class RecordingStore(ContextStore):
             project=project, min_confidence=min_confidence
         )
 
-
-class LockProbeStore(RecordingStore):
-    """Records whether update_access ran while the cutover lock was held shared."""
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.lock_states: list[bool] = []
-
-    def update_access(self, item_ids):
-        self.lock_states.append(self._shared_lock_held())
-        super().update_access(item_ids)
-
     def _shared_lock_held(self) -> bool:
         # flock locks are per open file description: while the service holds
         # the shared lock, a non-blocking exclusive acquire on a fresh fd of
@@ -134,6 +129,18 @@ class LockProbeStore(RecordingStore):
             return False
         finally:
             os.close(fd)
+
+
+class LockProbeStore(RecordingStore):
+    """Records whether update_access ran while the cutover lock was held shared."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.lock_states: list[bool] = []
+
+    def update_access(self, item_ids):
+        self.lock_states.append(self._shared_lock_held())
+        super().update_access(item_ids)
 
 
 class FakeVectorIndex:
@@ -2136,4 +2143,464 @@ def test_status_projection_lag_uses_the_full_mismatch_evaluator(test_config):
     status = service.status()
     assert status.projection_lag == 1  # the old counter saw only missing mappings
     assert status.mapping_count == 1
+    service.close()
+
+
+# ---- candidate lifecycle, session archives, and consolidation (P4a) ----
+
+_ARCHIVE_T0 = datetime(2020, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+class LifecycleProbeStore(RecordingStore):
+    """Records whether lifecycle/archive writes ran under the shared lock."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.evidence_lock_states: list[bool] = []
+        self.status_lock_states: list[bool] = []
+        self.purge_lock_states: list[bool] = []
+
+    def insert_evidence(self, *args, **kwargs):
+        self.evidence_lock_states.append(self._shared_lock_held())
+        return super().insert_evidence(*args, **kwargs)
+
+    def set_item_status(self, *args, **kwargs):
+        self.status_lock_states.append(self._shared_lock_held())
+        return super().set_item_status(*args, **kwargs)
+
+    def mark_session_archive_purged(self, *args, **kwargs):
+        self.purge_lock_states.append(self._shared_lock_held())
+        return super().mark_session_archive_purged(*args, **kwargs)
+
+
+class RecordingVectorIndex:
+    """Full-surface fake: tracks per-item ids and dirty markers."""
+
+    def __init__(self, config):
+        self.path = config.context_vector_path.resolve()
+        self.ids: set[int] = set()
+        self.dirty = False
+        self.preserved = 0
+
+    def is_dirty(self):
+        return self.dirty
+
+    def count(self):
+        return len(self.ids)
+
+    def mark_dirty(self):
+        self.dirty = True
+
+    def preserve_dirty(self):
+        self.preserved += 1
+
+    def clear_dirty(self):
+        self.dirty = False
+
+    def initialize(self, dim=768):
+        pass
+
+    def add(self, item_id, embedding):
+        self.ids.add(item_id)
+
+    def remove(self, item_id):
+        self.ids.discard(item_id)
+        return False
+
+    def save(self):
+        pass
+
+    def search(self, embedding, k):
+        return []
+
+    def close(self):
+        pass
+
+
+class LoadedFakeEmbedding:
+    """Deterministic loaded engine matching the configured dimension."""
+
+    is_loaded = True
+
+    def __init__(self, dim):
+        self._dim = dim
+
+    def encode_document(self, text):
+        return [0.5] * self._dim
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def probe_store(test_config):
+    with LifecycleProbeStore(test_config) as instance:
+        yield instance
+
+
+def _lifecycle_service(config, store, *, mode=ContextMode.SHADOW, engine=None):
+    vector = RecordingVectorIndex(config)
+    service = ContextService(
+        config, store=store, vector_index=vector, embedding_engine=engine
+    )
+    service.initialize(mode=mode, adapter="codex")
+    return service
+
+
+def _candidate(store, identity_key="exp-candidate", **overrides):
+    overrides.setdefault("content_type", ContextContentType.EXPERIENCE)
+    overrides.setdefault("status", ContextStatus.CANDIDATE)
+    return add_item(store, identity_key, **overrides)
+
+
+def _seed_archive(store, external_id, *, project="proj", now=None):
+    record = SessionArchiver(store.config, store).archive_session(
+        project, "codex", external_id, "原始会话正文", now=now
+    )
+    assert record is not None
+    return record
+
+
+def _lifecycle_calls(service):
+    return (
+        lambda: service.confirm(1),
+        lambda: service.record_outcome(1, "success"),
+        lambda: service.sweep_archives(),
+        lambda: service.archive_project("proj"),
+        lambda: service.list_candidates(),
+        lambda: service.run_consolidation(),
+    )
+
+
+def test_lifecycle_and_archive_apis_require_initialize(test_config, store):
+    service = ContextService(test_config, store=store)
+    for call in _lifecycle_calls(service):
+        with pytest.raises(ContextServiceError) as excinfo:
+            call()
+        assert excinfo.value.code == "not_initialized"
+
+
+@pytest.mark.parametrize("mode", [ContextMode.LEGACY, ContextMode.COMPAT])
+def test_lifecycle_and_archive_apis_fail_closed_in_legacy_and_compat(
+    test_config, store, mode
+):
+    service = make_service(test_config, store, mode=mode)
+    for call in _lifecycle_calls(service):
+        with pytest.raises(ContextServiceError) as excinfo:
+            call()
+        assert excinfo.value.code == "context_not_enabled"
+    service.close()
+
+
+def test_degraded_primary_rejects_lifecycle_and_archive_operations(
+    test_config, store
+):
+    service = make_service(test_config, store, mode=ContextMode.PRIMARY)
+    assert service.status().ready is False  # default vector index never opened
+    for call in _lifecycle_calls(service):
+        with pytest.raises(ContextServiceError) as excinfo:
+            call()
+        assert excinfo.value.code == "degraded_legacy"
+    service.close()
+
+
+def test_confirm_promotes_candidate_under_lock_and_syncs_vector(
+    test_config, probe_store
+):
+    service = _lifecycle_service(
+        test_config,
+        probe_store,
+        engine=LoadedFakeEmbedding(test_config.embedding_dim),
+    )
+    item = _candidate(probe_store)
+
+    report = service.confirm(item.id)
+
+    assert isinstance(report, EvidenceReport)
+    assert report.item_id == item.id
+    assert report.outcome == "confirmed"
+    assert report.status is ContextStatus.ACTIVE
+    reloaded = probe_store.get_item(item.id, include_layers=False)
+    assert reloaded.status is ContextStatus.ACTIVE
+    evidence = probe_store.list_evidence(item.id)
+    assert [row["outcome"] for row in evidence] == ["confirmed"]
+    # 锁内事务：状态翻转与 evidence 插入都持共享 cutover 锁
+    assert probe_store.status_lock_states == [True]
+    assert probe_store.evidence_lock_states == [True]
+    # 提交后才同步：新 active 项的 L0 进入 context 向量缓存
+    assert item.id in service.vector_index.ids
+    service.close()
+
+
+def test_confirm_rejects_missing_and_non_candidate_items(service, store):
+    active = _candidate(store, "exp-active", status=ContextStatus.ACTIVE)
+    with pytest.raises(ContextLifecycleError) as excinfo:
+        service.confirm(active.id)
+    assert excinfo.value.code == "invalid_item_state"
+
+    with pytest.raises(ContextLifecycleError) as excinfo:
+        service.confirm(999)
+    assert excinfo.value.code == "item_not_found"
+
+
+def test_confirm_identity_conflict_is_typed(service, store):
+    _candidate(store, "exp-conflict", status=ContextStatus.ACTIVE)
+    twin = _candidate(store, "exp-conflict")
+    with pytest.raises(ContextLifecycleError) as excinfo:
+        service.confirm(twin.id)
+    assert excinfo.value.code == "identity_conflict"
+    reloaded = store.get_item(twin.id, include_layers=False)
+    assert reloaded.status is ContextStatus.CANDIDATE
+
+
+def test_confirm_rolls_back_status_and_evidence_together(
+    test_config, probe_store, monkeypatch
+):
+    service = _lifecycle_service(test_config, probe_store)
+    item = _candidate(probe_store)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic bookkeeping failure")
+
+    monkeypatch.setattr(probe_store, "update_outcome_stats", boom)
+
+    with pytest.raises(RuntimeError, match="synthetic"):
+        service.confirm(item.id)
+
+    reloaded = probe_store.get_item(item.id, include_layers=False)
+    assert reloaded.status is ContextStatus.CANDIDATE
+    assert probe_store.list_evidence(item.id) == []
+    assert service.vector_index.ids == set()  # 回滚后绝不同步向量
+    service.close()
+
+
+def test_record_outcome_applies_counters_under_lock(test_config, probe_store):
+    service = _lifecycle_service(test_config, probe_store)
+    item = _candidate(probe_store)
+
+    report = service.record_outcome(item.id, "success", note="落地验证通过")
+
+    assert isinstance(report, EvidenceReport)
+    assert report.outcome == "success"
+    assert report.archived is False
+    reloaded = probe_store.get_item(item.id, include_layers=False)
+    assert reloaded.success_count == 1
+    assert reloaded.last_verified_at is not None
+    evidence = probe_store.list_evidence(item.id)
+    assert [row["outcome"] for row in evidence] == ["success"]
+    assert probe_store.evidence_lock_states == [True]
+    service.close()
+
+
+def test_record_outcome_rejects_sensitive_note_without_storing(service, store):
+    item = _candidate(store)
+    with pytest.raises(ContextLifecycleError) as excinfo:
+        service.record_outcome(
+            item.id, "success", note="api_key=sk-live-secret-123"
+        )
+    assert excinfo.value.code == "sensitive_note"
+    assert store.list_evidence(item.id) == []
+    reloaded = store.get_item(item.id, include_layers=False)
+    assert reloaded.success_count == 0
+
+
+def test_record_outcome_failure_archives_and_removes_vectors(
+    test_config, probe_store
+):
+    service = _lifecycle_service(test_config, probe_store)
+    item = _candidate(
+        probe_store, "exp-active", status=ContextStatus.ACTIVE, confidence=0.9
+    )
+    playbook = add_item(
+        probe_store,
+        "playbook-active",
+        content_type=ContextContentType.PLAYBOOK,
+        status=ContextStatus.ACTIVE,
+    )
+    with probe_store.transaction():
+        probe_store.record_experience_source(
+            playbook.id, item.id, extraction_version="test-v1"
+        )
+    service.vector_index.ids.update({item.id, playbook.id})
+
+    report = service.record_outcome(item.id, "failure", note="复现失败")
+
+    assert report.archived is True
+    assert report.demoted_playbook_ids == (playbook.id,)
+    assert report.confidence == pytest.approx(0.8)
+    assert (
+        probe_store.get_item(item.id, include_layers=False).status
+        is ContextStatus.ARCHIVED
+    )
+    assert (
+        probe_store.get_item(playbook.id, include_layers=False).status
+        is ContextStatus.CANDIDATE
+    )
+    # 提交后：archived 项与被降级的 playbook 都移出 context 向量缓存
+    assert service.vector_index.ids == set()
+    service.close()
+
+
+def test_sweep_archives_purges_expired_under_lock_and_is_idempotent(
+    test_config, probe_store
+):
+    service = _lifecycle_service(test_config, probe_store)
+    expired = _seed_archive(probe_store, "sess-old", now=_ARCHIVE_T0)
+    fresh = _seed_archive(probe_store, "sess-new")
+    expired_file = test_config.data_dir / expired.payload_path
+    assert expired_file.exists()
+
+    report = service.sweep_archives()
+
+    assert isinstance(report, SessionPurgeReport)
+    assert report.purged_archive_ids == (expired.id,)
+    assert report.failed_archive_ids == ()
+    assert not expired_file.exists()
+    assert probe_store.purge_lock_states == [True]
+    rows = {
+        int(row["id"]): row["state"]
+        for row in probe_store._connection()
+        .execute("SELECT id, state FROM session_archives")
+        .fetchall()
+    }
+    assert rows[expired.id] == "purged"
+    assert rows[fresh.id] == "available"
+
+    again = service.sweep_archives()
+    assert again.purged_archive_ids == ()
+    assert again.failed_archive_ids == ()
+    service.close()
+
+
+def test_archive_project_normalizes_workspace_path_and_aliases(
+    test_config, probe_store
+):
+    test_config.context_project_aliases = {"evolvmem-worktree": "evolvmem"}
+    service = _lifecycle_service(test_config, probe_store)
+    target = _seed_archive(probe_store, "sess-1", project="evolvmem")
+    other = _seed_archive(probe_store, "sess-2", project="other")
+    item = add_item(probe_store, "exp-target", project="evolvmem")
+
+    report = service.archive_project("/home/o/worktrees/evolvmem-worktree")
+
+    assert report.purged_archive_ids == (target.id,)
+    assert report.failed_archive_ids == ()
+    assert not (test_config.data_dir / target.payload_path).exists()
+    # ContextItem 永不删除；其他项目的 archive 不动
+    assert (
+        probe_store.get_item(item.id, include_layers=False).status
+        is ContextStatus.ACTIVE
+    )
+    assert probe_store.get_session_archive(other.id)["state"] == "available"
+    service.close()
+
+
+def test_archive_project_validates_project(service):
+    with pytest.raises(ContextValidationError, match="project"):
+        service.archive_project(123)
+    with pytest.raises(ContextValidationError, match="project"):
+        service.archive_project("   ")
+
+
+def test_list_candidates_is_read_only_without_access_side_effects(
+    test_config, store
+):
+    service = make_service(test_config, store)
+    candidate = _candidate(store, "exp-cand", project="proj", l0="候选摘要")
+    other = _candidate(store, "exp-other", project="other")
+    add_item(store, "fact-active")  # active 不进入候选审阅
+
+    summaries = service.list_candidates()
+
+    assert [summary.id for summary in summaries] == [candidate.id, other.id]
+    summary = summaries[0]
+    assert isinstance(summary, CandidateSummary)
+    assert summary.l0 == "候选摘要"
+    assert not hasattr(summary, "l1")
+    assert not hasattr(summary, "l2")
+    # 只读审阅：无 access 计数、无分层读取
+    assert store.update_access_calls == []
+    assert store.get_layer_calls == []
+
+    filtered = service.list_candidates(project="/worktrees/proj")
+    assert [entry.id for entry in filtered] == [candidate.id]
+    service.close()
+
+
+def test_run_consolidation_promotes_and_degrades_playbook_without_error(
+    test_config, probe_store
+):
+    service = _lifecycle_service(
+        test_config,
+        probe_store,
+        engine=LoadedFakeEmbedding(test_config.embedding_dim),
+    )
+    item = _candidate(probe_store, "exp-promotable")
+    for external_id in ("sess-a", "sess-b"):
+        record = _seed_archive(probe_store, external_id)
+        with probe_store.transaction():
+            source_id = probe_store.record_session_source(
+                item.id, record.id, extraction_version="test-v1"
+            )
+        service.record_outcome(item.id, "success", source_id=source_id)
+
+    report = service.run_consolidation()
+
+    assert isinstance(report, ConsolidationReport)
+    assert report.promoted_ids == (item.id,)
+    assert report.promotion_skipped == ()
+    assert (
+        probe_store.get_item(item.id, include_layers=False).status
+        is ContextStatus.ACTIVE
+    )
+    # 晋升项的 L0 在提交后进入 context 向量缓存
+    assert item.id in service.vector_index.ids
+    # 无 LLM：playbook 生成是显式降级，不是错误
+    assert report.playbook_reason == "llm_unavailable"
+    assert report.playbook_created_ids == ()
+    assert report.playbook_skipped == ()
+    service.close()
+
+
+def test_run_consolidation_without_candidates_is_a_noop(service, store):
+    report = service.run_consolidation()
+    assert report.promoted_ids == ()
+    assert report.promotion_skipped == ()
+    assert report.playbook_created_ids == ()
+    assert report.playbook_skipped == ()
+    assert report.playbook_reason == "llm_unavailable"
+
+
+def test_lifecycle_archiver_and_generator_are_cached_and_released_on_close(
+    test_config, store
+):
+    service = make_service(test_config, store)
+    lifecycle = service._context_lifecycle()
+    assert service._context_lifecycle() is lifecycle
+    archiver = service._session_archiver()
+    assert service._session_archiver() is archiver
+    generator = service._playbook_generator()
+    assert service._playbook_generator() is generator
+
+    service.close()
+
+    assert service._lifecycle is None
+    assert service._archiver is None
+    assert service._generator is None
+
+
+def test_component_construction_failure_fails_closed(
+    test_config, store, monkeypatch
+):
+    service = make_service(test_config, store)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic construction failure at /secret/path")
+
+    monkeypatch.setattr("evolvmem.context_service.ContextLifecycle", boom)
+
+    with pytest.raises(ContextServiceError) as excinfo:
+        service.confirm(1)
+    assert excinfo.value.code == "degraded_legacy"
+    assert "/secret/path" not in str(excinfo.value)
     service.close()

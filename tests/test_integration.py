@@ -1,6 +1,8 @@
 """端到端集成测试——从写入到检索的完整链路。"""
 
+from datetime import datetime, timezone
 import hashlib
+import json
 import sqlite3
 import pytest
 import numpy as np
@@ -8,14 +10,19 @@ import evolvmem.kimi_hooks as hooks
 from evolvmem.config import Config
 from evolvmem.consolidator import Consolidator
 from evolvmem.context_models import (
+    ContextContentType,
+    ContextItemDraft,
     ContextLayer,
+    ContextLayers,
     ContextMode,
+    ContextScope,
     ContextStatus,
     ContextTier,
 )
 from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
 from evolvmem.memory_store import MemoryStore
+from evolvmem.session_archive import SessionArchiver
 from evolvmem.vector_index import VectorIndex
 from evolvmem.retriever import Retriever
 from evolvmem.conflict_detector import ConflictDetector
@@ -756,7 +763,7 @@ class TestIntegration:
         store.close()
 
     def test_mcp_tool_schemas_match_design(self, test_config):
-        """legacy 默认仅注册 6 个旧工具；codex/kimi+shadow 追加四个 context 工具。"""
+        """legacy 默认仅注册 6 个旧工具；codex/kimi+shadow 追加八个 context 工具。"""
         from evolvmem.mcp_server import MemoryMCPServer
         server = MemoryMCPServer(config=test_config)
         # 伪造 initialize request 后直接查询工具列表
@@ -771,7 +778,7 @@ class TestIntegration:
         }
         assert tool_names == expected
 
-        # Codex/Kimi shadow：同一注册表按 adapter/mode/health 暴露四个 context 工具
+        # Codex/Kimi shadow：同一注册表按 adapter/mode/health 暴露八个 context 工具
         test_config.context_mode = "shadow"
         for adapter in ("codex", "kimi"):
             test_config.adapter = adapter
@@ -789,6 +796,8 @@ class TestIntegration:
                 assert adapter_names == expected | {
                     "context_session_start", "context_search",
                     "context_read", "context_status",
+                    "context_confirm", "context_record_outcome",
+                    "context_archive_project", "context_sweep",
                 }
             finally:
                 service.close()
@@ -953,3 +962,118 @@ class TestMigrateClaudeMem:
         assert second["skipped"] == 2
         with MemoryStore(test_config) as store:
             assert len(store.get_by_key("claude-mem:summary:1")) == 1
+
+
+class TestContextLifecycleIntegration:
+    """P4a 端到端：candidate 隔离 → outcome/confirm → archive purge（MCP 面）。"""
+
+    @staticmethod
+    def _shadow_server(test_config):
+        from evolvmem.mcp_server import MemoryMCPServer
+        with MemoryStore(test_config):
+            pass  # legacy 投影 schema 引导；只有测试允许持有裸 store
+        test_config.context_mode = "shadow"
+        test_config.adapter = "codex"
+        srv = MemoryMCPServer(config=test_config)
+        srv._init_done.set()  # 注入服务的服务器不经过初始化门闩
+        service = ContextService(test_config, embedding_engine=srv.engine)
+        service._legacy_vector = srv.vidx
+        service.initialize(mode=ContextMode.SHADOW, adapter="codex")
+        srv.context_service = service
+        return srv
+
+    @staticmethod
+    def _call(srv, name, arguments, req_id=7):
+        resp = srv._handle_request({
+            "method": "tools/call", "id": req_id, "jsonrpc": "2.0",
+            "params": {"name": name, "arguments": arguments},
+        })
+        result = resp["result"]
+        return result, json.loads(result["content"][0]["text"])
+
+    def test_candidate_lifecycle_and_archive_purge_end_to_end(
+            self, test_config):
+        srv = self._shadow_server(test_config)
+        service = srv.context_service
+        try:
+            candidate = service.store.create_item(
+                ContextItemDraft(
+                    identity_key="experience:proj:stdio-hang",
+                    content_type=ContextContentType.EXPERIENCE,
+                    layers=ContextLayers(
+                        l0="MCP stdio 握手卡住时先检查 stdin 预读竞争。",
+                        l1="症状是 initialize 无响应；改为单一读取路径。",
+                        l2="完整排查与修复证据。",
+                        generator="test-suite",
+                    ),
+                    project="proj",
+                    scope=ContextScope.PROJECT,
+                    status=ContextStatus.CANDIDATE,
+                    tier=ContextTier.NORMAL,
+                    confidence=0.8,
+                )
+            )
+
+            # 注册表暴露四个新写工具
+            listed = {
+                tool["name"]
+                for tool in srv._handle_request({
+                    "method": "tools/list", "id": 3, "jsonrpc": "2.0",
+                })["result"]["tools"]
+            }
+            assert {
+                "context_confirm", "context_record_outcome",
+                "context_archive_project", "context_sweep",
+            } <= listed
+
+            # candidate 隔离：精确读取被策略拒绝，绝不进入服务面
+            result, payload = self._call(
+                srv, "context_read", {"id": candidate.id}
+            )
+            assert result["isError"] is True
+            assert payload["error"] == "not_readable"
+
+            # outcome → confirm：candidate 经显式确认进入 active
+            _, recorded = self._call(srv, "context_record_outcome", {
+                "id": candidate.id, "outcome": "success",
+                "note": "改为单一读取路径后握手回归通过",
+            })
+            assert recorded["outcome"] == "success"
+            _, confirmed = self._call(
+                srv, "context_confirm", {"id": candidate.id}
+            )
+            assert confirmed["status"] == "active"
+
+            # 晋升后同一精确 ID 可读 L1
+            _, read = self._call(srv, "context_read", {"id": candidate.id})
+            assert read["layer"] == "l1"
+            assert "单一读取路径" in read["content"]
+
+            # 到期 archive 经 context_sweep 真实删除且幂等
+            expired = SessionArchiver(
+                test_config, service.store
+            ).archive_session(
+                "proj", "codex", "sess-old", "过期的原始会话正文",
+                now=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            )
+            expired_file = test_config.data_dir / expired.payload_path
+            _, swept = self._call(srv, "context_sweep", {})
+            assert swept["purged"] == 1
+            assert not expired_file.exists()
+            assert self._call(srv, "context_sweep", {})[1]["purged"] == 0
+
+            # 项目 purge：路径形入参归一化；active item 不受影响
+            fresh = SessionArchiver(
+                test_config, service.store
+            ).archive_session("proj", "codex", "sess-new", "未过期的原始会话正文")
+            _, purged = self._call(
+                srv, "context_archive_project", {"project": "/worktrees/proj"}
+            )
+            assert purged["purged"] == 1
+            assert purged["purged_archive_ids"] == [fresh.id]
+            reloaded = service.store.get_item(
+                candidate.id, include_layers=False
+            )
+            assert reloaded.status is ContextStatus.ACTIVE
+        finally:
+            service.close()

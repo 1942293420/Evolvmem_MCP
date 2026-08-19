@@ -4,9 +4,12 @@ ContextService is the single coordination point between adapters and the
 Context Core: it owns the service lifecycle, gates operations by context
 mode, normalizes workspace identifiers, orchestrates
 Retriever/Renderer/Store for session start and search, performs exact
-L1/L2 reads, and reports a content-free status snapshot.
+L1/L2 reads, and reports a content-free status snapshot. It also
+coordinates the candidate lifecycle (confirm/outcome review), the
+session-archive purge sweeps, and the promotion/playbook consolidation
+pass under the same mode gates, shared lock, and transaction discipline.
 
-It also owns every production legacy mutation. In compat/shadow/primary
+The service owns every production legacy mutation. In compat/shadow/primary
 mode each typed legacy_* call takes the shared cutover lock and writes the
 legacy projection row, the ContextItem with its three layers, and their ID
 mapping inside one outer ContextStore transaction; in legacy mode the same
@@ -38,6 +41,12 @@ import numpy as np
 
 from evolvmem.config import Config
 from evolvmem.conflict_detector import ConflictDetector
+from evolvmem.context_lifecycle import (
+    CandidateSummary,
+    ContextLifecycle,
+    EvidenceReport,
+    PromotionSkip,
+)
 from evolvmem.context_migration import LegacyMemoryMigrator
 from evolvmem.context_models import (
     ContextContentType,
@@ -59,6 +68,7 @@ from evolvmem.context_models import (
     ContextValidationError,
     ContextVectorDocument,
 )
+from evolvmem.context_playbook import PlaybookGenerator, PlaybookSkip
 from evolvmem.context_renderer import ContextRenderCandidate, ContextRenderer
 from evolvmem.context_retriever import ContextRetriever
 from evolvmem.context_store import ContextStore
@@ -88,6 +98,7 @@ from evolvmem.legacy_projection import (
 )
 from evolvmem.memory_store import MemoryStore
 from evolvmem.semantic_merge import find_semantic_match
+from evolvmem.session_archive import SessionArchiver, SessionPurgeReport
 from evolvmem.vector_index import VectorIndex
 
 
@@ -110,6 +121,21 @@ class _VectorAftermath:
     legacy_removals: tuple[int, ...] = ()
     context_upserts: tuple[tuple[int, str], ...] = ()
     context_removals: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ConsolidationReport:
+    """Merged maintenance outcome: the promotion batch plus playbook generation.
+
+    Carries ids and reason codes only; a degraded playbook stage reports its
+    explicit reason and is never an error.
+    """
+
+    promoted_ids: tuple[int, ...]
+    promotion_skipped: tuple[PromotionSkip, ...]
+    playbook_created_ids: tuple[int, ...]
+    playbook_skipped: tuple[PlaybookSkip, ...]
+    playbook_reason: str
 
 
 class ContextService:
@@ -138,6 +164,9 @@ class ContextService:
         self._migrator: LegacyMemoryMigrator | None = None
         self._synchronizer: ContextVectorSynchronizer | None = None
         self._facade: LegacyCompatibilityFacade | None = None
+        self._lifecycle: ContextLifecycle | None = None
+        self._archiver: SessionArchiver | None = None
+        self._generator: PlaybookGenerator | None = None
         self._cutover_lock = CutoverLock(config)
         self._mode: ContextMode | None = None
         self._adapter = ""
@@ -188,6 +217,10 @@ class ContextService:
                 if callable(close):
                     close()
         finally:
+            # 借用 store 的协调器不持有资源；丢弃引用即完成清理
+            self._lifecycle = None
+            self._archiver = None
+            self._generator = None
             self._mode = None
             self._adapter = ""
             self._ready = False
@@ -537,6 +570,122 @@ class ContextService:
                 legacy_ids = self.store.legacy_ids_mapped_to_items(ids)
                 if legacy_ids:
                     self.store.legacy_projection().update_access(legacy_ids)
+
+    # ---- candidate lifecycle and session archives ----
+
+    def confirm(self, item_id: int) -> EvidenceReport:
+        """Promote one candidate to active through the lifecycle state machine.
+
+        The status flip and its confirmed evidence share one transaction
+        under the shared cutover lock; the newly active item's L0 joins the
+        context vector cache only after the commit.
+        """
+        self._require_serving()
+        with self._cutover_lock.shared():
+            report = self._context_lifecycle().confirm(item_id)
+            l0 = self.store.get_layer(report.item_id, ContextLayer.L0) or ""
+        self._apply_vector_aftermath(
+            _VectorAftermath(context_upserts=((report.item_id, l0),))
+        )
+        return report
+
+    def record_outcome(
+        self,
+        item_id: int,
+        outcome: str,
+        note: str = "",
+        source_id: int | None = None,
+    ) -> EvidenceReport:
+        """Record one outcome and apply the frozen confidence/archive rules.
+
+        The lifecycle policy-checks the note before anything is stored.
+        Failure-driven archival and playbook demotion leave the context
+        vector cache only after the commit.
+        """
+        self._require_serving()
+        with self._cutover_lock.shared():
+            report = self._context_lifecycle().record_outcome(
+                item_id, outcome, note=note, source_id=source_id
+            )
+        removals: list[int] = []
+        if report.archived:
+            removals.append(report.item_id)
+        removals.extend(report.demoted_playbook_ids)
+        if removals:
+            self._apply_vector_aftermath(
+                _VectorAftermath(context_removals=tuple(removals))
+            )
+        return report
+
+    def sweep_archives(self) -> SessionPurgeReport:
+        """Run one TTL purge sweep over expired session archives.
+
+        Purge is irreversible and never faked: rows transition only after
+        their payload file is actually gone, and failures stay available
+        for the next sweep.
+        """
+        self._require_serving()
+        with self._cutover_lock.shared():
+            return self._session_archiver().sweep_expired()
+
+    def archive_project(self, project: str) -> SessionPurgeReport:
+        """Immediately purge every available archive of one project.
+
+        The workspace identifier normalizes exactly like session_start
+        (basename, then configured aliases); ContextItems are never
+        deleted — only their source_state is recomputed.
+        """
+        if not isinstance(project, str):
+            raise ContextValidationError("project must be a string")
+        self._require_serving()
+        normalized = self._normalize_project(project)
+        if not normalized:
+            raise ContextValidationError("project must not be empty")
+        with self._cutover_lock.shared():
+            return self._session_archiver().purge_project(normalized)
+
+    def list_candidates(
+        self, project: str | None = None
+    ) -> tuple[CandidateSummary, ...]:
+        """Read-only candidate review: L0 metadata, no access side effects.
+
+        Candidates are visible only through this explicit review API; they
+        never enter retrieval or the session-start block.
+        """
+        self._require_serving()
+        normalized = (
+            self._normalize_project(project) if project is not None else None
+        )
+        return self._context_lifecycle().list_candidates(project=normalized)
+
+    def run_consolidation(self) -> ConsolidationReport:
+        """Maintenance pass: automatic promotions, then playbook generation.
+
+        Each stage keeps its own single-transaction guarantee under the
+        shared cutover lock. A missing embedding engine or LLM degrades the
+        playbook stage to its explicit reason — never an error.
+        """
+        self._require_serving()
+        lifecycle = self._context_lifecycle()
+        with self._cutover_lock.shared():
+            promotion = lifecycle.evaluate_promotions()
+            upserts = tuple(
+                (item_id, self.store.get_layer(item_id, ContextLayer.L0) or "")
+                for item_id in promotion.promoted_ids
+            )
+        if upserts:
+            self._apply_vector_aftermath(
+                _VectorAftermath(context_upserts=upserts)
+            )
+        with self._cutover_lock.shared():
+            generation = self._playbook_generator().generate()
+        return ConsolidationReport(
+            promoted_ids=promotion.promoted_ids,
+            promotion_skipped=promotion.skipped,
+            playbook_created_ids=generation.created_ids,
+            playbook_skipped=generation.skipped,
+            playbook_reason=generation.reason,
+        )
 
     # ---- typed legacy mutations ----
 
@@ -1406,6 +1555,52 @@ class ContextService:
         if self._migrator is None:
             self._migrator = LegacyMemoryMigrator(self.store, self.config)
         return self._migrator
+
+    def _context_lifecycle(self) -> ContextLifecycle:
+        """Service-owned lifecycle coordinator; construction fails closed."""
+        if self._lifecycle is None:
+            try:
+                self._lifecycle = ContextLifecycle(self.config, self.store)
+            except Exception as exc:
+                raise ContextServiceError(
+                    "degraded_legacy",
+                    "context lifecycle could not be constructed; failing closed",
+                ) from exc
+        return self._lifecycle
+
+    def _session_archiver(self) -> SessionArchiver:
+        """Service-owned session archiver; construction fails closed."""
+        if self._archiver is None:
+            try:
+                self._archiver = SessionArchiver(self.config, self.store)
+            except Exception as exc:
+                raise ContextServiceError(
+                    "degraded_legacy",
+                    "session archiver could not be constructed; failing closed",
+                ) from exc
+        return self._archiver
+
+    def _playbook_generator(self) -> PlaybookGenerator:
+        """Service-owned playbook generator; construction fails closed.
+
+        The service wires no LLM of its own: generation degrades to the
+        explicit ``llm_unavailable`` reason instead of erroring.
+        """
+        if self._generator is None:
+            try:
+                self._generator = PlaybookGenerator(
+                    self.config,
+                    self.store,
+                    self._context_lifecycle(),
+                    llm=None,
+                    embedding_engine=self.embedding_engine,
+                )
+            except Exception as exc:
+                raise ContextServiceError(
+                    "degraded_legacy",
+                    "playbook generator could not be constructed; failing closed",
+                ) from exc
+        return self._generator
 
     def _context_synchronizer(self) -> ContextVectorSynchronizer:
         if self._synchronizer is None:

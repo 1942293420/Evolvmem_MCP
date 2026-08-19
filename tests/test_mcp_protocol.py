@@ -5,13 +5,14 @@ Codex/Kimi 行，其余 adapter 行为不变）：
 
 | State | Context tools | Legacy reads | Legacy writes | initialize instructions |
 | legacy or compat | none | legacy ranking | facade | none |
-| Codex/Kimi shadow ready | all four, real Core results | legacy result + content-free compare | facade | none |
-| Codex/Kimi primary ready | all four | Core ranking mapped to old shape | facade | primary text (per-adapter variant) |
+| Codex/Kimi shadow ready | all eight, real Core results | legacy result + content-free compare | facade | none |
+| Codex/Kimi primary ready | all eight | Core ranking mapped to old shape | facade | primary text (per-adapter variant) |
 | other adapters (claude/dsh/web/空) shadow/primary | none | configured compatibility read | facade | none |
 | invalid config or degraded primary | context_status only | legacy diagnostic reads only | rejected | diagnostic text only |
 """
 
 import dataclasses
+from datetime import datetime, timezone
 import json
 import threading
 
@@ -27,6 +28,7 @@ from evolvmem.context_models import (
     ContextScope,
     ContextServiceStatus,
     ContextStatus,
+    ContextTier,
 )
 from evolvmem.context_service import ContextService
 from evolvmem.embedding import EmbeddingEngine
@@ -39,6 +41,7 @@ from evolvmem.mcp_contract import (
 )
 from evolvmem.mcp_server import MemoryMCPServer
 from evolvmem.retriever import Retriever
+from evolvmem.session_archive import SessionArchiver
 
 
 _LEGACY_TOOLS = {
@@ -47,6 +50,8 @@ _LEGACY_TOOLS = {
 }
 _CONTEXT_TOOLS = {
     "context_session_start", "context_search", "context_read", "context_status",
+    "context_confirm", "context_record_outcome",
+    "context_archive_project", "context_sweep",
 }
 _CONTENT_TYPE_VALUES = [member.value for member in ContextContentType]
 
@@ -62,6 +67,10 @@ _PROBE_ARGS = {
     "context_search": {},
     "context_read": {},
     "context_status": {},
+    "context_confirm": {},
+    "context_record_outcome": {},
+    "context_archive_project": {},
+    "context_sweep": {},
 }
 
 
@@ -625,14 +634,14 @@ class TestRegistry:
         assert {spec.name for spec in specs} == _LEGACY_TOOLS
 
     @pytest.mark.parametrize("adapter", ["codex", "kimi"])
-    def test_shadow_ready_lists_all_ten_tools(self, adapter):
+    def test_shadow_ready_lists_all_tools(self, adapter):
         health = _health(mode=ContextMode.SHADOW, ready=True, adapter=adapter)
         specs = tool_specs(adapter=adapter, mode=ContextMode.SHADOW,
                            health=health)
         assert {spec.name for spec in specs} == _LEGACY_TOOLS | _CONTEXT_TOOLS
 
     @pytest.mark.parametrize("adapter", ["codex", "kimi"])
-    def test_primary_ready_lists_all_ten_tools(self, adapter):
+    def test_primary_ready_lists_all_tools(self, adapter):
         specs = tool_specs(adapter=adapter, mode=ContextMode.PRIMARY,
                            health=_health(adapter=adapter))
         assert {spec.name for spec in specs} == _LEGACY_TOOLS | _CONTEXT_TOOLS
@@ -690,6 +699,39 @@ class TestRegistry:
         status = specs["context_status"].input_schema
         assert status == {"type": "object", "properties": {}}
 
+    def test_lifecycle_tool_schemas_are_frozen(self):
+        specs = {
+            spec.name: spec
+            for spec in tool_specs(adapter="codex", mode=ContextMode.PRIMARY,
+                                   health=_health())
+        }
+        confirm = specs["context_confirm"].input_schema
+        assert confirm["type"] == "object"
+        assert confirm["required"] == ["id"]
+        assert confirm["properties"]["id"]["type"] == "integer"
+        assert confirm["properties"]["id"]["minimum"] == 1
+        assert confirm["additionalProperties"] is False
+
+        record = specs["context_record_outcome"].input_schema
+        assert sorted(record["required"]) == ["id", "outcome"]
+        assert record["properties"]["id"]["type"] == "integer"
+        assert record["properties"]["id"]["minimum"] == 1
+        assert record["properties"]["outcome"]["enum"] == [
+            "success", "failure", "confirmed", "contradicted",
+        ]
+        assert record["properties"]["note"]["type"] == "string"
+        assert record["additionalProperties"] is False
+
+        archive = specs["context_archive_project"].input_schema
+        assert archive["required"] == ["project"]
+        assert archive["properties"]["project"]["type"] == "string"
+        assert archive["additionalProperties"] is False
+
+        sweep = specs["context_sweep"].input_schema
+        assert sweep == {
+            "type": "object", "properties": {}, "additionalProperties": False,
+        }
+
     def test_readonly_annotations(self):
         specs = {
             spec.name: spec
@@ -705,6 +747,8 @@ class TestRegistry:
         for name in (
             "memory_add", "memory_replace", "memory_remove",
             "memory_consolidate",
+            "context_confirm", "context_record_outcome",
+            "context_archive_project", "context_sweep",
         ):
             assert specs[name].annotations.get("readOnlyHint") is not True, name
 
@@ -1080,3 +1124,255 @@ class TestLegacySearchModes:
         assert status["available"] is False
         assert status["diagnostics"]
         assert str(test_config.data_dir) not in json.dumps(status)
+
+
+# ---- 生命周期/归档写工具（P4a：codex/kimi shadow/primary ready） ----
+
+_ARCHIVE_T0 = datetime(2020, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _seed_candidate(service, identity_key="exp-candidate", *, project="proj",
+                    status=ContextStatus.CANDIDATE):
+    return service.store.create_item(
+        ContextItemDraft(
+            identity_key=identity_key,
+            content_type=ContextContentType.EXPERIENCE,
+            layers=ContextLayers(
+                l0=f"候选摘要 {identity_key}",
+                l1="候选经验的支持细节",
+                l2="候选经验的完整来源",
+                generator="test-suite",
+            ),
+            project=project,
+            scope=ContextScope.PROJECT,
+            status=status,
+            tier=ContextTier.NORMAL,
+            confidence=0.8,
+        )
+    )
+
+
+def _seed_archive(service, external_id, *, project="proj", now=None):
+    record = SessionArchiver(service.config, service.store).archive_session(
+        project, "codex", external_id, "原始会话正文", now=now
+    )
+    assert record is not None
+    return record
+
+
+class TestContextLifecycleTools:
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    def test_shadow_serves_confirm_record_outcome_sweep_and_archive_project(
+            self, test_config, adapter):
+        server = _make_server(test_config, mode="shadow", adapter=adapter)
+        service = server.context_service
+        candidate = _seed_candidate(service)
+
+        # context_confirm：candidate → active，返回新状态
+        _, confirmed = _call(server, "context_confirm", {"id": candidate.id})
+        assert confirmed["id"] == candidate.id
+        assert confirmed["status"] == "active"
+        assert confirmed["evidence_id"] > 0
+        reloaded = service.store.get_item(candidate.id, include_layers=False)
+        assert reloaded.status is ContextStatus.ACTIVE
+
+        # context_record_outcome：success 计数与报告
+        _, recorded = _call(server, "context_record_outcome", {
+            "id": candidate.id, "outcome": "success", "note": "复现验证通过",
+        })
+        assert recorded["outcome"] == "success"
+        assert recorded["status"] == "active"
+        assert recorded["archived"] is False
+        reloaded = service.store.get_item(candidate.id, include_layers=False)
+        assert reloaded.success_count == 1
+
+        # context_sweep：只清到期 archive，幂等
+        expired = _seed_archive(service, "sess-old", now=_ARCHIVE_T0)
+        fresh = _seed_archive(service, "sess-new")
+        _, swept = _call(server, "context_sweep", {})
+        assert swept["purged"] == 1
+        assert swept["failed"] == 0
+        assert swept["purged_archive_ids"] == [expired.id]
+        _, swept_again = _call(server, "context_sweep", {})
+        assert swept_again["purged"] == 0
+        assert swept_again["failed"] == 0
+
+        # context_archive_project：路径归一化后立即 purge；item 永不删除
+        _, purged = _call(
+            server, "context_archive_project", {"project": "/worktrees/proj"}
+        )
+        assert purged["purged"] == 1
+        assert purged["failed"] == 0
+        assert purged["purged_archive_ids"] == [fresh.id]
+        reloaded = service.store.get_item(candidate.id, include_layers=False)
+        assert reloaded.status is ContextStatus.ACTIVE
+
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    def test_primary_ready_serves_the_lifecycle_tools(
+            self, test_config, adapter):
+        server = _make_server(
+            test_config, mode="primary", adapter=adapter, loaded_engine=True,
+        )
+        service = server.context_service
+        candidate = _seed_candidate(service)
+
+        _, confirmed = _call(server, "context_confirm", {"id": candidate.id})
+        assert confirmed["status"] == "active"
+        # confirm 后向量计数不变量仍成立（按次健康复查不降级）
+        service._refresh_health()
+        assert service.status().ready is True
+
+        _, swept = _call(server, "context_sweep", {})
+        assert swept["purged"] == 0
+        assert swept["failed"] == 0
+
+    def test_record_outcome_failure_archives_and_demotes_via_mcp(
+            self, test_config):
+        server = _make_server(test_config, mode="shadow", adapter="codex")
+        service = server.context_service
+        experience = _seed_candidate(
+            service, "exp-active", status=ContextStatus.ACTIVE,
+        )
+        playbook = service.store.create_item(
+            ContextItemDraft(
+                identity_key="playbook-active",
+                content_type=ContextContentType.PLAYBOOK,
+                layers=ContextLayers(
+                    l0="已激活的 playbook 摘要",
+                    l1="playbook 的支持细节",
+                    l2="playbook 的完整来源",
+                    generator="test-suite",
+                ),
+                project="proj",
+                scope=ContextScope.PROJECT,
+                status=ContextStatus.ACTIVE,
+                tier=ContextTier.NORMAL,
+                confidence=0.8,
+            )
+        )
+        with service.store.transaction():
+            service.store.record_experience_source(
+                playbook.id, experience.id, extraction_version="test-v1"
+            )
+
+        _, recorded = _call(server, "context_record_outcome", {
+            "id": experience.id, "outcome": "failure",
+        })
+
+        assert recorded["archived"] is True
+        assert recorded["status"] == "archived"
+        assert recorded["demoted_playbook_ids"] == [playbook.id]
+        assert recorded["confidence"] == pytest.approx(0.7)
+
+    @pytest.mark.parametrize(
+        "tool,args",
+        [
+            ("context_confirm", {}),
+            ("context_confirm", {"id": 0}),
+            ("context_confirm", {"id": True}),
+            ("context_confirm", {"id": 1.5}),
+            ("context_confirm", {"id": 1, "extra": 1}),
+            ("context_record_outcome", {}),
+            ("context_record_outcome", {"id": 1}),
+            ("context_record_outcome", {"outcome": "success"}),
+            ("context_record_outcome", {"id": 1, "outcome": "maybe"}),
+            ("context_record_outcome", {"id": 1, "outcome": True}),
+            ("context_record_outcome",
+             {"id": 1, "outcome": "success", "note": 5}),
+            ("context_record_outcome",
+             {"id": 1, "outcome": "success", "source_id": 3}),
+            ("context_archive_project", {}),
+            ("context_archive_project", {"project": ""}),
+            ("context_archive_project", {"project": "   "}),
+            ("context_archive_project", {"project": 7}),
+            ("context_archive_project", {"project": "p", "extra": 1}),
+            ("context_sweep", {"unexpected": 1}),
+        ],
+    )
+    def test_lifecycle_tool_validation_is_stable_and_content_free(
+            self, test_config, tool, args):
+        server = _make_server(test_config, mode="shadow", adapter="codex")
+        _seed_candidate(server.context_service)
+
+        result, payload = _call(server, tool, args)
+
+        assert result["isError"] is True
+        assert payload["error"] == "invalid_arguments"
+        rendered = json.dumps(payload, ensure_ascii=False)
+        assert str(test_config.data_dir) not in rendered
+        assert "Traceback" not in rendered
+
+    def test_confirm_state_machine_errors_are_stable(self, test_config):
+        server = _make_server(test_config, mode="shadow", adapter="codex")
+        service = server.context_service
+        candidate = _seed_candidate(service)
+
+        result, payload = _call(server, "context_confirm", {"id": 999})
+        assert result["isError"] is True
+        assert payload["error"] == "item_not_found"
+
+        _, confirmed = _call(server, "context_confirm", {"id": candidate.id})
+        assert confirmed["status"] == "active"
+        result, payload = _call(server, "context_confirm", {"id": candidate.id})
+        assert result["isError"] is True
+        assert payload["error"] == "invalid_item_state"
+        rendered = json.dumps(payload, ensure_ascii=False)
+        assert "Traceback" not in rendered
+
+    def test_record_outcome_sensitive_note_is_rejected_with_a_stable_code(
+            self, test_config):
+        server = _make_server(test_config, mode="shadow", adapter="codex")
+        service = server.context_service
+        candidate = _seed_candidate(service)
+        secret = "api_key=sk-live-secret-123"
+
+        result, payload = _call(server, "context_record_outcome", {
+            "id": candidate.id, "outcome": "success", "note": secret,
+        })
+
+        assert result["isError"] is True
+        assert payload["error"] == "sensitive_note"
+        rendered = json.dumps(payload, ensure_ascii=False)
+        assert secret not in rendered
+        assert "sk-live" not in rendered
+        assert "Traceback" not in rendered
+        assert service.store.list_evidence(candidate.id) == []
+
+    @pytest.mark.parametrize("mode", ["legacy", "compat"])
+    def test_lifecycle_tools_stay_hidden_in_legacy_and_compat(
+            self, test_config, mode):
+        server = _make_server(test_config, mode=mode, adapter="codex")
+        for tool in (
+            "context_confirm", "context_record_outcome",
+            "context_archive_project", "context_sweep",
+        ):
+            result, payload = _call(server, tool, {})
+            assert result["isError"] is True
+            assert "Unknown tool" in payload["error"]
+
+    @pytest.mark.parametrize("adapter", ["claude", "dsh", "web", ""])
+    def test_lifecycle_tools_stay_hidden_for_non_cutover_adapters(
+            self, test_config, adapter):
+        server = _make_server(test_config, mode="shadow", adapter=adapter)
+        for tool in (
+            "context_confirm", "context_record_outcome",
+            "context_archive_project", "context_sweep",
+        ):
+            result, payload = _call(server, tool, {})
+            assert result["isError"] is True
+            assert "Unknown tool" in payload["error"]
+
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    def test_degraded_primary_hides_the_lifecycle_write_tools(
+            self, test_config, adapter):
+        server = _make_server(
+            test_config, mode="primary", adapter=adapter, degraded=True,
+        )
+        assert server.context_service.status().ready is False
+        for tool in (
+            "context_confirm", "context_record_outcome",
+            "context_archive_project", "context_sweep",
+        ):
+            result, payload = _call(server, tool, {})
+            assert result["isError"] is True
+            assert "Unknown tool" in payload["error"]

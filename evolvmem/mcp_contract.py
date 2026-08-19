@@ -5,7 +5,8 @@ The registry is a pure function of (adapter, context mode, Context health):
 - legacy/compat modes and adapters outside the cutover set (Codex/Kimi)
   expose only the six legacy ``memory_*`` tools.
 - Codex/Kimi shadow/primary with a ready ContextService additionally expose
-  the four ``context_*`` tools (session start, search, exact read, status).
+  the eight ``context_*`` tools (session start, search, exact read, status,
+  confirm, record outcome, archive project, sweep).
 - An invalid context configuration or a degraded primary fails closed to
   ``context_status`` plus the legacy tools; the server rejects writes at
   call time and the initialize instructions only diagnose.
@@ -294,11 +295,88 @@ _CONTEXT_STATUS_SPEC = McpToolSpec(
     annotations=_READ_ONLY,
 )
 
+_CONTEXT_CONFIRM_SPEC = McpToolSpec(
+    name="context_confirm",
+    description="Confirm a candidate context item by exact ID: promotes it to active and records a confirmed evidence. Candidates are review-only and never enter injected context until confirmed or auto-promoted.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Exact context ID of the candidate to confirm",
+            },
+        },
+        "required": ["id"],
+        "additionalProperties": False,
+    },
+    annotations=_WRITE_TOOL_ANNOTATIONS,
+)
+
+_CONTEXT_RECORD_OUTCOME_SPEC = McpToolSpec(
+    name="context_record_outcome",
+    description="Record one outcome for an exact context ID and apply the frozen confidence/archive rules: failure or contradicted lowers confidence; an active experience whose failures reach its successes is archived. The optional note must pass the sensitive-content policy.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Exact context ID the outcome belongs to",
+            },
+            "outcome": {
+                "type": "string",
+                "enum": ["success", "failure", "confirmed", "contradicted"],
+                "description": "Outcome kind; only success/failure move the counters",
+            },
+            "note": {
+                "type": "string",
+                "description": "Optional caller-written note; sensitive content is rejected",
+            },
+        },
+        "required": ["id", "outcome"],
+        "additionalProperties": False,
+    },
+    annotations=_WRITE_TOOL_ANNOTATIONS,
+)
+
+_CONTEXT_ARCHIVE_PROJECT_SPEC = McpToolSpec(
+    name="context_archive_project",
+    description="Immediately purge every available encrypted session archive of one project (workspace path normalized to basename/alias). Irreversible; active ContextItems are never deleted.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Project workspace path or name (normalized to a project name; never stored as a path)",
+            },
+        },
+        "required": ["project"],
+        "additionalProperties": False,
+    },
+    annotations=_WRITE_TOOL_ANNOTATIONS,
+)
+
+_CONTEXT_SWEEP_SPEC = McpToolSpec(
+    name="context_sweep",
+    description="Run one TTL purge sweep over expired encrypted session archives. Irreversible for expired payloads only; takes no arguments.",
+    input_schema={
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    },
+    annotations=_WRITE_TOOL_ANNOTATIONS,
+)
+
 _CONTEXT_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     _CONTEXT_SESSION_START_SPEC,
     _CONTEXT_SEARCH_SPEC,
     _CONTEXT_READ_SPEC,
     _CONTEXT_STATUS_SPEC,
+    _CONTEXT_CONFIRM_SPEC,
+    _CONTEXT_RECORD_OUTCOME_SPEC,
+    _CONTEXT_ARCHIVE_PROJECT_SPEC,
+    _CONTEXT_SWEEP_SPEC,
 )
 
 
