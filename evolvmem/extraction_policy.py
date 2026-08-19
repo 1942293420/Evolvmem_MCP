@@ -174,6 +174,10 @@ _ALLOWED_ATTRIBUTES = frozenset({
     "fact",
     "constraint",
     "user_profile",
+    # Phase 3 扩展合约：experience/playbook 通过全部既有门控后放行；
+    # 持久化侧将它们隔离为 Core candidate（不写投影、不进注入）。
+    "experience",
+    "playbook",
 })
 _ALLOWED_TIERS = frozenset({"pinned", "normal", "reference"})
 _STABLE_KEY_RE = re.compile(r"[\w\u3400-\u9fff-]+(?::[\w\u3400-\u9fff-]+){3}")

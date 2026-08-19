@@ -1086,7 +1086,6 @@ class TestKimiSessionArchiveIntegration:
             self, test_config, monkeypatch, tmp_path):
         from evolvmem.auto_extractor import CandidateMemory
         from evolvmem.context_models import ContextReadRequest
-        import evolvmem.extraction_policy as policy
 
         test_config.context_mode = "shadow"
         wire = tmp_path / "wire.jsonl"
@@ -1122,12 +1121,7 @@ class TestKimiSessionArchiveIntegration:
                 model="deepseek-v4-flash",
             ),
         )
-        # 模拟提取合约扩展后放行 experience attribute（其余门控保持真实）
-        monkeypatch.setattr(
-            policy,
-            "_ALLOWED_ATTRIBUTES",
-            policy._ALLOWED_ATTRIBUTES | {"experience"},
-        )
+        # P5 起合约为真实放行：experience attribute 无需再打补丁
         monkeypatch.setattr(
             hooks,
             "_extract_candidates",

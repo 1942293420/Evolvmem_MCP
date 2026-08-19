@@ -190,3 +190,48 @@ writes nothing and only reports whether the journal state is rollbackable.
 Restoring a backup (database/vector files or the full pre-cutover stanza
 snapshot) is a separate destructive recovery operation and requires its own
 explicit human approval; it is never part of the normal rollback path.
+
+## Phase 3 operations: session archives, purge, and candidate review
+
+### Archive key and payload files
+
+Session archive payloads live under `${data_dir}/session_archives/`
+(directory mode `0700`); the symmetric AES-GCM key is
+`${data_dir}/archive.key`, created owner read/write only (`0600`). Keep it
+that way: any process that can read the key can decrypt every retained
+payload, and losing the key makes all retained payloads unrecoverable. If the
+encryption backend is missing or an archive write fails, session extraction
+still completes but persists without source links, logging only a
+content-free warning — the hook never falls back to plaintext payloads. A
+missing `session_archives/` directory after completed sessions therefore
+means archiving is not happening (check the server log for the warning), not
+that payloads were stored elsewhere.
+
+### Purge troubleshooting
+
+The automatic SessionStart sweep and each explicit `context_sweep` delete
+expired payloads and then mark their `session_archives` rows
+`state='purged'` with `purged_at`; `context_archive_project` does the same
+immediately for every available archive of one project. Purge is
+irreversible. When payload deletion or the state update fails, the row stays
+`available`, the run reports the id under `failed_archive_ids` (logs carry
+ids only, never paths or content), and the next sweep retries — a payload
+still on disk after a sweep is a pending retry, not a leaked `purged` row.
+A row whose payload file is already gone from disk is marked `purged`
+truthfully. Purging never deletes ContextItems; it only recomputes their
+`source_state`.
+
+### Candidate review
+
+Extraction items marked `experience`/`playbook` land as Core candidates:
+they never enter retrieval, the session-start block, or the legacy
+projection. Review them only through the read-only service API
+`ContextService.list_candidates()` (L0 plus metadata, no access side
+effects), then act per item: `context_confirm(id)` promotes a candidate to
+active and records a `confirmed` evidence; `context_record_outcome(id,
+outcome, note)` appends `success`/`failure`/`confirmed`/`contradicted`
+evidence under the frozen confidence/archive rules. Candidates also
+auto-promote once they hold `context_promotion_min_successes` (default 2)
+`success` evidence rows from distinct session archives with zero `failure`
+evidence. All four lifecycle tools are write tools without `readOnlyHint`,
+so they follow the same approval flow as the legacy `memory_*` write tools.

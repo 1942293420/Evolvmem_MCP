@@ -29,7 +29,7 @@ class AutoExtractor:
     EXTRACTION_PROMPT = """你是 EvolvMem 长期记忆提炼器。请审阅完整会话，只提炼跨会话仍有价值的信息。
 
 ## 保留规则
-保留：用户长期偏好和画像、硬约束与安全开关、业务规则、架构或技术决策及原因、废弃方案及替代原因、可复用故障根因和防复发规则。
+保留：用户长期偏好和画像、硬约束与安全开关、业务规则、架构或技术决策及原因、废弃方案及替代原因、可复用故障根因和防复发规则（标为 experience）。
 
 ## 丢弃规则
 丢弃：临时密码、等待输入或稍后确认、一次性测试、单次测试通过或测试数量、单次部署完成、纯提交号、已完成且没有长期决策或原因的待办、可直接从代码或 git 获得的事实。
@@ -48,7 +48,9 @@ class AutoExtractor:
 "memories" 的值必须是数组；数组条目包含：
 - key：稳定标识符
 - value：记忆内容，必须为单句且最多 200 个字符；更长内容必须拆分或压缩。
-- attribute：decision | preference | fact | constraint | user_profile
+- attribute：decision | preference | fact | constraint | user_profile | experience | playbook
+  - experience：可复用的排查/操作经验——验证过的方法步骤、故障根因与修复路径；新提炼的 experience 先进入候选隔离，经确认或自动晋升后才生效。
+  - playbook：多经验汇总的标准操作流程；通常不由提炼直接产出（由系统自动生成），但合约允许标记。
 - tags：相关标签列表
 - confidence：0.0-1.0 的置信度
 - importance：1-10 的整数。9-10 为硬约束或成败关键决策；7-8 为重要架构或业务决策；5-6 为普通偏好和事实；3-4 为边缘参考资料。

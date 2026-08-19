@@ -219,3 +219,30 @@ class TestAutoExtractor:
 
         assert "JSON 对象" in prompt
         assert '"memories"' in prompt
+
+    def test_extraction_prompt_lists_experience_and_playbook_attributes(self):
+        """P5 合约：prompt 提供 experience/playbook 及各自使用释义。"""
+        prompt = AutoExtractor().build_extraction_prompt(
+            [{"role": "user", "content": "hi"}]
+        )
+
+        assert "experience" in prompt
+        assert "playbook" in prompt
+        # experience 释义：可复用的排查/操作经验、验证过的方法步骤
+        assert "可复用" in prompt
+        assert "验证过的方法步骤" in prompt
+        # playbook 通常不由提炼直接产出，但合约允许
+        assert "通常不由提炼直接产出" in prompt
+
+    def test_parse_response_preserves_experience_attribute(self):
+        extractor = AutoExtractor()
+        response = (
+            '[{"key": "project:mcp:experience:stdio-hang", '
+            '"value": "MCP 握手卡住时先检查 stdin 预读竞争。", '
+            '"attribute": "experience", "confidence": 0.8}]'
+        )
+
+        candidates = extractor.parse_response(response)
+
+        assert len(candidates) == 1
+        assert candidates[0].attribute == "experience"

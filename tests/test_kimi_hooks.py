@@ -1699,17 +1699,6 @@ class TestSessionEndArchiveLinking:
         return wire
 
     @staticmethod
-    def _allow_experience_attribute(monkeypatch):
-        """模拟提取合约扩展后放行 experience attribute（其余门控保持真实）。"""
-        import evolvmem.extraction_policy as policy
-
-        monkeypatch.setattr(
-            policy,
-            "_ALLOWED_ATTRIBUTES",
-            policy._ALLOWED_ATTRIBUTES | {"experience", "playbook"},
-        )
-
-    @staticmethod
     def _candidates():
         return [
             CandidateMemory(
@@ -1762,7 +1751,6 @@ class TestSessionEndArchiveLinking:
         with MemoryStore(test_config):
             pass
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        self._allow_experience_attribute(monkeypatch)
         monkeypatch.setattr(
             hooks, "_extract_candidates", lambda *_: self._candidates(),
         )
@@ -1831,7 +1819,6 @@ class TestSessionEndArchiveLinking:
         with MemoryStore(test_config):
             pass
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        self._allow_experience_attribute(monkeypatch)
         monkeypatch.setattr(
             hooks, "_extract_candidates", lambda *_: self._candidates(),
         )
@@ -1853,7 +1840,6 @@ class TestSessionEndArchiveLinking:
         with MemoryStore(test_config):
             pass
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        self._allow_experience_attribute(monkeypatch)
         monkeypatch.setattr(
             hooks, "_extract_candidates", lambda *_: self._candidates(),
         )
@@ -1881,7 +1867,6 @@ class TestSessionEndArchiveLinking:
         with MemoryStore(test_config):
             pass
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        self._allow_experience_attribute(monkeypatch)
         monkeypatch.setattr(
             hooks, "_extract_candidates", lambda *_: self._candidates(),
         )
@@ -1901,6 +1886,49 @@ class TestSessionEndArchiveLinking:
         assert self._rows(test_config, "context_sources") == []
         assert any("archive" in line for line in logs)
         assert "/secret/path" not in "\n".join(logs)
+
+    def test_session_end_isolates_playbook_candidate(
+            self, monkeypatch, tmp_path, test_config):
+        """P5 合约矩阵：playbook 与 experience 一样只建 Core candidate。"""
+        test_config.context_mode = "compat"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks,
+            "_extract_candidates",
+            lambda *_: [
+                CandidateMemory(
+                    key="project:proj:playbook:stdio-triage",
+                    value="排查握手卡死先确认症状，再定位读取路径，最后回归验证。",
+                    attribute="playbook",
+                    confidence=0.8,
+                    importance=7.0,
+                ),
+                CandidateMemory(
+                    key="SESSION_SUMMARY",
+                    value="本次会话验证了 playbook 的候选隔离。",
+                    confidence=0.9,
+                    tags=["日志"],
+                ),
+            ],
+        )
+
+        result = hooks.session_end({"session_id": "session_playbook_isolation"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2  # summary + 隔离的 playbook
+        items = self._rows(test_config, "context_items")
+        by_key = {item["identity_key"]: item for item in items}
+        isolated = by_key["project:proj:playbook:stdio-triage"]
+        assert isolated["status"] == "candidate"
+        assert isolated["content_type"] == "playbook"
+        assert isolated["source_count"] == 1
+        # 候选隔离：无 legacy 投影行，memories 表只有 summary
+        memories = self._rows(test_config, "memories")
+        assert len(memories) == 1
+        assert ":progress:log:" in memories[0]["key"]
 
 
 class TestSessionEndConsolidationWiring:

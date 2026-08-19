@@ -336,3 +336,50 @@ def test_rank_candidates_keeps_earlier_candidate_on_identical_quality_tie():
     )
 
     assert policy.rank_candidates([earlier, later]) == [earlier]
+
+
+def test_allowed_attributes_contract_freezes_the_extended_set():
+    """P5 合约：attribute 全集含 experience/playbook，其余一律不放行。"""
+    assert policy._ALLOWED_ATTRIBUTES == frozenset({
+        "decision",
+        "preference",
+        "fact",
+        "constraint",
+        "user_profile",
+        "experience",
+        "playbook",
+    })
+
+
+@pytest.mark.parametrize("attribute", ["experience", "playbook"])
+def test_evaluate_candidate_accepts_experience_and_playbook(attribute):
+    """experience/playbook 通过全部既有门控后被合约接受。"""
+    item = candidate(
+        "排查 MCP 握手卡死时先检查 stdin 预读竞争，改为单一读取路径。",
+        key=f"project:test:{attribute}:stdio-hang",
+        attribute=attribute,
+        importance=7,
+    )
+
+    decision = policy.evaluate_candidate(item)
+
+    assert decision == policy.PolicyDecision(True)
+
+
+@pytest.mark.parametrize("attribute", ["experience", "playbook"])
+def test_evaluate_candidate_still_applies_value_gates_to_new_attributes(
+        attribute):
+    """合约放行不弱化门控：非中文/低信息/敏感的 experience 照样被拒。"""
+    non_chinese = candidate(
+        "check stdin pre-read contention first",
+        key=f"project:test:{attribute}:stdio-hang",
+        attribute=attribute,
+    )
+    sensitive = candidate(
+        "临时密码为 Synthetic-Pass-123!",
+        key=f"project:test:{attribute}:credential",
+        attribute=attribute,
+    )
+
+    assert policy.evaluate_candidate(non_chinese).reason == "language"
+    assert policy.evaluate_candidate(sensitive).reason == "sensitive"

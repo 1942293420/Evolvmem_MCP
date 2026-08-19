@@ -100,6 +100,46 @@ def test_readme_points_to_runbook() -> None:
     _assert_mentions(README, "docs/codex-context-core-runbook.md", "README.md")
 
 
+# ---- README: Phase 3 archives, candidates, and lifecycle ----
+
+
+def test_readme_phase3_encrypted_session_archives() -> None:
+    for needle in ("AES-GCM", "session_archives/", "archive.key", "0600"):
+        _assert_mentions(README, needle, "README.md")
+    _assert_mentions(README, "never falls back to plaintext", "README.md")
+    _assert_mentions(README, "`context_archive_ttl_days`", "README.md")
+    _assert_mentions(README, "irreversible", "README.md")
+
+
+def test_readme_phase3_candidate_isolation_and_promotion() -> None:
+    _assert_mentions(README, "candidate", "README.md")
+    _assert_mentions(README, "list_candidates", "README.md")
+    _assert_mentions(README, "distinct session archives", "README.md")
+    _assert_mentions(README, "`context_promotion_min_successes`", "README.md")
+
+
+def test_readme_phase3_playbook_generation_and_degradation() -> None:
+    _assert_mentions(README, "`context_playbook_min_experiences`", "README.md")
+    _assert_mentions(
+        README, "`context_promotion_similarity_threshold`", "README.md"
+    )
+    _assert_mentions(README, "0.95", "README.md")
+    _assert_mentions(README, "degraded", "README.md")
+
+
+def test_readme_phase3_lifecycle_write_tools() -> None:
+    for tool in (
+        "context_confirm",
+        "context_record_outcome",
+        "context_archive_project",
+        "context_sweep",
+    ):
+        _assert_mentions(README, f"`{tool}`", "README.md")
+    # Write tools carry no readOnlyHint and therefore require write approval.
+    _assert_mentions(README, "readOnlyHint", "README.md")
+    _assert_mentions(README, "write approval", "README.md")
+
+
 # ---- Runbook: operator procedure and safety ----
 
 
@@ -162,3 +202,28 @@ def test_runbook_cli_0147_dual_verification(runbook: str) -> None:
     # CLI 0.147 does not echo the approval field; verification is dual-source.
     _assert_mentions(runbook, "0.147", "runbook")
     _assert_mentions(runbook, "codex mcp get", "runbook")
+
+
+# ---- Runbook: Phase 3 operations ----
+
+
+def test_runbook_phase3_key_file_permissions(runbook: str) -> None:
+    _assert_mentions(runbook, "archive.key", "runbook")
+    _assert_mentions(runbook, "0600", "runbook")
+    _assert_mentions(runbook, "0700", "runbook")
+    _assert_mentions(runbook, "never falls back to plaintext", "runbook")
+
+
+def test_runbook_phase3_purge_troubleshooting(runbook: str) -> None:
+    _assert_mentions(runbook, "failed_archive_ids", "runbook")
+    _assert_mentions(runbook, "irreversible", "runbook")
+    _assert_mentions(runbook, "available", "runbook")
+    _assert_mentions(runbook, "purged", "runbook")
+    _assert_mentions(runbook, "source_state", "runbook")
+
+
+def test_runbook_phase3_candidate_review_api(runbook: str) -> None:
+    _assert_mentions(runbook, "list_candidates", "runbook")
+    _assert_mentions(runbook, "context_confirm", "runbook")
+    _assert_mentions(runbook, "context_record_outcome", "runbook")
+    _assert_mentions(runbook, "context_promotion_min_successes", "runbook")

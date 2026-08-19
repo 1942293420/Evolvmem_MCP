@@ -108,6 +108,10 @@ The worker scans sessions idle for at least 30 minutes and processes at most thr
 | `context_search` | Codex shadow/primary only: thresholded Context Core hybrid search returning context IDs, identity keys, L0 summaries, and scores — never L1/L2 bodies (read-only) |
 | `context_read` | Codex shadow/primary only: reads one layer (`l1` default, or `l2`) by exact context ID; missing/deleted IDs return a structured error and are never substituted (read-only) |
 | `context_status` | Content-free Context Core diagnostic snapshot: mode, readiness, counts, projection lag, vector flags, reason codes (read-only) |
+| `context_confirm` | Codex/Kimi shadow/primary only: promote one candidate to active and record a `confirmed` evidence (write approval) |
+| `context_record_outcome` | Codex/Kimi shadow/primary only: append `success`/`failure`/`confirmed`/`contradicted` evidence to one exact context ID and apply the frozen confidence/archive rules (write approval) |
+| `context_archive_project` | Codex/Kimi shadow/primary only: immediately purge every available encrypted session archive of one project; irreversible for the payloads, active ContextItems are never deleted (write approval) |
+| `context_sweep` | Codex/Kimi shadow/primary only: run one TTL purge sweep over expired encrypted session archives; irreversible for expired payloads only (write approval) |
 
 Deletion is two-staged: `memory_remove` soft-deletes (recoverable via restore), while the Web Console's `POST /api/memory/<id>/hard_delete` permanently removes the row — irreversible, intended for confirmed junk. The quality gate above applies to every live `memory_add`/`memory_replace` call, so rejected values never enter the store in the first place.
 
@@ -126,6 +130,8 @@ All data is stored under `~/.claude/evolvmem/`:
 | `memory.db` | SQLite database with FTS5/trigram indexes |
 | `vectors.usearch` | USearch HNSW vector index |
 | `context_vectors.usearch` | Separate, explicitly rebuilt Context Core L0 vector cache (not created by bootstrap) |
+| `session_archives/` | AES-GCM encrypted raw session payloads (local evidence only, never sent to any provider) |
+| `archive.key` | Symmetric key for the session archives, created with owner-only read/write permissions (`0600`) |
 | `models/nomic-embed-text-v1.5.f16.gguf` | Canonical Nomic GGUF embedding model (768 dimensions) |
 | `backups/context-core-cutover-<UTC>/` | Verified cutover backups (database snapshot, config copies, Codex stanza snapshot, cutover journal); never deleted automatically |
 | `config.json` | Retrieval, embedding runtime, forgetting, and other parameters |
@@ -178,6 +184,18 @@ PY
 
 This command is local, transactional, non-destructive, and safe to repeat. It does not load or download an embedding model and does not create or rebuild either vector index.
 
+### Phase 3: encrypted session archives, candidates, and lifecycle
+
+Phase 3 adds an evidence-backed experience lifecycle on top of Context Core. At session end the Kimi adapter writes the raw conversation into an encrypted local session archive before extraction: payloads are AES-GCM encrypted files under `session_archives/` (never SQLite BLOBs, never sent to any provider), the symmetric key lives in `archive.key` with owner-only permissions, and each archive expires `context_archive_ttl_days` (default 30) days after the session. Archiving is best-effort local evidence, not a precondition for extraction: without an encryption backend or on any write failure the hook logs a content-free warning and extraction continues without source links — it never falls back to plaintext on disk.
+
+Every SessionStart and each explicit `context_sweep` runs a lightweight TTL purge that deletes expired archive payloads and marks their rows `purged`; `context_archive_project` purges one project's available archives immediately. Purge is irreversible — a failed purge keeps the archive `available` and the next sweep retries; active ContextItems are never deleted, only their `source_state` is recomputed.
+
+Extraction items the model marks `experience` or `playbook` are quarantined as Core candidates: no legacy projection row, no vector cache entry, and they never enter retrieval or the session-start block — they are visible only through the explicit candidate review API (`ContextService.list_candidates`, read-only L0 metadata). A candidate becomes active in two ways: a user confirms it through `context_confirm` (which also records a `confirmed` evidence), or automatic promotion fires once it carries at least `context_promotion_min_successes` (default 2) `success` evidence rows from distinct session archives and zero `failure` evidence. `context_record_outcome` appends `success`/`failure`/`confirmed`/`contradicted` evidence; a `failure` or `contradicted` outcome lowers confidence, and an active experience whose failures reach its successes is archived, which demotes any dependent playbook back to candidate review.
+
+When one project (or the global scope) holds at least `context_playbook_min_experiences` (default 3) active experiences — each with at least two `success` evidence and no unresolved contradiction — whose pairwise L0 normalized similarity `(1+cos)/2` reaches `context_promotion_similarity_threshold` (default 0.95), one playbook is generated automatically, referencing its source experiences without overwriting them. If the LLM or embedding engine is unavailable, or the generated output fails the quality gates, nothing changes and the run reports its explicit degraded reason instead of failing.
+
+The four lifecycle tools — `context_confirm`, `context_record_outcome`, `context_archive_project`, `context_sweep` — are exposed to Codex and Kimi in `shadow`/`primary` mode with a ready service. They carry no `readOnlyHint`, so MCP clients treat them as write operations that require approval; the two purge tools are irreversible for the payloads they delete.
+
 ## Configuration
 
 Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
@@ -202,6 +220,10 @@ Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
 - `context_recency_tau_days`: Recency decay time constant in days for Context scoring, default 30.0
 - `context_frequency_cap`: Access-count normalization cap for Context frequency scoring, default 20
 - `context_project_aliases`: Map of workspace directory name → project name for Context project matching, default `{}`
+- `context_archive_ttl_days`: Days an encrypted session archive is retained before the TTL purge deletes its payload, default 30
+- `context_promotion_min_successes`: Distinct-archive `success` evidence rows (with zero failures) required to auto-promote a candidate experience to active, default 2
+- `context_playbook_min_experiences`: Minimum active experiences in one project (or global scope) forming a playbook qualification cluster, default 3
+- `context_promotion_similarity_threshold`: Minimum pairwise normalized L0 similarity `(1+cos)/2` for a playbook qualification cluster, default 0.95
 - `inject_max_count`: Max memories injected on SessionStart, default 50
 - `inject_max_chars`: Total character budget for SessionStart injection, default 8000
 - `inject_pinned_max_count` / `inject_pinned_max_chars`: Max count and character budget for the pinned layer, default 10 / 2000
