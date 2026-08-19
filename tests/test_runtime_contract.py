@@ -218,6 +218,9 @@ def test_context_configuration_defaults_match_the_frozen_design_values(
     assert config.context_frequency_cap == 20
     assert config.context_project_aliases == {}
     assert config.context_archive_ttl_days == 30
+    assert config.context_promotion_min_successes == 2
+    assert config.context_playbook_min_experiences == 3
+    assert config.context_promotion_similarity_threshold == 0.95
     assert config.validate_runtime() == ()
 
 
@@ -270,6 +273,8 @@ def test_unknown_context_mode_is_a_structured_diagnostic_and_never_primary(
         "context_inject_related_max_chars",
         "context_frequency_cap",
         "context_archive_ttl_days",
+        "context_promotion_min_successes",
+        "context_playbook_min_experiences",
     ],
 )
 @pytest.mark.parametrize("bad", [0, -1, True])
@@ -284,7 +289,12 @@ def test_context_positive_integer_settings_are_validated(temp_dir, field_name, b
 
 
 @pytest.mark.parametrize(
-    "field_name", ["context_min_confidence", "context_vector_min_similarity"]
+    "field_name",
+    [
+        "context_min_confidence",
+        "context_vector_min_similarity",
+        "context_promotion_similarity_threshold",
+    ],
 )
 @pytest.mark.parametrize("bad", [-0.1, 1.1, True, float("nan"), float("inf")])
 def test_context_unit_interval_settings_are_validated(temp_dir, field_name, bad):
@@ -375,6 +385,9 @@ def test_config_round_trip_preserves_context_configuration(temp_dir, monkeypatch
     config.context_frequency_cap = 10
     config.context_project_aliases = {"hermes-memory-plugin": "evolvmem"}
     config.context_archive_ttl_days = 14
+    config.context_promotion_min_successes = 3
+    config.context_playbook_min_experiences = 4
+    config.context_promotion_similarity_threshold = 0.97
     config.save()
 
     loaded = Config.from_file(config.config_path)
@@ -396,6 +409,9 @@ def test_config_round_trip_preserves_context_configuration(temp_dir, monkeypatch
     assert loaded.context_frequency_cap == 10
     assert loaded.context_project_aliases == {"hermes-memory-plugin": "evolvmem"}
     assert loaded.context_archive_ttl_days == 14
+    assert loaded.context_promotion_min_successes == 3
+    assert loaded.context_playbook_min_experiences == 4
+    assert loaded.context_promotion_similarity_threshold == 0.97
 
 
 def test_config_save_replaces_via_a_same_directory_temp_file(temp_dir, monkeypatch):

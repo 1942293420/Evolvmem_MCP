@@ -1222,3 +1222,210 @@ def test_record_session_source_and_recompute_source_states(store, draft_factory)
     assert store.get_item(item.id).source_state == "purged"
     # Items without archive-backed sources are never touched.
     assert store.get_item(loner.id).source_state == "none"
+
+
+# ---- evidence and lifecycle primitives ----
+
+
+def test_insert_and_list_evidence_round_trip(store, draft_factory):
+    item = store.create_item(draft_factory("project:test:fact:evidenced"))
+    with store.transaction():
+        first_id = store.insert_evidence(
+            item.id, None, "success", "复用成功", "2026-01-02 00:00:00"
+        )
+        second_id = store.insert_evidence(
+            item.id, None, "failure", "", "2026-01-03 00:00:00"
+        )
+
+    assert second_id > first_id
+    rows = store.list_evidence(item.id)
+    assert [row["id"] for row in rows] == [first_id, second_id]
+    assert [row["outcome"] for row in rows] == ["success", "failure"]
+    assert rows[0]["note"] == "复用成功"
+    assert rows[0]["source_id"] is None
+    assert rows[0]["observed_at"] == "2026-01-02 00:00:00"
+    assert rows[0]["created_at"]
+    assert store.list_evidence(item.id + 100) == []
+
+
+def test_insert_evidence_requires_transaction(store, draft_factory):
+    item = store.create_item(draft_factory("project:test:fact:evidence-tx"))
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.insert_evidence(item.id, None, "success", "", "2026-01-02 00:00:00")
+
+
+def test_update_outcome_stats_applies_deltas_and_optional_fields(
+        store, draft_factory):
+    item = store.create_item(draft_factory("project:test:fact:stats"))
+
+    with store.transaction():
+        assert store.update_outcome_stats(
+            item.id, success_delta=2, last_verified_at="2026-01-05 00:00:00"
+        ) is True
+    reloaded = store.get_item(item.id)
+    assert reloaded.success_count == 2
+    assert reloaded.failure_count == 0
+    assert reloaded.confidence == 0.8  # None keeps the stored value
+    assert reloaded.last_verified_at == "2026-01-05 00:00:00"
+
+    with store.transaction():
+        store.update_outcome_stats(item.id, failure_delta=1, confidence=0.3)
+    reloaded = store.get_item(item.id)
+    assert reloaded.success_count == 2
+    assert reloaded.failure_count == 1
+    assert reloaded.confidence == 0.3
+    # None never erases a stored verification timestamp.
+    assert reloaded.last_verified_at == "2026-01-05 00:00:00"
+
+    with store.transaction():
+        assert store.update_outcome_stats(item.id + 100, success_delta=1) is False
+
+
+def test_update_outcome_stats_requires_transaction(store, draft_factory):
+    item = store.create_item(draft_factory("project:test:fact:stats-tx"))
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.update_outcome_stats(item.id, success_delta=1)
+
+
+def test_list_item_sources_returns_session_and_experience_rows(
+        store, draft_factory):
+    item = store.create_item(draft_factory("project:test:fact:multi-source"))
+    other = store.create_item(draft_factory("project:test:fact:source-target"))
+    with store.transaction():
+        archive_id = store.upsert_session_archive(
+            "proj", "codex", "sess-multi",
+            payload_path="session_archives/multi.bin",
+            payload_sha256="a" * 64,
+            expires_at="2026-12-31 00:00:00",
+            recorded_at="2026-01-01 00:00:00",
+        )
+        session_source = store.record_session_source(
+            item.id, archive_id, extraction_version="v1"
+        )
+        experience_source = store.record_experience_source(
+            item.id, other.id, extraction_version="v1"
+        )
+
+    rows = store.list_item_sources(item.id)
+    assert [row["id"] for row in rows] == [session_source, experience_source]
+    assert rows[0]["archive_id"] == archive_id
+    assert rows[0]["source_kind"] == "session"
+    assert rows[1]["archive_id"] is None
+    assert rows[1]["source_kind"] == "experience"
+    assert rows[1]["source_ref"] == str(other.id)
+    assert store.list_item_sources(other.id) == []
+
+
+def test_record_experience_source_counts_without_touching_source_state(
+        store, draft_factory):
+    playbook = store.create_item(draft_factory("project:test:fact:playbook-src"))
+    experience = store.create_item(draft_factory("project:test:fact:exp-src"))
+
+    with store.transaction():
+        source_id = store.record_experience_source(
+            playbook.id, experience.id, extraction_version="v9"
+        )
+    assert source_id > 0
+    reloaded = store.get_item(playbook.id)
+    assert reloaded.source_count == 1
+    # Experience dependencies are not archive-backed: source_state stays none.
+    assert reloaded.source_state == "none"
+
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.record_experience_source(playbook.id, experience.id,
+                                       extraction_version="v9")
+
+
+def test_list_dependent_playbook_ids_scopes_to_active_playbooks(store):
+    def make(identity_key, content_type, status):
+        return store.create_item(
+            ContextItemDraft(
+                identity_key=identity_key,
+                content_type=content_type,
+                layers=ContextLayers(
+                    l0=f"Summary of {identity_key}",
+                    l1="Supporting detail for the dependent-playbook test.",
+                    l2="Full source material for the dependent-playbook test.",
+                    generator="test-suite",
+                ),
+                project="test",
+                scope=ContextScope.PROJECT,
+                status=status,
+                tier=ContextTier.NORMAL,
+                tags=("lifecycle",),
+                importance=6.0,
+                confidence=0.8,
+            )
+        )
+
+    experience = make("experience:test:dep-exp", ContextContentType.EXPERIENCE,
+                      ContextStatus.ACTIVE)
+    active_playbook = make("playbook:test:dep-active", ContextContentType.PLAYBOOK,
+                           ContextStatus.ACTIVE)
+    candidate_playbook = make("playbook:test:dep-cand", ContextContentType.PLAYBOOK,
+                              ContextStatus.CANDIDATE)
+    active_fact = make("fact:test:dep-fact", ContextContentType.FACT,
+                       ContextStatus.ACTIVE)
+    with store.transaction():
+        for item in (active_playbook, candidate_playbook, active_fact):
+            store.record_experience_source(
+                item.id, experience.id, extraction_version="v1"
+            )
+
+    # Only ACTIVE playbooks are demotion targets.
+    assert store.list_dependent_playbook_ids(experience.id) == [active_playbook.id]
+    assert store.list_dependent_playbook_ids(active_playbook.id) == []
+
+
+def test_list_item_ids_filters_by_status_type_and_project(store, draft_factory):
+    first = store.create_item(draft_factory("project:test:fact:ids-a"))
+    second = store.create_item(
+        draft_factory("project:test:fact:ids-b", status=ContextStatus.ACTIVE)
+    )
+    third = store.create_item(
+        draft_factory("project:test:fact:ids-c", project="other")
+    )
+
+    assert store.list_item_ids() == [first.id, second.id, third.id]
+    assert store.list_item_ids(status=ContextStatus.CANDIDATE) == [first.id, third.id]
+    assert store.list_item_ids(status=ContextStatus.ACTIVE) == [second.id]
+    assert store.list_item_ids(project="other") == [third.id]
+    assert store.list_item_ids(
+        status=ContextStatus.CANDIDATE, project="other"
+    ) == [third.id]
+    assert store.list_item_ids(
+        content_type=ContextContentType.EXPERIENCE
+    ) == []
+
+
+def test_active_identity_exists_ignores_self_and_non_active(store, draft_factory):
+    active = store.create_item(
+        draft_factory("project:test:fact:identity", status=ContextStatus.ACTIVE)
+    )
+    candidate = store.create_item(draft_factory("project:test:fact:identity"))
+    stranger = store.create_item(draft_factory("project:test:fact:stranger"))
+
+    assert store.active_identity_exists(
+        "project:test:fact:identity", "test", ContextScope.PROJECT,
+        exclude_id=candidate.id,
+    ) is True
+    # The active item itself is excluded.
+    assert store.active_identity_exists(
+        "project:test:fact:identity", "test", ContextScope.PROJECT,
+        exclude_id=active.id,
+    ) is False
+    assert store.active_identity_exists(
+        "project:test:fact:stranger", "test", ContextScope.PROJECT,
+        exclude_id=stranger.id,
+    ) is False
+    # Candidates never satisfy the active-identity probe: the stranger
+    # identity is held only by a candidate, so even excluding an unrelated
+    # id the probe stays False.
+    assert store.active_identity_exists(
+        "project:test:fact:stranger", "test", ContextScope.PROJECT,
+        exclude_id=active.id,
+    ) is False
+    assert store.active_identity_exists(
+        "project:test:fact:identity", "other", ContextScope.PROJECT,
+        exclude_id=candidate.id,
+    ) is False

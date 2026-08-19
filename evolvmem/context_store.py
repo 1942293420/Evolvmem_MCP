@@ -770,6 +770,153 @@ class ContextStore:
                 (source_state, item_id),
             )
 
+    # ---- evidence and lifecycle primitives ----
+
+    def insert_evidence(
+        self,
+        item_id: int,
+        source_id: int | None,
+        outcome: str,
+        note: str,
+        observed_at: str,
+    ) -> int:
+        """Insert one context_evidence row; returns the new row id."""
+        self._require_transaction("insert_evidence")
+        cursor = self._connection().execute(
+            "INSERT INTO context_evidence ("
+            "item_id, source_id, outcome, note, observed_at, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?)",
+            (item_id, source_id, outcome, note, observed_at, _now_iso()),
+        )
+        return int(cursor.lastrowid)
+
+    def list_evidence(self, item_id: int) -> list[dict]:
+        """All evidence rows for one item in insertion order."""
+        rows = self._connection().execute(
+            "SELECT * FROM context_evidence WHERE item_id=? ORDER BY id",
+            (item_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_outcome_stats(
+        self,
+        item_id: int,
+        *,
+        success_delta: int = 0,
+        failure_delta: int = 0,
+        confidence: float | None = None,
+        last_verified_at: str | None = None,
+    ) -> bool:
+        """Apply outcome bookkeeping to one item; False when the id is absent.
+
+        Counters move by delta; confidence and last_verified_at are absolute
+        replacements applied only when not None. updated_at always moves.
+        """
+        self._require_transaction("update_outcome_stats")
+        cursor = self._connection().execute(
+            "UPDATE context_items SET success_count=success_count+?, "
+            "failure_count=failure_count+?, "
+            "confidence=COALESCE(?, confidence), "
+            "last_verified_at=COALESCE(?, last_verified_at), updated_at=? "
+            "WHERE id=?",
+            (
+                success_delta,
+                failure_delta,
+                confidence,
+                last_verified_at,
+                _now_iso(),
+                item_id,
+            ),
+        )
+        return cursor.rowcount > 0
+
+    def list_item_sources(self, item_id: int) -> list[dict]:
+        """All context_sources rows for one item in insertion order."""
+        rows = self._connection().execute(
+            "SELECT * FROM context_sources WHERE item_id=? ORDER BY id",
+            (item_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_experience_source(
+        self, item_id: int, experience_id: int, *, extraction_version: str
+    ) -> int:
+        """Link one playbook item to a contributing experience item.
+
+        The dependency is how lifecycle demotion finds playbooks that rely on
+        an experience; it carries no archive and never affects source_state.
+        """
+        self._require_transaction("record_experience_source")
+        cursor = self._connection().execute(
+            "INSERT INTO context_sources ("
+            "item_id, archive_id, source_kind, source_ref, extraction_version, "
+            "created_at"
+            ") VALUES (?, NULL, 'experience', ?, ?, ?)",
+            (item_id, str(experience_id), extraction_version, _now_iso()),
+        )
+        self._connection().execute(
+            "UPDATE context_items SET source_count=("
+            "SELECT COUNT(*) FROM context_sources WHERE item_id=?"
+            ") WHERE id=?",
+            (item_id, item_id),
+        )
+        return int(cursor.lastrowid)
+
+    def list_dependent_playbook_ids(self, experience_id: int) -> list[int]:
+        """Active playbook ids whose source chain references the experience."""
+        rows = self._connection().execute(
+            "SELECT i.id AS id FROM context_items i "
+            "JOIN context_sources s ON s.item_id=i.id "
+            "WHERE i.content_type='playbook' AND i.status='active' "
+            "AND s.source_kind='experience' AND s.source_ref=? "
+            "ORDER BY i.id",
+            (str(experience_id),),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+    def list_item_ids(
+        self,
+        *,
+        status: ContextStatus | None = None,
+        content_type: ContextContentType | None = None,
+        project: str | None = None,
+    ) -> list[int]:
+        """Item ids matching the given exact filters, ordered by id."""
+        clauses: list[str] = []
+        params: list[object] = []
+        if status is not None:
+            clauses.append("status=?")
+            params.append(status.value)
+        if content_type is not None:
+            clauses.append("content_type=?")
+            params.append(content_type.value)
+        if project is not None:
+            clauses.append("project=?")
+            params.append(project)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = self._connection().execute(
+            f"SELECT id FROM context_items{where} ORDER BY id",
+            tuple(params),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+    def active_identity_exists(
+        self,
+        identity_key: str,
+        project: str,
+        scope: ContextScope,
+        *,
+        exclude_id: int,
+    ) -> bool:
+        """Whether another active item already holds this exact identity."""
+        row = self._connection().execute(
+            "SELECT 1 FROM context_items "
+            "WHERE identity_key=? AND project=? AND scope=? AND status='active' "
+            "AND id != ? LIMIT 1",
+            (identity_key, project, scope.value, exclude_id),
+        ).fetchone()
+        return row is not None
+
     def record_legacy_mapping(
         self, legacy_memory_id: int, context_item_id: int
     ) -> None:

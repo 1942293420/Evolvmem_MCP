@@ -107,6 +107,11 @@ class Config:
     context_project_aliases: dict = field(default_factory=dict)  # 工作区名 → 项目名
     context_archive_ttl_days: int = 30      # 原始会话加密归档的保留天数
 
+    # --- Context Core 晋升阈值（设计「晋升规则」冻结默认值） ---
+    context_promotion_min_successes: int = 2        # 自动晋升所需的不同 archive 成功证据数
+    context_playbook_min_experiences: int = 3       # 生成 Playbook 资格簇的最小经验数
+    context_promotion_similarity_threshold: float = 0.95  # 资格簇 L0 归一化相似度阈值
+
     # --- SessionStart 注入限额 ---
     inject_max_count: int = 50     # 最多注入的记忆条数
     inject_max_chars: int = 8000   # 注入内容总字符预算（约 3-4k tokens）
@@ -256,10 +261,16 @@ class Config:
             "context_inject_related_max_chars",
             "context_frequency_cap",
             "context_archive_ttl_days",
+            "context_promotion_min_successes",
+            "context_playbook_min_experiences",
         ):
             if not self._is_positive_int(getattr(self, name)):
                 diagnostics.append(f"{name} must be a positive integer")
-        for name in ("context_min_confidence", "context_vector_min_similarity"):
+        for name in (
+            "context_min_confidence",
+            "context_vector_min_similarity",
+            "context_promotion_similarity_threshold",
+        ):
             if not self._is_unit_interval(getattr(self, name)):
                 diagnostics.append(f"{name} must be a finite number between 0 and 1")
         tau = self.context_recency_tau_days
@@ -363,6 +374,9 @@ class Config:
             "context_frequency_cap": self.context_frequency_cap,
             "context_project_aliases": self.context_project_aliases,
             "context_archive_ttl_days": self.context_archive_ttl_days,
+            "context_promotion_min_successes": self.context_promotion_min_successes,
+            "context_playbook_min_experiences": self.context_playbook_min_experiences,
+            "context_promotion_similarity_threshold": self.context_promotion_similarity_threshold,
             "inject_max_count": self.inject_max_count,
             "inject_max_chars": self.inject_max_chars,
             "inject_pinned_max_count": self.inject_pinned_max_count,
