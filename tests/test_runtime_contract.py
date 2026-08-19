@@ -107,6 +107,7 @@ def test_path_like_model_filename_is_rejected_without_leaking_home_path(temp_dir
         "context_l0_max_chars",
         "context_l1_max_chars",
         "context_l2_max_chars",
+        "context_archive_ttl_days",
     ],
 )
 def test_boolean_numeric_runtime_settings_are_rejected(temp_dir, field_name):
@@ -216,6 +217,7 @@ def test_context_configuration_defaults_match_the_frozen_design_values(
     assert config.context_recency_tau_days == 30.0
     assert config.context_frequency_cap == 20
     assert config.context_project_aliases == {}
+    assert config.context_archive_ttl_days == 30
     assert config.validate_runtime() == ()
 
 
@@ -267,6 +269,7 @@ def test_unknown_context_mode_is_a_structured_diagnostic_and_never_primary(
         "context_inject_project_max_chars",
         "context_inject_related_max_chars",
         "context_frequency_cap",
+        "context_archive_ttl_days",
     ],
 )
 @pytest.mark.parametrize("bad", [0, -1, True])
@@ -371,6 +374,7 @@ def test_config_round_trip_preserves_context_configuration(temp_dir, monkeypatch
     config.context_recency_tau_days = 14.0
     config.context_frequency_cap = 10
     config.context_project_aliases = {"hermes-memory-plugin": "evolvmem"}
+    config.context_archive_ttl_days = 14
     config.save()
 
     loaded = Config.from_file(config.config_path)
@@ -391,6 +395,7 @@ def test_config_round_trip_preserves_context_configuration(temp_dir, monkeypatch
     assert loaded.context_recency_tau_days == 14.0
     assert loaded.context_frequency_cap == 10
     assert loaded.context_project_aliases == {"hermes-memory-plugin": "evolvmem"}
+    assert loaded.context_archive_ttl_days == 14
 
 
 def test_config_save_replaces_via_a_same_directory_temp_file(temp_dir, monkeypatch):

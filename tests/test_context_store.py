@@ -1073,3 +1073,152 @@ def test_delete_legacy_mapping_requires_transaction_and_reports_existence(
 
     assert store.resolve_legacy_mapping(41) is None
     assert store.get_item(item.id) is not None
+
+
+# ---- session archive SQL primitives (Phase 3 P1) ----
+
+
+def _archive_row(store, archive_id: int) -> dict | None:
+    row = store._connection().execute(
+        "SELECT * FROM session_archives WHERE id=?", (archive_id,)
+    ).fetchone()
+    return None if row is None else dict(row)
+
+
+def test_upsert_session_archive_inserts_then_updates_in_place(store):
+    """UNIQUE(adapter, external_session_id) makes re-archiving idempotent."""
+    with store.transaction():
+        archive_id = store.upsert_session_archive(
+            "proj",
+            "codex",
+            "sess-1",
+            payload_path="session_archives/aaa.bin",
+            payload_sha256="a" * 64,
+            expires_at="2026-01-31 00:00:00",
+            recorded_at="2026-01-01 00:00:00",
+        )
+    row = _archive_row(store, archive_id)
+    assert row["project"] == "proj"
+    assert row["state"] == "available"
+    assert row["purged_at"] is None
+    assert row["created_at"] == "2026-01-01 00:00:00"
+
+    with store.transaction():
+        again = store.upsert_session_archive(
+            "proj-renamed",
+            "codex",
+            "sess-1",
+            payload_path="session_archives/bbb.bin",
+            payload_sha256="b" * 64,
+            expires_at="2026-02-10 00:00:00",
+            recorded_at="2026-01-11 00:00:00",
+        )
+    assert again == archive_id
+    row = _archive_row(store, archive_id)
+    assert row["project"] == "proj-renamed"
+    assert row["payload_path"] == "session_archives/bbb.bin"
+    assert row["payload_sha256"] == "b" * 64
+    assert row["expires_at"] == "2026-02-10 00:00:00"
+    assert row["state"] == "available"
+    assert row["created_at"] == "2026-01-01 00:00:00"  # original insert time kept
+    assert store._connection().execute(
+        "SELECT COUNT(*) FROM session_archives"
+    ).fetchone()[0] == 1
+
+
+def test_session_archive_primitives_require_transaction(store):
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.upsert_session_archive(
+            "proj",
+            "codex",
+            "sess-1",
+            payload_path="session_archives/aaa.bin",
+            payload_sha256="a" * 64,
+            expires_at="2026-01-31 00:00:00",
+            recorded_at="2026-01-01 00:00:00",
+        )
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.mark_session_archive_purged(1, purged_at="2026-02-01 00:00:00")
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.record_session_source(1, 1, extraction_version="v1")
+    with pytest.raises(RuntimeError, match="transaction"):
+        store.recompute_source_states([1])
+
+
+def test_list_expired_and_project_archives_filter_by_state(store):
+    with store.transaction():
+        expired_id = store.upsert_session_archive(
+            "alpha", "codex", "sess-old",
+            payload_path="session_archives/old.bin",
+            payload_sha256="c" * 64,
+            expires_at="2026-01-31 00:00:00",
+            recorded_at="2026-01-01 00:00:00",
+        )
+        fresh_id = store.upsert_session_archive(
+            "alpha", "codex", "sess-new",
+            payload_path="session_archives/new.bin",
+            payload_sha256="d" * 64,
+            expires_at="2026-02-10 00:00:00",
+            recorded_at="2026-01-11 00:00:00",
+        )
+        other_project_id = store.upsert_session_archive(
+            "beta", "codex", "sess-other",
+            payload_path="session_archives/other.bin",
+            payload_sha256="e" * 64,
+            expires_at="2026-01-31 00:00:00",
+            recorded_at="2026-01-01 00:00:00",
+        )
+
+    expired = store.list_expired_session_archives("2026-01-31 00:00:00")
+    assert [row["id"] for row in expired] == [expired_id, other_project_id]
+    assert store.list_expired_session_archives("2026-01-30 23:59:59") == []
+
+    alpha = store.list_available_project_archives("alpha")
+    assert [row["id"] for row in alpha] == [expired_id, fresh_id]
+
+    with store.transaction():
+        assert store.mark_session_archive_purged(
+            expired_id, purged_at="2026-02-01 00:00:00"
+        ) is True
+        # Already purged: a repeated mark must not report success.
+        assert store.mark_session_archive_purged(
+            expired_id, purged_at="2026-02-02 00:00:00"
+        ) is False
+
+    remaining = store.list_expired_session_archives("2026-02-03 00:00:00")
+    assert [row["id"] for row in remaining] == [other_project_id]
+    assert [row["id"] for row in store.list_available_project_archives("alpha")] == [
+        fresh_id
+    ]
+    row = _archive_row(store, expired_id)
+    assert row["state"] == "purged"
+    assert row["purged_at"] == "2026-02-01 00:00:00"
+
+
+def test_record_session_source_and_recompute_source_states(store, draft_factory):
+    item = store.create_item(draft_factory("project:test:fact:sourced"))
+    loner = store.create_item(draft_factory("project:test:fact:loner"))
+    with store.transaction():
+        archive_id = store.upsert_session_archive(
+            "proj", "codex", "sess-src",
+            payload_path="session_archives/src.bin",
+            payload_sha256="f" * 64,
+            expires_at="2026-01-31 00:00:00",
+            recorded_at="2026-01-01 00:00:00",
+        )
+        store.record_session_source(item.id, archive_id, extraction_version="v1")
+
+    assert store.get_item(item.id).source_state == "available"
+    assert store.get_item(item.id).source_count == 1
+    assert store.get_item(loner.id).source_state == "none"
+
+    sources = store.list_archive_sources(archive_id)
+    assert [row["item_id"] for row in sources] == [item.id]
+
+    with store.transaction():
+        store.mark_session_archive_purged(archive_id, purged_at="2026-02-01 00:00:00")
+        store.recompute_source_states([item.id, loner.id])
+
+    assert store.get_item(item.id).source_state == "purged"
+    # Items without archive-backed sources are never touched.
+    assert store.get_item(loner.id).source_state == "none"

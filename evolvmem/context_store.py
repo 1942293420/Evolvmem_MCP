@@ -620,6 +620,156 @@ class ContextStore:
         )
         return int(cursor.lastrowid)
 
+    # ---- session archive primitives ----
+
+    def upsert_session_archive(
+        self,
+        project: str,
+        adapter: str,
+        external_session_id: str,
+        *,
+        payload_path: str,
+        payload_sha256: str,
+        expires_at: str,
+        recorded_at: str,
+    ) -> int:
+        """Insert or replace one archive row keyed by (adapter, external_session_id).
+
+        Re-archiving the same session refreshes the payload pointer, hash, and
+        expiry and revives the row to 'available'; the original created_at is
+        kept. Returns the stable row id.
+        """
+        self._require_transaction("upsert_session_archive")
+        conn = self._connection()
+        conn.execute(
+            "INSERT INTO session_archives ("
+            "project, adapter, external_session_id, payload_path, payload_sha256, "
+            "state, expires_at, purged_at, created_at"
+            ") VALUES (?, ?, ?, ?, ?, 'available', ?, NULL, ?) "
+            "ON CONFLICT(adapter, external_session_id) DO UPDATE SET "
+            "project=excluded.project, payload_path=excluded.payload_path, "
+            "payload_sha256=excluded.payload_sha256, state='available', "
+            "expires_at=excluded.expires_at, purged_at=NULL",
+            (
+                project,
+                adapter,
+                external_session_id,
+                payload_path,
+                payload_sha256,
+                expires_at,
+                recorded_at,
+            ),
+        )
+        row = conn.execute(
+            "SELECT id FROM session_archives "
+            "WHERE adapter=? AND external_session_id=?",
+            (adapter, external_session_id),
+        ).fetchone()
+        if row is None:  # pragma: no cover - the upsert just wrote this row
+            raise RuntimeError("upserted session archive could not be loaded")
+        return int(row["id"])
+
+    def get_session_archive(self, archive_id: int) -> dict | None:
+        row = self._connection().execute(
+            "SELECT * FROM session_archives WHERE id=?", (archive_id,)
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def get_session_archive_by_external(
+        self, adapter: str, external_session_id: str
+    ) -> dict | None:
+        row = self._connection().execute(
+            "SELECT * FROM session_archives "
+            "WHERE adapter=? AND external_session_id=?",
+            (adapter, external_session_id),
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def list_expired_session_archives(self, now: str) -> list[dict]:
+        """Available rows whose expires_at has been reached; purge candidates."""
+        rows = self._connection().execute(
+            "SELECT * FROM session_archives "
+            "WHERE state='available' AND expires_at <= ? ORDER BY id",
+            (now,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_available_project_archives(self, project: str) -> list[dict]:
+        rows = self._connection().execute(
+            "SELECT * FROM session_archives "
+            "WHERE state='available' AND project=? ORDER BY id",
+            (project,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_session_archive_purged(self, archive_id: int, *, purged_at: str) -> bool:
+        """Transition one available row to 'purged'; False when not available."""
+        self._require_transaction("mark_session_archive_purged")
+        cursor = self._connection().execute(
+            "UPDATE session_archives SET state='purged', purged_at=? "
+            "WHERE id=? AND state='available'",
+            (purged_at, archive_id),
+        )
+        return cursor.rowcount > 0
+
+    def record_session_source(
+        self, item_id: int, archive_id: int, *, extraction_version: str
+    ) -> int:
+        """Link one item to its origin archive and refresh source bookkeeping."""
+        self._require_transaction("record_session_source")
+        cursor = self._connection().execute(
+            "INSERT INTO context_sources ("
+            "item_id, archive_id, source_kind, source_ref, extraction_version, "
+            "created_at"
+            ") VALUES (?, ?, 'session', ?, ?, ?)",
+            (item_id, archive_id, str(archive_id), extraction_version, _now_iso()),
+        )
+        self._connection().execute(
+            "UPDATE context_items SET source_count=("
+            "SELECT COUNT(*) FROM context_sources WHERE item_id=?"
+            ") WHERE id=?",
+            (item_id, item_id),
+        )
+        self.recompute_source_states([item_id])
+        return int(cursor.lastrowid)
+
+    def list_archive_sources(self, archive_id: int) -> list[dict]:
+        """All context_sources rows backed by one archive."""
+        rows = self._connection().execute(
+            "SELECT * FROM context_sources WHERE archive_id=? ORDER BY id",
+            (archive_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def recompute_source_states(self, item_ids: list[int]) -> None:
+        """Re-derive source_state from the items' archive-backed sources only.
+
+        Items without any archive-backed source keep their current state.
+        Like update_access, this lifecycle bookkeeping leaves updated_at alone.
+        """
+        self._require_transaction("recompute_source_states")
+        conn = self._connection()
+        for item_id in dict.fromkeys(item_ids):
+            rows = conn.execute(
+                "SELECT a.state AS state FROM context_sources s "
+                "JOIN session_archives a ON a.id=s.archive_id "
+                "WHERE s.item_id=? AND s.archive_id IS NOT NULL",
+                (item_id,),
+            ).fetchall()
+            if not rows:
+                continue
+            states = {row["state"] for row in rows}
+            if states == {"purged"}:
+                source_state = "purged"
+            elif "purged" in states:
+                source_state = "partial_purged"
+            else:
+                source_state = "available"
+            conn.execute(
+                "UPDATE context_items SET source_state=? WHERE id=?",
+                (source_state, item_id),
+            )
+
     def record_legacy_mapping(
         self, legacy_memory_id: int, context_item_id: int
     ) -> None:

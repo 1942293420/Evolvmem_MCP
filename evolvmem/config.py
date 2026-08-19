@@ -105,6 +105,7 @@ class Config:
     context_recency_tau_days: float = 30.0  # recency 衰减时间常数（天）
     context_frequency_cap: int = 20         # 访问次数归一化上限
     context_project_aliases: dict = field(default_factory=dict)  # 工作区名 → 项目名
+    context_archive_ttl_days: int = 30      # 原始会话加密归档的保留天数
 
     # --- SessionStart 注入限额 ---
     inject_max_count: int = 50     # 最多注入的记忆条数
@@ -254,6 +255,7 @@ class Config:
             "context_inject_project_max_chars",
             "context_inject_related_max_chars",
             "context_frequency_cap",
+            "context_archive_ttl_days",
         ):
             if not self._is_positive_int(getattr(self, name)):
                 diagnostics.append(f"{name} must be a positive integer")
@@ -360,6 +362,7 @@ class Config:
             "context_recency_tau_days": self.context_recency_tau_days,
             "context_frequency_cap": self.context_frequency_cap,
             "context_project_aliases": self.context_project_aliases,
+            "context_archive_ttl_days": self.context_archive_ttl_days,
             "inject_max_count": self.inject_max_count,
             "inject_max_chars": self.inject_max_chars,
             "inject_pinned_max_count": self.inject_pinned_max_count,
