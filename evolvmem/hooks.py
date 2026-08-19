@@ -5,12 +5,16 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from evolvmem.config import Config
 from evolvmem.auto_extractor import AutoExtractor
 from evolvmem.forgetting import ForgettingEngine
 from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.scoring import compute_score
+
+if TYPE_CHECKING:
+    from evolvmem.context_service import ContextService
 
 
 def _last_forget_path(config: Config) -> Path:
@@ -145,6 +149,64 @@ def _session_context() -> dict:
         return {}
 
 
+def _session_project(config: Config) -> str:
+    """Session project identity for the Context Core boundary.
+
+    cwd basename normalized through inject_project_aliases and
+    context_project_aliases; only the normalized project name crosses the
+    boundary, never an absolute path.
+    """
+    try:
+        name = os.path.basename(os.getcwd())
+    except Exception:
+        return ""
+    if not name:
+        return ""
+    project = config.inject_project_aliases.get(name, name)
+    aliases = config.context_project_aliases
+    if isinstance(aliases, dict):
+        mapped = aliases.get(project)
+        if isinstance(mapped, str) and mapped.strip():
+            project = mapped.strip()
+    return project
+
+
+def _core_session_start_block(config: Config,
+                              service: "ContextService") -> str:
+    """Best-effort Core-rendered bounded L1 block for primary mode.
+
+    Any Core-path failure — an unreadable vector cache, unmet primary
+    invariants, a degraded service, a raised error, or an empty render —
+    returns "" so the caller silently falls back to the legacy render; the
+    hook never crashes on the Core path. The service lifecycle stays with
+    the caller (opened before, closed after this attempt).
+    """
+    try:
+        # 与 MCP 服务器同一惯例：先打开 context 向量缓存（mmap 恢复或空
+        # 索引），再用与正式门禁相同的评估器按次复查 primary 不变量
+        try:
+            service.vector_index.initialize(dim=config.embedding_dim)
+        except Exception:
+            pass  # 打不开的索引由健康评估如实报告为不可用
+        service._refresh_health()
+        if not service.status().ready:
+            return ""
+        project = _session_project(config)
+        if not project:
+            return ""  # 无项目标识时不猜 query，回退 legacy 渲染
+        from evolvmem.context_models import ContextSessionStartRequest
+
+        # session start 没有用户 query：以规范化项目名充当弱相关性信号
+        # （与 legacy 评分的 cwd 项目加分同源）；pinned 种子例外在无 query
+        # 命中时照常生效
+        result = service.session_start(
+            ContextSessionStartRequest(project=project, query=project)
+        )
+        return result.block
+    except Exception:
+        return ""
+
+
 def _is_session_log(key: str) -> bool:
     """Session-summary log keys end with ':progress:log:<date...>'.
 
@@ -227,6 +289,13 @@ def get_session_start_block(config: Config | None = None) -> str:
        tier='reference' memories (long documents) always land here and are
        never injected in full.
 
+    In primary mode the injection first attempts the Context Core read
+    path (maintenance still runs through the compatibility facade, then
+    the service renders its bounded L1 history block); any Core failure —
+    service not ready, degraded_legacy, an exception, or an empty block —
+    silently falls back to the legacy render. legacy/compat/shadow modes
+    keep the legacy render byte-for-byte.
+
     Args:
         config: Configuration object, uses defaults when None.
 
@@ -237,7 +306,8 @@ def get_session_start_block(config: Config | None = None) -> str:
         config = Config.from_file()
 
     # 维护与读取统一经 ContextService 兼容门面：archive/access 变更按配置
-    # mode 落到 legacy 投影或 Core 双侧；渲染仍用旧格式（读侧切换在后续切片）。
+    # mode 落到 legacy 投影或 Core 双侧；primary 的注入渲染先尝试 Core 读
+    # 路径，失败静默回退旧格式
     from evolvmem.context_models import ContextMode, parse_context_mode
     from evolvmem.context_service import ContextService
 
@@ -252,6 +322,10 @@ def get_session_start_block(config: Config | None = None) -> str:
         facade = service.legacy_facade()
         _maybe_run_forgetting(config, facade)
         _maybe_run_consolidation(config, facade)
+        if mode is ContextMode.PRIMARY:
+            block = _core_session_start_block(config, service)
+            if block:
+                return block
         memories = facade.get_active()
     finally:
         service.close()

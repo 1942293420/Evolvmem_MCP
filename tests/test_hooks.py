@@ -3,10 +3,13 @@
 import sqlite3
 import time
 
+import numpy as np
+
 from evolvmem.context_models import ContextMode, ContextStatus
 from evolvmem.context_service import ContextService
 from evolvmem.hooks import get_session_start_block, get_stop_prompt
 from evolvmem.memory_store import MemoryStore
+from evolvmem.vector_index import VectorIndex
 
 
 class TestSessionStartHook:
@@ -314,6 +317,169 @@ class TestSessionStartCutoverRouting:
                 "SELECT COUNT(*) FROM context_items").fetchone()[0] == 0
         finally:
             conn.close()
+
+
+class TestSessionStartPrimaryCoreInjection:
+    """primary 模式：SessionStart 注入切换到 Context Core（fail-open 回退）。"""
+
+    _CORE_BEGIN = "[BEGIN EVOLVMEM CONTEXT HISTORY]"
+    _LEGACY_HEADER = "## Persistent Memory (from EvolvMem plugin)"
+
+    @staticmethod
+    def _seed_dual(config, adds):
+        """compat 模式双侧写入（索引因无 embedding 引擎保持 dirty）。"""
+        with MemoryStore(config):
+            pass
+        config.context_mode = "compat"
+        service = ContextService(config)
+        service.initialize(mode=ContextMode.COMPAT, adapter="test-hooks")
+        facade = service.legacy_facade()
+        context_ids = []
+        for kwargs in adds:
+            legacy_id = facade.add(**kwargs)
+            context_ids.append(service.store.resolve_legacy_mapping(legacy_id))
+        service.close()
+        config.context_mode = "primary"
+        return context_ids
+
+    @classmethod
+    def _seed_primary_ready(cls, config, adds):
+        """双侧写入 + 占位向量重建，让 primary 启动不变量全部满足。"""
+        context_ids = cls._seed_dual(config, adds)
+        index = VectorIndex(config, path=config.context_vector_path)
+        index.initialize(dim=config.embedding_dim)
+        index.rebuild(
+            context_ids,
+            [np.ones(config.embedding_dim, dtype=np.float32)
+             for _ in context_ids],
+        )
+        index.close()
+        return context_ids
+
+    def test_primary_injects_core_rendered_block(self, test_config):
+        self._seed_primary_ready(test_config, [
+            dict(key="user:constraint:no-prod", value="禁止直接操作生产库",
+                 attribute="constraint", importance=8.0, tier="pinned"),
+        ])
+
+        result = get_session_start_block(config=test_config)
+
+        # Core 渲染的 bounded L1 块（含「不可信历史」边界声明），而非旧四层格式
+        assert self._CORE_BEGIN in result
+        assert "untrusted historical data" in result
+        assert "禁止直接操作生产库" in result
+        assert self._LEGACY_HEADER not in result
+        # 维护节奏不变：自动遗忘/合并按原节奏触发
+        assert (test_config.data_dir / ".last_forget").exists()
+        assert (test_config.data_dir / ".last_consolidate").exists()
+
+    def test_primary_project_identity_uses_basename_with_aliases(
+            self, test_config, monkeypatch, tmp_path):
+        self._seed_primary_ready(test_config, [
+            dict(key="user:constraint:no-prod", value="禁止直接操作生产库",
+                 attribute="constraint", importance=8.0, tier="pinned"),
+        ])
+        workdir = tmp_path / "wd"
+        workdir.mkdir()
+        monkeypatch.chdir(workdir)
+        # 目录名 → inject_project_aliases → context_project_aliases 两跳归一化
+        test_config.inject_project_aliases = {"wd": "mid"}
+        test_config.context_project_aliases = {"mid": "final"}
+        requests = []
+        real_session_start = ContextService.session_start
+
+        def spy(service, request):
+            requests.append(request)
+            return real_session_start(service, request)
+
+        monkeypatch.setattr(ContextService, "session_start", spy)
+
+        result = get_session_start_block(config=test_config)
+
+        assert self._CORE_BEGIN in result
+        (request,) = requests
+        # 只传规范化项目名，绝不传绝对路径
+        assert request.project == "final"
+        assert "/" not in request.project and "\\" not in request.project
+        # session start 没有用户 query：项目名充当弱相关性信号（与 legacy
+        # 评分的 cwd 项目加分同源），pinned 种子例外照常生效
+        assert request.query == "final"
+
+    def test_primary_degraded_falls_back_to_legacy_render(self, test_config):
+        # 索引 dirty（写入时无 embedding 引擎）→ primary 健康复查 degraded
+        self._seed_dual(test_config, [
+            dict(key="p:t:fact:fresh", value="现行事实", importance=5.0),
+        ])
+
+        result = get_session_start_block(config=test_config)
+
+        assert self._LEGACY_HEADER in result
+        assert "现行事实" in result
+        assert self._CORE_BEGIN not in result
+
+    def test_primary_empty_core_block_falls_back_to_legacy_render(
+            self, test_config, monkeypatch):
+        # pinned 事实不享受无命中豁免（豁免已收窄到三类 policy），Core 渲染空块
+        self._seed_primary_ready(test_config, [
+            dict(key="user:fact:pinned-note", value="置顶的普通事实",
+                 attribute="fact", importance=8.0, tier="pinned"),
+        ])
+        requests = []
+        real_session_start = ContextService.session_start
+
+        def spy(service, request):
+            requests.append(request)
+            return real_session_start(service, request)
+
+        monkeypatch.setattr(ContextService, "session_start", spy)
+
+        result = get_session_start_block(config=test_config)
+
+        assert len(requests) == 1  # Core 路径确实进入并返回空块
+        assert self._LEGACY_HEADER in result
+        assert "置顶的普通事实" in result
+        assert self._CORE_BEGIN not in result
+
+    def test_primary_core_failure_falls_back_and_closes_service(
+            self, test_config, monkeypatch):
+        self._seed_primary_ready(test_config, [
+            dict(key="p:t:fact:fresh", value="现行事实", importance=5.0),
+        ])
+
+        def boom(service, request):
+            raise RuntimeError("core boom")
+
+        monkeypatch.setattr(ContextService, "session_start", boom)
+        real_close = ContextService.close
+        close_calls = []
+
+        def counting_close(service):
+            close_calls.append(1)
+            real_close(service)
+
+        monkeypatch.setattr(ContextService, "close", counting_close)
+
+        result = get_session_start_block(config=test_config)
+
+        # Core 异常静默回退旧渲染；服务实例照常关闭，不残留跨进程资源
+        assert self._LEGACY_HEADER in result
+        assert "现行事实" in result
+        assert self._CORE_BEGIN not in result
+        assert close_calls == [1]
+
+    def test_shadow_mode_still_uses_legacy_render(self, test_config):
+        """冻结：shadow 模式的 SessionStart 注入仍走 legacy 渲染，一字不变。"""
+        self._seed_dual(test_config, [
+            dict(key="user:constraint:no-prod", value="禁止直接操作生产库",
+                 attribute="constraint", importance=8.0, tier="pinned"),
+        ])
+        test_config.context_mode = "shadow"
+
+        result = get_session_start_block(config=test_config)
+
+        assert self._LEGACY_HEADER in result
+        assert "禁止直接操作生产库" in result
+        assert self._CORE_BEGIN not in result
 
 
 class TestStopHook:
