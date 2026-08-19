@@ -273,6 +273,25 @@ def _build_digest_lines(logs: list[dict], config: Config) -> list[str]:
     ]
 
 
+def _maybe_sweep_archives(service: "ContextService", mode) -> None:
+    """Shadow/primary SessionStart: one silent TTL purge before rendering.
+
+    The sweep's lock and transaction discipline stays with the service; like
+    every other maintenance step it is fail-open — any failure only prints a
+    content-free stderr line and never blocks the injection. legacy/compat
+    modes skip it entirely.
+    """
+    from evolvmem.context_models import ContextMode
+
+    if mode not in (ContextMode.SHADOW, ContextMode.PRIMARY):
+        return
+    try:
+        service.sweep_archives()
+    except Exception:
+        print("[evolvmem] session archive sweep skipped",
+              file=sys.stderr, flush=True)
+
+
 def get_session_start_block(config: Config | None = None) -> str:
     """Build the SessionStart injection block with four layers:
 
@@ -294,7 +313,9 @@ def get_session_start_block(config: Config | None = None) -> str:
     the service renders its bounded L1 history block); any Core failure —
     service not ready, degraded_legacy, an exception, or an empty block —
     silently falls back to the legacy render. legacy/compat/shadow modes
-    keep the legacy render byte-for-byte.
+    keep the legacy render byte-for-byte. In shadow/primary modes one
+    silent session-archive TTL sweep runs before any maintenance; it is
+    fail-open and legacy/compat modes skip it entirely.
 
     Args:
         config: Configuration object, uses defaults when None.
@@ -319,6 +340,7 @@ def get_session_start_block(config: Config | None = None) -> str:
         adapter=config.adapter or "claude",
     )
     try:
+        _maybe_sweep_archives(service, mode)
         facade = service.legacy_facade()
         _maybe_run_forgetting(config, facade)
         _maybe_run_consolidation(config, facade)

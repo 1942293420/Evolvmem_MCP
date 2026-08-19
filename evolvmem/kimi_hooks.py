@@ -526,6 +526,57 @@ def _sync_candidate_vectors(store, vidx, engine,
         _log(f"vector sync skipped: {type(error).__name__}")
 
 
+def _archive_raw_session(config, service, project: str,
+                         source_session: str,
+                         messages: list[dict[str, str]]) -> int | None:
+    """Encrypt the raw messages into the local session archive; None on failure.
+
+    The archive is local encrypted evidence and never leaves the machine; it
+    is not a precondition for extraction — without an encryption backend or
+    on any write failure the hook logs content-free and persists unlinked.
+    Re-archiving the same session replaces the payload instead of adding rows.
+    """
+    try:
+        from evolvmem.session_archive import SessionArchiver
+
+        payload = json.dumps({"messages": messages}, ensure_ascii=False)
+        record = SessionArchiver(config, service.store).archive_session(
+            project, "kimi", source_session, payload
+        )
+    except Exception:
+        _log("session archive failed; extraction continues without source links")
+        return None
+    return record.id if record is not None else None
+
+
+def _run_consolidation_best_effort(service, mode, llm_config,
+                                   engine) -> None:
+    """One promotion + playbook pass after a successful persist; never fails.
+
+    Only shadow/primary modes serve the lifecycle APIs. The existing LLM
+    chat capability is wrapped as the narrow ``callable(prompt) -> str | None``
+    the playbook generator expects; provider failures degrade to None, and
+    any consolidation failure is logged content-free and skipped.
+    """
+    from evolvmem.context_models import ContextMode
+
+    if mode not in (ContextMode.SHADOW, ContextMode.PRIMARY):
+        return
+    if llm_config is None:
+        return
+
+    def llm_call(prompt: str) -> str | None:
+        try:
+            return _call_llm_with_retry(prompt, llm_config)
+        except Exception:
+            return None
+
+    try:
+        service.run_consolidation(llm=llm_call, embedding_engine=engine)
+    except Exception as error:
+        _log(f"consolidation skipped: {type(error).__name__}")
+
+
 def session_end(payload: dict) -> ExtractionResult:
     """Distill the closed session into memories via the extractor + live gate."""
     from evolvmem.config import Config
@@ -670,8 +721,12 @@ def session_end(payload: dict) -> ExtractionResult:
         service = ContextService(config, embedding_engine=engine)
         # 未知 context_mode 按 legacy 落库：提炼正常持久化，Context 功能 fail-closed
         mode = parse_context_mode(config.context_mode)
-        service.initialize(
-            mode=mode if mode is not None else ContextMode.LEGACY, adapter="kimi"
+        resolved_mode = mode if mode is not None else ContextMode.LEGACY
+        service.initialize(mode=resolved_mode, adapter="kimi")
+        # 原始消息先落加密归档（本地证据，绝不外发）；归档不是提炼的前置，
+        # 失败只记无正文日志，提炼以无来源链接的旧行为继续
+        archive_id = _archive_raw_session(
+            config, service, project, source_session, messages
         )
         extraction = service.persist_legacy_extraction(
             LegacyExtractionRequest(
@@ -698,10 +753,16 @@ def session_end(payload: dict) -> ExtractionResult:
                 ),
                 max_writes=_MAX_MEMORIES_PER_SESSION,
                 source_session=source_session,
-            )
+            ),
+            source_archive_id=archive_id,
         )
         atomic_ids = [m.legacy_id for m in extraction.candidates]
         n = extraction.persisted
+        # 提炼落库成功后用既有 LLM chat 能力跑一次晋升+playbook 评估；
+        # 仅 shadow/primary 提供服务面，任何失败都不改变提炼结果
+        _run_consolidation_best_effort(
+            service, resolved_mode, llm_config, engine
+        )
     except Exception as error:
         _log(f"persistence failed: {type(error).__name__}")
         return ExtractionResult("retry", reason="persistence failed")

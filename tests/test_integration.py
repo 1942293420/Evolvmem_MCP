@@ -1077,3 +1077,115 @@ class TestContextLifecycleIntegration:
             assert reloaded.status is ContextStatus.ACTIVE
         finally:
             service.close()
+
+
+class TestKimiSessionArchiveIntegration:
+    """P4b 端到端：kimi session_end 归档 → 候选隔离 → 确认晋升。"""
+
+    def test_kimi_session_end_archives_isolates_then_confirms(
+            self, test_config, monkeypatch, tmp_path):
+        from evolvmem.auto_extractor import CandidateMemory
+        from evolvmem.context_models import ContextReadRequest
+        import evolvmem.extraction_policy as policy
+
+        test_config.context_mode = "shadow"
+        wire = tmp_path / "wire.jsonl"
+        text = "排查并修复了 MCP stdio 握手卡死问题。" + "甲" * 250
+        events = [
+            {"type": "turn.prompt",
+             "input": [{"type": "text", "text": text}]},
+            {"type": "context.append_loop_event",
+             "event": {"type": "content.part",
+                       "part": {"type": "text", "text": "已修复并回归验证"}}},
+        ]
+        wire.write_text(
+            "\n".join(
+                json.dumps(event, ensure_ascii=False) for event in events
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(hooks, "_find_wire", lambda _sid: str(wire))
+        monkeypatch.setattr(
+            Config,
+            "from_file",
+            classmethod(lambda cls, path=None: test_config),
+        )
+        with MemoryStore(test_config):
+            pass  # shadow 模式同样以既有 legacy 库为前提
+        monkeypatch.setattr(
+            hooks,
+            "_load_llm_config",
+            lambda: hooks.LLMConfig(
+                provider="deepseek",
+                api_key="test-key",
+                base_url="https://api.deepseek.com/chat/completions",
+                model="deepseek-v4-flash",
+            ),
+        )
+        # 模拟提取合约扩展后放行 experience attribute（其余门控保持真实）
+        monkeypatch.setattr(
+            policy,
+            "_ALLOWED_ATTRIBUTES",
+            policy._ALLOWED_ATTRIBUTES | {"experience"},
+        )
+        monkeypatch.setattr(
+            hooks,
+            "_extract_candidates",
+            lambda *_: [
+                CandidateMemory(
+                    key="project:proj:experience:stdio-hang",
+                    value="MCP 握手卡住时先检查 stdin 预读竞争，改为单一读取路径。",
+                    attribute="experience",
+                    confidence=0.8,
+                    importance=7.0,
+                ),
+                CandidateMemory(
+                    key="SESSION_SUMMARY",
+                    value="本次会话修复了 MCP 握手卡死并完成回归验证。",
+                    confidence=0.9,
+                    tags=["日志"],
+                ),
+            ],
+        )
+
+        result = hooks.session_end({"session_id": "session_e2e_archive"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2  # summary + 隔离的 experience
+
+        service = ContextService(test_config)
+        service.initialize(mode=ContextMode.SHADOW, adapter="kimi")
+        try:
+            # 候选隔离：只在显式审阅 API 中可见
+            candidates = service.list_candidates()
+            assert [entry.identity_key for entry in candidates] == [
+                "project:proj:experience:stdio-hang"
+            ]
+            candidate = candidates[0]
+            # 来源链接：candidate 可追溯到加密归档，payload 可解密
+            sources = service.store.list_item_sources(candidate.id)
+            assert len(sources) == 1
+            assert sources[0]["source_kind"] == "session"
+            assert sources[0]["extraction_version"] == "kimi-extraction-v1"
+            archive = service.store.get_session_archive(
+                sources[0]["archive_id"]
+            )
+            assert archive["adapter"] == "kimi"
+            assert archive["external_session_id"] == "session_e2e_archive"
+            payload = SessionArchiver(
+                test_config, service.store
+            ).read_payload(archive["id"])
+            assert "握手卡死" in payload  # 原始消息原文（本地证据）
+            # candidate 不可精确读取；确认晋升后 L1 可读
+            denied = service.read(
+                ContextReadRequest(id=candidate.id, layer=ContextLayer.L1)
+            )
+            assert denied.error_code == "not_readable"
+            service.confirm(candidate.id)
+            read = service.read(
+                ContextReadRequest(id=candidate.id, layer=ContextLayer.L1)
+            )
+            assert read.error_code is None
+            assert "预读竞争" in read.content
+        finally:
+            service.close()

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from evolvmem.context_models import (
     ContextLayer,
+    ContextStatus,
     ContextValidationError,
     _normalize_layers,
     _normalize_tags,
@@ -255,17 +256,25 @@ class LegacyAccessRequest:
 
 @dataclass(frozen=True, slots=True)
 class LegacyMutationResult:
-    """Old-API-compatible outcome of one typed legacy mutation."""
+    """Old-API-compatible outcome of one typed legacy mutation.
 
-    legacy_id: int
+    ``legacy_id`` is None only for extraction writes quarantined as Core
+    candidates (no legacy projection row exists for them); every other
+    mutation keeps the old positive-int contract. ``context_status`` marks
+    that quarantine explicitly and stays None everywhere else.
+    """
+
+    legacy_id: int | None
     context_id: int | None
     old_legacy_id: int | None
     old_context_id: int | None
     available_layers: tuple[ContextLayer, ...]
     changed: bool
+    context_status: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_positive_int(self.legacy_id, "legacy_id")
+        if self.legacy_id is not None:
+            _validate_positive_int(self.legacy_id, "legacy_id")
         for name in ("context_id", "old_legacy_id", "old_context_id"):
             value = getattr(self, name)
             if value is not None:
@@ -277,6 +286,13 @@ class LegacyMutationResult:
         )
         if type(self.changed) is not bool:
             raise ContextValidationError("changed must be a boolean")
+        if self.context_status is not None:
+            try:
+                ContextStatus(self.context_status)
+            except ValueError as exc:
+                raise ContextValidationError(
+                    "context_status must be a valid ContextStatus value or None"
+                ) from exc
 
 
 @dataclass(frozen=True, slots=True)

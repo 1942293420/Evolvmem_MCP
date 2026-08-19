@@ -50,6 +50,7 @@ from evolvmem.context_lifecycle import (
 from evolvmem.context_migration import LegacyMemoryMigrator
 from evolvmem.context_models import (
     ContextContentType,
+    ContextItemDraft,
     ContextLayer,
     ContextMatchType,
     ContextMode,
@@ -67,6 +68,7 @@ from evolvmem.context_models import (
     ContextStatus,
     ContextValidationError,
     ContextVectorDocument,
+    _validate_positive_int,
 )
 from evolvmem.context_playbook import PlaybookGenerator, PlaybookSkip
 from evolvmem.context_renderer import ContextRenderCandidate, ContextRenderer
@@ -111,6 +113,34 @@ _MAX_DIAGNOSTIC_CHARS = 160
 
 # Every mapped live ContextItem has exactly one L0, L1, and L2.
 _ALL_LAYERS = (ContextLayer.L0, ContextLayer.L1, ContextLayer.L2)
+
+# Extraction provenance: a batch persisted with a source archive links every
+# written ContextItem to that archive inside the same transaction, stamped
+# with the adapter's frozen extraction version.
+_KIMI_EXTRACTION_VERSION = "kimi-extraction-v1"
+
+# Only experience/playbook extraction items quarantine as Core candidates;
+# every other content type keeps the active dual-write path.
+_ISOLATED_CONTENT_TYPES = frozenset(
+    {ContextContentType.EXPERIENCE, ContextContentType.PLAYBOOK}
+)
+
+
+def _extraction_content_type(item: LegacyExtractionItem) -> ContextContentType:
+    """Map one extraction item onto its Context content type.
+
+    ``experience``/``playbook`` attributes pass through by name (the
+    extended extraction contract); every other attribute follows the
+    migrator's legacy projection policy unchanged.
+    """
+    attribute = item.attribute.strip().lower()
+    if attribute == ContextContentType.EXPERIENCE.value:
+        return ContextContentType.EXPERIENCE
+    if attribute == ContextContentType.PLAYBOOK.value:
+        return ContextContentType.PLAYBOOK
+    return LegacyMemoryMigrator.content_type_for(
+        {"attribute": item.attribute, "key": item.key}
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -658,12 +688,17 @@ class ContextService:
         )
         return self._context_lifecycle().list_candidates(project=normalized)
 
-    def run_consolidation(self) -> ConsolidationReport:
+    def run_consolidation(
+        self, *, llm=None, embedding_engine=None
+    ) -> ConsolidationReport:
         """Maintenance pass: automatic promotions, then playbook generation.
 
         Each stage keeps its own single-transaction guarantee under the
         shared cutover lock. A missing embedding engine or LLM degrades the
-        playbook stage to its explicit reason — never an error.
+        playbook stage to its explicit reason — never an error. A caller with
+        a real LLM chat capability (the Kimi session-end hook) passes it as a
+        narrow ``callable(prompt) -> str | None`` for one actual generation
+        pass; the default stays the explicitly degraded ``llm_unavailable``.
         """
         self._require_serving()
         lifecycle = self._context_lifecycle()
@@ -678,7 +713,9 @@ class ContextService:
                 _VectorAftermath(context_upserts=upserts)
             )
         with self._cutover_lock.shared():
-            generation = self._playbook_generator().generate()
+            generation = self._playbook_generator(
+                llm=llm, embedding_engine=embedding_engine
+            ).generate()
         return ConsolidationReport(
             promoted_ids=promotion.promoted_ids,
             promotion_skipped=promotion.skipped,
@@ -1145,7 +1182,7 @@ class ContextService:
     # ---- extraction batch ----
 
     def persist_legacy_extraction(
-        self, request: LegacyExtractionRequest
+        self, request: LegacyExtractionRequest, *, source_archive_id: int | None = None
     ) -> LegacyExtractionResult:
         """Persist one extraction batch as all-or-nothing under the cutover lock.
 
@@ -1153,9 +1190,20 @@ class ContextService:
         actual candidate writes share one outer SQLite transaction; a failure
         on any write rolls the summary and every earlier candidate back on
         both sides. Both derived vector batches start only after the commit.
+
+        ``source_archive_id`` links the batch to its encrypted session
+        archive (the Kimi session-end path): every actually written
+        ContextItem gains a ``session`` source row in the same transaction,
+        and extraction items mapping to ``experience``/``playbook`` are
+        quarantined as Core candidates — no legacy projection, no mapping,
+        no vector work. Without an archive every type keeps the active
+        dual-write path unchanged; the explicit legacy mode ignores the
+        argument entirely.
         """
         self._require_request(request, LegacyExtractionRequest)
         self._require_initialized()
+        if source_archive_id is not None:
+            _validate_positive_int(source_archive_id, "source_archive_id")
         engine = self.embedding_engine
         engine_ready = engine is not None and getattr(engine, "is_loaded", False)
         if engine_ready:
@@ -1167,10 +1215,16 @@ class ContextService:
                 engine_ready = False
         if self._mode is ContextMode.LEGACY:
             return self._persist_extraction_legacy(request, engine_ready=engine_ready)
-        return self._persist_extraction_dual(request, engine_ready=engine_ready)
+        return self._persist_extraction_dual(
+            request, engine_ready=engine_ready, source_archive_id=source_archive_id
+        )
 
     def _persist_extraction_dual(
-        self, request: LegacyExtractionRequest, *, engine_ready: bool
+        self,
+        request: LegacyExtractionRequest,
+        *,
+        engine_ready: bool,
+        source_archive_id: int | None,
     ) -> LegacyExtractionResult:
         source_session = request.source_session
 
@@ -1224,8 +1278,23 @@ class ContextService:
                         conflict_as_replace=True,
                         write_add=write_add,
                         write_replace=write_replace,
+                        isolated_writer=(
+                            self._write_isolated_candidate
+                            if source_archive_id is not None
+                            else None
+                        ),
                     )
                 )
+                if source_archive_id is not None:
+                    # 每个实际写入的 ContextItem 与归档的来源链接随批同事务落库
+                    for mutation in (summary_result, *candidate_results):
+                        if mutation is None or mutation.context_id is None:
+                            continue
+                        self.store.record_session_source(
+                            mutation.context_id,
+                            source_archive_id,
+                            extraction_version=_KIMI_EXTRACTION_VERSION,
+                        )
         self._apply_vector_aftermath(aftermath)
         return LegacyExtractionResult(
             summary=summary_result,
@@ -1324,6 +1393,7 @@ class ContextService:
         conflict_as_replace: bool,
         write_add,
         write_replace,
+        isolated_writer=None,
     ) -> tuple[
         LegacyMutationResult | None, tuple[LegacyMutationResult, ...], _VectorAftermath
     ]:
@@ -1335,6 +1405,10 @@ class ContextService:
         ``conflict_as_replace`` is set in dual modes, where the Core's one
         active item per identity makes a legacy-style dual-active add
         impossible; an undecidable same-key conflict converges to a replace.
+        ``isolated_writer`` (set only when the batch carries a source
+        archive) quarantines experience/playbook items as Core candidates
+        before any legacy conflict/merge logic — it returns the mutation
+        result, or None when an identical item already exists.
         """
         detector = ConflictDetector(reader)
         engine = self.embedding_engine if engine_ready else None
@@ -1346,6 +1420,16 @@ class ContextService:
         for item in request.candidates:
             if len(candidate_results) >= request.max_writes:
                 break
+            if (
+                isolated_writer is not None
+                and _extraction_content_type(item) in _ISOLATED_CONTENT_TYPES
+            ):
+                # 候选隔离：experience/playbook 只建 Core candidate，不触碰
+                # legacy 投影、冲突检测与语义合并；candidate 无向量善后
+                isolated = isolated_writer(item)
+                if isolated is not None:
+                    candidate_results.append(isolated)
+                continue
             decision = detector.check(item.key, item.value)
             if decision.action == "skip":
                 continue
@@ -1383,6 +1467,70 @@ class ContextService:
             tuple(candidate_results),
             self._merge_aftermaths(tuple(aftermaths)),
         )
+
+    def _write_isolated_candidate(
+        self, item: LegacyExtractionItem
+    ) -> LegacyMutationResult | None:
+        """Create one quarantined Core candidate without a legacy projection.
+
+        Returns None when a non-deleted item with the same identity and L1
+        already exists, so a repeated extraction of the same session stays
+        idempotent. The caller holds the cutover lock and the outer
+        transaction. The result carries no legacy_id (no projection row
+        exists) and is marked ``candidate`` explicitly; candidates produce
+        no vector aftermath because the context cache is active-only.
+        """
+        content_type = _extraction_content_type(item)
+        scope = LegacyMemoryMigrator.scope_for(content_type)
+        layers = self._legacy_migrator().layers_for(item.value, content_type)
+        if self._find_identical_item(item.key, scope, layers.l1) is not None:
+            return None
+        tier = LegacyMemoryMigrator.tier_for(item.tier)
+        draft = ContextItemDraft(
+            identity_key=item.key,
+            content_type=content_type,
+            layers=layers,
+            project="",
+            scope=scope,
+            status=ContextStatus.CANDIDATE,
+            tier=tier,
+            tags=item.tags,
+            importance=LegacyMemoryMigrator.importance_for(item.importance),
+            confidence=(
+                item.confidence
+                if item.confidence is not None
+                else LegacyMemoryMigrator.confidence_for(
+                    ContextStatus.CANDIDATE, tier, item.expires_at
+                )
+            ),
+            expires_at=item.expires_at,
+        )
+        created = self.store._create_legacy_item(draft)
+        return LegacyMutationResult(
+            legacy_id=None,
+            context_id=created.id,
+            old_legacy_id=None,
+            old_context_id=None,
+            available_layers=_ALL_LAYERS,
+            changed=True,
+            context_status=ContextStatus.CANDIDATE.value,
+        )
+
+    def _find_identical_item(
+        self, identity_key: str, scope: ContextScope, l1: str
+    ) -> int | None:
+        """Non-deleted item id with the exact identity and L1, if one exists."""
+        rows = self.store._connection().execute(
+            "SELECT id FROM context_items "
+            "WHERE identity_key=? AND project='' AND scope=? "
+            "AND status != 'deleted'",
+            (identity_key, scope.value),
+        ).fetchall()
+        for row in rows:
+            item_id = int(row["id"])
+            if (self.store.get_layer(item_id, ContextLayer.L1) or "") == l1:
+                return item_id
+        return None
 
     def _extraction_summary_write(
         self,
@@ -1580,12 +1728,35 @@ class ContextService:
                 ) from exc
         return self._archiver
 
-    def _playbook_generator(self) -> PlaybookGenerator:
+    def _playbook_generator(
+        self, *, llm=None, embedding_engine=None
+    ) -> PlaybookGenerator:
         """Service-owned playbook generator; construction fails closed.
 
-        The service wires no LLM of its own: generation degrades to the
-        explicit ``llm_unavailable`` reason instead of erroring.
+        Without caller overrides the cached default is returned: the service
+        wires no LLM of its own, so generation degrades to the explicit
+        ``llm_unavailable`` reason instead of erroring. Overrides build a
+        per-call generator; the embedding engine falls back to the service's
+        own unless the caller replaces it explicitly.
         """
+        if llm is not None or embedding_engine is not None:
+            try:
+                return PlaybookGenerator(
+                    self.config,
+                    self.store,
+                    self._context_lifecycle(),
+                    llm=llm,
+                    embedding_engine=(
+                        self.embedding_engine
+                        if embedding_engine is None
+                        else embedding_engine
+                    ),
+                )
+            except Exception as exc:
+                raise ContextServiceError(
+                    "degraded_legacy",
+                    "playbook generator could not be constructed; failing closed",
+                ) from exc
         if self._generator is None:
             try:
                 self._generator = PlaybookGenerator(

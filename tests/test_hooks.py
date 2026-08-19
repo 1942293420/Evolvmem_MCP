@@ -2,8 +2,10 @@
 
 import sqlite3
 import time
+from datetime import datetime, timezone
 
 import numpy as np
+import pytest
 
 from evolvmem.context_models import ContextMode, ContextStatus
 from evolvmem.context_service import ContextService
@@ -596,3 +598,98 @@ class TestProjectDigestLayer:
 
         assert "最近项目动态" in result
         assert "唯一日志" in result
+
+
+class TestSessionStartArchiveSweep:
+    """P4b：shadow/primary 的 SessionStart 先静默跑 archive purge（fail-open）。"""
+
+    def test_shadow_sweeps_before_maintenance_and_render(
+            self, test_config, monkeypatch):
+        test_config.context_mode = "shadow"
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:0", value="现行事实")
+        calls = []
+        monkeypatch.setattr(
+            ContextService,
+            "sweep_archives",
+            lambda service: calls.append("sweep"),
+        )
+        monkeypatch.setattr(
+            "evolvmem.hooks._maybe_run_forgetting",
+            lambda config, facade: calls.append("forget"),
+        )
+
+        result = get_session_start_block(config=test_config)
+
+        assert calls == ["sweep", "forget"]  # purge 先于维护与渲染
+        assert "现行事实" in result
+
+    def test_shadow_sweep_failure_is_swallowed_to_stderr(
+            self, test_config, monkeypatch, capsys):
+        test_config.context_mode = "shadow"
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:0", value="现行事实")
+
+        def boom(service):
+            raise RuntimeError("synthetic sweep outage at /secret/path")
+
+        monkeypatch.setattr(ContextService, "sweep_archives", boom)
+
+        result = get_session_start_block(config=test_config)
+
+        assert "现行事实" in result  # fail-open：渲染照常
+        err = capsys.readouterr().err
+        assert "archive sweep" in err
+        assert "/secret/path" not in err
+
+    @pytest.mark.parametrize("mode", ["legacy", "compat"])
+    def test_legacy_and_compat_skip_sweep(self, test_config, monkeypatch, mode):
+        test_config.context_mode = mode
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:0", value="现行事实")
+        calls = []
+        monkeypatch.setattr(
+            ContextService,
+            "sweep_archives",
+            lambda service: calls.append(1),
+        )
+
+        result = get_session_start_block(config=test_config)
+
+        assert "现行事实" in result
+        assert calls == []
+
+    def test_shadow_session_start_purges_expired_archive(self, test_config):
+        """真服务真 sweep：SessionStart 真实删除到期 payload 并置 purged。"""
+        from evolvmem.context_store import ContextStore
+        from evolvmem.session_archive import SessionArchiver
+
+        test_config.context_mode = "shadow"
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:0", value="现行事实")
+        with ContextStore(test_config) as cstore:
+            cstore.initialize()
+            record = SessionArchiver(test_config, cstore).archive_session(
+                "proj",
+                "kimi",
+                "session_old",
+                "过期的原始会话正文",
+                now=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            )
+        payload_file = test_config.data_dir / record.payload_path
+        assert payload_file.exists()
+
+        result = get_session_start_block(config=test_config)
+
+        assert "现行事实" in result
+        assert not payload_file.exists()
+        conn = sqlite3.connect(test_config.db_path)
+        try:
+            row = conn.execute(
+                "SELECT state, purged_at FROM session_archives WHERE id=?",
+                (record.id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row[0] == "purged"
+        assert row[1] is not None

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import fields
 from datetime import datetime, timezone
 import fcntl
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -2603,4 +2604,423 @@ def test_component_construction_failure_fails_closed(
         service.confirm(1)
     assert excinfo.value.code == "degraded_legacy"
     assert "/secret/path" not in str(excinfo.value)
+    service.close()
+
+
+# ---- P4b: candidate isolation + session source linking ----
+
+
+def _seed_session_archive(store, external_id="session_p4b"):
+    record = SessionArchiver(store.config, store).archive_session(
+        "proj", "kimi", external_id, '{"messages": []}'
+    )
+    assert record is not None
+    return record
+
+
+def _source_rows(config):
+    conn = sqlite3.connect(config.db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT * FROM context_sources ORDER BY id"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def _table_count(config, table):
+    conn = sqlite3.connect(config.db_path)
+    try:
+        return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_mutation_result_allows_isolated_candidate_shape():
+    result = LegacyMutationResult(
+        legacy_id=None,
+        context_id=7,
+        old_legacy_id=None,
+        old_context_id=None,
+        available_layers=(ContextLayer.L0, ContextLayer.L1, ContextLayer.L2),
+        changed=True,
+        context_status="candidate",
+    )
+    assert result.legacy_id is None
+    assert result.context_id == 7
+    assert result.context_status == "candidate"
+
+    # 既有形状一字不变：默认无状态标记，legacy_id 照常校验
+    defaulted = _mutation_result(1, 2)
+    assert defaulted.context_status is None
+    with pytest.raises(ContextValidationError):
+        _mutation_result(0, 2)
+    with pytest.raises(ContextValidationError):
+        _mutation_result(-3, 2)
+    with pytest.raises(ContextValidationError):
+        LegacyMutationResult(
+            legacy_id=None,
+            context_id=7,
+            old_legacy_id=None,
+            old_context_id=None,
+            available_layers=(),
+            changed=True,
+            context_status="bogus",
+        )
+
+
+def test_extraction_with_archive_isolates_experience_and_playbook(test_config):
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    engine = LoadedFakeEmbedding(test_config.embedding_dim)
+    service = _extraction_service(test_config, store, engine=engine)
+    archive = _seed_session_archive(store)
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=(
+                _extraction_item(
+                    "experience:test:stdio-hang",
+                    "MCP 握手卡住时先检查 stdin 预读竞争。",
+                    attribute="experience",
+                    confidence=0.7,
+                ),
+                _extraction_item(
+                    "playbook:test:release",
+                    "发布前必须依次跑全套回归与人工验收。",
+                    attribute="playbook",
+                    confidence=0.8,
+                ),
+                _extraction_item(
+                    "project:test:fact:plain",
+                    "值得长期保存的普通事实。",
+                    attribute="fact",
+                ),
+                _extraction_item(
+                    "user:preference:language",
+                    "始终使用中文交流。",
+                    attribute="preference",
+                ),
+            ),
+        ),
+        source_archive_id=archive.id,
+    )
+
+    assert result.persisted == 5
+    isolated = result.candidates[:2]
+    dual = result.candidates[2:]
+    # 隔离：experience/playbook 只建 Core candidate，不写 legacy 投影
+    for mutation, content_type in zip(
+        isolated, (ContextContentType.EXPERIENCE, ContextContentType.PLAYBOOK)
+    ):
+        assert mutation.legacy_id is None
+        assert mutation.context_id is not None
+        assert mutation.context_status == "candidate"
+        assert mutation.changed is True
+        item = store.get_item(mutation.context_id)
+        assert item.status is ContextStatus.CANDIDATE
+        assert item.content_type is content_type
+        assert item.layers is not None
+    # 其他类型保持现状：active 双写
+    for mutation in (result.summary, *dual):
+        assert mutation is not None
+        assert mutation.legacy_id is not None
+        assert mutation.context_status is None
+        row = _memory_row(test_config, mutation.legacy_id)
+        assert row["status"] == "active"
+        assert store.resolve_legacy_mapping(mutation.legacy_id) == (
+            mutation.context_id
+        )
+        item = store.get_item(mutation.context_id)
+        assert item.status is ContextStatus.ACTIVE
+    # 投影与映射只覆盖 3 个双写项（summary + fact + preference）
+    assert _table_count(test_config, "memories") == 3
+    assert _table_count(test_config, "legacy_memory_migrations") == 3
+
+    # 每个实际写入的 context item 在同一事务内带来源链接
+    written_ids = {
+        result.summary.context_id,
+        *(mutation.context_id for mutation in result.candidates),
+    }
+    rows = _source_rows(test_config)
+    assert {row["item_id"] for row in rows} == written_ids
+    for row in rows:
+        assert row["archive_id"] == archive.id
+        assert row["source_kind"] == "session"
+        assert row["extraction_version"] == "kimi-extraction-v1"
+    for context_id in written_ids:
+        item = store.get_item(context_id, include_layers=False)
+        assert item.source_state == "available"
+        assert item.source_count == 1
+
+    # candidate 不进 context 向量缓存；active 双写项照常进入
+    added = {
+        call[2]
+        for call in service._test_context_index.calls
+        if call[1] == "add"
+    }
+    assert added == {
+        result.summary.context_id,
+        dual[0].context_id,
+        dual[1].context_id,
+    }
+    assert not added & {mutation.context_id for mutation in isolated}
+    service.close()
+    store.close()
+
+
+def test_extraction_without_archive_keeps_experience_dual_active(test_config):
+    """无 archive：experience 提炼项走旧路径（active 双写、旧类型映射）。"""
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store)
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=(
+                _extraction_item(
+                    "experience:test:stdio-hang",
+                    "MCP 握手卡住时先检查 stdin 预读竞争。",
+                    attribute="experience",
+                ),
+            ),
+        )
+    )
+
+    (mutation,) = result.candidates
+    assert mutation.legacy_id is not None
+    assert mutation.context_status is None
+    row = _memory_row(test_config, mutation.legacy_id)
+    assert row["status"] == "active"
+    assert store.resolve_legacy_mapping(mutation.legacy_id) == (
+        mutation.context_id
+    )
+    item = store.get_item(mutation.context_id)
+    assert item.status is ContextStatus.ACTIVE
+    assert item.content_type is ContextContentType.REFERENCE  # 旧映射不变
+    assert _source_rows(test_config) == []
+    service.close()
+    store.close()
+
+
+def test_extraction_repeat_with_archive_stays_idempotent(test_config):
+    """同一会话重复提炼：归档 upsert 不建行，隔离候选与同值事实都跳过。"""
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store)
+    archive = _seed_session_archive(store)
+    request = _extraction_request(
+        candidates=(
+            _extraction_item(
+                "experience:test:stdio-hang",
+                "MCP 握手卡住时先检查 stdin 预读竞争。",
+                attribute="experience",
+            ),
+            _extraction_item(
+                "project:test:fact:plain",
+                "值得长期保存的普通事实。",
+                attribute="fact",
+            ),
+        )
+    )
+
+    first = service.persist_legacy_extraction(
+        request, source_archive_id=archive.id
+    )
+    assert first.persisted == 3
+    snapshot = _db_snapshot(test_config)
+
+    second = service.persist_legacy_extraction(
+        request, source_archive_id=archive.id
+    )
+    assert second.persisted == 0
+    assert second.summary is None
+    assert second.candidates == ()
+    assert _db_snapshot(test_config) == snapshot
+    service.close()
+    store.close()
+
+
+def test_extraction_source_link_failure_rolls_back_the_whole_batch(
+    test_config, monkeypatch
+):
+    """来源链接与提炼写入共享一个事务：链接失败则全部回滚。"""
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store)
+    archive = _seed_session_archive(store)
+    before = _db_snapshot(test_config)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic source link failure")
+
+    monkeypatch.setattr(store, "record_session_source", boom)
+
+    with pytest.raises(RuntimeError, match="synthetic source link"):
+        service.persist_legacy_extraction(
+            _extraction_request(), source_archive_id=archive.id
+        )
+    assert _db_snapshot(test_config) == before
+    service.close()
+    store.close()
+
+
+def test_extraction_legacy_mode_ignores_source_archive_id(test_config):
+    """legacy 模式行为一字不变：无 Core 写入、无来源链接、无候选隔离。"""
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(
+        test_config, store, mode=ContextMode.LEGACY
+    )
+    archive = _seed_session_archive(store)
+
+    result = service.persist_legacy_extraction(
+        _extraction_request(
+            candidates=(
+                _extraction_item(
+                    "experience:test:stdio-hang",
+                    "MCP 握手卡住时先检查 stdin 预读竞争。",
+                    attribute="experience",
+                ),
+            ),
+        ),
+        source_archive_id=archive.id,
+    )
+
+    (mutation,) = result.candidates
+    assert mutation.legacy_id is not None
+    assert mutation.context_id is None
+    assert mutation.context_status is None
+    assert _source_rows(test_config) == []
+    assert store.count_by_status() == {}
+    service.close()
+    store.close()
+
+
+def test_extraction_source_archive_id_must_be_a_positive_int(test_config):
+    _legacy_schema(test_config)
+    store = ContextStore(test_config)
+    store.initialize()
+    service = _extraction_service(test_config, store)
+    for bad in (0, -1, "7", 1.5, True):
+        with pytest.raises(ContextValidationError, match="source_archive_id"):
+            service.persist_legacy_extraction(
+                _extraction_request(), source_archive_id=bad
+            )
+    service.close()
+    store.close()
+
+
+# ---- P4b: playbook LLM wiring through run_consolidation ----
+
+
+def _seed_playbook_cluster(service, store, count=3):
+    members = []
+    for index in range(count):
+        item = add_item(
+            store,
+            f"exp-cluster-{index}",
+            content_type=ContextContentType.EXPERIENCE,
+            status=ContextStatus.ACTIVE,
+            project="proj",
+        )
+        for _ in range(2):
+            service.record_outcome(item.id, "success")
+        members.append(item)
+    return members
+
+
+def test_run_consolidation_uses_caller_supplied_llm(test_config, probe_store):
+    service = _lifecycle_service(
+        test_config,
+        probe_store,
+        engine=LoadedFakeEmbedding(test_config.embedding_dim),
+    )
+    members = _seed_playbook_cluster(service, probe_store)
+    prompts = []
+    response = json.dumps(
+        {
+            "l0": "发布前先跑全套回归再做人工验收。",
+            "l1": "步骤：一、跑全套回归；二、人工验收关键路径。",
+            "l2": "完整细节：回归覆盖核心链路，验收聚焦发布阻断项。",
+        },
+        ensure_ascii=False,
+    )
+
+    def fake_llm(prompt):
+        prompts.append(prompt)
+        return response
+
+    report = service.run_consolidation(llm=fake_llm)
+
+    assert len(prompts) == 1  # LLM 真实被调用一次
+    assert report.playbook_reason == "ok"
+    assert len(report.playbook_created_ids) == 1
+    playbook = probe_store.get_item(report.playbook_created_ids[0])
+    assert playbook.content_type is ContextContentType.PLAYBOOK
+    assert playbook.status is ContextStatus.CANDIDATE
+    linked = {
+        int(row["source_ref"])
+        for row in probe_store.list_item_sources(playbook.id)
+        if row["source_kind"] == "experience"
+    }
+    assert linked == {item.id for item in members}
+    # 新生成的 playbook 仍是 candidate：不进 context 向量缓存
+    assert playbook.id not in service.vector_index.ids
+    service.close()
+
+
+def test_run_consolidation_llm_failure_skips_cluster_without_error(
+    test_config, probe_store
+):
+    service = _lifecycle_service(
+        test_config,
+        probe_store,
+        engine=LoadedFakeEmbedding(test_config.embedding_dim),
+    )
+    _seed_playbook_cluster(service, probe_store)
+
+    def failing_llm(prompt):
+        raise RuntimeError("synthetic llm outage at /secret/path")
+
+    report = service.run_consolidation(llm=failing_llm)
+
+    assert report.playbook_reason == "ok"
+    assert report.playbook_created_ids == ()
+    assert [skip.reason for skip in report.playbook_skipped] == [
+        "llm_no_response"
+    ]
+    service.close()
+
+
+def test_run_consolidation_embedding_override_degrades_explicitly(
+    test_config, probe_store
+):
+    class UnloadedEngine:
+        is_loaded = False
+
+    service = _lifecycle_service(
+        test_config,
+        probe_store,
+        engine=LoadedFakeEmbedding(test_config.embedding_dim),
+    )
+    _seed_playbook_cluster(service, probe_store)
+    calls = []
+
+    report = service.run_consolidation(
+        llm=lambda prompt: calls.append(prompt) or "{}",
+        embedding_engine=UnloadedEngine(),
+    )
+
+    assert report.playbook_reason == "embedding_unavailable"
+    assert report.playbook_created_ids == ()
+    assert report.playbook_skipped == ()
+    assert calls == []  # 降级时绝不调用 LLM
     service.close()
