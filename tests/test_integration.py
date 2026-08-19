@@ -756,7 +756,7 @@ class TestIntegration:
         store.close()
 
     def test_mcp_tool_schemas_match_design(self, test_config):
-        """legacy 默认仅注册 6 个旧工具；codex+shadow 追加四个 context 工具。"""
+        """legacy 默认仅注册 6 个旧工具；codex/kimi+shadow 追加四个 context 工具。"""
         from evolvmem.mcp_server import MemoryMCPServer
         server = MemoryMCPServer(config=test_config)
         # 伪造 initialize request 后直接查询工具列表
@@ -771,25 +771,27 @@ class TestIntegration:
         }
         assert tool_names == expected
 
-        # Codex shadow：同一注册表按 adapter/mode/health 暴露四个 context 工具
+        # Codex/Kimi shadow：同一注册表按 adapter/mode/health 暴露四个 context 工具
         test_config.context_mode = "shadow"
-        test_config.adapter = "codex"
-        codex_server = MemoryMCPServer(config=test_config)
-        service = ContextService(test_config,
-                                 embedding_engine=codex_server.engine)
-        service.initialize(mode=ContextMode.SHADOW, adapter="codex")
-        codex_server.context_service = service
-        try:
-            response = codex_server._handle_request({
-                "method": "tools/list", "id": 2, "jsonrpc": "2.0",
-            })
-            codex_names = {t["name"] for t in response["result"]["tools"]}
-            assert codex_names == expected | {
-                "context_session_start", "context_search",
-                "context_read", "context_status",
-            }
-        finally:
-            service.close()
+        for adapter in ("codex", "kimi"):
+            test_config.adapter = adapter
+            adapter_server = MemoryMCPServer(config=test_config)
+            service = ContextService(
+                test_config, embedding_engine=adapter_server.engine
+            )
+            service.initialize(mode=ContextMode.SHADOW, adapter=adapter)
+            adapter_server.context_service = service
+            try:
+                response = adapter_server._handle_request({
+                    "method": "tools/list", "id": 2, "jsonrpc": "2.0",
+                })
+                adapter_names = {t["name"] for t in response["result"]["tools"]}
+                assert adapter_names == expected | {
+                    "context_session_start", "context_search",
+                    "context_read", "context_status",
+                }
+            finally:
+                service.close()
 
     def test_memory_consolidate_requires_embedding(self, server):
         result = server.handle_tool_call("memory_consolidate", {})

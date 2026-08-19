@@ -9,7 +9,7 @@ Tools (legacy, always registered):
   memory_remove   — soft-delete a memory
   memory_consolidate — find/merge near-duplicate memories
 
-Context tools (Codex shadow/primary with a ready ContextService):
+Context tools (Codex/Kimi shadow/primary with a ready ContextService):
   context_session_start — bounded rendered L1 history block
   context_search        — thresholded Core retrieval, L0 metadata only
   context_read          — exact-ID L1/L2 read
@@ -48,7 +48,7 @@ from evolvmem.legacy_models import (
     LegacyReplaceRequest,
 )
 from evolvmem.mcp_contract import (
-    CODEX_ADAPTER,
+    CONTEXT_CORE_ADAPTERS,
     initialization_instructions,
     tool_specs,
 )
@@ -246,7 +246,7 @@ class MemoryMCPServer:
             status is not None
             and status.mode is ContextMode.PRIMARY
             and status.ready
-            and status.adapter == CODEX_ADAPTER
+            and status.adapter in CONTEXT_CORE_ADAPTERS
         ):
             return self._memory_search_primary(query, top_k)
         if self.retriever is None:
@@ -275,7 +275,7 @@ class MemoryMCPServer:
         }
 
     def _memory_search_primary(self, query: str, top_k: int) -> dict:
-        """Codex primary：Core 排序后把精确 ID 映射回投影行。
+        """primary（codex/kimi）：Core 排序后把精确 ID 映射回投影行。
 
         保留旧 `id/key/value/...` 字段，context 字段只做可选增量；没有
         精确映射的 Core 邻居直接略过，绝不替换。
@@ -622,7 +622,7 @@ class MemoryMCPServer:
         except ContextServiceError as exc:
             return self._context_error(exc.code)
         except Exception:
-            # Codex fail-open：绝不回退注入所有旧 active memory
+            # Codex/Kimi fail-open：绝不回退注入所有旧 active memory
             return self._context_error("context_unavailable")
         return {
             "block": result.block,
@@ -765,7 +765,7 @@ class MemoryMCPServer:
         if self.context_mode is None:
             return self.adapter, None, None
         if (
-            self.adapter == CODEX_ADAPTER
+            self.adapter in CONTEXT_CORE_ADAPTERS
             and self.context_mode in (ContextMode.SHADOW, ContextMode.PRIMARY)
             and not self._init_done.is_set()
         ):

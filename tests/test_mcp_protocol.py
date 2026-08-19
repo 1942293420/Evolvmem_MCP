@@ -1,12 +1,13 @@
 """MCP 协议契约测试：单一注册表驱动 tools/list 与 tools/call。
 
-冻结计划 Task 9 的五行 mode/adapter/health 矩阵：
+冻结计划 Task 9 的五行 mode/adapter/health 矩阵（K2 起 Codex 行扩展为
+Codex/Kimi 行，其余 adapter 行为不变）：
 
 | State | Context tools | Legacy reads | Legacy writes | initialize instructions |
 | legacy or compat | none | legacy ranking | facade | none |
-| Codex shadow ready | all four, real Core results | legacy result + content-free compare | facade | none |
-| Codex primary ready | all four | Core ranking mapped to old shape | facade | primary text |
-| non-Codex shadow/primary | none | configured compatibility read | facade | none |
+| Codex/Kimi shadow ready | all four, real Core results | legacy result + content-free compare | facade | none |
+| Codex/Kimi primary ready | all four | Core ranking mapped to old shape | facade | primary text (per-adapter variant) |
+| other adapters (claude/dsh/web/空) shadow/primary | none | configured compatibility read | facade | none |
 | invalid config or degraded primary | context_status only | legacy diagnostic reads only | rejected | diagnostic text only |
 """
 
@@ -267,8 +268,9 @@ class TestModeAdapterHealthMatrix:
         })
         assert added["status"] == "added"
 
-    def test_codex_shadow_ready_serves_real_core_results(self, test_config):
-        server = _make_server(test_config, mode="shadow", adapter="codex")
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    def test_shadow_ready_serves_real_core_results(self, test_config, adapter):
+        server = _make_server(test_config, mode="shadow", adapter=adapter)
         logs = []
         server._log = logs.append
         service = server.context_service
@@ -327,9 +329,14 @@ class TestModeAdapterHealthMatrix:
         assert "top1_match=True" in compare_lines[0]
         assert "双人复核" not in compare_lines[0]
 
-    def test_codex_primary_ready_full_contract(self, test_config):
+    @pytest.mark.parametrize(
+        "adapter,session_phrase",
+        [("codex", "every new Codex session"), ("kimi", "every new session")],
+    )
+    def test_primary_ready_full_contract(
+            self, test_config, adapter, session_phrase):
         server = _make_server(
-            test_config, mode="primary", adapter="codex", loaded_engine=True,
+            test_config, mode="primary", adapter=adapter, loaded_engine=True,
         )
         service = server.context_service
         alpha = _seed(
@@ -351,7 +358,7 @@ class TestModeAdapterHealthMatrix:
         assert _tool_names(server) == _LEGACY_TOOLS | _CONTEXT_TOOLS
         instructions = _initialize(server)["instructions"]
         assert instructions.startswith(
-            "Before the first substantive answer in every new Codex session"
+            f"Before the first substantive answer in {session_phrase}"
         )
 
         # primary memory_search：Core 排序映射回旧形状
@@ -376,10 +383,11 @@ class TestModeAdapterHealthMatrix:
         assert added["status"] == "added"
         assert added["context_id"] is not None
 
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
     def test_primary_memory_search_never_substitutes_unmapped_neighbor(
-            self, test_config):
+            self, test_config, adapter):
         server = _make_server(
-            test_config, mode="primary", adapter="codex", loaded_engine=True,
+            test_config, mode="primary", adapter=adapter, loaded_engine=True,
         )
         service = server.context_service
         seeded = _seed(
@@ -421,9 +429,13 @@ class TestModeAdapterHealthMatrix:
 
     @pytest.mark.parametrize(
         "mode,adapter",
-        [("shadow", "kimi"), ("primary", "kimi")],
+        [
+            ("shadow", "claude"), ("primary", "claude"),
+            ("shadow", "dsh"), ("primary", "web"),
+            ("shadow", ""),
+        ],
     )
-    def test_non_codex_modes_expose_no_context_tools(
+    def test_non_cutover_adapters_expose_no_context_tools(
             self, test_config, mode, adapter):
         server = _make_server(
             test_config, mode=mode, adapter=adapter,
@@ -456,8 +468,9 @@ class TestModeAdapterHealthMatrix:
         })
         assert added["status"] == "added"
 
-    def test_invalid_config_fails_closed(self, test_config):
-        server = _make_server(test_config, mode="turbo", adapter="codex")
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    def test_invalid_config_fails_closed(self, test_config, adapter):
+        server = _make_server(test_config, mode="turbo", adapter=adapter)
 
         assert _tool_names(server) == _LEGACY_TOOLS | {"context_status"}
         instructions = _initialize(server)["instructions"]
@@ -484,9 +497,11 @@ class TestModeAdapterHealthMatrix:
         assert status["diagnostics"]
         assert str(test_config.data_dir) not in json.dumps(status)
 
-    def test_degraded_primary_keeps_only_context_status(self, test_config):
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    def test_degraded_primary_keeps_only_context_status(
+            self, test_config, adapter):
         server = _make_server(
-            test_config, mode="primary", adapter="codex", degraded=True,
+            test_config, mode="primary", adapter=adapter, degraded=True,
         )
         service = server.context_service
         assert service.status().ready is False
@@ -525,12 +540,13 @@ class TestModeAdapterHealthMatrix:
         assert search["count"] == 1
         assert search["results"][0]["id"] == seeded_id
 
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
     def test_primary_write_gate_fails_closed_when_status_is_unknown(
-            self, test_config, monkeypatch):
+            self, test_config, monkeypatch, adapter):
         """status() 瞬时异常等于健康未知：primary 写门禁必须 fail-closed，
         与读侧同向拒绝，而不是放行写。"""
         server = _make_server(
-            test_config, mode="primary", adapter="codex", loaded_engine=True,
+            test_config, mode="primary", adapter=adapter, loaded_engine=True,
         )
         service = server.context_service
         assert service.status().ready is True
@@ -577,7 +593,10 @@ class TestModeAdapterHealthMatrix:
             ("primary", "codex", True),
             ("shadow", "kimi", False),
             ("primary", "kimi", True),
+            ("shadow", "claude", False),
+            ("primary", "claude", True),
             ("turbo", "codex", False),
+            ("turbo", "kimi", False),
         ],
     )
     def test_tools_call_shares_the_tools_list_registry(
@@ -605,26 +624,32 @@ class TestRegistry:
         specs = tool_specs(adapter="codex", mode=mode, health=None)
         assert {spec.name for spec in specs} == _LEGACY_TOOLS
 
-    def test_codex_shadow_ready_lists_all_ten_tools(self):
-        health = _health(mode=ContextMode.SHADOW, ready=True)
-        specs = tool_specs(adapter="codex", mode=ContextMode.SHADOW,
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    def test_shadow_ready_lists_all_ten_tools(self, adapter):
+        health = _health(mode=ContextMode.SHADOW, ready=True, adapter=adapter)
+        specs = tool_specs(adapter=adapter, mode=ContextMode.SHADOW,
                            health=health)
         assert {spec.name for spec in specs} == _LEGACY_TOOLS | _CONTEXT_TOOLS
 
-    def test_codex_primary_ready_lists_all_ten_tools(self):
-        specs = tool_specs(adapter="codex", mode=ContextMode.PRIMARY,
-                           health=_health())
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    def test_primary_ready_lists_all_ten_tools(self, adapter):
+        specs = tool_specs(adapter=adapter, mode=ContextMode.PRIMARY,
+                           health=_health(adapter=adapter))
         assert {spec.name for spec in specs} == _LEGACY_TOOLS | _CONTEXT_TOOLS
 
     @pytest.mark.parametrize("mode", [ContextMode.SHADOW, ContextMode.PRIMARY])
-    def test_non_codex_adapter_never_lists_context_tools(self, mode):
-        specs = tool_specs(adapter="kimi", mode=mode, health=_health())
+    @pytest.mark.parametrize("adapter", ["claude", "dsh", "web", ""])
+    def test_non_cutover_adapter_never_lists_context_tools(
+            self, mode, adapter):
+        specs = tool_specs(adapter=adapter, mode=mode,
+                           health=_health(mode=mode, adapter=adapter))
         assert {spec.name for spec in specs} == _LEGACY_TOOLS
 
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
     @pytest.mark.parametrize("health", [None, _health(ready=False)])
-    def test_codex_without_ready_health_lists_only_context_status(
-            self, health):
-        specs = tool_specs(adapter="codex", mode=ContextMode.PRIMARY,
+    def test_without_ready_health_lists_only_context_status(
+            self, health, adapter):
+        specs = tool_specs(adapter=adapter, mode=ContextMode.PRIMARY,
                            health=health)
         names = {spec.name for spec in specs}
         assert names == _LEGACY_TOOLS | {"context_status"}
@@ -695,14 +720,20 @@ class TestRegistry:
 
 
 class TestInitializationInstructions:
-    def test_primary_instructions_are_self_contained_within_512_chars(self):
+    @pytest.mark.parametrize(
+        "adapter,session_phrase",
+        [("codex", "every new Codex session"), ("kimi", "every new session")],
+    )
+    def test_primary_instructions_are_self_contained_within_512_chars(
+            self, adapter, session_phrase):
         text = initialization_instructions(
-            adapter="codex", mode=ContextMode.PRIMARY, health=_health(),
+            adapter=adapter, mode=ContextMode.PRIMARY,
+            health=_health(adapter=adapter),
         )
         assert text is not None
         head = text[:512]
         for required in (
-            "Before the first substantive answer in every new Codex session",
+            f"Before the first substantive answer in {session_phrase}",
             "call context_session_start exactly once",
             "project=<current workspace path/name>",
             "query=<user first task>",
@@ -714,6 +745,22 @@ class TestInitializationInstructions:
         ):
             assert required in head, required
 
+    def test_kimi_primary_instructions_differ_only_in_the_session_phrase(
+            self):
+        """kimi 变体与 codex 文本逐字等价，唯一差异是去掉「Codex」二字。"""
+        codex_text = initialization_instructions(
+            adapter="codex", mode=ContextMode.PRIMARY, health=_health(),
+        )
+        kimi_text = initialization_instructions(
+            adapter="kimi", mode=ContextMode.PRIMARY,
+            health=_health(adapter="kimi"),
+        )
+        assert kimi_text is not None
+        assert "Codex" not in kimi_text
+        assert kimi_text == codex_text.replace(
+            "every new Codex session", "every new session"
+        )
+
     @pytest.mark.parametrize(
         "adapter,mode",
         [
@@ -721,7 +768,9 @@ class TestInitializationInstructions:
             ("codex", ContextMode.COMPAT),
             ("codex", ContextMode.LEGACY),
             ("kimi", ContextMode.SHADOW),
-            ("kimi", ContextMode.PRIMARY),
+            ("kimi", ContextMode.COMPAT),
+            ("claude", ContextMode.PRIMARY),
+            ("dsh", ContextMode.PRIMARY),
         ],
     )
     def test_non_primary_states_never_issue_auto_call_instructions(
@@ -731,10 +780,11 @@ class TestInitializationInstructions:
                                                        adapter=adapter),
         ) is None
 
-    def test_degraded_primary_instructions_only_diagnose(self):
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    def test_degraded_primary_instructions_only_diagnose(self, adapter):
         text = initialization_instructions(
-            adapter="codex", mode=ContextMode.PRIMARY,
-            health=_health(ready=False),
+            adapter=adapter, mode=ContextMode.PRIMARY,
+            health=_health(ready=False, adapter=adapter),
         )
         assert text is not None
         assert "unavailable" in text
@@ -856,9 +906,11 @@ class TestContextProtocolErrors:
 
 
 class TestPrimaryHealthRecheck:
-    def test_degraded_service_cannot_continue_writes(self, test_config):
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    def test_degraded_service_cannot_continue_writes(
+            self, test_config, adapter):
         server = _make_server(
-            test_config, mode="primary", adapter="codex", loaded_engine=True,
+            test_config, mode="primary", adapter=adapter, loaded_engine=True,
         )
         service = server.context_service
         _seed(
@@ -906,10 +958,14 @@ class TestPrimaryHealthRecheck:
 
 
 class TestHandshakeBoundedHealthCheck:
+    @pytest.mark.parametrize(
+        "adapter,session_phrase",
+        [("codex", "every new Codex session"), ("kimi", "every new session")],
+    )
     def test_primary_handshake_does_not_wait_for_embedding_model(
-            self, test_config, monkeypatch):
+            self, test_config, monkeypatch, adapter, session_phrase):
         test_config.context_mode = "primary"
-        test_config.adapter = "codex"
+        test_config.adapter = adapter
         release_model_load = threading.Event()
 
         def _blocked_initialize(engine_self):
@@ -932,7 +988,7 @@ class TestHandshakeBoundedHealthCheck:
             server.shutdown()
 
         assert result["instructions"].startswith(
-            "Before the first substantive answer in every new Codex session"
+            f"Before the first substantive answer in {session_phrase}"
         )
         assert _CONTEXT_TOOLS <= tools
 
@@ -941,12 +997,13 @@ class TestHandshakeBoundedHealthCheck:
 
 
 class TestLegacySearchModes:
+    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
     def test_shadow_records_threshold_exclusion_without_content(
-            self, test_config, monkeypatch):
+            self, test_config, monkeypatch, adapter):
         import numpy as np
 
         test_config.embedding_dim = 512
-        server = _make_server(test_config, mode="shadow", adapter="codex")
+        server = _make_server(test_config, mode="shadow", adapter=adapter)
         logs = []
         server._log = logs.append
         service = server.context_service
