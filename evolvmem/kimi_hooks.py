@@ -661,6 +661,14 @@ def session_end(payload: dict) -> ExtractionResult:
         importance=5.0,
         tier="normal",
     )
+    # 摘要 TTL：到期后仅当被滚动摘要覆盖才归档（覆盖门控见 summary_retention）；
+    # 日期精度沿用 legacy_projection 的 date-only 填充约定（写入侧补 " 00:00:00"）
+    summary_expires_at = time.strftime(
+        "%Y-%m-%d",
+        time.localtime(
+            summary_time + config.context_session_summary_ttl_days * 86400
+        ),
+    )
     source_session = _canonical_session_id(session_id, wire)
 
     try:
@@ -738,6 +746,7 @@ def session_end(payload: dict) -> ExtractionResult:
                     importance=summary.importance,
                     tier=summary.tier,
                     confidence=summary.confidence,
+                    expires_at=summary_expires_at,
                 ),
                 candidates=tuple(
                     LegacyExtractionItem(

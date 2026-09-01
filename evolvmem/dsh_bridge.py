@@ -133,6 +133,13 @@ def extract_from_messages(
         importance=5.0,
         tier="normal",
     )
+    # 摘要 TTL：与 kimi_hooks 同一约定（date-only，写入侧补 " 00:00:00"）
+    summary_expires_at = time.strftime(
+        "%Y-%m-%d",
+        time.localtime(
+            summary_time + config.context_session_summary_ttl_days * 86400
+        ),
+    )
     source_session = f"dsh:{session_id}"[:kh._MAX_SOURCE_SESSION_CHARS]
 
     try:
@@ -201,6 +208,7 @@ def extract_from_messages(
                     importance=summary.importance,
                     tier=summary.tier,
                     confidence=summary.confidence,
+                    expires_at=summary_expires_at,
                 ),
                 candidates=tuple(
                     LegacyExtractionItem(

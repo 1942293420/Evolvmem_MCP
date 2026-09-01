@@ -106,6 +106,8 @@ class Config:
     context_frequency_cap: int = 20         # 访问次数归一化上限
     context_project_aliases: dict = field(default_factory=dict)  # 工作区名 → 项目名
     context_archive_ttl_days: int = 30      # 原始会话加密归档的保留天数
+    context_session_summary_ttl_days: int = 30  # 会话摘要条目的 TTL（到期且被滚动摘要覆盖后才归档）
+    context_session_summary_keep: int = 10  # 每项目保留的最近会话摘要条数（超出且被覆盖才归档）
 
     # --- Context Core 晋升阈值（设计「晋升规则」冻结默认值） ---
     context_promotion_min_successes: int = 2        # 自动晋升所需的不同 archive 成功证据数
@@ -261,6 +263,8 @@ class Config:
             "context_inject_related_max_chars",
             "context_frequency_cap",
             "context_archive_ttl_days",
+            "context_session_summary_ttl_days",
+            "context_session_summary_keep",
             "context_promotion_min_successes",
             "context_playbook_min_experiences",
         ):
@@ -374,6 +378,8 @@ class Config:
             "context_frequency_cap": self.context_frequency_cap,
             "context_project_aliases": self.context_project_aliases,
             "context_archive_ttl_days": self.context_archive_ttl_days,
+            "context_session_summary_ttl_days": self.context_session_summary_ttl_days,
+            "context_session_summary_keep": self.context_session_summary_keep,
             "context_promotion_min_successes": self.context_promotion_min_successes,
             "context_playbook_min_experiences": self.context_playbook_min_experiences,
             "context_promotion_similarity_threshold": self.context_promotion_similarity_threshold,

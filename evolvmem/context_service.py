@@ -75,7 +75,7 @@ from evolvmem.context_models import (
 from evolvmem.context_playbook import PlaybookGenerator, PlaybookSkip
 from evolvmem.context_renderer import ContextRenderCandidate, ContextRenderer
 from evolvmem.context_retriever import ContextRetriever
-from evolvmem.context_store import ContextStore
+from evolvmem.context_store import ContextStore, _now_iso
 from evolvmem.context_vector_sync import ContextVectorSynchronizer
 from evolvmem.cutover_checks import check_projection_lag
 from evolvmem.cutover_lock import CutoverLock
@@ -110,6 +110,7 @@ from evolvmem.project_rollup import ProjectRollupGenerator
 from evolvmem.project_store import ProjectStore
 from evolvmem.semantic_merge import find_semantic_match
 from evolvmem.session_archive import SessionArchiver, SessionPurgeReport
+from evolvmem.summary_retention import SummaryRetention, insert_rollup_pending_hold
 from evolvmem.vector_index import VectorIndex
 from evolvmem.workspace_identity import (
     WorkspaceIdentityError,
@@ -816,11 +817,19 @@ class ContextService:
 
         Purge is irreversible and never faked: rows transition only after
         their payload file is actually gone, and failures stay available
-        for the next sweep.
+        for the next sweep. The purge is followed by one coverage-gated
+        session-summary retention pass (archiving covered summaries beyond
+        the keep count releases their archive holds); the retention pass is
+        fail-open and never changes the purge report.
         """
         self._require_serving()
         with self._cutover_lock.shared():
-            return self._session_archiver().sweep_expired()
+            report = self._session_archiver().sweep_expired()
+            try:
+                SummaryRetention(self.config, self.store).sweep(_now_iso())
+            except Exception:
+                logger.warning("summary retention sweep skipped: sweep failed")
+            return report
 
     def archive_project(self, project: str) -> SessionPurgeReport:
         """Immediately purge every available archive of one project.
@@ -1488,6 +1497,14 @@ class ContextService:
                             mutation.context_id,
                             source_archive_id,
                             extraction_version=_KIMI_EXTRACTION_VERSION,
+                        )
+                    if (
+                        summary_result is not None
+                        and summary_result.context_id is not None
+                    ):
+                        # 摘要承载归档的保留门：rollup 覆盖前该 archive 不得 purge
+                        insert_rollup_pending_hold(
+                            self.store, source_archive_id, summary_result.context_id
                         )
         self._apply_vector_aftermath(aftermath)
         result = LegacyExtractionResult(

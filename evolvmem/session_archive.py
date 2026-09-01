@@ -58,6 +58,7 @@ class SessionPurgeReport:
 
     purged_archive_ids: tuple[int, ...] = ()
     failed_archive_ids: tuple[int, ...] = ()
+    held_archive_ids: tuple[int, ...] = ()
 
 
 def _coerce_now(now: datetime | None) -> datetime:
@@ -208,7 +209,12 @@ class SessionArchiver:
     # ---- purge ----
 
     def sweep_expired(self, *, now: datetime | None = None) -> SessionPurgeReport:
-        """Purge every available archive whose TTL has been reached."""
+        """Purge every available archive whose TTL has been reached.
+
+        Archives listed in ``session_archive_holds`` are coverage-gated:
+        they stay available (reported as held) until the rollup covers
+        their summary and the hold is released.
+        """
         moment = _format_ts(_coerce_now(now))
         rows = self.store.list_expired_session_archives(moment)
         return self._purge_rows(rows, purged_at=moment)
@@ -217,6 +223,8 @@ class SessionArchiver:
         """Immediately purge all available archives of one project.
 
         ContextItems are never deleted; only their source_state is recomputed.
+        Held archives (``session_archive_holds``) are skipped exactly like in
+        the TTL sweep and reported as held.
         """
         rows = self.store.list_available_project_archives(project)
         return self._purge_rows(rows, purged_at=_format_ts(_coerce_now(None)))
@@ -224,8 +232,19 @@ class SessionArchiver:
     def _purge_rows(self, rows: list[dict], *, purged_at: str) -> SessionPurgeReport:
         purged: list[int] = []
         failed: list[int] = []
+        held: list[int] = []
+        held_ids = {
+            int(row["archive_id"])
+            for row in self.store._connection()
+            .execute("SELECT archive_id FROM session_archive_holds")
+            .fetchall()
+        }
         for row in rows:
             archive_id = int(row["id"])
+            if archive_id in held_ids:
+                # 覆盖门控：摘要尚未进入滚动摘要闭包的归档不得 purge
+                held.append(archive_id)
+                continue
             payload_file = self.config.data_dir / row["payload_path"]
             try:
                 payload_file.unlink()
@@ -259,6 +278,7 @@ class SessionArchiver:
         return SessionPurgeReport(
             purged_archive_ids=tuple(purged),
             failed_archive_ids=tuple(failed),
+            held_archive_ids=tuple(held),
         )
 
     # ---- key and payload files ----
