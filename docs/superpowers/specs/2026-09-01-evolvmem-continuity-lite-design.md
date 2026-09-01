@@ -42,7 +42,7 @@
 
 直接使用已提交的 `evolvmem/project_resolver.py`（ProjectResolver）、`evolvmem/workspace_identity.py`（WorkspaceIdentityProvider）、`evolvmem/project_models.py`。判定规则与信号优先级完全沿用完整版设计第一章：强信号单一采信，两个独立中等信号一致方可自动 resolved，冲突/无信号分别进入 conflict/unresolved，global 类型（constraint/preference/user_profile）不强制 project。
 
-### Schema（一次迁移，PRAGMA user_version 递进）
+### Schema（沿用现有幂等 DDL 模式：向 `_SCHEMA_TABLE_STATEMENTS` 追加 `CREATE TABLE IF NOT EXISTS`，`initialize()` 时既有库自动补齐；本代码库无 user_version 迁移机制，不新增）
 
 ```text
 context_project_registry(project PK, status active|archived, revision, created_at, updated_at)
