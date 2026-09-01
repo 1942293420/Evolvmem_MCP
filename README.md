@@ -196,6 +196,37 @@ When one project (or the global scope) holds at least `context_playbook_min_expe
 
 The four lifecycle tools — `context_confirm`, `context_record_outcome`, `context_archive_project`, `context_sweep` — are exposed to Codex and Kimi in `shadow`/`primary` mode with a ready service. They carry no `readOnlyHint`, so MCP clients treat them as write operations that require approval; the two purge tools are irreversible for the payloads they delete.
 
+## Project Continuity
+
+**Project attribution.** Every typed write resolves its project through a small registry: `context_project_registry` holds registered projects, `context_project_aliases` maps globally unique alias names to them, and `context_project_workspace_bindings` binds HMAC workspace fingerprints to projects — the raw path is fingerprinted with the owner-only `workspace.key` and never stored. Each write also records a `context_project_resolutions` row; a conflicted or unresolvable write goes `pending` with an empty project instead of guessing, and operator accept/reject decisions are final. Administration is JSON-only (identifiers, revisions, and stable codes — never memory content or absolute paths), and every state change is guarded by `--expected-revision` CAS:
+
+```bash
+python -m evolvmem.project_cli bootstrap-key
+python -m evolvmem.project_cli projects register myproj
+python -m evolvmem.project_cli fingerprint /path/to/workspace
+python -m evolvmem.project_cli bindings bind <fingerprint> myproj --default
+python -m evolvmem.project_cli resolutions list-pending
+python -m evolvmem.project_cli resolutions accept 12 myproj --expected-revision 3
+```
+
+**Rolling project summaries.** After a session-end extraction batch lands its summary on a resolved project, a best-effort rollup refreshes that project's single active `project:{project}:knowledge:current` summary — one transaction supersedes the old PROJECT_SUMMARY, and the L0 vector handoff follows the commit. The source set is the project's active session summaries plus the atomic items created after the rollup's `covered_through` watermark; when its hash is unchanged the project is `skipped`/`unchanged` and the LLM is never called, and when no LLM is wired the run degrades to `skipped`/`llm_unavailable` and writes nothing. A failed attempt leaves the old active summary untouched. Manual runs go through the operator CLI, which wires no LLM and therefore reports the honest degradation:
+
+```bash
+python -m evolvmem.project_cli rollup run --project myproj
+```
+
+**Session-log TTL and coverage-gated archiving.** Each project keeps its newest `context_session_summary_keep` (default 10) active session summaries; older ones are archived only once they belong to the rollup's covered source set, and archiving them releases the `rollup_pending` holds that kept their raw encrypted archives unpurgeable. An expired summary without rollup coverage is held, never archived, and its project is reported pending until a rollup covers it. Every freshly written summary records its archive hold in the same write transaction, and the retention sweep follows the archive TTL purge at SessionStart and behind `context_sweep`, fail-open.
+
+**Continuity tools.** The same `python -m evolvmem.mcp_server` process configured above exposes three continuity tools to Codex and Kimi in `compat`/`shadow`/`primary` mode: `continuity_resume` (exact focused-workstream read — never semantic search), `continuity_checkpoint` (a closed action whitelist under per-row revision CAS; a stale token reliably returns `revision_conflict`), and `continuity_list` (unfinished workstreams, metadata plus L0 summaries only). The transient workspace path is fingerprinted and discarded; readiness is checked per call (`continuity_not_ready`), so the tools stay listed even in `compat` or a degraded `primary`. A "继续原任务"-style session-start query is detected as control intent and routed to an exact resume instead of FTS/HNSW; no-focus, multi-candidate, and dangling-focus states each return a stable code, and any continuity failure silently degrades to the normal retrieval path.
+
+**One-shot historical backfill.** `plan` prints a read-only, deterministic preview whose digest fingerprints the database. `apply` recomputes the plan under the exclusive cutover lock (a digest mismatch is a usage error, not an apply failure), makes a verified cutover backup, then migrates legacy rows and backfills project resolutions in one transaction before rolling summaries, sweeping retention, and rebuilding the disposable Context vector cache; already-converged rows are skipped, so re-applying is a no-op. `verify` checks the post-apply invariants and exits 0 only when every one passes. Output carries counts, identifiers, and stable codes only:
+
+```bash
+python -m evolvmem.maintenance_cli plan
+python -m evolvmem.maintenance_cli apply --plan-digest <hex> --yes
+python -m evolvmem.maintenance_cli verify
+```
+
 ## Configuration
 
 Edit `~/.claude/evolvmem/config.json` to adjust the following parameters:
