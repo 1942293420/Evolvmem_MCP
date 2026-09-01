@@ -257,6 +257,7 @@ def test_l2_canonical_writeback_with_server_authority(
     assert payload["project"] == "proj"
     assert payload["workspace_fingerprint"] == fingerprint
     assert payload["checkpoint_revision"] == 1
+    assert payload["state_version"] == 1
     assert payload["status"] == "open"
     assert payload["objective"] == "交付续接域层"
     assert payload["next_action"] == "写测试"
