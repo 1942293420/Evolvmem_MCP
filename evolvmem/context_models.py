@@ -44,6 +44,8 @@ class ContextContentType(str, Enum):
     USER_PROFILE = "user_profile"
     REFERENCE = "reference"
     SESSION_SUMMARY = "session_summary"
+    PROJECT_SUMMARY = "project_summary"
+    WORKSTREAM_CHECKPOINT = "workstream_checkpoint"
 
 
 class ContextStatus(str, Enum):

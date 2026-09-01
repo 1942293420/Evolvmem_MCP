@@ -36,6 +36,7 @@ def test_context_enums_expose_the_persisted_values():
     assert {member.value for member in ContextContentType} == {
         "decision", "fact", "experience", "playbook", "workflow_policy",
         "constraint", "preference", "user_profile", "reference", "session_summary",
+        "project_summary", "workstream_checkpoint",
     }
     assert {member.value for member in ContextStatus} == {
         "candidate", "active", "superseded", "archived", "deleted",

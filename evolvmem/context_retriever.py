@@ -53,7 +53,9 @@ _TYPE_PRIORITY_BASE = {
     ContextContentType.FACT: 0.4,
     ContextContentType.EXPERIENCE: 0.4,
     ContextContentType.SESSION_SUMMARY: 0.4,
+    ContextContentType.PROJECT_SUMMARY: 0.4,
     ContextContentType.REFERENCE: 0.2,
+    ContextContentType.WORKSTREAM_CHECKPOINT: 0.0,
 }
 _PINNED_TYPE_BONUS = 0.2
 
@@ -225,6 +227,11 @@ class ContextRetriever:
             and ContextContentType.REFERENCE not in request.content_types
         ):
             return False  # reference tier requires an explicit content-type opt-in
+        if (
+            item.content_type is ContextContentType.WORKSTREAM_CHECKPOINT
+            and ContextContentType.WORKSTREAM_CHECKPOINT not in request.content_types
+        ):
+            return False  # checkpoints require an explicit content-type opt-in
         return True
 
     @staticmethod

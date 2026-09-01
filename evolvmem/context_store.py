@@ -155,6 +155,127 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
         ON context_items(identity_key, project, scope)
         WHERE status = 'active'
     """,
+    """
+    CREATE TABLE IF NOT EXISTS context_project_registry(
+        project TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS context_project_aliases(
+        alias TEXT PRIMARY KEY,
+        project TEXT NOT NULL REFERENCES context_project_registry(project),
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS context_project_workspace_bindings(
+        workspace_fingerprint TEXT NOT NULL,
+        project TEXT NOT NULL REFERENCES context_project_registry(project),
+        state TEXT NOT NULL DEFAULT 'candidate' CHECK(state IN ('candidate','active','revoked')),
+        is_default INTEGER NOT NULL DEFAULT 0,
+        method TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(workspace_fingerprint, project)
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bindings_one_active_default
+        ON context_project_workspace_bindings(workspace_fingerprint)
+        WHERE state='active' AND is_default=1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS context_project_resolutions(
+        item_id INTEGER PRIMARY KEY REFERENCES context_items(id),
+        resolution_state TEXT NOT NULL CHECK(resolution_state IN ('resolved','conflict','unresolved','global','ignored')),
+        decision_source TEXT NOT NULL DEFAULT 'none' CHECK(decision_source IN ('automatic','human','none')),
+        review_state TEXT NOT NULL DEFAULT 'not_required' CHECK(review_state IN ('not_required','pending','accepted','rejected')),
+        proposed_project TEXT NOT NULL DEFAULT '',
+        resolved_project TEXT NOT NULL DEFAULT '',
+        confidence TEXT NOT NULL DEFAULT 'none' CHECK(confidence IN ('high','medium','none')),
+        method TEXT NOT NULL DEFAULT '',
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        resolver_version TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        reviewed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_resolutions_pending
+        ON context_project_resolutions(review_state, resolution_state)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS context_project_rollups(
+        project TEXT PRIMARY KEY,
+        current_context_id INTEGER REFERENCES context_items(id),
+        source_set_hash TEXT NOT NULL DEFAULT '',
+        covered_through TEXT,
+        generator_version TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','ready','failed','vector_dirty')),
+        revision INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS session_archive_holds(
+        archive_id INTEGER NOT NULL REFERENCES session_archives(id),
+        source_context_id INTEGER NOT NULL REFERENCES context_items(id),
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(archive_id, source_context_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS continuity_workstreams(
+        id TEXT PRIMARY KEY,
+        project TEXT NOT NULL,
+        workspace_fingerprint TEXT NOT NULL,
+        parent_id TEXT REFERENCES continuity_workstreams(id),
+        current_context_id INTEGER NOT NULL REFERENCES context_items(id),
+        checkpoint_revision INTEGER NOT NULL,
+        state_version INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('open','paused','blocked','completed','cancelled')),
+        repo_kind TEXT NOT NULL DEFAULT 'non_git' CHECK(repo_kind IN ('git','non_git')),
+        repo_branch TEXT NOT NULL DEFAULT '',
+        repo_root_commit TEXT NOT NULL DEFAULT '',
+        repo_head_commit TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS continuity_focus(
+        project TEXT NOT NULL,
+        workspace_fingerprint TEXT NOT NULL,
+        workstream_id TEXT REFERENCES continuity_workstreams(id),
+        revision INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(project, workspace_fingerprint)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS continuity_events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workstream_id TEXT,
+        event_type TEXT NOT NULL,
+        before_revision INTEGER,
+        after_revision INTEGER,
+        before_state_version INTEGER,
+        after_state_version INTEGER,
+        error_code TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    )
+    """,
 )
 
 _FTS_TABLE_STATEMENT = (
