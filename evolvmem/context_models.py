@@ -407,12 +407,33 @@ class ContextExclusionCount:
         _validate_non_negative_int(self.count, "count")
 
 
+# session_start 续接路由的稳定码："" 表示未触发续接分支；"stale" 是
+# session 层的映射码（resume ok 但 checkpoint 已确认偏离），其余与
+# ContinuityResumeResult.code 一一对应。
+_SESSION_CONTINUATION_CODES = frozenset(
+    {
+        "",
+        "ok",
+        "needs_focus_confirmation",
+        "ambiguous",
+        "no_continuation",
+        "dangling_focus",
+        "stale",
+        "continuity_not_ready",
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ContextSessionStartResult:
     block: str
     selected_ids: tuple[int, ...]
     used_chars: int
     excluded_counts: tuple[ContextExclusionCount, ...]
+    # 续接路由结果：code 稳定码 + 有界结构（五要素/修订/状态/候选元数据），
+    # 绝不含 L2 原文、绝对路径或工作区指纹；未触发续接分支时为 ""/None。
+    continuation_code: str = ""
+    continuation: dict | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.block, str):
@@ -438,6 +459,13 @@ class ContextSessionStartResult:
                 "excluded_counts must be an iterable of ContextExclusionCount"
             )
         object.__setattr__(self, "excluded_counts", excluded_counts)
+        if self.continuation_code not in _SESSION_CONTINUATION_CODES:
+            raise ContextValidationError(
+                "continuation_code must be one of "
+                + ", ".join(sorted(_SESSION_CONTINUATION_CODES))
+            )
+        if self.continuation is not None and not isinstance(self.continuation, dict):
+            raise ContextValidationError("continuation must be a dict or None")
 
 
 @dataclass(frozen=True, slots=True)
