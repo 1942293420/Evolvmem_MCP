@@ -6,17 +6,20 @@
     python -m evolvmem.project_cli [--data-dir DIR] aliases list|add|remove ...
     python -m evolvmem.project_cli [--data-dir DIR] bindings list|bind|revoke|set-default ...
     python -m evolvmem.project_cli [--data-dir DIR] resolutions list-pending|accept|reject ...
+    python -m evolvmem.project_cli [--data-dir DIR] rollup run [--project P]
     python -m evolvmem.project_cli [--data-dir DIR] fingerprint <workspace_path>
     python -m evolvmem.project_cli [--data-dir DIR] bootstrap-key
 
 Output convention: unlike ``evolvmem.cutover_cli`` (which gates JSON behind a
 ``--json`` flag), every command here always prints exactly one JSON object to
-stdout. Failures print ``{"error": <stable code>}`` to stderr and exit 2,
+stdout — except ``rollup run``, which prints one JSON line per rolled
+project. Failures print ``{"error": <stable code>}`` to stderr and exit 2,
 mirroring argparse's own usage-error exit code. Nothing content-bearing ever
 crosses the output boundary: no memory text, no absolute paths, no key
 material, no tracebacks — only stable codes, project/alias names, HMAC
-fingerprints, and row revisions. The review queue in particular projects
-identifiers and decision metadata only, never evidence payloads.
+fingerprints, row revisions, and rollup outcome codes. The review queue in
+particular projects identifiers and decision metadata only, never evidence
+payloads.
 
 Every write runs inside one ``ContextStore.transaction()`` through
 ``ProjectStore``; reads open the same store and query safe columns directly.
@@ -35,6 +38,7 @@ import sys
 from evolvmem.config import Config
 from evolvmem.context_store import ContextStore
 from evolvmem.cutover_cli import _scrubbed_environment
+from evolvmem.project_rollup import ProjectRollupGenerator
 from evolvmem.project_store import ProjectResolutionRow, ProjectStore, ProjectStoreError
 from evolvmem.workspace_identity import (
     WorkspaceIdentityError,
@@ -131,6 +135,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     fingerprint.add_argument("workspace_path")
     fingerprint.set_defaults(handler=_cmd_fingerprint)
+
+    rollup = sub.add_parser("rollup", help="rolling project summaries")
+    rollup_sub = rollup.add_subparsers(dest="action", required=True)
+    run = rollup_sub.add_parser(
+        "run",
+        help="refresh rolling project summaries (one JSON line per project; "
+        "the operator CLI wires no LLM, so runs degrade to llm_unavailable)",
+    )
+    run.add_argument("--project", default=None, help="roll up only this project")
+    run.set_defaults(handler=_cmd_rollup_run)
 
     bootstrap = sub.add_parser(
         "bootstrap-key", help="explicitly create the owner-only workspace key"
@@ -388,6 +402,38 @@ def _cmd_resolutions_reject(args) -> int:
                 args.item_id, expected_revision=args.expected_revision
             )
     _emit({"ok": True, "item_id": args.item_id, "review_state": "rejected"})
+    return 0
+
+
+# ---- rollup ----
+
+
+def _cmd_rollup_run(args) -> int:
+    """Print one JSON line per project: project/status/reason/context_id.
+
+    The CLI never carries content across its output boundary; the generator
+    runs with no LLM and no vector handoff, so projects report their honest
+    degradation (``llm_unavailable``) and nothing is written.
+    """
+    if args.project is not None and not args.project.strip():
+        _emit_error({"error": "invalid_project"})
+        return 2
+    config = Config(data_dir=args.data_dir)
+    with ContextStore(config) as store:
+        generator = ProjectRollupGenerator(config, store)
+        if args.project is not None:
+            reports = (generator.rollup_project(args.project.strip()),)
+        else:
+            reports = generator.rollup_all()
+    for report in reports:
+        _emit(
+            {
+                "project": report.project,
+                "status": report.status,
+                "reason": report.reason,
+                "context_id": report.context_id,
+            }
+        )
     return 0
 
 

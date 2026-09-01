@@ -9,6 +9,7 @@ from evolvmem.context_models import (
     ContextContentType,
     ContextItemDraft,
     ContextLayers,
+    ContextStatus,
 )
 from evolvmem.context_store import ContextStore
 from evolvmem.project_models import ProjectResolutionDecision
@@ -269,6 +270,66 @@ def test_resolutions_list_accept_reject(test_config, store, ps, capsys):
     assert store.get_item(item_b.id).project == ""
     assert _run(test_config, "resolutions", "list-pending") == 0
     assert _out_json(capsys)["resolutions"] == []
+
+
+# ---- rollup run ----
+
+
+def _make_session_summary(store, project: str, tag: str) -> int:
+    return store.create_item(
+        ContextItemDraft(
+            identity_key=f"project:{project}:progress:log:{tag}",
+            content_type=ContextContentType.SESSION_SUMMARY,
+            layers=ContextLayers(
+                l0=f"会话摘要 {tag} 要点。",
+                l1=f"细节：{tag} 的进展与决定。",
+                l2=f"完整正文：{tag} 的症状、假设、修改与验证。",
+                generator="test-suite",
+            ),
+            project=project,
+            status=ContextStatus.ACTIVE,
+        )
+    ).id
+
+
+def test_rollup_run_without_llm_reports_llm_unavailable(test_config, store, capsys):
+    _make_session_summary(store, "eva", "a")
+    _make_session_summary(store, "hermes", "b")
+    assert _run(test_config, "rollup", "run") == 0
+    lines = [
+        json.loads(line) for line in capsys.readouterr().out.strip().splitlines()
+    ]
+    assert lines == [
+        {"project": "eva", "status": "skipped", "reason": "llm_unavailable", "context_id": None},
+        {"project": "hermes", "status": "skipped", "reason": "llm_unavailable", "context_id": None},
+    ]
+    # a single-project run prints exactly that project's line
+    assert _run(test_config, "rollup", "run", "--project", "eva") == 0
+    lines = [
+        json.loads(line) for line in capsys.readouterr().out.strip().splitlines()
+    ]
+    assert lines == [
+        {"project": "eva", "status": "skipped", "reason": "llm_unavailable", "context_id": None}
+    ]
+    # the degraded run wrote nothing
+    assert (
+        store._connection()
+        .execute("SELECT COUNT(*) AS n FROM context_project_rollups")
+        .fetchone()["n"]
+        == 0
+    )
+
+
+def test_rollup_run_output_hygiene(test_config, store, capsys):
+    _make_session_summary(store, "eva", "a")
+    assert _run(test_config, "rollup", "run") == 0
+    captured = capsys.readouterr()
+    assert str(test_config.data_dir) not in captured.out
+    assert captured.err == ""
+    assert _run(test_config, "rollup", "run", "--project", "  ") == 2
+    err = _err_json(capsys)
+    assert err == {"error": "invalid_project"}
+    assert str(test_config.data_dir) not in json.dumps(err)
 
 
 # ---- workspace fingerprint helper commands ----

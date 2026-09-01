@@ -106,6 +106,7 @@ from evolvmem.project_models import (
     ProjectResolutionRequest,
 )
 from evolvmem.project_resolver import ProjectResolver, _CANONICAL_KEY_PATTERN
+from evolvmem.project_rollup import ProjectRollupGenerator
 from evolvmem.project_store import ProjectStore
 from evolvmem.semantic_merge import find_semantic_match
 from evolvmem.session_archive import SessionArchiver, SessionPurgeReport
@@ -1359,7 +1360,8 @@ class ContextService:
     # ---- extraction batch ----
 
     def persist_legacy_extraction(
-        self, request: LegacyExtractionRequest, *, source_archive_id: int | None = None
+        self, request: LegacyExtractionRequest, *, source_archive_id: int | None = None,
+        llm=None,
     ) -> LegacyExtractionResult:
         """Persist one extraction batch as all-or-nothing under the cutover lock.
 
@@ -1376,6 +1378,13 @@ class ContextService:
         no vector work. Without an archive every type keeps the active
         dual-write path unchanged; the explicit legacy mode ignores the
         argument entirely.
+
+        ``llm`` follows the ``run_consolidation`` injection convention: a
+        caller with a real LLM chat capability passes the narrow
+        ``callable(prompt) -> str | None``, and after a successful dual-write
+        batch whose summary item resolved to a project, a best-effort
+        rolling-summary refresh runs post-commit; without one the refresh is
+        skipped entirely. The refresh never affects the persisted batch.
         """
         self._require_request(request, LegacyExtractionRequest)
         self._require_initialized()
@@ -1393,7 +1402,10 @@ class ContextService:
         if self._mode is ContextMode.LEGACY:
             return self._persist_extraction_legacy(request, engine_ready=engine_ready)
         return self._persist_extraction_dual(
-            request, engine_ready=engine_ready, source_archive_id=source_archive_id
+            request,
+            engine_ready=engine_ready,
+            source_archive_id=source_archive_id,
+            llm=llm,
         )
 
     def _persist_extraction_dual(
@@ -1402,6 +1414,7 @@ class ContextService:
         *,
         engine_ready: bool,
         source_archive_id: int | None,
+        llm=None,
     ) -> LegacyExtractionResult:
         source_session = request.source_session
 
@@ -1477,12 +1490,71 @@ class ContextService:
                             extraction_version=_KIMI_EXTRACTION_VERSION,
                         )
         self._apply_vector_aftermath(aftermath)
-        return LegacyExtractionResult(
+        result = LegacyExtractionResult(
             summary=summary_result,
             candidates=candidate_results,
             persisted=(1 if summary_result is not None else 0)
             + len(candidate_results),
         )
+        self._maybe_rollup_project(summary_result, llm=llm)
+        return result
+
+    # ---- rolling project summary trigger ----
+
+    def _maybe_rollup_project(self, summary_result, *, llm) -> None:
+        """Best-effort rolling summary refresh after a persisted batch.
+
+        Only a batch whose summary item landed on a resolved project can roll
+        up. The LLM arrives through the caller's injection chain (the
+        ``run_consolidation`` convention); without one the refresh is skipped
+        entirely. Every failure is logged content-free and never affects the
+        already-persisted extraction.
+        """
+        if llm is None or summary_result is None or summary_result.context_id is None:
+            return
+        try:
+            item = self.store.get_item(
+                summary_result.context_id, include_layers=False
+            )
+            project = item.project if item is not None else ""
+            if not project:
+                return
+            ProjectRollupGenerator(
+                self.config,
+                self.store,
+                llm=llm,
+                vector_sync=self._rollup_vector_sync,
+            ).rollup_project(project)
+        except Exception:
+            logger.warning("project rollup trigger skipped: rollup failed")
+
+    def _rollup_vector_sync(self, context_id, superseded_id, l0) -> bool:
+        """Post-commit vector handoff for one rolled-up project summary.
+
+        Same convention as every other mutation's vector aftermath: the
+        synchronizer keeps its own durable retry markers, and an engine-less
+        upsert reports ``unavailable`` — the caller then honestly degrades
+        the rollup row to ``vector_dirty``.
+        """
+        try:
+            synchronizer = self._context_synchronizer()
+            if superseded_id is not None:
+                removal = synchronizer.remove_l0(superseded_id)
+                if removal.status != "synchronized":
+                    return False
+            return (
+                synchronizer.upsert_active_l0(context_id, l0).status
+                == "synchronized"
+            )
+        except Exception:
+            # the synchronizer itself exploded (single-item failures are
+            # already contained inside it); leave the durable retry marker
+            try:
+                self.vector_index.mark_dirty()
+                self.vector_index.preserve_dirty()
+            except Exception:
+                pass
+            return False
 
     def _persist_extraction_legacy(
         self, request: LegacyExtractionRequest, *, engine_ready: bool
