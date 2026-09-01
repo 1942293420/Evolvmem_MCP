@@ -681,6 +681,64 @@ def test_session_start_accepts_workspace_path_over_mcp(test_config):
     assert payload["error"] == "invalid_arguments"
 
 
+# ---- session_start 续接信号透传 ----
+
+
+_CANDIDATE_KEYS = {
+    "workstream_id", "project", "status", "checkpoint_revision",
+    "state_version", "l0", "updated_at",
+}
+
+
+def _bound_shadow_server(test_config, git_workspace):
+    """shadow/kimi server：过 context 读门禁且续接就绪（key + 绑定）。"""
+    server = _make_server(test_config, mode="shadow", adapter="kimi")
+    provider = _bootstrap_key(test_config)
+    _bind(server, provider, git_workspace)
+    return server
+
+
+def test_session_start_surfaces_continuation_over_mcp(test_config, git_workspace):
+    server = _bound_shadow_server(test_config, git_workspace)
+    _call(server, "continuity_checkpoint", _create_args(git_workspace))
+
+    # 续接意图 + workspace_path：无 focus 单一未完成 → needs_focus_confirmation
+    result, started = _call(
+        server,
+        "context_session_start",
+        {"project": "proj", "query": "继续原任务",
+         "workspace_path": str(git_workspace)},
+    )
+    assert "isError" not in result
+    assert "block" in started
+    assert started["continuation_code"] == "needs_focus_confirmation"
+    continuation = started["continuation"]
+    # 有界键集：候选元数据 + L0，绝无 L2 原文或绝对路径
+    assert set(continuation) == {"candidates"}
+    assert len(continuation["candidates"]) == 1
+    assert set(continuation["candidates"][0]) <= _CANDIDATE_KEYS
+    rendered = json.dumps(started, ensure_ascii=False)
+    assert str(git_workspace) not in rendered
+    assert "Traceback" not in rendered
+
+
+def test_session_start_without_intent_surfaces_empty_continuation_code(
+    test_config, git_workspace
+):
+    server = _bound_shadow_server(test_config, git_workspace)
+    _call(server, "continuity_checkpoint", _create_args(git_workspace))
+
+    result, started = _call(
+        server,
+        "context_session_start",
+        {"project": "proj", "query": "项目进展如何",
+         "workspace_path": str(git_workspace)},
+    )
+    assert "isError" not in result
+    assert started["continuation_code"] == ""
+    assert "continuation" not in started
+
+
 # ---- instructions 增补 ----
 
 

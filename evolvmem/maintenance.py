@@ -649,11 +649,15 @@ def _verify_with_store(config: Config, store: ContextStore) -> MaintenanceVerify
         "resolved_project_nonempty", resolved_empty == 0, "resolved_project_empty"
     )
 
+    # Same scope as the plan side: only legacy-migrated rows count; pending
+    # resolutions written by the live write path are not plan drift.
     pending = {
         str(row["resolution_state"]): int(row["c"])
         for row in conn.execute(
             "SELECT resolution_state, COUNT(*) AS c FROM context_project_resolutions "
-            "WHERE review_state='pending' GROUP BY resolution_state"
+            "WHERE review_state='pending' "
+            "AND item_id IN (SELECT context_item_id FROM legacy_memory_migrations) "
+            "GROUP BY resolution_state"
         )
     }
     counts_match = (

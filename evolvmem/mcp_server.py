@@ -677,7 +677,7 @@ class MemoryMCPServer:
         except Exception:
             # Codex/Kimi fail-open：绝不回退注入所有旧 active memory
             return self._context_error("context_unavailable")
-        return {
+        payload = {
             "block": result.block,
             "selected_ids": list(result.selected_ids),
             "used_chars": result.used_chars,
@@ -685,7 +685,13 @@ class MemoryMCPServer:
                 {"reason": item.reason, "count": item.count}
                 for item in result.excluded_counts
             ],
+            # 续接路由信号（Task 9）：未触发续接分支时为 ""；结构体内绝无
+            # L2 原文或绝对路径
+            "continuation_code": result.continuation_code or "",
         }
+        if result.continuation is not None:
+            payload["continuation"] = result.continuation
+        return payload
 
     def _context_search(self, args: dict) -> dict:
         try:

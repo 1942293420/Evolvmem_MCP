@@ -11,6 +11,13 @@ import pytest
 from evolvmem import maintenance_cli
 from evolvmem.config import Config
 from evolvmem.context_migration import LegacyMemoryMigrator
+from evolvmem.context_models import (
+    ContextContentType,
+    ContextItemDraft,
+    ContextLayers,
+    ContextScope,
+    ContextStatus,
+)
 from evolvmem.context_store import ContextStore
 from evolvmem.maintenance import (
     MaintenanceError,
@@ -265,6 +272,40 @@ def test_backfill_covers_mapped_rows_missing_resolutions(legacy_db_with_rows):
     assert followup.planned_actions == ()
 
 
+def test_apply_survives_project_free_active_summary(legacy_db_with_rows):
+    """project='' 的活跃摘要不得让 apply 以 retention_failed 中止。"""
+    config = Config(data_dir=legacy_db_with_rows)
+    with ContextStore(config) as store:
+        free = store.create_item(
+            ContextItemDraft(
+                identity_key="project::progress:log:free",
+                content_type=ContextContentType.SESSION_SUMMARY,
+                layers=ContextLayers(
+                    l0="无项目会话摘要要点。",
+                    l1="细节：无项目归属的会话进展与决定。",
+                    l2="完整正文：无项目会话的症状与验证。",
+                    generator="test-suite",
+                ),
+                project="",
+                scope=ContextScope.PROJECT,
+                status=ContextStatus.ACTIVE,
+            )
+        )
+    plan = build_plan(config)
+
+    report = apply_plan(
+        config,
+        plan_digest=plan.digest,
+        timestamp=datetime(2026, 9, 2, 0, 0, 0, tzinfo=timezone.utc),
+        embedding_engine=_fake_engine(config),
+    )
+
+    assert report.plan_digest == plan.digest
+    assert report.backup_directory
+    # the project-free summary stays active and untouched by the sweep
+    assert _item_projects(config)[free.id] == ("", "active")
+
+
 def test_apply_rejects_stale_digest(legacy_db_with_rows):
     config = Config(data_dir=legacy_db_with_rows)
     with pytest.raises(MaintenanceError) as excinfo:
@@ -338,6 +379,47 @@ def test_verify_detects_missing_layer(legacy_db_with_rows):
     assert report.ok is False
     by_name = {invariant.name: invariant for invariant in report.invariants}
     assert by_name["mapped_item_layers"].passed is False
+
+
+def test_verify_ignores_non_legacy_pending_resolutions(legacy_db_with_rows):
+    """Live-DB rows pending review outside the legacy scope are not drift."""
+    config = Config(data_dir=legacy_db_with_rows)
+    with ContextStore(config) as store:
+        native = store.create_item(
+            ContextItemDraft(
+                identity_key="project::fact:native-pending",
+                content_type=ContextContentType.FACT,
+                layers=ContextLayers(
+                    l0="原生写入的待复核事实要点。",
+                    l1="细节：写路径产生、未经迁移。",
+                    l2="完整正文：等待人工复核归属。",
+                    generator="test-suite",
+                ),
+                project="",
+                scope=ContextScope.PROJECT,
+                status=ContextStatus.ACTIVE,
+            )
+        )
+        with store.transaction():
+            store._connection().execute(
+                "INSERT INTO context_project_resolutions("
+                "item_id, resolution_state, review_state, created_at, updated_at"
+                ") VALUES (?, 'unresolved', 'pending', ?, ?)",
+                (native.id, "2026-09-02 00:00:00", "2026-09-02 00:00:00"),
+            )
+    plan = build_plan(config)
+    apply_plan(
+        config,
+        plan_digest=plan.digest,
+        timestamp=datetime(2026, 9, 2, 0, 0, 0, tzinfo=timezone.utc),
+        embedding_engine=_fake_engine(config),
+    )
+
+    report = verify_invariants(config)
+
+    assert report.ok is True
+    by_name = {invariant.name: invariant for invariant in report.invariants}
+    assert by_name["review_counts_match_plan"].passed is True
 
 
 # ---- CLI ----

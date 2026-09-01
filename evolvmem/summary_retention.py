@@ -15,6 +15,9 @@ Frozen rules (pinned by tests):
   ``source_archive_id`` records a ``rollup_pending`` hold in the same write
   transaction, so the raw archive outlives its summary until the rollup
   covers it; ``SessionArchiver._purge_rows`` skips held archives.
+- Project-free summaries (``project=''``) are out of scope: the coverage
+  closure rejects an empty project, so they are never archived, held, or
+  reported pending — the sweep skips them entirely.
 
 Logs and reports carry ids, projects, and reason codes only — never item
 content, payload paths, or backend exception messages.
@@ -90,7 +93,8 @@ class SummaryRetention:
             str(row["project"])
             for row in conn.execute(
                 "SELECT DISTINCT project FROM context_items "
-                "WHERE status='active' AND content_type=? ORDER BY project",
+                "WHERE status='active' AND content_type=? AND project != '' "
+                "ORDER BY project",
                 (ContextContentType.SESSION_SUMMARY.value,),
             ).fetchall()
         ]

@@ -240,6 +240,21 @@ def test_pending_marker_preserves_existing_ready_row(test_config, store):
     assert row["current_context_id"] is not None
 
 
+def test_project_free_active_summary_is_out_of_scope(test_config, store):
+    """project='' 的活跃摘要不参与扫描：空项目没有覆盖闭包，永不归档/挂起。"""
+    free_id = _make_summary(store, "", "t1", expires_at=EXPIRED)
+    expired_id = _make_summary(store, "eva", "t2", expires_at=EXPIRED)
+
+    report = SummaryRetention(test_config, store).sweep(NOW)
+
+    assert report.archived_ids == ()
+    assert report.held_ids == (expired_id,)  # the real project still processed
+    assert report.pending_projects == ("eva",)
+    assert store.get_item(free_id).status is ContextStatus.ACTIVE
+    assert store.get_item(expired_id).status is ContextStatus.ACTIVE
+    assert _rollup_row(store, "") is None  # no pending marker for ''
+
+
 def test_expired_covered_summary_within_keep_stays_active(test_config, store):
     summary_id = _make_summary(store, "eva", "t1", expires_at=EXPIRED)
     _rollup_ready(test_config, store, "eva")
