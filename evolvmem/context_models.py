@@ -16,6 +16,10 @@ _CONTEXT_SERVICE_ERROR_CODES = frozenset(
         "initialize_conflict",
         "context_not_enabled",
         "degraded_legacy",
+        # 续接就绪码：continuity schema 未建或 workspace identity key 不可用；
+        # 允许经 ContextServiceStatus.reason_codes / ContextServiceError 承载
+        "continuity_not_ready",
+        "workspace_key_missing",
     }
 )
 
@@ -372,6 +376,8 @@ class ContextSessionStartRequest:
     project: str
     query: str
     max_chars: int | None = None
+    # 瞬态工作区路径：仅用于续接路由，指纹化后即弃，永不落库
+    workspace_path: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.project, str):
@@ -383,6 +389,11 @@ class ContextSessionStartRequest:
         object.__setattr__(self, "query", query)
         if self.max_chars is not None:
             _validate_positive_int(self.max_chars, "max_chars")
+        if not isinstance(self.workspace_path, str):
+            raise ContextValidationError("workspace_path must be a string")
+        object.__setattr__(
+            self, "workspace_path", self.workspace_path.strip()
+        )
 
 
 @dataclass(frozen=True, slots=True)

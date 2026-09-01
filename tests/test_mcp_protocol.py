@@ -1,14 +1,17 @@
 """MCP 协议契约测试：单一注册表驱动 tools/list 与 tools/call。
 
 冻结计划 Task 9 的五行 mode/adapter/health 矩阵（K2 起 Codex 行扩展为
-Codex/Kimi 行，其余 adapter 行为不变）：
+Codex/Kimi 行，其余 adapter 行为不变），continuity-lite Task 8 起追加
+续接工具列（compat 也放行，不依赖 Core serving gate）：
 
-| State | Context tools | Legacy reads | Legacy writes | initialize instructions |
-| legacy or compat | none | legacy ranking | facade | none |
-| Codex/Kimi shadow ready | all eight, real Core results | legacy result + content-free compare | facade | none |
-| Codex/Kimi primary ready | all eight | Core ranking mapped to old shape | facade | primary text (per-adapter variant) |
-| other adapters (claude/dsh/web/空) shadow/primary | none | configured compatibility read | facade | none |
-| invalid config or degraded primary | context_status only | legacy diagnostic reads only | rejected | diagnostic text only |
+| State | Context tools | Continuity tools | Legacy reads | Legacy writes | initialize instructions |
+| legacy | none | none | legacy ranking | facade | none |
+| Codex/Kimi compat | none | three (call-time readiness) | legacy ranking | facade | none |
+| Codex/Kimi shadow ready | all eight, real Core results | three | legacy result + content-free compare | facade | none |
+| Codex/Kimi primary ready | all eight | three | Core ranking mapped to old shape | facade | primary text (per-adapter variant) |
+| other adapters (claude/dsh/web/空) shadow/primary | none | none | configured compatibility read | facade | none |
+| invalid config | context_status only | none | legacy diagnostic reads only | rejected | diagnostic text only |
+| degraded primary | context_status only | three | legacy diagnostic reads only | rejected | diagnostic text only |
 """
 
 import dataclasses
@@ -53,6 +56,10 @@ _CONTEXT_TOOLS = {
     "context_confirm", "context_record_outcome",
     "context_archive_project", "context_sweep",
 }
+# 续接工具组：codex/kimi 的 compat/shadow/primary 均列出（不过 Core 门禁）
+_CONTINUITY_TOOLS = {
+    "continuity_resume", "continuity_checkpoint", "continuity_list",
+}
 _CONTENT_TYPE_VALUES = [member.value for member in ContextContentType]
 
 # 每个协议工具的的最小合法/非法调用参数（registry 对称性测试用）
@@ -71,6 +78,9 @@ _PROBE_ARGS = {
     "context_record_outcome": {},
     "context_archive_project": {},
     "context_sweep": {},
+    "continuity_resume": {},
+    "continuity_checkpoint": {},
+    "continuity_list": {},
 }
 
 
@@ -254,7 +264,11 @@ class TestModeAdapterHealthMatrix:
             "供应商合同必须双人复核后归档",
         )
 
-        assert _tool_names(server) == _LEGACY_TOOLS
+        # compat 在 codex/kimi 下也列出续接工具（不过 Core serving gate）
+        expected = set(_LEGACY_TOOLS)
+        if mode == "compat":
+            expected |= _CONTINUITY_TOOLS
+        assert _tool_names(server) == expected
         assert "instructions" not in _initialize(server)
 
         # 隐藏工具不能被调用
@@ -291,7 +305,9 @@ class TestModeAdapterHealthMatrix:
         )
         context_id = service.store.resolve_legacy_mapping(seeded.legacy_id)
 
-        assert _tool_names(server) == _LEGACY_TOOLS | _CONTEXT_TOOLS
+        assert _tool_names(server) == (
+            _LEGACY_TOOLS | _CONTEXT_TOOLS | _CONTINUITY_TOOLS
+        )
         assert "instructions" not in _initialize(server)
 
         # context_search 返回真实 Core 结果（L0 元数据，无 L1/L2 正文）
@@ -364,7 +380,9 @@ class TestModeAdapterHealthMatrix:
         alpha_context = service.store.resolve_legacy_mapping(alpha.legacy_id)
         assert service.status().ready is True
 
-        assert _tool_names(server) == _LEGACY_TOOLS | _CONTEXT_TOOLS
+        assert _tool_names(server) == (
+            _LEGACY_TOOLS | _CONTEXT_TOOLS | _CONTINUITY_TOOLS
+        )
         instructions = _initialize(server)["instructions"]
         assert instructions.startswith(
             f"Before the first substantive answer in {session_phrase}"
@@ -507,7 +525,7 @@ class TestModeAdapterHealthMatrix:
         assert str(test_config.data_dir) not in json.dumps(status)
 
     @pytest.mark.parametrize("adapter", ["codex", "kimi"])
-    def test_degraded_primary_keeps_only_context_status(
+    def test_degraded_primary_hides_context_tools_but_keeps_continuity(
             self, test_config, adapter):
         server = _make_server(
             test_config, mode="primary", adapter=adapter, degraded=True,
@@ -521,7 +539,11 @@ class TestModeAdapterHealthMatrix:
                 key="p:t:fact:seed", value="既有的长期事实记录。"
             )
 
-        assert _tool_names(server) == _LEGACY_TOOLS | {"context_status"}
+        # 降级 primary：context_* 收缩到 context_status，续接工具仍列出
+        # （不依赖 Core serving gate）
+        assert _tool_names(server) == (
+            _LEGACY_TOOLS | {"context_status"} | _CONTINUITY_TOOLS
+        )
         instructions = _initialize(server)["instructions"]
         assert "unavailable" in instructions
         assert "call context_session_start exactly once" not in instructions
@@ -631,20 +653,28 @@ class TestRegistry:
     @pytest.mark.parametrize("mode", [ContextMode.LEGACY, ContextMode.COMPAT])
     def test_legacy_and_compat_list_only_legacy_tools(self, mode):
         specs = tool_specs(adapter="codex", mode=mode, health=None)
-        assert {spec.name for spec in specs} == _LEGACY_TOOLS
+        expected = set(_LEGACY_TOOLS)
+        if mode is ContextMode.COMPAT:
+            # compat 在 codex/kimi 下也列出续接工具（不过 Core serving gate）
+            expected |= _CONTINUITY_TOOLS
+        assert {spec.name for spec in specs} == expected
 
     @pytest.mark.parametrize("adapter", ["codex", "kimi"])
     def test_shadow_ready_lists_all_tools(self, adapter):
         health = _health(mode=ContextMode.SHADOW, ready=True, adapter=adapter)
         specs = tool_specs(adapter=adapter, mode=ContextMode.SHADOW,
                            health=health)
-        assert {spec.name for spec in specs} == _LEGACY_TOOLS | _CONTEXT_TOOLS
+        assert {spec.name for spec in specs} == (
+            _LEGACY_TOOLS | _CONTEXT_TOOLS | _CONTINUITY_TOOLS
+        )
 
     @pytest.mark.parametrize("adapter", ["codex", "kimi"])
     def test_primary_ready_lists_all_tools(self, adapter):
         specs = tool_specs(adapter=adapter, mode=ContextMode.PRIMARY,
                            health=_health(adapter=adapter))
-        assert {spec.name for spec in specs} == _LEGACY_TOOLS | _CONTEXT_TOOLS
+        assert {spec.name for spec in specs} == (
+            _LEGACY_TOOLS | _CONTEXT_TOOLS | _CONTINUITY_TOOLS
+        )
 
     @pytest.mark.parametrize("mode", [ContextMode.SHADOW, ContextMode.PRIMARY])
     @pytest.mark.parametrize("adapter", ["claude", "dsh", "web", ""])
@@ -661,7 +691,8 @@ class TestRegistry:
         specs = tool_specs(adapter=adapter, mode=ContextMode.PRIMARY,
                            health=health)
         names = {spec.name for spec in specs}
-        assert names == _LEGACY_TOOLS | {"context_status"}
+        # context_* 收缩到诊断入口；续接工具不看 Core 健康，仍列出
+        assert names == _LEGACY_TOOLS | {"context_status"} | _CONTINUITY_TOOLS
 
     def test_invalid_mode_lists_only_context_status(self):
         specs = tool_specs(adapter="codex", mode=None, health=None)
@@ -741,6 +772,7 @@ class TestRegistry:
         for name in (
             "context_session_start", "context_search", "context_read",
             "context_status", "memory_search", "memory_status",
+            "continuity_resume", "continuity_list",
         ):
             assert specs[name].annotations.get("readOnlyHint") is True, name
         # 任何带写分支的工具（含 consolidate 的 dry_run=False）不得标只读
@@ -749,6 +781,7 @@ class TestRegistry:
             "memory_consolidate",
             "context_confirm", "context_record_outcome",
             "context_archive_project", "context_sweep",
+            "continuity_checkpoint",
         ):
             assert specs[name].annotations.get("readOnlyHint") is not True, name
 
@@ -962,7 +995,9 @@ class TestPrimaryHealthRecheck:
             "所有合并请求必须经过双人复核后才能合入主干",
             attribute="constraint",
         )
-        assert _tool_names(server) == _LEGACY_TOOLS | _CONTEXT_TOOLS
+        assert _tool_names(server) == (
+            _LEGACY_TOOLS | _CONTEXT_TOOLS | _CONTINUITY_TOOLS
+        )
         _, added = _call(server, "memory_add", {
             "key": "project:demo:fact:archive",
             "value": "归档前必须完成双人复核并签字",
@@ -971,7 +1006,10 @@ class TestPrimaryHealthRecheck:
 
         # 服务在两次列表之间降级：早先的列表不能作为继续写的依据
         service._test_context_index.dirty = True
-        assert _tool_names(server) == _LEGACY_TOOLS | {"context_status"}
+        # context_* 收缩到诊断入口；续接工具不看 Core 健康，仍列出
+        assert _tool_names(server) == (
+            _LEGACY_TOOLS | {"context_status"} | _CONTINUITY_TOOLS
+        )
 
         result, payload = _call(server, "memory_add", {
             "key": "project:demo:fact:other",
@@ -990,7 +1028,9 @@ class TestPrimaryHealthRecheck:
 
         # 恢复后立即恢复服务（每次调用都重新评估）
         service._test_context_index.dirty = False
-        assert _tool_names(server) == _LEGACY_TOOLS | _CONTEXT_TOOLS
+        assert _tool_names(server) == (
+            _LEGACY_TOOLS | _CONTEXT_TOOLS | _CONTINUITY_TOOLS
+        )
         _, added = _call(server, "memory_add", {
             "key": "project:demo:fact:other",
             "value": "另一条需要双人复核的归档记录",

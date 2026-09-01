@@ -19,6 +19,11 @@ Context tools (Codex/Kimi shadow/primary with a ready ContextService):
   context_archive_project — immediately purge one project's session archives
   context_sweep         — TTL purge sweep over expired session archives
 
+Continuity tools (Codex/Kimi compat/shadow/primary; call-time readiness):
+  continuity_resume     — exact focus-pointer resume, bounded checkpoint
+  continuity_checkpoint — action whitelist + revision CAS mutation
+  continuity_list       — unfinished workstream L0 summaries
+
 The exposed tool set comes from one registry (evolvmem.mcp_contract):
 tools/list and tools/call share it, so a hidden tool cannot still be
 called. MCP dictionaries are parsed only at this boundary; the Context
@@ -46,6 +51,13 @@ from evolvmem.context_models import (
     ContextValidationError,
 )
 from evolvmem.context_service import ContextService
+from evolvmem.continuity_models import (
+    ContinuityCheckpointRequest,
+    ContinuityError,
+    ContinuityResumeRequest,
+    ContinuityValidationError,
+)
+from evolvmem.continuity_service import ContinuityService
 from evolvmem.cutover_checks import compare_shadow
 from evolvmem.legacy_models import (
     LegacyAddRequest,
@@ -64,6 +76,7 @@ from evolvmem.conflict_detector import ConflictDetector
 from evolvmem.forgetting import ForgettingEngine
 from evolvmem.consolidator import Consolidator
 from evolvmem.semantic_merge import find_semantic_match
+from evolvmem.workspace_identity import WorkspaceIdentityProvider
 
 
 # 低信息过渡语：自动摘要里常见的"零价值"句式（命中即拒收）
@@ -96,6 +109,22 @@ _CONTEXT_ERROR_MESSAGES = {
     "invalid_mode": "context mode is invalid; context features fail closed",
     "invalid_config": "context configuration is invalid; context features fail closed",
     "context_unavailable": "context tool failed; continue without memory",
+    # continuity 续接域的稳定文案：同样无正文、无路径、无 traceback
+    "revision_conflict": "the workstream or focus revision does not match; resume again before writing",
+    "invalid_transition": "the action is not allowed from the current workstream status",
+    "invalid_action": "the checkpoint action is unknown or misses a required CAS token",
+    "workspace_key_missing": "the workspace identity is unavailable",
+    "workstream_not_found": "no workstream with the exact given id in this project/workspace",
+    "focus_conflict": "the focus pointer revision does not match; resume again before writing",
+    "invalid_source": "a source context id is missing, deleted, or outside the project",
+    "invalid_parent": "the parent workstream is invalid (missing, terminal, cross-project, or cyclic)",
+    "content_rejected": "the checkpoint content was rejected by the content policy",
+    "project_unresolved": "no active project binding resolves for this workspace and hint",
+    "continuity_not_ready": "continuity storage or workspace identity is not ready",
+    "dangling_focus": "the focus pointer targets a missing or terminal workstream",
+    "ambiguous": "multiple unfinished workstreams; pick one before resuming",
+    "no_continuation": "no unfinished workstream for this project/workspace",
+    "needs_focus_confirmation": "one unfinished workstream candidate needs focus confirmation",
 }
 
 
@@ -126,6 +155,10 @@ class MemoryMCPServer:
         # 所有 legacy 读写都经 ContextService 兼容门面（access 计数也不例外）；
         # 本模块不再持有裸 MemoryStore
         self.context_service = context_service
+        # 续接服务与 workspace identity 惰性构建（首次 continuity_* 调用时）；
+        # 借用 context_service 的 store，与其同生命周期（shutdown 统一关闭）
+        self._continuity_service = None
+        self._workspace_identity_provider = None
         self.retriever = None
         self.conflict_detector = None
         self.forgetting = None
@@ -248,6 +281,9 @@ class MemoryMCPServer:
             "context_record_outcome": self._context_record_outcome,
             "context_archive_project": self._context_archive_project,
             "context_sweep": self._context_sweep,
+            "continuity_resume": self._continuity_resume,
+            "continuity_checkpoint": self._continuity_checkpoint,
+            "continuity_list": self._continuity_list,
         }
 
     def _memory_search(self, args: dict) -> dict:
@@ -625,6 +661,8 @@ class MemoryMCPServer:
                 project=args.get("project"),
                 query=args.get("query"),
                 max_chars=args.get("max_chars"),
+                # 新可选入参：缺省/显式 null 归一为 ""（未提供），Task 9 接线消费
+                workspace_path=args.get("workspace_path") or "",
             )
         except (ContextValidationError, TypeError):
             return self._context_error("invalid_arguments")
@@ -845,6 +883,192 @@ class MemoryMCPServer:
             "failed": len(report.failed_archive_ids),
             "purged_archive_ids": list(report.purged_archive_ids),
             "failed_archive_ids": list(report.failed_archive_ids),
+        }
+
+    # ---- continuity tool handlers (MCP dict ↔ typed API boundary) ----
+
+    def _workspace_identity(self) -> WorkspaceIdentityProvider:
+        """Server-shared provider keyed by the data dir's workspace.key."""
+        if self._workspace_identity_provider is None:
+            self._workspace_identity_provider = WorkspaceIdentityProvider(
+                key_path=self.config.data_dir / "workspace.key"
+            )
+        return self._workspace_identity_provider
+
+    def _continuity(self):
+        """惰性构建 ContinuityService；借用 context_service 的 store。
+
+        与 context_service 同生命周期：store 由 context_service 持有并在
+        shutdown() 关闭，ContinuityService 只是借用连接（与 ProjectStore/
+        ProjectRollupGenerator 同一模式）。context_service 缺失（未初始化）
+        时返回 None，由门禁映射为 continuity_not_ready。
+        """
+        service = self._continuity_service
+        if service is None:
+            context = getattr(self, "context_service", None)
+            store = getattr(context, "store", None)
+            if store is None:
+                return None
+            service = ContinuityService(
+                self.config, store, self._workspace_identity()
+            )
+            self._continuity_service = service
+        return service
+
+    def _continuity_gate_error(self) -> dict | None:
+        """continuity 专用就绪检查：schema 表存在 + workspace key 可用。
+
+        不复用 ``_context_gate_error``：续接不依赖 Core serving gate，
+        compat/降级 primary 下续接仍可用，不得被 ``context_not_enabled``
+        或 ``degraded_legacy`` 提前拒掉。
+        """
+        service = self._continuity()
+        if service is None:
+            return self._context_error("continuity_not_ready")
+        try:
+            if not service._schema_ready():
+                return self._context_error("continuity_not_ready")
+            if self._workspace_identity().status().state != "ready":
+                return self._context_error("continuity_not_ready")
+        except Exception:
+            return self._context_error("continuity_not_ready")
+        return None
+
+    def _continuity_read_request(self, args: dict):
+        """Strict ContinuityResumeRequest build; an error dict on bad input."""
+        if not isinstance(args, dict) or set(args) - {
+            "workspace_path", "project_hint"
+        }:
+            return self._context_error("invalid_arguments")
+        try:
+            return ContinuityResumeRequest(
+                workspace_path=args.get("workspace_path"),
+                project_hint=args.get("project_hint", ""),
+            )
+        except (ContinuityValidationError, TypeError):
+            return self._context_error("invalid_arguments")
+
+    def _continuity_resume(self, args: dict) -> dict:
+        request = self._continuity_read_request(args)
+        if isinstance(request, dict):
+            return request
+        gate_error = self._continuity_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            result = self._continuity().resume(request)
+        except ContinuityError as exc:
+            # resume 设计上对数据不抛错；边界处仍做稳定映射兜底
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        if result.code == "continuity_not_ready":
+            # 门禁与服务之间的瞬时竞态（key/schema 在调用间被移除）
+            return self._context_error("continuity_not_ready")
+        payload = {
+            "code": result.code,
+            "workstream_id": result.workstream_id,
+            "context_id": result.context_id,
+            "checkpoint_revision": result.checkpoint_revision,
+            "state_version": result.state_version,
+            "focus_revision": result.focus_revision,
+            "status": result.status,
+            "staleness": result.staleness,
+            # L0/L1 + L2 权威字段；绝不回传 L2 原文
+            "checkpoint": result.checkpoint,
+            "candidates": [
+                self._workstream_summary(item) for item in result.candidates
+            ],
+        }
+        if result.code != "ok":
+            # 短回路码不是协议错误：附稳定文案但不置 isError
+            payload["message"] = _CONTEXT_ERROR_MESSAGES.get(
+                result.code, result.code
+            )
+        return payload
+
+    def _continuity_list(self, args: dict) -> dict:
+        request = self._continuity_read_request(args)
+        if isinstance(request, dict):
+            return request
+        gate_error = self._continuity_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            summaries = self._continuity().list_open(request)
+        except ContinuityError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        rows = [self._workstream_summary(item) for item in summaries]
+        return {"workstreams": rows, "count": len(rows)}
+
+    @staticmethod
+    def _workstream_summary(summary) -> dict:
+        """Bounded candidate projection: metadata plus L0, never L1/L2."""
+        return {
+            "workstream_id": summary.workstream_id,
+            "project": summary.project,
+            "status": summary.status,
+            "checkpoint_revision": summary.checkpoint_revision,
+            "state_version": summary.state_version,
+            "l0": summary.l0,
+            "updated_at": summary.updated_at,
+        }
+
+    # ContinuityCheckpointRequest 的字段全集（schema additionalProperties:
+    # False 的服务端镜像）：未知键直接 invalid_arguments
+    _CHECKPOINT_FIELDS = frozenset({
+        "action", "workspace_path", "project_hint", "workstream_id",
+        "objective", "accepted_decisions", "completed_steps", "current_step",
+        "next_action", "blockers", "parent_workstream_id",
+        "source_context_ids", "make_focus", "expected_checkpoint_revision",
+        "expected_state_version", "expected_focus_revision",
+    })
+
+    def _continuity_checkpoint(self, args: dict) -> dict:
+        if not isinstance(args, dict) or set(args) - self._CHECKPOINT_FIELDS:
+            return self._context_error("invalid_arguments")
+        try:
+            request = ContinuityCheckpointRequest(
+                action=args.get("action"),
+                workspace_path=args.get("workspace_path"),
+                project_hint=args.get("project_hint", ""),
+                workstream_id=args.get("workstream_id", ""),
+                objective=args.get("objective", ""),
+                accepted_decisions=args.get("accepted_decisions", ()),
+                completed_steps=args.get("completed_steps", ()),
+                current_step=args.get("current_step", ""),
+                next_action=args.get("next_action", ""),
+                blockers=args.get("blockers", ()),
+                parent_workstream_id=args.get("parent_workstream_id", ""),
+                source_context_ids=args.get("source_context_ids", ()),
+                make_focus=args.get("make_focus", False),
+                expected_checkpoint_revision=args.get(
+                    "expected_checkpoint_revision", 0
+                ),
+                expected_state_version=args.get("expected_state_version", 0),
+                expected_focus_revision=args.get("expected_focus_revision"),
+            )
+        except (ContinuityValidationError, TypeError):
+            return self._context_error("invalid_arguments")
+        gate_error = self._continuity_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            result = self._continuity().checkpoint(request)
+        except ContinuityError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        # 只有指针/修订状态：无正文、无绝对路径、无指纹材料
+        return {
+            "workstream_id": result.workstream_id,
+            "checkpoint_revision": result.checkpoint_revision,
+            "state_version": result.state_version,
+            "focus_revision": result.focus_revision,
+            "status": result.status,
+            "context_id": result.context_id,
         }
 
     # ---- mode/health views and mutation boundary helpers ----
@@ -1191,8 +1415,9 @@ class MemoryMCPServer:
                 # 与 tools/list 同一注册表：隐藏工具不能被调用；
                 # 未知工具也无需等待初始化门闩
                 result = {"error": f"Unknown tool: {tool_name}"}
-            elif tool_name.startswith("context_"):
-                # context_* 不等重初始化门闩：服务未就绪即 fail-open 错误
+            elif tool_name.startswith(("context_", "continuity_")):
+                # context_*/continuity_* 不等重初始化门闩：服务未就绪即返回
+                # 各自的稳定错误（continuity_not_ready / context_* gate）
                 result = self.handle_tool_call(tool_name, tool_args)
             else:
                 gate_error = self._init_gate_error()

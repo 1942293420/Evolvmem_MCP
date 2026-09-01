@@ -763,7 +763,8 @@ class TestIntegration:
         store.close()
 
     def test_mcp_tool_schemas_match_design(self, test_config):
-        """legacy 默认仅注册 6 个旧工具；codex/kimi+shadow 追加八个 context 工具。"""
+        """legacy 默认仅注册 6 个旧工具；codex/kimi+shadow 追加八个 context
+        工具与三个续接工具（续接不过 Core serving gate）。"""
         from evolvmem.mcp_server import MemoryMCPServer
         server = MemoryMCPServer(config=test_config)
         # 伪造 initialize request 后直接查询工具列表
@@ -778,7 +779,8 @@ class TestIntegration:
         }
         assert tool_names == expected
 
-        # Codex/Kimi shadow：同一注册表按 adapter/mode/health 暴露八个 context 工具
+        # Codex/Kimi shadow：同一注册表按 adapter/mode/health 暴露 context
+        # 与 continuity 工具
         test_config.context_mode = "shadow"
         for adapter in ("codex", "kimi"):
             test_config.adapter = adapter
@@ -798,6 +800,8 @@ class TestIntegration:
                     "context_read", "context_status",
                     "context_confirm", "context_record_outcome",
                     "context_archive_project", "context_sweep",
+                    "continuity_resume", "continuity_checkpoint",
+                    "continuity_list",
                 }
             finally:
                 service.close()
