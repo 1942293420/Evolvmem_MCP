@@ -109,11 +109,35 @@ def _normalize_write_payload(instance: object) -> None:
     _validate_optional_number(
         instance.confidence, "confidence", lower=0.0, upper=1.0  # type: ignore[attr-defined]
     )
+    _normalize_transient_project_fields(instance)
+
+
+def _normalize_transient_project_fields(instance: object) -> None:
+    """Normalize the transient project-resolution fields of one write payload.
+
+    ``workspace_path``/``project_hint`` are request-local signals for the
+    typed-write project resolver: the path is fingerprinted and discarded
+    inside the service, and neither field is ever persisted.
+    """
+    object.__setattr__(
+        instance,
+        "workspace_path",
+        _normalize_text(instance.workspace_path, "workspace_path"),  # type: ignore[attr-defined]
+    )
+    object.__setattr__(
+        instance,
+        "project_hint",
+        _normalize_text(instance.project_hint, "project_hint"),  # type: ignore[attr-defined]
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class LegacyAddRequest:
-    """One legacy memory_add payload plus optional extractor confidence."""
+    """One legacy memory_add payload plus optional extractor confidence.
+
+    ``workspace_path``/``project_hint`` are transient resolution signals:
+    consumed in memory by the service, never written to any table.
+    """
 
     key: str
     value: str
@@ -124,6 +148,8 @@ class LegacyAddRequest:
     tier: str = "normal"
     expires_at: str | None = None
     confidence: float | None = None
+    workspace_path: str = ""
+    project_hint: str = ""
 
     def __post_init__(self) -> None:
         _normalize_write_payload(self)
@@ -136,7 +162,11 @@ class LegacyAddRequest:
 
 @dataclass(frozen=True, slots=True)
 class LegacyReplaceRequest:
-    """One legacy memory_replace payload; None fields inherit the old row."""
+    """One legacy memory_replace payload; None fields inherit the old row.
+
+    ``workspace_path``/``project_hint`` are transient resolution signals:
+    consumed in memory by the service, never written to any table.
+    """
 
     key: str
     new_value: str
@@ -147,6 +177,8 @@ class LegacyReplaceRequest:
     tier: str | None = None
     expires_at: str | None = None
     confidence: float | None = None
+    workspace_path: str = ""
+    project_hint: str = ""
 
     def __post_init__(self) -> None:
         key = _normalize_text(self.key, "key")
@@ -178,6 +210,7 @@ class LegacyReplaceRequest:
         object.__setattr__(self, "tier", _validate_optional_tier(self.tier))
         object.__setattr__(self, "expires_at", _validate_expires_at(self.expires_at))
         _validate_optional_number(self.confidence, "confidence", lower=0.0, upper=1.0)
+        _normalize_transient_project_fields(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,7 +350,11 @@ class LegacyAccessResult:
 
 @dataclass(frozen=True, slots=True)
 class LegacyExtractionItem:
-    """One extraction-batch payload: the session summary or one candidate."""
+    """One extraction-batch payload: the session summary or one candidate.
+
+    ``workspace_path``/``project_hint`` are transient resolution signals:
+    consumed in memory by the service, never written to any table.
+    """
 
     key: str
     value: str
@@ -327,6 +364,8 @@ class LegacyExtractionItem:
     tier: str = "normal"
     expires_at: str | None = None
     confidence: float | None = None
+    workspace_path: str = ""
+    project_hint: str = ""
 
     def __post_init__(self) -> None:
         _normalize_write_payload(self)
@@ -339,13 +378,16 @@ class LegacyExtractionRequest:
     Message parsing, redaction, ranking, and the deterministic policy gates
     stay in the adapters; everything listed here is already safe to write.
     ``max_writes`` bounds actual candidate writes — skipped duplicates never
-    consume the quota.
+    consume the quota. Request-level ``workspace_path``/``project_hint`` are
+    transient resolution defaults an item can override; never persisted.
     """
 
     summary: LegacyExtractionItem
     candidates: tuple[LegacyExtractionItem, ...] = ()
     max_writes: int = 8
     source_session: str = ""
+    workspace_path: str = ""
+    project_hint: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.summary, LegacyExtractionItem):
@@ -374,6 +416,7 @@ class LegacyExtractionRequest:
             "source_session",
             _normalize_text(self.source_session, "source_session"),
         )
+        _normalize_transient_project_fields(self)
 
 
 @dataclass(frozen=True, slots=True)

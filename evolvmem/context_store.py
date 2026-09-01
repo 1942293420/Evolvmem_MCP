@@ -1234,13 +1234,18 @@ class ContextStore:
     def hard_delete_item(self, item_id: int) -> bool:
         """Physically remove one item after deleting its legacy mapping.
 
-        The mapping must go first because it foreign-key references the item.
+        The mapping and the project-resolution row must go first because they
+        foreign-key reference the item (layers/sources/evidence cascade).
         This is only a primitive; no automated lifecycle calls it.
         """
         self._require_transaction("hard_delete_item")
         conn = self._connection()
         conn.execute(
             "DELETE FROM legacy_memory_migrations WHERE context_item_id=?",
+            (item_id,),
+        )
+        conn.execute(
+            "DELETE FROM context_project_resolutions WHERE item_id=?",
             (item_id,),
         )
         cursor = conn.execute("DELETE FROM context_items WHERE id=?", (item_id,))

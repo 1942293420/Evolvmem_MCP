@@ -11,11 +11,12 @@ pass under the same mode gates, shared lock, and transaction discipline.
 
 The service owns every production legacy mutation. In compat/shadow/primary
 mode each typed legacy_* call takes the shared cutover lock and writes the
-legacy projection row, the ContextItem with its three layers, and their ID
-mapping inside one outer ContextStore transaction; in legacy mode the same
-typed calls are served by a service-owned legacy backend with no claim that
-Core changed. Vector indexes stay derived caches with independent dirty
-markers, updated only after the SQLite commit.
+legacy projection row, the ContextItem with its three layers, their ID
+mapping, and the write's deterministic project-resolution row inside one
+outer ContextStore transaction; in legacy mode the same typed calls are
+served by a service-owned legacy backend with no claim that Core changed.
+Vector indexes stay derived caches with independent dirty markers, updated
+only after the SQLite commit.
 
 ``initialize()`` opens the existing Context schema only. It never runs
 ``LegacyMemoryMigrator.migrate()``, never rebuilds a vector index, and
@@ -30,11 +31,12 @@ ready claim.
 
 Privacy contract: workspace paths are normalized to basename/alias before
 use, and the service neither stores nor logs absolute paths, queries, or
-content — it owns no logger at all.
+content — its only logging is stable-code debug lines.
 """
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import logging
 from pathlib import PurePosixPath
 
 import numpy as np
@@ -99,10 +101,22 @@ from evolvmem.legacy_projection import (
     LegacyProjectionUpdate,
 )
 from evolvmem.memory_store import MemoryStore
+from evolvmem.project_models import (
+    ProjectResolutionDecision,
+    ProjectResolutionRequest,
+)
+from evolvmem.project_resolver import ProjectResolver, _CANONICAL_KEY_PATTERN
+from evolvmem.project_store import ProjectStore
 from evolvmem.semantic_merge import find_semantic_match
 from evolvmem.session_archive import SessionArchiver, SessionPurgeReport
 from evolvmem.vector_index import VectorIndex
+from evolvmem.workspace_identity import (
+    WorkspaceIdentityError,
+    WorkspaceIdentityProvider,
+)
 
+
+logger = logging.getLogger(__name__)
 
 _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -124,6 +138,13 @@ _KIMI_EXTRACTION_VERSION = "kimi-extraction-v1"
 _ISOLATED_CONTENT_TYPES = frozenset(
     {ContextContentType.EXPERIENCE, ContextContentType.PLAYBOOK}
 )
+
+# Typed-write resolution: the fixed generator stamp recorded in resolution
+# evidence, and the directory/workspace basenames the resolver never trusts
+# as project candidates (the coarse-cwd artifacts the alias dicts map away
+# from — user home, generic source roots).
+_TYPED_WRITE_SOURCE_VERSION = "typed-write-v1"
+_KNOWN_GENERIC_WORKSPACE_NAMES = ("home", "workspace", "project", "src", "jiangli")
 
 
 def _extraction_content_type(item: LegacyExtractionItem) -> ContextContentType:
@@ -197,6 +218,8 @@ class ContextService:
         self._lifecycle: ContextLifecycle | None = None
         self._archiver: SessionArchiver | None = None
         self._generator: PlaybookGenerator | None = None
+        self._resolver: ProjectResolver | None = None
+        self._identity_provider: WorkspaceIdentityProvider | None = None
         self._cutover_lock = CutoverLock(config)
         self._mode: ContextMode | None = None
         self._adapter = ""
@@ -251,6 +274,8 @@ class ContextService:
             self._lifecycle = None
             self._archiver = None
             self._generator = None
+            self._resolver = None
+            self._identity_provider = None
             self._mode = None
             self._adapter = ""
             self._ready = False
@@ -601,6 +626,144 @@ class ContextService:
                 if legacy_ids:
                     self.store.legacy_projection().update_access(legacy_ids)
 
+    # ---- write-time project resolution ----
+
+    def _project_store(self) -> ProjectStore:
+        """Fresh project persistence over the store's borrowed connection.
+
+        Construction is cheap and the instance is never cached: it borrows
+        the current connection and the owner's transaction boundary, so a
+        store reconnect can never leave a stale handle behind.
+        """
+        return ProjectStore(
+            self.store._connection(),
+            self.store._require_transaction,
+            generic_names=self._generic_workspace_names(),
+        )
+
+    def _project_resolver(self) -> ProjectResolver:
+        """Service-shared stateless resolver, default policy."""
+        if self._resolver is None:
+            self._resolver = ProjectResolver()
+        return self._resolver
+
+    def _workspace_identity(self) -> WorkspaceIdentityProvider:
+        """Service-shared provider keyed by the data dir's workspace.key."""
+        if self._identity_provider is None:
+            self._identity_provider = WorkspaceIdentityProvider(
+                key_path=self.config.data_dir / "workspace.key"
+            )
+        return self._identity_provider
+
+    def _generic_workspace_names(self) -> tuple[str, ...]:
+        """Directory/workspace basenames the resolver must never trust.
+
+        The keys of both configured alias dicts are exactly the coarse
+        basenames those aliases map away from; their values are canonical
+        project names and stay trustable. The known-generic list follows.
+        """
+        names: list[str] = []
+        for aliases in (
+            self.config.context_project_aliases,
+            self.config.inject_project_aliases,
+        ):
+            if isinstance(aliases, dict):
+                names.extend(str(name) for name in aliases)
+        names.extend(_KNOWN_GENERIC_WORKSPACE_NAMES)
+        return tuple(dict.fromkeys(names))
+
+    def _resolve_write_project(
+        self,
+        *,
+        key: str,
+        tags: tuple[str, ...],
+        attribute: str,
+        content_type: str,
+        scope: str,
+        source_session: str,
+        workspace_path: str,
+        project_hint: str,
+        archive_project: str = "",
+        archive_source_version: str = "",
+    ) -> ProjectResolutionDecision:
+        """Resolve one typed write's project from structured signals only.
+
+        The transient workspace path is fingerprinted and discarded in place;
+        a missing or unsafe identity key fails closed to an empty fingerprint
+        and never blocks the write. A canonical ``project:{name}:...`` key on
+        a typed write is the adapter explicitly providing the project, so it
+        is presented to the resolver as the typed hint when the request
+        carries no explicit one — alias normalization, generic-name
+        filtering, binding gating, and the conflict rules apply unchanged.
+        ``attribute`` pins the stored-row call shape; the resolver consumes
+        only the derived content_type/scope.
+        """
+        fingerprint = ""
+        if workspace_path:
+            try:
+                fingerprint = self._workspace_identity().resolve(
+                    workspace_path
+                ).fingerprint
+            except WorkspaceIdentityError as exc:
+                # fail-closed: 身份不可用只丢掉绑定信号，绝不阻断写入
+                logger.debug("workspace identity unavailable: %s", exc.code)
+        request = ProjectResolutionRequest(
+            content_type=content_type,
+            scope=scope,
+            key=key,
+            tags=tags,
+            source_session=source_session,
+            source_version=_TYPED_WRITE_SOURCE_VERSION,
+            archive_project=archive_project,
+            archive_source_version=archive_source_version,
+            project_hint=project_hint or self._canonical_key_hint(key),
+            workspace_fingerprint=fingerprint,
+        )
+        return self._project_resolver().resolve(
+            request, self._project_store().snapshot()
+        )
+
+    @staticmethod
+    def _canonical_key_hint(key: str) -> str:
+        """The project a canonical typed key explicitly declares, if any."""
+        match = _CANONICAL_KEY_PATTERN.match(key.strip().casefold())
+        return match.group(1) if match is not None else ""
+
+    def _resolve_row_write_project(
+        self, row: dict, *, workspace_path: str, project_hint: str
+    ) -> ProjectResolutionDecision:
+        """Decision for one just-written projection row plus transient fields."""
+        content_type = LegacyMemoryMigrator.content_type_for(row)
+        return self._resolve_write_project(
+            key=LegacyMemoryMigrator.source_text(row.get("key")),
+            tags=LegacyMemoryMigrator.tags_for(row.get("tags")),
+            attribute=LegacyMemoryMigrator.source_text(row.get("attribute")),
+            content_type=content_type.value,
+            scope=LegacyMemoryMigrator.scope_for(content_type).value,
+            source_session=LegacyMemoryMigrator.source_text(
+                row.get("source_session")
+            ),
+            workspace_path=workspace_path,
+            project_hint=project_hint,
+        )
+
+    def _write_row_project(self, row: dict) -> str:
+        """Row-signal-only project for migrator-built drafts (lazy migration).
+
+        Transient request fields never reach stored rows, so rows migrated
+        inside a write transaction resolve from their stored key/tag signals
+        alone; bulk historical backfill stays with the maintenance path.
+        """
+        return self._resolve_row_write_project(
+            row, workspace_path="", project_hint=""
+        ).resolved_project
+
+    def _record_write_resolution(
+        self, item_id: int, decision: ProjectResolutionDecision
+    ) -> None:
+        """Persist the write's resolution row inside the caller's transaction."""
+        self._project_store().record_resolution(item_id, decision)
+
     # ---- candidate lifecycle and session archives ----
 
     def confirm(self, item_id: int) -> EvidenceReport:
@@ -784,12 +947,20 @@ class ContextService:
         )
         row = repository.get_by_id(legacy_id)
         # The Context draft derives from the just-written projection
-        # row so projection inheritance and Core metadata cannot diverge.
+        # row so projection inheritance and Core metadata cannot diverge;
+        # the project decision resolves from the same row plus the
+        # request's transient signals before the draft is built.
+        decision = self._resolve_row_write_project(
+            row,
+            workspace_path=request.workspace_path,
+            project_hint=request.project_hint,
+        )
         draft = self._legacy_migrator().draft_from_projection_row(
-            row, confidence=request.confidence
+            row, confidence=request.confidence, decision=decision
         )
         item = self.store._create_legacy_item(draft)
         self.store.record_legacy_mapping(legacy_id, item.id)
+        self._record_write_resolution(item.id, decision)
         new_l0 = item.layers.l0 if item.layers is not None else ""
         return (
             LegacyMutationResult(
@@ -857,8 +1028,13 @@ class ContextService:
             )
         )
         new_row = repository.get_by_id(new_id)
+        decision = self._resolve_row_write_project(
+            new_row,
+            workspace_path=request.workspace_path,
+            project_hint=request.project_hint,
+        )
         draft = self._legacy_migrator().draft_from_projection_row(
-            new_row, confidence=request.confidence
+            new_row, confidence=request.confidence, decision=decision
         )
         old_context_id = None
         if old_legacy_id is None:
@@ -873,6 +1049,7 @@ class ContextService:
                 )
             item = self.store.supersede_item(old_context_id, draft)
         self.store.record_legacy_mapping(new_id, item.id)
+        self._record_write_resolution(item.id, decision)
         new_l0 = item.layers.l0 if item.layers is not None else ""
         return (
             LegacyMutationResult(
@@ -1242,6 +1419,8 @@ class ContextService:
                     tier=item.tier,
                     expires_at=item.expires_at,
                     confidence=item.confidence,
+                    workspace_path=item.workspace_path or request.workspace_path,
+                    project_hint=item.project_hint or request.project_hint,
                 )
             )
 
@@ -1265,6 +1444,8 @@ class ContextService:
                     tier=item.tier if tier is None else tier,
                     expires_at=item.expires_at,
                     confidence=item.confidence,
+                    workspace_path=item.workspace_path or request.workspace_path,
+                    project_hint=item.project_hint or request.project_hint,
                 )
             )
 
@@ -1701,7 +1882,13 @@ class ContextService:
 
     def _legacy_migrator(self) -> LegacyMemoryMigrator:
         if self._migrator is None:
-            self._migrator = LegacyMemoryMigrator(self.store, self.config)
+            # The service write path passes a row-signal decider so rows
+            # lazily migrated inside write transactions resolve their stored
+            # key/tag signals; batch migration constructs its own migrator
+            # without one and stays under the maintenance path's control.
+            self._migrator = LegacyMemoryMigrator(
+                self.store, self.config, project_decider=self._write_row_project
+            )
         return self._migrator
 
     def _context_lifecycle(self) -> ContextLifecycle:

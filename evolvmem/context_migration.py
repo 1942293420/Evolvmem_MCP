@@ -1,5 +1,6 @@
 """Atomic, idempotent migration from legacy memories into Context Core."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import math
 import re
@@ -15,6 +16,7 @@ from evolvmem.context_models import (
     ContextTier,
 )
 from evolvmem.context_store import ContextStore
+from evolvmem.project_models import ProjectResolutionDecision
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,9 +29,16 @@ class LegacyMigrationReport:
 
 
 class LegacyMemoryMigrator:
-    def __init__(self, store: ContextStore, config: Config):
+    def __init__(
+        self,
+        store: ContextStore,
+        config: Config,
+        *,
+        project_decider: Callable[[dict], str] | None = None,
+    ):
         self.store = store
         self.config = config
+        self._project_decider = project_decider
 
     def migrate(self) -> LegacyMigrationReport:
         if not self.store.legacy_memory_table_exists():
@@ -162,12 +171,16 @@ class LegacyMemoryMigrator:
         *,
         status: ContextStatus | None = None,
         confidence: float | None = None,
+        decision: ProjectResolutionDecision | None = None,
     ) -> ContextItemDraft:
         """Derive the Context draft for one legacy projection row.
 
         Production writes pass the just-written row so Core metadata inherits
         exactly what the projection stored; the batch migrator passes explicit
         status/confidence for its duplicate-active and durability policy.
+        ``decision`` is the typed-write resolution result for the row; without
+        it the project falls back to the migrator's ``project_decider`` (if
+        any) and otherwise stays empty.
         """
         legacy_id = self.legacy_id_for(row["id"])
         resolved_status = (
@@ -181,7 +194,7 @@ class LegacyMemoryMigrator:
             identity_key=self.identity_key_for(row.get("key"), legacy_id),
             content_type=content_type,
             layers=self.layers_for(original_l2, content_type),
-            project=self.project_for(row),
+            project=self.project_for(row, decision=decision),
             scope=self.scope_for(content_type),
             status=resolved_status,
             tier=tier,
@@ -281,9 +294,21 @@ class LegacyMemoryMigrator:
             return ContextScope.GLOBAL
         return ContextScope.PROJECT
 
-    @staticmethod
-    def project_for(row: dict) -> str:
-        """Legacy rows carry no project; the projection stays project-free."""
+    def project_for(
+        self, row: dict, *, decision: ProjectResolutionDecision | None = None
+    ) -> str:
+        """Project for one row: explicit decision > decider > project-free.
+
+        An explicit typed-write ``decision`` wins (its ``resolved_project`` is
+        empty for conflict/unresolved/global, keeping the row project-free).
+        Without one, the optional ``project_decider`` is consulted; batch
+        migration constructs no decider, so historical rows stay project-free
+        until the maintenance backfill resolves them explicitly.
+        """
+        if decision is not None:
+            return decision.resolved_project
+        if self._project_decider is not None:
+            return self._project_decider(row)
         return ""
 
     @staticmethod
