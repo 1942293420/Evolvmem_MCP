@@ -100,7 +100,9 @@ _CONTEXT_ERROR_MESSAGES = {
     "invalid_layer": "the requested layer is unavailable for the exact id",
     "item_not_found": "no context item with the exact given id",
     "invalid_item_state": "the context item state does not allow this operation",
-    "invalid_source": "the outcome source is invalid for the context item",
+    # invalid_source 服务两个域：context_record_outcome 的 outcome source
+    # 与 continuity_checkpoint 的 source_context_ids；文案保持域中立
+    "invalid_source": "the source reference is invalid for this operation",
     "sensitive_note": "the note was rejected by the sensitive-content policy",
     "identity_conflict": "an active item already owns this identity",
     "context_not_enabled": "context reads are disabled in the current mode",
@@ -116,7 +118,6 @@ _CONTEXT_ERROR_MESSAGES = {
     "workspace_key_missing": "the workspace identity is unavailable",
     "workstream_not_found": "no workstream with the exact given id in this project/workspace",
     "focus_conflict": "the focus pointer revision does not match; resume again before writing",
-    "invalid_source": "a source context id is missing, deleted, or outside the project",
     "invalid_parent": "the parent workstream is invalid (missing, terminal, cross-project, or cyclic)",
     "content_rejected": "the checkpoint content was rejected by the content policy",
     "project_unresolved": "no active project binding resolves for this workspace and hint",
