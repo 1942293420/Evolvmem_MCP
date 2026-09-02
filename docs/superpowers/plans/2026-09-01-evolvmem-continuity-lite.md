@@ -37,7 +37,7 @@
 - Consumes: 现有幂等 schema 模式、唯一 active identity 索引 `idx_context_items_one_active_identity`（context_store.py:154-157）。
 - Produces: 九张表（下方 SQL 逐字）；`ContextContentType.PROJECT_SUMMARY = "project_summary"`、`ContextContentType.WORKSTREAM_CHECKPOINT = "workstream_checkpoint"`（与 `project_resolver.py:39` 既有 `_INTERNAL_CONTENT_TYPES` 字符串一致）；WORKSTREAM_CHECKPOINT 不在 `content_types` 显式指定时被检索排除（仿 REFERENCE 模式）。
 
-- [ ] **Step 1: 写失败的 schema/类型测试**
+- [x] **Step 1: 写失败的 schema/类型测试**
 
 新建 `tests/test_continuity_schema.py`：
 
@@ -114,12 +114,12 @@ def test_checkpoint_excluded_from_default_retrieval(store, make_draft, test_conf
 
 fixture 复用：`store`/`make_draft` 仿照 `tests/test_context_service.py:209-253` 在本文件内定义（`store` 直接用 `ContextStore(test_config)` context manager 即可）。注意 `ContextRetriever.__init__(config, store, vector_index, embedding_engine)`（context_retriever.py:89-102），vector/embedding 传 None 时 FTS 路径仍工作——若构造函数不允许 None，仿照 `tests/test_context_retriever.py:104-123` 的既有 fixture 写法。
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_continuity_schema.py`
 Expected: FAIL（表不存在 / 枚举无成员）。
 
-- [ ] **Step 3: 实现 schema 与内容类型**
+- [x] **Step 3: 实现 schema 与内容类型**
 
 `context_models.py` 枚举追加（保持字母序插入位置合理）：
 
@@ -238,12 +238,12 @@ CREATE TABLE IF NOT EXISTS continuity_events(
 
 `_APPLICABLE_GLOBAL_TYPES` 不动（内部类型都是 project scope）。检查 `context_service.py:124-126` `_ISOLATED_CONTENT_TYPES` 与 `context_migration.py` 的 `content_type_for/scope_for`：内部类型不从 legacy/extraction 产生，不需要映射条目；若存在对枚举穷举的校验（如 `_extraction_content_type`）导致新成员报错，最小化补齐并说明。
 
-- [ ] **Step 4: 跑测试确认绿 + 全量回归**
+- [x] **Step 4: 跑测试确认绿 + 全量回归**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_continuity_schema.py && PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q`
 Expected: 新测试 PASS；全量零失败。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add evolvmem/context_models.py evolvmem/context_store.py evolvmem/context_retriever.py tests/test_continuity_schema.py
@@ -276,7 +276,7 @@ git commit -m "feat: add project and continuity schema"
   - `seed_from_config(aliases: dict[str, str]) -> None`（缺失才插入，幂等）
   - `ProjectResolutionRow` frozen dataclass（字段与表列同名）
 
-- [ ] **Step 1: 写失败测试**（覆盖：注册幂等；alias 全库唯一冲突报错；binding candidate→active；同一 fingerprint 第二个 active default 被唯一索引拒绝；record_resolution 三态；accept 同事务改 item.project 且 revision CAS 失败抛 `ProjectStoreError("revision_conflict")`；reject 保持 project 为空；seed_from_config 二次运行零变化；snapshot 的 revision 为各表最大 revision 和；所有写方法在无活跃事务时抛错）
+- [x] **Step 1: 写失败测试**（覆盖：注册幂等；alias 全库唯一冲突报错；binding candidate→active；同一 fingerprint 第二个 active default 被唯一索引拒绝；record_resolution 三态；accept 同事务改 item.project 且 revision CAS 失败抛 `ProjectStoreError("revision_conflict")`；reject 保持 project 为空；seed_from_config 二次运行零变化；snapshot 的 revision 为各表最大 revision 和；所有写方法在无活跃事务时抛错）
 
 ```python
 import pytest
@@ -296,12 +296,12 @@ def test_second_active_default_binding_rejected(store):
 
 注意唯一索引拒绝会抛 `sqlite3.IntegrityError`——ProjectStore 捕获后转为 `ProjectStoreError("default_binding_conflict")`，且不得吞掉事务（让调用方决定是否回滚）。
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_project_store.py`
 Expected: FAIL（ModuleNotFoundError: evolvmem.project_store）。
 
-- [ ] **Step 3: 实现 ProjectStore**
+- [x] **Step 3: 实现 ProjectStore**
 
 - 所有写方法首行 `self._require_transaction("project_store.<op>")`。
 - revision CAS 统一为 `UPDATE ... SET ..., revision=revision+1, updated_at=? WHERE ... AND revision=?` + rowcount==1 检查，失败抛 `ProjectStoreError("revision_conflict")`。
@@ -310,12 +310,12 @@ Expected: FAIL（ModuleNotFoundError: evolvmem.project_store）。
 - 时间统一 `_now_iso()` 风格的 UTC ISO 字符串（沿用 context_store 的既有写法）。
 - `ProjectStoreError(Exception)` 带 `.code` 属性；codes：`revision_conflict`、`default_binding_conflict`、`project_not_found`、`binding_not_found`、`resolution_not_found`、`alias_conflict`。
 
-- [ ] **Step 4: 跑测试确认绿 + 全量回归**
+- [x] **Step 4: 跑测试确认绿 + 全量回归**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_project_store.py && PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q`
 Expected: PASS；全量零失败。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add evolvmem/project_store.py tests/test_project_store.py
@@ -340,7 +340,7 @@ git commit -m "feat: persist project registry and resolutions"
   - `ContextService._record_write_resolution(item_id: int, decision: ProjectResolutionDecision) -> None`：在同一事务内调 `ProjectStore.record_resolution`。
   - `LegacyMemoryMigrator.project_for(row)` 不再是唯一来源：`_add_dual_in_transaction` 等写路径在构造 draft 前用上述帮助函数得到 decision，resolved 时把 `decision.resolved_project` 写入 draft.project，并在 item 创建后落 resolution 行；conflict/unresolved 保持 `project=""` 且落 pending 行。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 from evolvmem.legacy_models import LegacyAddRequest
@@ -389,12 +389,12 @@ def test_global_attribute_stays_global_without_project(service, store):
 
 service fixture 参照 `tests/test_context_service.py:215-220`（SHADOW 模式初始化）。注意 `context_migration.py:267-270` 把 `attribute=="fact"` 且 key 含 `:progress:log:` 的映射为 SESSION_SUMMARY；测试用例避开该模式除非测它。resolver 的信号来自 key/tag 等结构化字段，与 registry 交互——先确认测试里 alias/key 形态与 `project_resolver.py:241-284` 的模式一致。
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_project_write_wiring.py`
 Expected: FAIL（project 仍为空 / 无 resolution 行）。
 
-- [ ] **Step 3: 实现接线**
+- [x] **Step 3: 实现接线**
 
 - `legacy_models.py`：给四个请求 dataclass 加 `workspace_path: str = ""`、`project_hint: str = ""`；frozen dataclass 直接加字段即可（带默认值不破坏既有调用）。
 - `context_service.py`：
@@ -404,12 +404,12 @@ Expected: FAIL（project 仍为空 / 无 resolution 行）。
   - `_normalize_project`（575-583）保持不动（检索路径的 project 归一化与本任务正交）。
 - `WorkspaceIdentityProvider.resolve` 抛 `WorkspaceIdentityError` 时按 fingerprint="" 继续（记录 debug 日志，无路径）。
 
-- [ ] **Step 4: 跑测试确认绿 + 全量回归**
+- [x] **Step 4: 跑测试确认绿 + 全量回归**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_project_write_wiring.py && PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q`
 Expected: PASS；全量零失败。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add evolvmem/legacy_models.py evolvmem/context_service.py evolvmem/context_migration.py tests/test_project_write_wiring.py
@@ -433,7 +433,7 @@ git commit -m "feat: resolve project on typed writes"
   - `resolutions list-pending [--limit N]|accept <item_id> <project> --expected-revision N|reject <item_id> --expected-revision N`
   - 另提供 `fingerprint <workspace_path>` 辅助命令：用 WorkspaceIdentityProvider 打印当前目录 fingerprint（key 缺失时退出码 2 并提示先 `bootstrap`）；`bootstrap-key` 显式创建 key（调用 `bootstrap_key()`）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 from evolvmem.project_cli import main
@@ -448,21 +448,21 @@ def test_register_bind_accept_flow(test_config, store, capsys):
 
 CLI 统一 `--data-dir` 顶层参数构造 `Config(data_dir=Path(...))`；所有读命令输出 JSON（`--json` 不必设，直接 JSON 落 stdout，对齐 cutover_cli 风格则按其既有输出习惯，取其一并在模块 docstring 说明）。错误（CAS 冲突、未找到）输出 `{"error": code}` 到 stderr，退出码 2。
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_project_cli.py`
 Expected: FAIL（ModuleNotFoundError）。
 
-- [ ] **Step 3: 实现 project_cli**
+- [x] **Step 3: 实现 project_cli**
 
 仿 `cutover_cli.py`：`_build_parser()`（顶层 `--data-dir` 默认 `Config().data_dir`；subparsers 两级 group/action）、`main(argv=None) -> int`、module-level `_cmd_*` 函数。每个写命令在 `store.transaction()` 内调 ProjectStore；`ContextStore(config)` + `initialize()` 打开。禁止打印任何记忆正文——resolutions list 只输出 item_id/state/projects/method/confidence/revision。
 
-- [ ] **Step 4: 跑测试确认绿 + 全量回归**
+- [x] **Step 4: 跑测试确认绿 + 全量回归**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_project_cli.py && PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q`
 Expected: PASS；全量零失败。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add evolvmem/project_cli.py tests/test_project_cli.py
@@ -487,7 +487,7 @@ git commit -m "feat: add project registry CLI"
   - `ProjectRollupReport(project, status, reason, context_id, covered_through)` frozen dataclass；status ∈ `ready|skipped|failed|vector_dirty`，reason ∈ `""|llm_unavailable|llm_no_response|invalid_json|sensitive_content|low_information|layer_too_long|no_sources|unchanged`
   - `ProjectRollupGenerator.covered_source_ids(project: str) -> frozenset[int]`：当前 ready 摘要的 relational source closure（Task 6 归档前置依赖它）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_same_source_set_skips_llm(service, store, make_draft):
@@ -511,12 +511,12 @@ def test_failed_generation_keeps_old_summary(...):
 
 还要覆盖：唯一 active identity（两次 ready 后旧版 superseded）；无 LLM → `llm_unavailable` 不写任何行；source closure 写入 `context_sources(source_kind='context_reference', source_ref=str(id))`；L0/L1/L2 过预算 → `layer_too_long`。
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_project_rollup.py`
 Expected: FAIL（ModuleNotFoundError）。
 
-- [ ] **Step 3: 实现生成器**
+- [x] **Step 3: 实现生成器**
 
 - 来源集：project 的 active SESSION_SUMMARY（按 created_at 升序）+ 自上次 `covered_through` 之后的 active 原子项（DECISION/FACT/EXPERIENCE）；`source_set_hash = sha256(",".join(sorted(map(str, ids))) + VERSION)`；与 rollup 行一致且 status=ready → skipped/unchanged，不调 LLM。
 - prompt 只含各条目 L1 文本与旧摘要 L1；LLM 输出 JSON `{l0,l1,l2}`；验证：JSON 可解析、三层非空、`validate_layers` 过、敏感信息复用 playbook 的检测（context_playbook.py:317-348 的 gate 函数若可复用则抽出共用，否则仿写并保持 reason 集合一致）。
@@ -525,12 +525,12 @@ Expected: FAIL（ModuleNotFoundError）。
 - service 触发：`persist_legacy_extraction` 成功且 summary item 属于已解析 project 时，try/except 调 `ProjectRollupGenerator(...).rollup_project(project)`（llm 从调用方注入链拿不到则跳过——`run_consolidation` 同款约定），异常只记日志不影响主流程。
 - CLI：`rollup run [--project P]` 打印每项目 JSON 行（project/status/reason/context_id）。
 
-- [ ] **Step 4: 跑测试确认绿 + 全量回归**
+- [x] **Step 4: 跑测试确认绿 + 全量回归**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_project_rollup.py tests/test_project_cli.py && PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q`
 Expected: PASS；全量零失败。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add evolvmem/project_rollup.py evolvmem/context_service.py evolvmem/project_cli.py tests/test_project_rollup.py tests/test_project_cli.py
@@ -557,7 +557,7 @@ git commit -m "feat: generate rolling project summaries"
     3. 新写入的 SESSION_SUMMARY 在写入事务内插 `session_archive_holds(archive_id, source_context_id, 'rollup_pending')`（仅当本次写入带 source_archive_id）。
   - `SummaryRetentionReport(archived_ids: tuple[int,...], held_ids: tuple[int,...], pending_projects: tuple[str,...])`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_expired_uncovered_summary_is_not_archived(...):
@@ -570,12 +570,12 @@ def test_archiver_purge_skips_held_archive(...):
     ...  # archive 到期但有 hold → SessionArchiver.sweep_expired 不 purge；释放 hold 后再 sweep 才 purge
 ```
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_summary_retention.py`
 Expected: FAIL（模块不存在/行为缺失）。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 - `kimi_hooks.py` summary `CandidateMemory` 加 `expires_at`（`summary_time + context_session_summary_ttl_days`，ISO 日期格式沿用 `legacy_projection` 的 date 填充约定）；`dsh_bridge.py` 同样。
 - `context_service.persist_legacy_extraction`：summary 写入成功且 `source_archive_id` 非空时，同事务插 hold 行。
@@ -583,12 +583,12 @@ Expected: FAIL（模块不存在/行为缺失）。
 - `SummaryRetention.sweep` 由 `hooks._maybe_sweep_archives`（hooks.py:276-292）在 archive sweep 后顺带调用，fail-open。
 - Config 两个新字段必须进 `save()` dict 和 `_validate_context_config()`（正整数校验）。
 
-- [ ] **Step 4: 跑测试确认绿 + 全量回归**
+- [x] **Step 4: 跑测试确认绿 + 全量回归**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_summary_retention.py && PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q`
 Expected: PASS；全量零失败。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add evolvmem/config.py evolvmem/kimi_hooks.py evolvmem/dsh_bridge.py evolvmem/session_archive.py evolvmem/summary_retention.py evolvmem/context_service.py tests/test_summary_retention.py
@@ -631,7 +631,7 @@ git commit -m "feat: gate session log retention on rollup coverage"
 - resume 短路顺序：解析 project/binding（无解→`no_continuation` 并带 reason）→ 无 focus 分支（单一 unfinished→`needs_focus_confirmation`；多个→`ambiguous` 只带 L0 候选；零→`no_continuation`）→ 有 focus：校验 workstream 存在/同 project/非终态（否则 `dangling_focus`）→ staleness → `ok` 返回 checkpoint dict（L0/L1 + L2 的权威字段，不返回 L2 原文）。
 - 事件：每次 mutation 同事务写 `continuity_events`（event_type=action 或错误码）。
 
-- [ ] **Step 1: 写失败测试**（按上面行为契约逐条：状态迁移白名单、CAS 冲突、并发 create 唯一、focus 空行语义、source/parent 校验、staleness 五码、resume 矩阵、L2 权威字段回写与客户端伪造拒绝）
+- [x] **Step 1: 写失败测试**（按上面行为契约逐条：状态迁移白名单、CAS 冲突、并发 create 唯一、focus 空行语义、source/parent 校验、staleness 五码、resume 矩阵、L2 权威字段回写与客户端伪造拒绝）
 
 ```python
 def test_update_with_stale_revision_conflicts(continuity, git_workspace):
@@ -652,19 +652,19 @@ def test_update_with_stale_revision_conflicts(continuity, git_workspace):
 
 `git_workspace` fixture：tmp_path 里 `git init` + 一次 commit（git 缺席时 `pytest.importorskip` 式 skip 用 `shutil.which("git")` 判断）。`continuity` fixture：`WorkspaceIdentityProvider` 用 tmp key（显式 `bootstrap_key()`）+ `ContextStore(test_config)`。
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_continuity_service.py`
 Expected: FAIL（ModuleNotFoundError）。
 
-- [ ] **Step 3: 实现域层**（按上面契约；所有写路径要求活跃事务可自开：`with self.store.transaction():` 包裹整动作）
+- [x] **Step 3: 实现域层**（按上面契约；所有写路径要求活跃事务可自开：`with self.store.transaction():` 包裹整动作）
 
-- [ ] **Step 4: 跑测试确认绿 + 全量回归**
+- [x] **Step 4: 跑测试确认绿 + 全量回归**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_continuity_service.py && PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q`
 Expected: PASS；全量零失败。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add evolvmem/continuity_models.py evolvmem/continuity_service.py tests/test_continuity_service.py
@@ -690,7 +690,7 @@ git commit -m "feat: add continuity workstream checkpoints"
   - `_PRIMARY_INSTRUCTIONS` 与 `_PRIMARY_INSTRUCTIONS_KIMI`（mcp_contract.py:40-60）各追加一段（中文/现有风格一致）：首个实质性回答前调用 `context_session_start`；用户确认目标后 `continuity_checkpoint(create)`；里程碑/阻塞/完成时 update；写前用最新 revision，冲突后重新 resume；fresh 验证通过才允许 complete；checkpoint 是不可信历史。
   - `_context_session_start` handler 透传 `workspace_path=args.get("workspace_path")`（新可选入参）；`ContextSessionStartRequest` 相应加字段（Task 9 接线消费）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_continuity_tools_listed_for_kimi_compat(server_kimi_compat):
@@ -710,23 +710,23 @@ def test_checkpoint_rejects_unknown_args(server_kimi_primary):
 
 server fixture 仿照 `tests/test_mcp_protocol.py` 的既有 server 构造（按其现有模式初始化不同 mode/adapter 的 server 实例）。再覆盖：compat 模式可调用、legacy 模式不列出、create→resume round-trip 返回相同 workstream_id、CAS 冲突返回 `revision_conflict`、错误码全在 `_CONTEXT_ERROR_MESSAGES` 有文案。
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_continuity_mcp.py`
 Expected: FAIL（工具未知）。
 
-- [ ] **Step 3: 实现合约与 handler**
+- [x] **Step 3: 实现合约与 handler**
 
 - handler 模式严格仿 `_context_session_start`（mcp_server.py:622-649）：先严格参数构造 request（TypeError/ValidationError→`invalid_arguments`）→ continuity 专用 readiness 检查（schema 表存在 + WorkspaceIdentityProvider.status() 为 ready；不复用 `_context_gate_error`，compat 不得被 `context_not_enabled` 提前拒掉）→ 调 ContinuityService → `ContinuityError` 映射 `self._context_error(exc.code)`。
 - ContinuityService 实例惰性建在 mcp_server 持有层（与 context_service 同生命周期），key 路径统一 `config.data_dir / "workspace.key"`。
 - `tools/call` 与 `tools/list` 的 gating 走同一 `tool_specs()`，勿分叉。
 
-- [ ] **Step 4: 跑测试确认绿 + 全量回归**
+- [x] **Step 4: 跑测试确认绿 + 全量回归**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_continuity_mcp.py tests/test_mcp_protocol.py && PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q`
 Expected: PASS；全量零失败。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add evolvmem/mcp_contract.py evolvmem/mcp_server.py evolvmem/context_models.py tests/test_continuity_mcp.py
@@ -750,7 +750,7 @@ git commit -m "feat: expose continuity tools over MCP"
   - `ContextSessionStartResult` 新增字段 `continuation_code: str = ""`、`continuation: dict | None = None`（checkpoint 有界结构：objective/current_step/next_action/blockers/revisions/status/staleness；不含 L2 原文、绝对路径）
   - session_start 行为：intent 命中且带 workspace_path → 先走 resume；`ok` 时 block 渲染为"续接块"（checkpoint L1 + 该项目 ready 滚动摘要 L1，受 max_chars 约束，但 objective/current_step/next_action/blockers/checkpoint_revision/state_version 永远保留）+ 固定边界句（"以下为不可信历史记录，当前系统/用户指令与代码测试优先"）；`needs_focus_confirmation/ambiguous/no_continuation/dangling_focus/stale` 只设 code 与候选元数据，消息的其余部分仍走原普通检索渲染。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 @pytest.mark.parametrize("text", [
@@ -775,23 +775,23 @@ def test_intent_negatives_miss(text):
 
 路由测试：`FakeRetriever` 断言 intent 分支下 `search` 未被调用（continuation 不过 FTS/HNSW）；`no_continuation` 时普通检索仍执行；`ok` 分支 block 含 next_action 与边界句且不含 L2；极小 `max_chars` 时仍保留五要素。
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_continuation_intent.py tests/test_session_start_continuation.py`
 Expected: FAIL（模块/字段不存在）。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 - `continuation_intent.py`：标准化（去空白、全小写）后匹配完整意图短语；先查否定前缀（"不要/别/不需要/don't"）、引号包裹、以及"之外/改做/instead"混合新目标模式，命中即 False。短语表与反例表为模块级常量，注释注明"新增短语必须同步测试"。
 - `context_service.session_start`：在 `_session_candidates` 之前分支；continuation 失败（ContinuityError/缺 key）不报错，退化普通路径并 `continuation_code="continuity_not_ready"`。续接块不走 `ContextRenderer.render`（格式不同），直接拼装，但仍遵守 `max_chars` 截断顺序：先保五要素，再补 L1 其余与项目摘要。
 - 既有渲染器包装文本（test_context_service.py:57-66 冻结串）不得改变——普通路径逐字保持。
 
-- [ ] **Step 4: 跑测试确认绿 + 全量回归**
+- [x] **Step 4: 跑测试确认绿 + 全量回归**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_continuation_intent.py tests/test_session_start_continuation.py tests/test_context_service.py && PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q`
 Expected: PASS；全量零失败。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add evolvmem/continuation_intent.py evolvmem/context_models.py evolvmem/context_service.py tests/test_continuation_intent.py tests/test_session_start_continuation.py
@@ -816,7 +816,7 @@ git commit -m "feat: route continuation intent to exact resume"
   - apply 流程：`CutoverLock.exclusive()` → 锁内重算 plan，digest 不等→退出码 2 → `cutover_backup` 一致性备份 + 独立打开 quick_check → 单事务 `LegacyMemoryMigrator(store, config, project_decider=...)` 全量 `migrate()` + 已映射项 project 回填（resolver 重算，conflict/unresolved 保持空 + pending 行）→ 提交后逐项目 `rollup_project` → `SummaryRetention.sweep` → 向量重建。任一步失败：打印备份文件名（不含目录绝对路径以外信息）与稳定 error code，退出码 1。
   - verify 输出不变量逐项 pass/fail：mapping lag=0；每 mapped item 恰有 L0/L1/L2；resolved active 项 project 非空；conflict/unresolved 计数与最近 plan 一致；每 resolved 项目恰一条 active project_summary；向量文档数 = active L0 数；二次 plan digest 不变。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_plan_is_read_only_and_deterministic(legacy_db_with_rows):
@@ -832,19 +832,19 @@ def test_apply_migrates_and_is_idempotent(legacy_db_with_rows):
 
 fixture `legacy_db_with_rows`：用 `MemoryStore(config)` 造 legacy schema + 若干条带 `project:x:...` key、冲突 tag、无信号三类记录（参照 tests/test_legacy_compat.py:209-211 的 boot 方式）。
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_maintenance.py`
 Expected: FAIL（模块不存在）。
 
-- [ ] **Step 3: 实现 maintenance 与 CLI**（CLI 形状仿 cutover_cli；`_scrubbed_environment` 同款包裹）
+- [x] **Step 3: 实现 maintenance 与 CLI**（CLI 形状仿 cutover_cli；`_scrubbed_environment` 同款包裹）
 
-- [ ] **Step 4: 跑测试确认绿 + 全量回归**
+- [x] **Step 4: 跑测试确认绿 + 全量回归**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q tests/test_maintenance.py && PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q`
 Expected: PASS；全量零失败。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add evolvmem/maintenance.py evolvmem/maintenance_cli.py tests/test_maintenance.py
@@ -859,12 +859,12 @@ git commit -m "feat: add maintenance plan apply verify CLI"
 - Modify: `README.md` — 新能力段落（项目归属/滚动摘要/续接工具/maintenance CLI，各一段，含 `python -m` 调用样例）
 - Create（真实库验证通过后才写）: `/home/jiangli/fix-records/records/2026-09-02-evolvmem-continuity-lite.md`
 
-- [ ] **Step 1: 全量质量门**
+- [x] **Step 1: 全量质量门**
 
 Run: `PYTHONPATH=. /home/jiangli/hermes-memory-plugin/.venv/bin/pytest -q && /home/jiangli/hermes-memory-plugin/.venv/bin/ruff check evolvmem tests`（若仓库未配置 ruff 则跳过并在报告说明）
 Expected: 零失败、lint 零错误。
 
-- [ ] **Step 2: 主 checkout 脏 WIP 哈希复核**
+- [x] **Step 2: 主 checkout 脏 WIP 哈希复核**
 
 ```bash
 cd /home/jiangli/hermes-memory-plugin
@@ -875,14 +875,14 @@ sha256sum evolvmem/context_skill.py evolvmem/session_miner.py scripts/mine_skill
 
 Expected: 两个 diff 均退出码 0。
 
-- [ ] **Step 3: README 更新并提交**
+- [x] **Step 3: README 更新并提交**
 
 ```bash
 git add README.md
 git commit -m "docs: document continuity lite capabilities"
 ```
 
-- [ ] **Step 4: 真实库回填（用户显式批准后执行）**
+- [x] **Step 4: 真实库回填（用户显式批准后执行）**
 
 `python -m evolvmem.maintenance_cli plan` 输出给用户审阅 → 批准后备份 + `apply --plan-digest <d> --yes` → `verify` → 把真实计数写进修复记录（格式按 `/home/jiangli/fix-records/README.md`：症状/排查过程/根因/修复内容/验证/遗留事项）。未获批准或未验证通过时，修复记录只写到"代码就绪、真实数据未动"。
 
