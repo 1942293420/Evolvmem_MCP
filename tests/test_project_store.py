@@ -89,6 +89,78 @@ def test_register_project_is_idempotent(store, ps):
     assert row["revision"] == 1
 
 
+def test_register_project_with_display_name(store, ps):
+    """注册时可带中文显示名；重复注册不覆盖已有显示名。"""
+    with store.transaction():
+        ps.register_project("eva", "EVA 客服")
+        ps.register_project("eva", "不该覆盖")
+    row = store._connection().execute(
+        "SELECT display_name, revision FROM context_project_registry "
+        "WHERE project='eva'"
+    ).fetchone()
+    assert row["display_name"] == "EVA 客服"
+    assert row["revision"] == 1
+
+
+def test_set_display_name_cas(store, ps):
+    with store.transaction():
+        ps.register_project("eva")
+        with pytest.raises(ProjectStoreError) as excinfo:
+            ps.set_display_name("eva", "X", expected_revision=99)
+        assert excinfo.value.code == "revision_conflict"
+        with pytest.raises(ProjectStoreError) as excinfo:
+            ps.set_display_name("ghost", "X", expected_revision=1)
+        assert excinfo.value.code == "project_not_found"
+        ps.set_display_name("eva", "EVA 客服", expected_revision=1)
+    row = store._connection().execute(
+        "SELECT display_name, revision FROM context_project_registry "
+        "WHERE project='eva'"
+    ).fetchone()
+    assert row["display_name"] == "EVA 客服"
+    assert row["revision"] == 2
+    # 空串清除显示名
+    with store.transaction():
+        ps.set_display_name("eva", "", expected_revision=2)
+    row = store._connection().execute(
+        "SELECT display_name FROM context_project_registry WHERE project='eva'"
+    ).fetchone()
+    assert row["display_name"] == ""
+
+
+def test_registry_display_name_column_added_to_old_db(test_config):
+    """老库（注册表无 display_name 列）打开时被幂等补列。"""
+    import sqlite3
+
+    test_config.ensure_dirs()
+    raw = sqlite3.connect(str(test_config.db_path))
+    raw.execute(
+        "CREATE TABLE context_project_registry("
+        "project TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active', "
+        "revision INTEGER NOT NULL DEFAULT 1, "
+        "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    raw.execute(
+        "INSERT INTO context_project_registry VALUES ('eva', 'active', 3, 't', 't')"
+    )
+    raw.commit()
+    raw.close()
+
+    with ContextStore(test_config) as store:
+        cols = {
+            row["name"]
+            for row in store._connection().execute(
+                "PRAGMA table_info(context_project_registry)"
+            )
+        }
+        assert "display_name" in cols
+        row = store._connection().execute(
+            "SELECT display_name, revision FROM context_project_registry "
+            "WHERE project='eva'"
+        ).fetchone()
+        assert row["display_name"] == ""
+        assert row["revision"] == 3  # 既有数据不受影响
+
+
 def test_archive_project_cas_and_snapshot(store, ps):
     with store.transaction():
         ps.register_project("eva")

@@ -562,3 +562,352 @@ def test_http_context_failure_500_bounded_no_partial_state(test_config):
         holder["srv"].server_close()
         t.join(timeout=5)
         outer.close()
+
+
+# ---- 项目归属与审核队列 ----
+
+from evolvmem.project_models import ProjectResolutionDecision  # noqa: E402
+from evolvmem.project_store import ProjectStore  # noqa: E402
+from evolvmem.web_server import (  # noqa: E402
+    api_project_register,
+    api_project_set_display_name,
+    api_projects,
+    api_resolution_accept,
+    api_resolution_reject,
+    api_resolutions,
+    api_resolutions_batch_accept,
+)
+
+_CONFLICT_EVIDENCE = (
+    {"source": "key", "type": "canonical_key", "source_version": "legacy-v1",
+     "normalized_value": "webproj"},
+    {"source": "tags", "type": "category_tag", "source_version": "legacy-v1",
+     "normalized_value": "otherproj"},
+)
+
+
+def _project_store(service):
+    store = service.store
+    return ProjectStore(
+        store._connection(), store._require_transaction, generic_names=()
+    )
+
+
+@pytest.fixture
+def review_backend(backend):
+    """Seeded facade plus a resolution queue in mixed review states.
+
+    COMPAT 模式下 facade.add 已为每条记忆自动记录 unresolved/pending 决议
+    （revision 1）。这里：warm 重录为 conflict（revision → 2，两个证据候选）；
+    cold（已归档）与 extra 被采纳进 webproj；hot 保持 pending。
+    """
+    facade, _, service, ids = backend
+    store = service.store
+    extra = facade.add("proj:fact:extra", "归属审核用例记忆", attribute="fact")
+    ctx = {
+        key: store.resolve_legacy_mapping(legacy_id)
+        for key, legacy_id in {**ids, "extra": extra}.items()
+    }
+    with store.transaction():
+        ps = _project_store(service)
+        ps.register_project("webproj")
+        ps.register_project("otherproj")
+        ps.record_resolution(
+            ctx["warm"],
+            ProjectResolutionDecision.conflict("test-v1", _CONFLICT_EVIDENCE),
+        )
+        ps.accept_resolution(ctx["cold"], "webproj", expected_revision=1)
+        ps.accept_resolution(ctx["extra"], "webproj", expected_revision=1)
+    yield facade, service, ids, ctx, extra
+
+
+def test_projects_registry_counts_and_pending(review_backend):
+    facade, service, _, _, _ = review_backend
+    payload = api_projects(facade, service.store)
+    by_name = {p["project"]: p for p in payload["projects"]}
+    assert by_name["webproj"]["status"] == "active"
+    assert by_name["webproj"]["active_items"] == 1  # 仅 extra；cold 已归档
+    assert by_name["otherproj"]["active_items"] == 0
+    assert payload["pending_review"] == 2
+
+
+def test_stats_attribution_counters(review_backend):
+    facade, service, _, _, _ = review_backend
+    st = api_stats(facade, service.store)
+    assert st["attributed_active"] == 1
+    assert st["unattributed_active"] == 2  # hot、warm 未归属
+    assert st["by_attribution"] == {"webproj": 1}
+    assert st["pending_review"] == 2
+    # 既有字段保持
+    assert st["total_active"] == 3
+
+
+def test_memories_attribution_enrichment_and_filter(review_backend):
+    facade, service, ids, ctx, extra = review_backend
+    rows = api_memories(facade, {}, service.store)
+    by_id = {r["id"]: r for r in rows}
+    assert by_id[extra]["project"] == "webproj"
+    assert by_id[ids["hot"]]["project"] == ""
+    # 行内改派/批量映射所需的决议元数据随行返回
+    assert by_id[extra]["item_id"] == ctx["extra"]
+    assert by_id[extra]["resolution_revision"] == 2  # 采纳后 revision+1
+    assert by_id[ids["hot"]]["item_id"] == ctx["hot"]
+    assert by_id[ids["hot"]]["resolution_revision"] == 1
+
+    rows = api_memories(facade, {"attribution": "webproj"}, service.store)
+    assert [r["id"] for r in rows] == [extra]
+    rows = api_memories(facade, {"attribution": "__none__"}, service.store)
+    assert sorted(r["id"] for r in rows) == sorted([ids["hot"], ids["warm"]])
+
+
+def test_memories_row_drives_reassign(review_backend):
+    """浏览列表行自带的 item_id/revision 可直接驱动改派（同一 CAS 通道）。"""
+    facade, service, ids, ctx, extra = review_backend
+    row = next(r for r in api_memories(facade, {}, service.store)
+               if r["id"] == extra)
+    res = api_resolution_accept(
+        service, row["item_id"],
+        {"project": "otherproj",
+         "expected_revision": row["resolution_revision"]},
+    )
+    assert res["ok"]
+    assert service.store.get_item(ctx["extra"]).project == "otherproj"
+    rows = api_memories(facade, {"attribution": "otherproj"}, service.store)
+    assert [r["id"] for r in rows] == [extra]
+
+
+def test_resolutions_pending_listing_with_preview(review_backend):
+    facade, service, ids, ctx, _ = review_backend
+    rows = api_resolutions(facade, service.store, {})
+    assert [r["item_id"] for r in rows] == sorted([ctx["hot"], ctx["warm"]])
+    hot, warm = rows
+    assert hot["legacy_id"] == ids["hot"]
+    assert hot["key"] == "proj:decision:db"
+    assert hot["value"] == "使用 SQLite 作为存储"
+    assert hot["review_state"] == "pending"
+    assert hot["resolution_state"] == "unresolved"
+    assert hot["revision"] == 1
+    assert warm["resolution_state"] == "conflict"
+    # evidence 只含解析器的有界公开行
+    assert warm["evidence"] == [dict(e) for e in _CONFLICT_EVIDENCE]
+
+
+def test_resolutions_state_filter(review_backend):
+    facade, service, _, ctx, _ = review_backend
+    accepted = api_resolutions(facade, service.store, {"state": "accepted"})
+    assert sorted(r["item_id"] for r in accepted) == sorted(
+        [ctx["cold"], ctx["extra"]]
+    )
+    assert all(r["resolved_project"] == "webproj" for r in accepted)
+    assert all(r["reviewed_at"] for r in accepted)
+    everything = api_resolutions(facade, service.store, {"state": "all"})
+    assert len(everything) == 4
+
+
+def test_resolution_accept_happy_path(review_backend):
+    facade, service, ids, ctx, _ = review_backend
+    res = api_resolution_accept(
+        service, ctx["hot"], {"project": "webproj", "expected_revision": 1}
+    )
+    assert res == {"ok": True, "item_id": ctx["hot"],
+                   "resolved_project": "webproj"}
+    assert service.store.get_item(ctx["hot"]).project == "webproj"
+    rows = api_resolutions(facade, service.store, {"state": "pending"})
+    assert [r["item_id"] for r in rows] == [ctx["warm"]]
+    rows = api_memories(facade, {"attribution": "webproj"}, service.store)
+    assert ids["hot"] in [r["id"] for r in rows]
+
+
+def test_resolution_accept_failures(review_backend):
+    _, service, _, ctx, _ = review_backend
+    assert api_resolution_accept(
+        service, ctx["hot"], {"project": "", "expected_revision": 1}
+    )["error"] == "invalid_project"
+    assert api_resolution_accept(
+        service, ctx["hot"], {"project": "webproj"}
+    )["error"] == "invalid_revision"
+    assert api_resolution_accept(
+        service, ctx["hot"],
+        {"project": "webproj", "expected_revision": 99},
+    )["error"] == "revision_conflict"
+    assert api_resolution_accept(
+        service, ctx["hot"],
+        {"project": "ghost", "expected_revision": 1},
+    )["error"] == "project_not_found"
+    assert api_resolution_accept(
+        service, 9999, {"project": "webproj", "expected_revision": 1}
+    )["error"] == "resolution_not_found"
+    # 全部失败均未落地
+    assert service.store.get_item(ctx["hot"]).project == ""
+
+
+def test_resolution_reject(review_backend):
+    facade, service, _, ctx, _ = review_backend
+    # warm 在夹具里被重录为 conflict，revision 已升到 2
+    res = api_resolution_reject(service, ctx["warm"], {"expected_revision": 2})
+    assert res["ok"] and res["review_state"] == "rejected"
+    assert service.store.get_item(ctx["warm"]).project == ""
+    rows = api_resolutions(facade, service.store, {"state": "rejected"})
+    assert [r["item_id"] for r in rows] == [ctx["warm"]]
+    assert api_resolution_reject(
+        service, ctx["hot"], {"expected_revision": 42}
+    )["error"] == "revision_conflict"
+
+
+def test_batch_accept_partial_success(review_backend):
+    facade, service, ids, ctx, _ = review_backend
+    res = api_resolutions_batch_accept(service, {
+        "project": "otherproj",
+        "items": [
+            {"item_id": ctx["hot"], "expected_revision": 1},
+            {"item_id": ctx["warm"], "expected_revision": 99},  # 过期 revision
+        ],
+    })
+    assert res["ok"] and res["accepted"] == 1 and res["failed"] == 1
+    by_item = {r["item_id"]: r for r in res["results"]}
+    assert by_item[ctx["hot"]]["ok"]
+    assert by_item[ctx["warm"]]["error"] == "revision_conflict"
+    assert service.store.get_item(ctx["hot"]).project == "otherproj"
+    assert service.store.get_item(ctx["warm"]).project == ""
+
+
+def test_batch_accept_validation(review_backend):
+    _, service, _, ctx, _ = review_backend
+    assert api_resolutions_batch_accept(
+        service, {"project": "", "items": []}
+    )["error"] == "invalid_project"
+    assert api_resolutions_batch_accept(
+        service, {"project": "webproj", "items": []}
+    )["error"] == "invalid_items"
+    assert api_resolutions_batch_accept(
+        service, {"project": "webproj",
+                  "items": [{"item_id": ctx["hot"], "expected_revision": "1"}]}
+    )["error"] == "invalid_items"
+    assert api_resolutions_batch_accept(
+        service, {"project": "ghost",
+                  "items": [{"item_id": ctx["hot"], "expected_revision": 1}]}
+    )["error"] == "project_not_found"
+
+
+def test_project_register(review_backend):
+    _, service, _, _, _ = review_backend
+    assert api_project_register(service, {"name": "newproj"}) == {
+        "ok": True, "project": "newproj", "display_name": ""}
+    # 幂等：重复注册仍 ok
+    assert api_project_register(service, {"name": "newproj"})["ok"]
+    assert api_project_register(
+        service, {"name": " "})["error"] == "invalid_project"
+    assert api_project_register(
+        service, {"name": "x" * 65})["error"] == "invalid_project"
+    assert api_project_register(
+        service, {"name": "a\x00b"})["error"] == "invalid_project"
+    assert api_project_register(
+        service, {"name": "ok", "display_name": "x" * 33}
+    )["error"] == "invalid_display_name"
+
+
+def test_project_display_name_flow(review_backend):
+    """中文显示名：注册携带 / CAS 设置 / 列表返回 / 冲突与校验。"""
+    facade, service, _, _, _ = review_backend
+    res = api_project_register(
+        service, {"name": "cnproj", "display_name": "中文项目"})
+    assert res == {"ok": True, "project": "cnproj", "display_name": "中文项目"}
+
+    res = api_project_set_display_name(
+        service, {"project": "webproj", "display_name": "网项目",
+                  "expected_revision": 1})
+    assert res["ok"] and res["display_name"] == "网项目"
+    # 过期 revision / 未知项目 / 非法显示名
+    assert api_project_set_display_name(
+        service, {"project": "webproj", "display_name": "X",
+                  "expected_revision": 1})["error"] == "revision_conflict"
+    assert api_project_set_display_name(
+        service, {"project": "ghost", "display_name": "X",
+                  "expected_revision": 1})["error"] == "project_not_found"
+    assert api_project_set_display_name(
+        service, {"project": "webproj", "display_name": "a\x01b",
+                  "expected_revision": 2})["error"] == "invalid_display_name"
+
+    payload = api_projects(facade, service.store)
+    by_name = {p["project"]: p for p in payload["projects"]}
+    assert by_name["webproj"]["display_name"] == "网项目"
+    assert by_name["cnproj"]["display_name"] == "中文项目"
+    assert by_name["webproj"]["revision"] == 2
+
+
+def test_project_endpoints_in_legacy_mode(test_config):
+    """LEGACY 模式（无 Core 数据）：新端点返回空集而不是报错。"""
+    service = _make_service(test_config, mode=ContextMode.LEGACY)
+    facade = service.legacy_facade()
+    facade.add("p:t:legacy", "旧模式记忆", attribute="fact")
+    payload = api_projects(facade, service.store)
+    assert payload == {"projects": [], "pending_review": 0}
+    assert api_resolutions(facade, service.store, {}) == []
+    rows = api_memories(facade, {}, service.store)
+    assert rows[0]["project"] == ""
+    service.close()
+
+
+def test_http_review_flow(http_server):
+    """HTTP 端到端：队列列表 → 采纳 → 项目筛选可见。"""
+    base, ids, service = http_server
+    store = service.store
+    # COMPAT 下 add 已自动记录 unresolved/pending 决议（revision 1）
+    with store.transaction():
+        _project_store(service).register_project("webproj")
+
+    projects = _get(base + "/api/projects")
+    # 三条播种记忆里 warm 是 global 域（preference）无需审核；hot/cold 待审
+    assert projects["pending_review"] == 2
+    assert [p["project"] for p in projects["projects"]] == ["webproj"]
+
+    pending = _get(base + "/api/resolutions?state=pending")
+    assert len(pending) == 2
+    row = next(r for r in pending if r["legacy_id"] == ids["hot"])
+    assert row["key"] == "proj:decision:db"
+    assert row["revision"] == 1
+
+    res = _post(f"{base}/api/resolution/{row['item_id']}/accept",
+                {"project": "webproj", "expected_revision": 1})
+    assert res["ok"]
+    assert _get(base + "/api/projects")["pending_review"] == 1
+    rows = _get(base + "/api/memories?attribution=webproj")
+    assert [r["id"] for r in rows] == [ids["hot"]]
+
+    # 过期 revision 与未知项目的错误形状
+    try:
+        _post(f"{base}/api/resolution/{row['item_id']}/accept",
+              {"project": "webproj", "expected_revision": 1})
+        assert False, "expected 400"
+    except urllib.error.HTTPError as e:
+        assert e.code == 400
+        assert json.loads(e.read().decode())["error"] == "revision_conflict"
+    try:
+        _post(f"{base}/api/resolutions/batch_accept",
+              {"project": "ghost",
+               "items": [{"item_id": row["item_id"], "expected_revision": 2}]})
+        assert False, "expected 400"
+    except urllib.error.HTTPError as e:
+        assert json.loads(e.read().decode())["error"] == "project_not_found"
+
+    assert _post(base + "/api/projects/register", {"name": "httpproj"})["ok"]
+    names = [p["project"] for p in _get(base + "/api/projects")["projects"]]
+    assert names == ["httpproj", "webproj"]
+
+    # 中文显示名：设置 → 列表返回 → 过期 revision 冲突
+    httpproj = next(p for p in _get(base + "/api/projects")["projects"]
+                    if p["project"] == "httpproj")
+    res = _post(base + "/api/projects/display_name",
+                {"project": "httpproj", "display_name": "HTTP 项目",
+                 "expected_revision": httpproj["revision"]})
+    assert res["ok"]
+    shown = next(p for p in _get(base + "/api/projects")["projects"]
+                 if p["project"] == "httpproj")
+    assert shown["display_name"] == "HTTP 项目"
+    try:
+        _post(base + "/api/projects/display_name",
+              {"project": "httpproj", "display_name": "X",
+               "expected_revision": httpproj["revision"]})
+        assert False, "expected 400"
+    except urllib.error.HTTPError as e:
+        assert json.loads(e.read().decode())["error"] == "revision_conflict"

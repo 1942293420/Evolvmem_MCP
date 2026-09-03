@@ -159,6 +159,7 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
     CREATE TABLE IF NOT EXISTS context_project_registry(
         project TEXT PRIMARY KEY,
         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),
+        display_name TEXT NOT NULL DEFAULT '',
         revision INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -452,6 +453,18 @@ class ContextStore:
         conn = self._connection()
         for statement in _SCHEMA_TABLE_STATEMENTS:
             conn.execute(statement)
+
+        # 既有库增量列：项目中文显示名（2026-09-02）。新库已由上面的
+        # CREATE TABLE 带上该列；老库在这里幂等补齐。
+        registry_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(context_project_registry)")
+        }
+        if "display_name" not in registry_cols:
+            conn.execute(
+                "ALTER TABLE context_project_registry "
+                "ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"
+            )
 
         conn.execute(_FTS_TABLE_STATEMENT)
         try:

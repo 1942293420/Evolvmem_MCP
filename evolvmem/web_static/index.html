@@ -98,6 +98,35 @@
   }
   .toast.show { opacity: .95; }
 
+  /* 视图页签 */
+  .tabs { display: flex; gap: 8px; }
+  .tab {
+    padding: 8px 18px; border-radius: 10px; background: #fff; color: #55556b;
+    border: 1px solid #e5e7eb; font-size: 14px; cursor: pointer;
+  }
+  .tab:hover { background: #faf9ff; }
+  .tab.active { background: #8b5cf6; color: #fff; border-color: #8b5cf6; }
+  .tab .badge { margin-left: 6px; }
+
+  /* 归属与审核 */
+  .badge-proj { background: #ede9fe; color: #7c3aed; }
+  .badge-noproj { background: #f3f4f6; color: #b0b0c0; }
+  .badge-unresolved { background: #fef3c7; color: #b45309; }
+  .badge-conflict { background: #fee2e2; color: #dc2626; }
+  .badge-cand {
+    background: #fff; color: #7c3aed; border: 1px solid #c4b5fd;
+    cursor: pointer; margin: 1px 2px;
+  }
+  .badge-cand:hover { background: #ede9fe; }
+  .batchbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  td.sel, th.sel { width: 28px; }
+  select.proj-pick { max-width: 150px; padding: 3px 8px; font-size: 12px; }
+  .dir-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #f3f4f6; }
+  .dir-row:last-child { border-bottom: none; }
+  .dir-slug { min-width: 180px; font-weight: 600; color: #1a1a2e; }
+  .dir-count { width: 70px; text-align: right; color: #8b8b9e; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .dir-input { flex: 0 1 260px; }
+
   /* 编辑弹窗 */
   .modal-mask {
     position: fixed; inset: 0; background: rgba(26,26,46,.35);
@@ -130,6 +159,13 @@
     <span class="sub">按检索命中与重要性管理记忆，高频知识可考虑生成 skill</span>
   </header>
 
+  <!-- 视图页签 -->
+  <nav class="tabs">
+    <button class="tab active" data-view="browse">📖 记忆浏览</button>
+    <button class="tab" data-view="review">🗂️ 归属审核<span class="badge badge-pinned" id="tab-pending" style="display:none;"></span></button>
+  </nav>
+
+  <div id="view-browse">
   <!-- 统计卡片 -->
   <section class="stats" id="stats"></section>
 
@@ -156,7 +192,9 @@
     </select>
     <label>属性</label>
     <select id="f-attribute"><option value="">全部</option></select>
-    <label>分类</label>
+    <label>项目名映射</label>
+    <select id="f-attribution"><option value="">全部</option></select>
+    <label>分类标签</label>
     <select id="f-project"><option value="">全部</option></select>
     <label>排序</label>
     <select id="f-sort">
@@ -174,19 +212,76 @@
     <button id="btn-refresh">刷新</button>
   </section>
 
+  <!-- 批量映射条（浏览视图） -->
+  <section class="panel batchbar" id="b-batchbar" style="display:none;">
+    <span>已选 <b id="b-selcount">0</b> 条 →</span>
+    <select id="b-batch-project" class="proj-pick"></select>
+    <button id="b-batch-apply">批量映射</button>
+    <span style="font-size:12px;color:#8b8b9e;">每条按各自 revision 单独提交，互不影响</span>
+  </section>
+
   <!-- 主表格 -->
   <section class="panel table-scroll">
     <table>
       <thead>
         <tr>
+          <th class="sel"><input type="checkbox" id="b-all"></th>
           <th>ID</th><th>Key</th><th>Value</th><th>层级</th><th>属性</th>
-          <th>重要性</th><th style="min-width:130px;">检索命中</th><th>最近访问</th><th>操作</th>
+          <th>项目名映射</th><th>重要性</th><th style="min-width:130px;">检索命中</th><th>最近访问</th><th>操作</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
     </table>
     <div class="empty" id="empty" style="display:none;">没有符合条件的记忆</div>
   </section>
+  </div><!-- /view-browse -->
+
+  <!-- 归属审核视图 -->
+  <div id="view-review" style="display:none;flex-direction:column;gap:16px;">
+    <section class="panel filters">
+      <label>审核状态</label>
+      <select id="r-state">
+        <option value="pending" selected>待审核</option>
+        <option value="accepted">已采纳</option>
+        <option value="rejected">已驳回</option>
+        <option value="all">全部</option>
+      </select>
+      <label>决议类型</label>
+      <select id="r-rstate">
+        <option value="">全部</option>
+        <option value="unresolved">unresolved（无信号）</option>
+        <option value="conflict">conflict（信号冲突）</option>
+      </select>
+      <input type="text" id="r-q" placeholder="搜索 key / value …">
+      <button id="r-refresh">刷新</button>
+    </section>
+
+    <section class="panel batchbar" id="r-batchbar" style="display:none;">
+      <span>已选 <b id="r-selcount">0</b> 条 →</span>
+      <select id="r-batch-project" class="proj-pick"></select>
+      <button id="r-batch-accept">批量采纳</button>
+      <span style="font-size:12px;color:#8b8b9e;">每条按各自 revision 单独提交，互不影响</span>
+    </section>
+
+    <section class="panel">
+      <h2 style="font-size:15px;margin-bottom:10px;">📇 项目名映射（slug ↔ 中文显示名）</h2>
+      <div id="dir-list"></div>
+    </section>
+
+    <section class="panel table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="sel"><input type="checkbox" id="r-all"></th>
+            <th>ID</th><th>Key</th><th>Value</th><th>状态</th><th>信号</th>
+            <th>项目名映射</th><th>归属到</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="r-tbody"></tbody>
+      </table>
+      <div class="empty" id="r-empty" style="display:none;">队列是空的 🎉</div>
+    </section>
+  </div>
 </div>
 
 <!-- 编辑弹窗 -->
@@ -295,11 +390,22 @@
       [s.by_tier.pinned || 0, "注入 (pinned)", ""],
       [s.by_tier.normal || 0, "rank评分 (normal)", "muted"],
       [s.by_tier.reference || 0, "地下书库 (reference)", "muted"],
+      [s.attributed_active || 0, "已映射项目", ""],
+      [(s.unattributed_active || 0), "未映射", "muted"],
+      [s.pending_review || 0, "待审核", "gray"],
       [s.never_accessed, "从未被调用", "gray"],
     ];
     $("stats").innerHTML = cards.map(c =>
       `<div class="stat-card ${c[2]}"><div class="num">${c[0]}</div><div class="label">${c[1]}</div></div>`
     ).join("");
+
+    const pendingBadge = $("tab-pending");
+    if (s.pending_review > 0) {
+      pendingBadge.style.display = "";
+      pendingBadge.textContent = s.pending_review;
+    } else {
+      pendingBadge.style.display = "none";
+    }
 
     const heat = t => t.importance * (t.access_count + 1);
     const max = Math.max(1, ...s.top_accessed.map(heat));
@@ -329,6 +435,117 @@
   }
 
   let allProjects = [];
+  let registryProjects = [];  // 项目注册表（归属筛选 / 审核下拉共用）
+  let projDisplay = {};       // 规范名 -> 中文显示名
+
+  // 项目展示名：有中文名时显示「中文（slug）」，否则原样
+  function projLabel(p) {
+    return p.display_name ? `${p.display_name}（${p.project}）` : p.project;
+  }
+  function projName(slug) {
+    const d = projDisplay[slug];
+    return d ? `${d}（${slug}）` : slug;
+  }
+
+  // ---- 项目注册表：归属筛选 + 审核下拉 ----
+  async function loadProjects() {
+    const payload = await api("/api/projects");
+    registryProjects = payload.projects.filter(p => p.status === "active");
+    projDisplay = {};
+    registryProjects.forEach(p => { if (p.display_name) projDisplay[p.project] = p.display_name; });
+    const sel = $("f-attribution"), cur = sel.value;
+    sel.innerHTML = '<option value="">全部</option>' +
+      '<option value="__none__">（未归属）</option>' +
+      registryProjects.map(p =>
+        `<option value="${esc(p.project)}">${esc(projLabel(p))} (${p.active_items})</option>`
+      ).join("");
+    sel.value = cur;
+    renderProjectDirectory();
+  }
+
+  // 审核用的项目下拉（含新建入口）
+  function projectOptions() {
+    const opts = ['<option value="">（选择项目）</option>']
+      .concat(registryProjects.map(p =>
+        `<option value="${esc(p.project)}">${esc(projLabel(p))}</option>`))
+      .concat(['<option value="__new__">＋ 新建项目…</option>']);
+    const html = opts.join("");
+    return html;
+  }
+
+  // 下拉选中「新建项目…」时的统一处理：注册（可附中文显示名）后重写所有项目下拉
+  async function handleProjectPick(selectEl, onDone) {
+    if (selectEl.value !== "__new__") return true;
+    const name = prompt("新项目规范名（英文 slug，如 ai_purchase）：");
+    if (!name || !name.trim()) {
+      selectEl.value = "";
+      return false;
+    }
+    const display = prompt("中文显示名（可留空，如 AI 采购）：") || "";
+    try {
+      await api("/api/projects/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), display_name: display.trim() }),
+      });
+      await loadProjects();
+      selectEl.innerHTML = projectOptions();
+      selectEl.value = name.trim();
+      toast("已注册项目: " + name.trim());
+      if (onDone) onDone(name.trim());
+      return true;
+    } catch (e) {
+      toast("注册失败: " + e.message);
+      selectEl.value = "";
+      return false;
+    }
+  }
+
+  // ---- 项目名录：中文显示名编辑 ----
+  function renderProjectDirectory() {
+    const box = $("dir-list");
+    if (!box) return;
+    if (!registryProjects.length) {
+      box.innerHTML = '<div class="empty">注册表为空</div>';
+      return;
+    }
+    box.innerHTML = registryProjects.map(p => `
+      <div class="dir-row">
+        <span class="dir-slug" title="规范名">${esc(p.project)}</span>
+        <span class="dir-count">${p.active_items} 条</span>
+        <input type="text" class="dir-input" data-slug="${esc(p.project)}"
+               value="${esc(p.display_name)}" placeholder="中文显示名（可留空）" maxlength="32">
+        <button class="ghost small" data-diract="save" data-slug="${esc(p.project)}">保存</button>
+      </div>`).join("");
+  }
+
+  $("dir-list").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-diract=save]");
+    if (!btn) return;
+    const slug = btn.dataset.slug;
+    const p = registryProjects.find(x => x.project === slug);
+    const input = document.querySelector(`.dir-input[data-slug="${CSS.escape(slug)}"]`);
+    if (!p || !input) return;
+    try {
+      await api("/api/projects/display_name", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project: slug, display_name: input.value.trim(),
+          expected_revision: p.revision,
+        }),
+      });
+      toast(`已保存「${slug}」的显示名`);
+      await refresh();
+    } catch (err) {
+      if (String(err.message).includes("revision_conflict")) {
+        toast("注册表已被变更，已刷新");
+        await refresh();
+      } else {
+        toast("保存失败: " + err.message);
+      }
+    }
+  });
 
   // ---- 列表 ----
   let listCache = {};
@@ -347,10 +564,25 @@
       tier: $("f-tier").value,
       attribute: $("f-attribute").value,
       project: $("f-project").value,
+      attribution: $("f-attribution").value,
       q: $("f-q").value.trim(),
       sort: $("f-sort").value,
       order: $("f-order").value,
     });
+  }
+
+  // 浏览列表的项目映射下拉：无归属时给占位项；当前项目已归档时补一个临时项
+  function memProjOptions(current) {
+    const names = registryProjects.map(p => p.project);
+    const opts = [];
+    if (!current) opts.push('<option value="" selected disabled>（未映射）</option>');
+    if (current && !names.includes(current)) {
+      opts.push(`<option value="${esc(current)}">${esc(projDisplay[current] || current)}</option>`);
+    }
+    registryProjects.forEach(p =>
+      opts.push(`<option value="${esc(p.project)}">${esc(projLabel(p))}</option>`));
+    opts.push('<option value="__new__">＋ 新建项目…</option>');
+    return opts.join("");
   }
 
   async function loadList() {
@@ -376,12 +608,20 @@
       ops.push(`<button class="danger small" data-act="hard_delete" data-id="${r.id}">彻底删除</button>`);
       const val = esc(r.value);
       const short = r.value.length > 80 ? esc(r.value.slice(0, 80)) + "…" : val;
+      // 项目名映射：有决议行的行可直接改派；无决议行的行只读
+      const projCell = r.resolution_revision != null && r.item_id != null
+        ? `<select class="proj-pick mem-proj" data-id="${r.id}" data-current="${esc(r.project)}">${memProjOptions(r.project)}</select>`
+        : (r.project
+            ? `<span class="badge badge-proj" title="项目名映射: ${esc(r.project)}（无决议行，仅审核页可改）">${esc(projDisplay[r.project] || r.project)}</span>`
+            : '<span class="badge badge-noproj" title="无决议行，仅审核页可改">未映射</span>');
       return `<tr data-id="${r.id}">
+        <td class="sel"><input type="checkbox" class="b-check" data-id="${r.id}" ${bselected.has(r.id) ? "checked" : ""}></td>
         <td>${r.id}</td>
         <td class="key" title="${val}">${esc(r.key)}${skill}</td>
         <td class="val"><span class="val-preview">${short}</span></td>
         <td><span class="badge badge-${esc(r.tier)}" title="${esc(r.tier)}">${tierCN(r.tier)}</span></td>
         <td>${r.attribute ? `<span class="badge badge-cat" title="${esc(r.attribute)}">${esc(attrCN(r.attribute))}</span>` : ""}</td>
+        <td>${projCell}</td>
         <td>${Number(r.importance).toFixed(1)}</td>
         <td><div class="freq">
           <span class="n">${r.access_count}</span>
@@ -391,11 +631,67 @@
         <td class="actions">${ops.join("")}</td>
       </tr>`;
     }).join("");
+    // 全选框与 bselected 集合保持一致（批量后集合清空即自动取消勾选）
+    $("b-all").checked = filtered.length > 0 &&
+      filtered.every(r => bselected.has(r.id));
+    updateBrowseBatchbar();
   }
+
+  // ---- 浏览视图的批量映射 ----
+  const bselected = new Set();  // 勾选的 legacy id
+
+  function updateBrowseBatchbar() {
+    const n = bselected.size;
+    $("b-batchbar").style.display = n > 0 ? "flex" : "none";
+    $("b-selcount").textContent = n;
+    const bp = $("b-batch-project");
+    if (!bp.options.length) bp.innerHTML = projectOptions();
+  }
+
+  $("b-all").addEventListener("change", () => {
+    bselected.clear();
+    if ($("b-all").checked) {
+      Object.values(listCache).forEach(r => bselected.add(r.id));
+    }
+    loadList();
+  });
+
+  $("b-batch-project").addEventListener("change", () =>
+    handleProjectPick($("b-batch-project")));
+
+  $("b-batch-apply").addEventListener("click", async () => {
+    const project = $("b-batch-project").value;
+    if (!project || project === "__new__") { toast("先选择批量映射的项目"); return; }
+    const items = [];
+    let skipped = 0;
+    [...bselected].forEach(id => {
+      const r = listCache[id];
+      if (r && r.item_id != null && r.resolution_revision != null) {
+        items.push({ item_id: r.item_id, expected_revision: r.resolution_revision });
+      } else {
+        skipped++;
+      }
+    });
+    if (!items.length) { toast("选中的条目都没有决议行，请在审核页处理"); return; }
+    if (!confirm(`把选中的 ${items.length} 条映射到「${projDisplay[project] || project}」？`)) return;
+    try {
+      const res = await api("/api/resolutions/batch_accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, items }),
+      });
+      toast(`批量映射完成：成功 ${res.accepted} 条，失败 ${res.failed} 条` +
+            (skipped ? `，跳过 ${skipped} 条（无决议行）` : ""));
+      bselected.clear();
+      await refresh();
+    } catch (e) { toast("批量映射失败: " + e.message); }
+  });
 
   async function refresh() {
     try {
+      await loadProjects();  // 项目下拉/徽标依赖注册表，先加载
       await Promise.all([loadStats(), loadList()]);
+      if (currentView === "review") await loadReview();
     } catch (e) {
       toast("加载失败: " + e.message);
     }
@@ -408,6 +704,7 @@
     const meta = [
       ["层级", `${tierCN(r.tier)} (${r.tier})`],
       ["属性", attrCN(r.attribute) + (r.attribute ? ` (${r.attribute})` : "")],
+      ["项目名映射", r.project ? projName(r.project) : "—"],
       ["标签", r.tags || "—"],
       ["重要性", Number(r.importance).toFixed(1)],
       ["检索命中", r.access_count],
@@ -444,6 +741,43 @@
       toast("已复制到剪贴板");
     } catch (e) { toast("复制失败: " + e.message); }
   };
+
+  // 行内改派项目名映射 / 勾选（change 事件；点击操作在下面的 click 监听里）
+  $("tbody").addEventListener("change", async (e) => {
+    const cb = e.target.closest(".b-check");
+    if (cb) {
+      const id = Number(cb.dataset.id);
+      cb.checked ? bselected.add(id) : bselected.delete(id);
+      updateBrowseBatchbar();
+      return;
+    }
+    const sel = e.target.closest("select.mem-proj");
+    if (!sel) return;
+    const before = sel.dataset.current;
+    const ok = await handleProjectPick(sel);
+    if (!ok) { sel.value = before; return; }
+    const project = sel.value;
+    if (!project || project === before) { sel.value = before; return; }
+    const r = listCache[sel.dataset.id];
+    if (!r) return;
+    try {
+      await api(`/api/resolution/${r.item_id}/accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, expected_revision: r.resolution_revision }),
+      });
+      toast(`#${r.id} 已映射到 ${projDisplay[project] || project}`);
+      await refresh();
+    } catch (err) {
+      if (String(err.message).includes("revision_conflict")) {
+        toast("该条已被变更，列表已刷新");
+        await refresh();
+      } else {
+        toast("操作失败: " + err.message);
+        sel.value = before;
+      }
+    }
+  });
 
   $("tbody").addEventListener("click", async (e) => {
     const prev = e.target.closest(".val-preview");
@@ -532,7 +866,7 @@
   };
 
   // ---- 过滤器事件 ----
-  ["f-status", "f-tier", "f-attribute", "f-project", "f-sort", "f-order", "f-skill"]
+  ["f-status", "f-tier", "f-attribute", "f-project", "f-attribution", "f-sort", "f-order", "f-skill"]
     .forEach(id => $(id).addEventListener("change", loadList));
   let debounce;
   $("f-q").addEventListener("input", () => {
@@ -540,6 +874,241 @@
     debounce = setTimeout(loadList, 250);
   });
   $("btn-refresh").onclick = refresh;
+
+  // ---- 视图页签 ----
+  let currentView = "browse";
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      currentView = btn.dataset.view;
+      document.querySelectorAll(".tab").forEach(b =>
+        b.classList.toggle("active", b === btn));
+      $("view-browse").style.display = currentView === "browse" ? "" : "none";
+      $("view-review").style.display = currentView === "review" ? "flex" : "none";
+      if (currentView === "review") {
+        try { await loadReview(); } catch (e) { toast("加载失败: " + e.message); }
+      }
+    });
+  });
+
+  // ---- 归属审核队列 ----
+  let reviewCache = {};       // item_id -> row
+  let reviewRows = [];        // 当前视图下的行
+  const rselected = new Set(); // 勾选的 item_id
+
+  function reviewParams() {
+    return new URLSearchParams({ state: $("r-state").value, limit: 1000 });
+  }
+
+  async function loadReview() {
+    const rows = await api("/api/resolutions?" + reviewParams());
+    reviewCache = {};
+    rows.forEach(r => reviewCache[r.item_id] = r);
+    const rstate = $("r-rstate").value;
+    const q = $("r-q").value.trim().toLowerCase();
+    reviewRows = rows.filter(r =>
+      (!rstate || r.resolution_state === rstate) &&
+      (!q || (r.key || "").toLowerCase().includes(q) ||
+             (r.value || "").toLowerCase().includes(q)));
+    // 已不在列表里的勾选清掉
+    const visible = new Set(rows.map(r => r.item_id));
+    [...rselected].forEach(id => { if (!visible.has(id)) rselected.delete(id); });
+    $("r-all").checked = false;
+    renderReview();
+  }
+
+  function renderReview() {
+    const pending = $("r-state").value === "pending";
+    $("r-empty").style.display = reviewRows.length ? "none" : "block";
+    $("r-all").style.visibility = pending ? "visible" : "hidden";
+    $("r-tbody").innerHTML = reviewRows.map(r => {
+      const val = esc(r.value || "");
+      const short = (r.value || "").length > 80 ? esc((r.value || "").slice(0, 80)) + "…" : val;
+      const sigBadge = r.resolution_state === "conflict"
+        ? '<span class="badge badge-conflict">conflict</span>'
+        : '<span class="badge badge-unresolved">unresolved</span>';
+      // conflict 的候选项目：点击即填入归属下拉
+      const cands = (r.evidence || [])
+        .map(e => e.normalized_value).filter(Boolean);
+      const uniqCands = [...new Set(cands)];
+      const candHtml = uniqCands.length
+        ? `<div style="margin-top:4px;">${uniqCands.map(c =>
+            `<span class="badge badge-cand" data-cand="${esc(c)}" data-id="${r.item_id}" title="点击填入归属下拉">${esc(c)}</span>`
+          ).join("")}</div>`
+        : "";
+      const proposed = r.proposed_project
+        ? `<span class="badge badge-proj" title="${esc(r.proposed_project)}">${esc(projDisplay[r.proposed_project] || r.proposed_project)}</span>` : "";
+      const curProj = r.current_project
+        ? `<span class="badge badge-proj" title="${esc(r.current_project)}">${esc(projDisplay[r.current_project] || r.current_project)}</span>`
+        : '<span class="badge badge-noproj">未归属</span>';
+      const statusCell = r.review_state === "accepted"
+        ? `<span class="badge badge-proj">已采纳</span><div style="font-size:11px;color:#8b8b9e;">${esc((r.reviewed_at || "").slice(0, 16))}</div>`
+        : r.review_state === "rejected"
+          ? `<span class="badge badge-noproj">已驳回</span><div style="font-size:11px;color:#8b8b9e;">${esc((r.reviewed_at || "").slice(0, 16))}</div>`
+          : '<span style="color:#b45309;font-size:12px;">待审核</span>';
+      const actions = pending
+        ? `<td><select class="proj-pick" data-id="${r.item_id}">${projectOptions()}</select></td>
+           <td class="actions">
+             <button class="ghost small" data-ract="accept" data-id="${r.item_id}">采纳</button>
+             <button class="danger small" data-ract="reject" data-id="${r.item_id}">驳回</button>
+           </td>`
+        : `<td colspan="2" style="color:#8b8b9e;font-size:12px;">映射: ${esc(r.resolved_project ? projName(r.resolved_project) : "—")}</td>`;
+      return `<tr data-id="${r.item_id}">
+        <td class="sel">${pending ? `<input type="checkbox" class="r-check" data-id="${r.item_id}" ${rselected.has(r.item_id) ? "checked" : ""}>` : ""}</td>
+        <td>${r.legacy_id != null ? r.legacy_id : "ctx:" + r.item_id}</td>
+        <td class="key" title="${val}">${esc(r.key)}</td>
+        <td class="val"><span class="val-preview">${short}</span></td>
+        <td>${statusCell}</td>
+        <td>${sigBadge}${proposed}${candHtml}</td>
+        <td>${curProj}</td>
+        ${actions}
+      </tr>`;
+    }).join("");
+    updateBatchbar();
+  }
+
+  function updateBatchbar() {
+    const n = rselected.size;
+    $("r-batchbar").style.display =
+      ($("r-state").value === "pending" && n > 0) ? "flex" : "none";
+    $("r-selcount").textContent = n;
+    const bp = $("r-batch-project");
+    if (!bp.options.length) bp.innerHTML = projectOptions();
+  }
+
+  // 勾选
+  $("r-tbody").addEventListener("change", (e) => {
+    const cb = e.target.closest(".r-check");
+    if (!cb) return;
+    const id = Number(cb.dataset.id);
+    cb.checked ? rselected.add(id) : rselected.delete(id);
+    updateBatchbar();
+  });
+  $("r-all").addEventListener("change", () => {
+    rselected.clear();
+    if ($("r-all").checked) {
+      reviewRows.forEach(r => rselected.add(r.item_id));
+    }
+    renderReview();
+  });
+
+  // 行内交互：候选填入 / 展开详情 / 采纳 / 驳回 / 新建项目
+  $("r-tbody").addEventListener("click", async (e) => {
+    const cand = e.target.closest(".badge-cand");
+    if (cand) {
+      const sel = document.querySelector(`select.proj-pick[data-id="${cand.dataset.id}"]`);
+      if (sel) {
+        if (![...sel.options].some(o => o.value === cand.dataset.cand)) {
+          // 候选不在注册表里：先注册
+          try {
+            await api("/api/projects/register", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: cand.dataset.cand }),
+            });
+            await loadProjects();
+            document.querySelectorAll("select.proj-pick").forEach(s => {
+              const v = s.value; s.innerHTML = projectOptions(); s.value = v;
+            });
+          } catch (err) { toast("注册失败: " + err.message); return; }
+        }
+        sel.value = cand.dataset.cand;
+      }
+      return;
+    }
+    const prev = e.target.closest(".val-preview");
+    if (prev) {
+      const tr = prev.closest("tr");
+      const r = reviewCache[tr.dataset.id];
+      if (r) openDetail({
+        id: r.legacy_id != null ? r.legacy_id : r.item_id,
+        key: r.key, value: r.value, tier: "—", attribute: "",
+        project: r.current_project, tags: "", importance: 0,
+        access_count: 0, last_accessed: null, created_at: r.created_at,
+        updated_at: null, expires_at: null, status: r.item_status,
+      });
+      return;
+    }
+    const btn = e.target.closest("button[data-ract]");
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    const row = reviewCache[id];
+    if (!row) return;
+    try {
+      if (btn.dataset.ract === "accept") {
+        const sel = document.querySelector(`select.proj-pick[data-id="${id}"]`);
+        const project = sel ? sel.value : "";
+        if (!project) { toast("先为这条选择归属项目"); return; }
+        await api(`/api/resolution/${id}/accept`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project, expected_revision: row.revision }),
+        });
+        rselected.delete(id);
+        toast(`#${row.legacy_id != null ? row.legacy_id : id} 已映射到 ${projDisplay[project] || project}`);
+        await refresh();
+      } else if (btn.dataset.ract === "reject") {
+        if (!confirm(`确认驳回 #${row.legacy_id != null ? row.legacy_id : id} 的归属建议？\n条目保持未映射，并从待审核里消失。`)) return;
+        await api(`/api/resolution/${id}/reject`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ expected_revision: row.revision }),
+        });
+        rselected.delete(id);
+        toast("已驳回");
+        await refresh();
+      }
+    } catch (err) {
+      if (String(err.message).includes("revision_conflict")) {
+        toast("该条已被其他人变更，队列已刷新");
+        await refresh();
+      } else {
+        toast("操作失败: " + err.message);
+      }
+    }
+  });
+  // 行内下拉的新建项目入口
+  $("r-tbody").addEventListener("change", async (e) => {
+    const sel = e.target.closest("select.proj-pick");
+    if (!sel || sel.id === "r-batch-project") return;
+    await handleProjectPick(sel, () => {
+      document.querySelectorAll("select.proj-pick").forEach(s => {
+        if (s !== sel) { const v = s.value; s.innerHTML = projectOptions(); s.value = v; }
+      });
+    });
+  });
+
+  // 批量采纳
+  $("r-batch-project").addEventListener("change", () =>
+    handleProjectPick($("r-batch-project")));
+  $("r-batch-accept").addEventListener("click", async () => {
+    const project = $("r-batch-project").value;
+    if (!project || project === "__new__") { toast("先选择批量归属的项目"); return; }
+    const items = [...rselected].map(id => ({
+      item_id: id, expected_revision: reviewCache[id].revision,
+    }));
+    if (!items.length) return;
+    if (!confirm(`把选中的 ${items.length} 条归属到「${project}」？`)) return;
+    try {
+      const res = await api("/api/resolutions/batch_accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, items }),
+      });
+      toast(`批量采纳完成：成功 ${res.accepted} 条，失败 ${res.failed} 条`);
+      rselected.clear();
+      await refresh();
+    } catch (e) { toast("批量采纳失败: " + e.message); }
+  });
+
+  // 审核筛选事件
+  ["r-state", "r-rstate"].forEach(id =>
+    $(id).addEventListener("change", loadReview));
+  let rdebounce;
+  $("r-q").addEventListener("input", () => {
+    clearTimeout(rdebounce);
+    rdebounce = setTimeout(loadReview, 250);
+  });
+  $("r-refresh").onclick = refresh;
 
   refresh();
 })();

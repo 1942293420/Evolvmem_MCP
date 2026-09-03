@@ -138,16 +138,34 @@ class ProjectStore:
 
     # ---- registry writes ----
 
-    def register_project(self, project: str) -> None:
+    def register_project(self, project: str, display_name: str = "") -> None:
         """Insert a project as active; an existing row is left untouched."""
         self._require_owner_transaction("project_store.register_project")
         now = _now_iso()
         self._conn.execute(
             "INSERT INTO context_project_registry"
-            "(project, status, revision, created_at, updated_at) "
-            "VALUES (?, 'active', 1, ?, ?) ON CONFLICT(project) DO NOTHING",
-            (project, now, now),
+            "(project, status, display_name, revision, created_at, updated_at) "
+            "VALUES (?, 'active', ?, 1, ?, ?) ON CONFLICT(project) DO NOTHING",
+            (project, display_name, now, now),
         )
+
+    def set_display_name(
+        self, project: str, display_name: str, *, expected_revision: int
+    ) -> None:
+        """Set (or clear) a project's human-facing display name (revision CAS)."""
+        self._require_owner_transaction("project_store.set_display_name")
+        cursor = self._conn.execute(
+            "UPDATE context_project_registry "
+            "SET display_name=?, revision=revision+1, updated_at=? "
+            "WHERE project=? AND revision=?",
+            (display_name, _now_iso(), project, expected_revision),
+        )
+        if cursor.rowcount != 1:
+            self._raise_cas_failure(
+                "SELECT 1 FROM context_project_registry WHERE project=?",
+                (project,),
+                missing="project_not_found",
+            )
 
     def archive_project(self, project: str, *, expected_revision: int) -> None:
         self._require_owner_transaction("project_store.archive_project")
