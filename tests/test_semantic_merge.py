@@ -37,7 +37,7 @@ class TestFindSemanticMatch:
     def test_identical_value_matches(self, setup):
         store, vidx, engine = setup
         mid = _add(store, vidx, engine, "p:t:fact:a", "数据库选用 PostgreSQL")
-        hit = find_semantic_match(store, vidx, engine, "数据库选用 PostgreSQL", 0.95)
+        hit = find_semantic_match(store, vidx, engine, "数据库选用 PostgreSQL", 0.95, key="p:t:fact:a")
         assert hit is not None and hit["id"] == mid
         assert hit["similarity"] > 0.99
 
@@ -64,3 +64,23 @@ class TestFindSemanticMatch:
         mid = _add(store, vidx, engine, "p:t:fact:a", "数据库选用 PostgreSQL")
         hit = find_semantic_match(store, vidx, engine, "数据库选用 PostgreSQL", 0.95, exclude_id=mid)
         assert hit is None
+
+
+def test_semantic_merge_requires_same_project_type_and_entity(setup):
+    store, vidx, engine = setup
+    value = '数据库选用 PostgreSQL'
+    mid = _add(store, vidx, engine, 'project:alpha:db:choice', value, attribute='decision')
+    for key, attribute in [('project:beta:db:choice', 'decision'),
+                           ('project:alpha:cache:choice', 'decision'),
+                           ('project:alpha:db:choice', 'fact')]:
+        assert find_semantic_match(store, vidx, engine, value, .95,
+                                   key=key, attribute=attribute) is None
+    hit = find_semantic_match(store, vidx, engine, value, .95,
+                              key='alpha:db:choice', attribute='decision')
+    assert hit['id'] == mid
+
+
+def test_semantic_merge_unknown_identity_never_overwrites(setup):
+    store, vidx, engine = setup
+    _add(store, vidx, engine, 'unknown', '数据库选用 PostgreSQL')
+    assert find_semantic_match(store, vidx, engine, '数据库选用 PostgreSQL', .95) is None

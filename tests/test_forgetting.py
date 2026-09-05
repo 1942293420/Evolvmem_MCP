@@ -90,6 +90,21 @@ class TestForgettingEngine:
             assert archived >= 1
             assert store.get_by_id(mid)["status"] == "archived"
 
+    def test_progress_log_key_with_non_fact_attribute_is_not_a_summary(
+            self, test_config):
+        with MemoryStore(test_config) as store:
+            mid = store.add(
+                key="project:eva:progress:log:decision",
+                value="这个同形状条目明确属于项目决定。",
+                attribute="decision",
+                expires_at="2020-01-01 00:00:00",
+            )
+
+            archived = ForgettingEngine(test_config, store).run()
+
+            assert archived == 1
+            assert store.get_by_id(mid)["status"] == "archived"
+
 
 def _make_compat_facade(config, *, store=None):
     """compat 模式的 ContextService + 兼容门面（legacy 投影 schema 先就位）。
@@ -122,6 +137,31 @@ class TestForgettingThroughFacade:
         assert archived >= 1
         assert facade.get_by_id(legacy_id)["status"] == "archived"
         assert service.store.get_item(context_id).status is ContextStatus.ARCHIVED
+        service.close()
+
+    def test_run_leaves_expired_session_summary_to_retention_gate(self, test_config):
+        from evolvmem.project_store import ProjectStore
+
+        service, facade = _make_compat_facade(test_config)
+        with service.store.transaction():
+            ProjectStore(
+                service.store._connection(),
+                service.store._require_transaction,
+                generic_names=(),
+            ).register_project("eva")
+        legacy_id = facade.add(
+            key="project:eva:progress:log:t1",
+            value="本次完成摘要覆盖门控接线。",
+            attribute="fact",
+            expires_at="2020-01-01 00:00:00",
+        )
+        context_id = service.store.resolve_legacy_mapping(legacy_id)
+
+        archived = ForgettingEngine(test_config, facade).run()
+
+        assert archived == 0
+        assert facade.get_by_id(legacy_id)["status"] == "active"
+        assert service.store.get_item(context_id).status is ContextStatus.ACTIVE
         service.close()
 
     def test_decay_candidate_archives_both_sides(self, test_config):

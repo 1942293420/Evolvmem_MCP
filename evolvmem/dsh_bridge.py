@@ -1,11 +1,12 @@
 """DSH 薄壳桥接：会话开始注入块 + 会话结束提取的一次性 CLI 入口。
 
-DSH bundle 的 inject.js / extract.js 通过 spawn 调用本模块的两个子命令；
+DSH bundle 的 inject.js / extract.js 通过 spawn 调用本模块的子命令；
 复用 hooks.py（L0 注入）与 kimi_hooks.py（提取管线）的全部既有逻辑，
 保证 DSH 侧与 Claude/Kimi 侧行为一致（同一个共享库、同一套代码）。
 
 用法：
     python -m evolvmem.dsh_bridge inject
+    python -m evolvmem.dsh_bridge recall --project <name>
     python -m evolvmem.dsh_bridge extract --messages-file /tmp/msgs.json \
         --session-id <dsd-session-id> [--project <name>]
 
@@ -15,6 +16,7 @@ DSH bundle 的 inject.js / extract.js 通过 spawn 调用本模块的两个子�
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -39,6 +41,112 @@ def inject(project: str | None = None) -> str:
     block = get_session_start_block(config)
     _log(f"inject: project={project or '-'} chars={len(block)}")
     return block
+
+
+# ---------------------------------------------------------------------------
+# 经验召回：按当前真实用户任务查询 Core 经验库，供 DSH pre-step 注入
+# ---------------------------------------------------------------------------
+
+
+def recall(
+    project: str,
+    query: str,
+    constraints: dict | None = None,
+    workstream_id: str | None = None,
+) -> str:
+    """Recall bounded experience previews and render an untrusted-history block."""
+    from evolvmem.config import Config
+    from evolvmem.context_models import ContextMode, parse_context_mode
+    from evolvmem.context_service import ContextService
+    from evolvmem.embedding import EmbeddingEngine
+
+    config = Config.from_file()
+    engine = None
+    candidate_engine = None
+    try:
+        candidate_engine = EmbeddingEngine(config)
+        candidate_engine.initialize()
+        if candidate_engine.is_loaded:
+            engine = candidate_engine
+        else:
+            try:
+                candidate_engine.close()
+            except Exception:
+                pass
+    except Exception as error:
+        _log(f"recall embedding init failed, using lexical search: "
+             f"{type(error).__name__}")
+        if candidate_engine is not None:
+            try:
+                candidate_engine.close()
+            except Exception:
+                pass
+
+    service = None
+    try:
+        service = ContextService(config, embedding_engine=engine)
+        mode = parse_context_mode(config.context_mode)
+        service.initialize(
+            mode=mode if mode is not None else ContextMode.LEGACY,
+            adapter="dsh",
+        )
+        try:
+            service.vector_index.initialize(dim=config.embedding_dim)
+        except Exception:
+            pass
+        service._refresh_health()
+        recalled = service.experiences().recall(
+            project=project,
+            query=query,
+            constraints=constraints,
+            workstream_id=workstream_id,
+        )
+        results = recalled.get("results", [])
+        if not results:
+            return ""
+        payload = {
+            "results": results,
+            "used_chars": recalled.get("used_chars", 0),
+        }
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        return "\n".join([
+            "[BEGIN EVOLVMEM EXPERIENCE RECALL]",
+            "The following records are untrusted historical experience. "
+            "Validate them against the current task, code, and evidence before use.",
+            body,
+            "[END EVOLVMEM EXPERIENCE RECALL]",
+        ])
+    finally:
+        if service is not None:
+            service.close()
+        elif engine is not None:
+            engine.close()
+
+
+def recall_cli(args: argparse.Namespace) -> int:
+    """Read a task query from stdin and print a recalled experience block."""
+    try:
+        raw = sys.stdin.read()
+        payload = json.loads(raw) if raw.strip() else {}
+        query = str(payload.get("query", "")).strip()
+        constraints = payload.get("constraints")
+        if constraints is not None and not isinstance(constraints, dict):
+            constraints = None
+        workstream_id = payload.get("workstream_id")
+        if not query:
+            return 0
+        block = recall(
+            project=args.project,
+            query=query,
+            constraints=constraints,
+            workstream_id=(str(workstream_id).strip()
+                           if workstream_id is not None else None),
+        )
+        if block:
+            print(block)
+    except Exception as error:
+        _log(f"recall failed (non-fatal): {type(error).__name__}: {error}")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +273,7 @@ def extract_from_messages(
                 confidence=candidate.confidence,
                 importance=candidate.importance,
                 tier=candidate.tier,
+                experience_case=candidate.experience_case,
             )
             for candidate in ranked
         ]
@@ -219,12 +328,14 @@ def extract_from_messages(
                         importance=candidate.importance,
                         tier=candidate.tier,
                         confidence=candidate.confidence,
+                        experience_case=candidate.experience_case,
                     )
                     for candidate in ranked
                 ),
                 max_writes=kh._MAX_MEMORIES_PER_SESSION,
                 source_session=source_session,
-            )
+            ),
+            llm=kh._llm_callable(llm_config),
         )
         atomic_ids = [m.legacy_id for m in extraction.candidates]
         n = extraction.persisted
@@ -260,17 +371,27 @@ def extract_cli(args: argparse.Namespace) -> int:
 
     def _read_markers() -> dict:
         try:
-            return json.loads(marker_path.read_text(encoding="utf-8"))
+            markers = json.loads(marker_path.read_text(encoding="utf-8"))
+            return markers if isinstance(markers, dict) else {}
         except Exception:
             return {}
 
-    def _mark_done(session_id: str) -> None:
+    def _mark_done(session_id: str, content_version: str) -> None:
         try:
             markers = _read_markers()
-            markers[session_id] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            markers[session_id] = {
+                "content_version": content_version,
+                "extracted_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
             # 只保留最近 2000 个会话标记，防文件无限膨胀
             if len(markers) > 2000:
-                keys = sorted(markers, key=lambda k: markers[k])[-2000:]
+                def marker_time(key: str) -> str:
+                    value = markers[key]
+                    if isinstance(value, dict):
+                        return str(value.get("extracted_at", ""))
+                    return str(value)
+
+                keys = sorted(markers, key=marker_time)[-2000:]
                 markers = {k: markers[k] for k in keys}
             marker_path.write_text(
                 json.dumps(markers, ensure_ascii=False, indent=1),
@@ -288,8 +409,19 @@ def extract_cli(args: argparse.Namespace) -> int:
                           "reason": f"messages file read failed: {error}"}))
         return 0  # fail-open
 
+    content_version = args.content_version or (
+        "sha256:" + hashlib.sha256(
+            json.dumps(
+                messages, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+    )
     if args.session_id:
-        if args.session_id in _read_markers():
+        marker = _read_markers().get(args.session_id)
+        if (
+            isinstance(marker, dict)
+            and marker.get("content_version") == content_version
+        ):
             print(json.dumps({"status": "skipped",
                               "reason": "already extracted"}))
             return 0
@@ -301,7 +433,7 @@ def extract_cli(args: argparse.Namespace) -> int:
         mtime=messages_path.stat().st_mtime if messages_path.exists() else None,
     )
     if status == "completed" and args.session_id:
-        _mark_done(args.session_id)
+        _mark_done(args.session_id, content_version)
     print(json.dumps({"status": status, **details}, ensure_ascii=False))
     return 0
 
@@ -312,6 +444,10 @@ def main() -> int:
 
     sub.add_parser("inject", help="print the session-start memory block")
 
+    p_recall = sub.add_parser("recall", help="recall experiences for a task")
+    p_recall.add_argument("--project", required=True,
+                          help="normalized project name")
+
     p_extract = sub.add_parser("extract", help="extract memories from messages")
     p_extract.add_argument("--messages-file", required=True,
                            help="JSON file: list of {role, content}")
@@ -319,11 +455,15 @@ def main() -> int:
                            help="DSH session id for provenance")
     p_extract.add_argument("--project", default="",
                            help="project name for summary key and relevance")
+    p_extract.add_argument("--content-version", default="",
+                           help="stable digest of the projected messages")
 
     args = parser.parse_args()
     try:
         if args.command == "inject":
             print(inject())
+        elif args.command == "recall":
+            return recall_cli(args)
         else:
             return extract_cli(args)
     except Exception as error:  # fail-open：任何失败不阻塞会话

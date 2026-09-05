@@ -325,7 +325,7 @@ class TestIntegration:
             })
             assert first["status"] == "added"
             second = server.handle_tool_call("memory_add", {
-                "key": "other:key:fact:x", "value": "数据库选用 MySQL",
+                "key": "project:p:t:decision:db", "value": "数据库选用 MySQL",
             })
             assert second["status"] == "merged"
             assert second["merged_into"] == first["id"]
@@ -537,10 +537,10 @@ class TestIntegration:
         server.context_service.embedding_engine = server.engine
         facade = server.context_service.legacy_facade()
         first_id = facade.add(
-            key="p:t:fact:dup-a", value="完全相同的内容", importance=3.0
+            key="p:t:fact:duplicate", value="完全相同的内容", importance=3.0
         )
         second_id = facade.add(
-            key="p:t:fact:dup-b", value="完全相同的内容", importance=9.0
+            key="project:p:t:fact:duplicate", value="完全相同的内容", importance=9.0
         )
         vector = np.array(
             server.engine.encode_document("完全相同的内容"), dtype=np.float32
@@ -800,6 +800,7 @@ class TestIntegration:
                     "context_read", "context_status",
                     "context_confirm", "context_record_outcome",
                     "context_archive_project", "context_sweep",
+                    "experience_recall", "experience_record",
                     "continuity_resume", "continuity_checkpoint",
                     "continuity_list",
                 }
@@ -1028,6 +1029,7 @@ class TestContextLifecycleIntegration:
             assert {
                 "context_confirm", "context_record_outcome",
                 "context_archive_project", "context_sweep",
+                    "experience_recall", "experience_record",
             } <= listed
 
             # candidate 隔离：精确读取被策略拒绝，绝不进入服务面

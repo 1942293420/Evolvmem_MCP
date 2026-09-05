@@ -366,9 +366,12 @@ class LegacyExtractionItem:
     confidence: float | None = None
     workspace_path: str = ""
     project_hint: str = ""
+    experience_case: dict | None = None
 
     def __post_init__(self) -> None:
         _normalize_write_payload(self)
+        if self.experience_case is not None and not isinstance(self.experience_case, dict):
+            raise ContextValidationError("experience_case must be a dict")
 
 
 @dataclass(frozen=True, slots=True)

@@ -653,12 +653,13 @@ def _verify_with_store(config: Config, store: ContextStore) -> MaintenanceVerify
     # resolutions written by the live write path are not plan drift.
     pending = {
         str(row["resolution_state"]): int(row["c"])
-        for row in conn.execute(
+        for row in (conn.execute(
             "SELECT resolution_state, COUNT(*) AS c FROM context_project_resolutions "
             "WHERE review_state='pending' "
-            "AND item_id IN (SELECT context_item_id FROM legacy_memory_migrations) "
+            "AND item_id IN (SELECT m.context_item_id FROM legacy_memory_migrations m "
+            "JOIN memories old ON old.id=m.legacy_memory_id) "
             "GROUP BY resolution_state"
-        )
+        ) if store.legacy_memory_table_exists() else ())
     }
     counts_match = (
         pending.get("conflict", 0) == plan_before.conflict

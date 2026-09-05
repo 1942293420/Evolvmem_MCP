@@ -211,13 +211,15 @@ def test_cjk_like_fallback_counts_as_a_full_lexical_match(store, test_config):
     assert results[0].score_components.relevance == pytest.approx(0.6)
 
 
-def test_l1_only_term_never_generates_a_candidate(store, test_config):
-    """Candidate generation searches L0 only; L1 text stays out of the recall path."""
+def test_l1_term_returns_summary_without_detail_body(store, test_config):
+    """Detail keywords recall the item while returning only its short summary."""
     add_item(store, "l1-only", l0="ordinary summary", l1="zebra hidden detail")
 
     results = make_retriever(test_config, store).search(request_for())
 
-    assert results == ()
+    assert len(results) == 1
+    assert results[0].l0 == "ordinary summary"
+    assert results[0].match_layers == (ContextLayer.L1,)
 
 
 # ---- candidate generation: vector channel, fusion, and thresholds ----
@@ -837,3 +839,30 @@ def test_every_component_and_total_stays_within_unit_interval(store, test_config
         )
         for value in values:
             assert 0.0 <= value <= 1.0
+
+
+def test_target_project_not_starved_by_other_project_candidates(test_config, store):
+    for i in range(12):
+        add_item(store, f'other:{i}', l0='zebra database', project='other')
+    target = add_item(store, 'target', l0='zebra database', project='proj')
+    result = make_retriever(test_config, store).search(request_for('zebra', top_k=1))
+    assert [r.id for r in result] == [target.id]
+
+
+def test_explicit_search_can_find_detail_only_keyword(test_config, store):
+    target = add_item(store, 'detail', l0='Project status', l1='zebra database migration')
+    result = make_retriever(test_config, store).search(request_for('zebra'))
+    assert [r.id for r in result] == [target.id]
+    assert result[0].l0 == 'Project status'
+    assert ContextLayer.L1 in result[0].match_layers
+
+
+def test_target_type_not_starved_by_irrelevant_types(test_config, store):
+    for n in range(15):
+        add_item(store, f'noise-{n}', l0='zebra striped animal',
+                 content_type=ContextContentType.FACT)
+    target = add_item(store, 'experience-target', l0='zebra striped animal',
+                      content_type=ContextContentType.EXPERIENCE)
+    results = make_retriever(test_config, store).search(request_for(
+        top_k=1, content_types=(ContextContentType.EXPERIENCE,)))
+    assert [r.id for r in results] == [target.id]

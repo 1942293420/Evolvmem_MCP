@@ -17,6 +17,7 @@ class CandidateMemory:
     confidence: float = 0.5
     importance: float = 5.0
     tier: str = "normal"
+    experience_case: dict | None = None
 
 
 class AutoExtractor:
@@ -55,6 +56,7 @@ class AutoExtractor:
 - confidence：0.0-1.0 的置信度
 - importance：1-10 的整数。9-10 为硬约束或成败关键决策；7-8 为重要架构或业务决策；5-6 为普通偏好和事实；3-4 为边缘参考资料。
 - tier：若该记忆必须在每个会话可见（约束、长期用户偏好、用户画像）则为 "pinned"；若为只应在相关时通过 memory_search 获取、绝不注入的长参考资料则为 "reference"；否则为 "normal"。
+- case：仅 experience 条目使用的结构化对象（其 value 仍为短摘要）。对象字段为 project、problem、conditions（字符串键值）、steps（步骤数组）、rationale、result、applicability（数组）、exclusions（数组）、transferable（布尔）、parent_experience_id（已知时填写）。case 总长最多 6000 字，保留机制、条件和步骤，不受 value 的 200 字限制。仅据会话提炼，推测原因注明推测；助手自称成功、无回复或无关测试不能证明方法有效。提炼结果只成为候选，实际成功必须另由真实工具结果/用户确认绑定来源。
 
 ## 会话摘要条目
 必须包含且只包含一个 key 为 SESSION_SUMMARY 的会话摘要；即使没有原子记忆也不能省略。SESSION_SUMMARY 不占 8 条原子记忆配额。
@@ -139,6 +141,8 @@ class AutoExtractor:
                 confidence=confidence,
                 importance=importance,
                 tier=tier,
+                experience_case=(item.get("case") if item.get("attribute") == "experience"
+                                 and isinstance(item.get("case"), dict) else None),
             ))
         return candidates
 

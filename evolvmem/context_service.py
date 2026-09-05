@@ -114,7 +114,7 @@ from evolvmem.project_models import (
     ProjectResolutionRequest,
 )
 from evolvmem.project_resolver import ProjectResolver, _CANONICAL_KEY_PATTERN
-from evolvmem.project_rollup import ProjectRollupGenerator
+from evolvmem.project_rollup import ProjectRollupGenerator, ProjectRollupReport
 from evolvmem.project_store import ProjectStore
 from evolvmem.semantic_merge import find_semantic_match
 from evolvmem.session_archive import SessionArchiver, SessionPurgeReport
@@ -416,7 +416,17 @@ class ContextService:
 
     def _quick_check_diagnostics(self) -> tuple[str, ...]:
         try:
-            rows = self.store._connection().execute("PRAGMA quick_check").fetchall()
+            conn = self.store._connection()
+            # SQLite 3.53 FTS5 can retain its previous checksum snapshot after
+            # another client commits. A bounded read refreshes each virtual
+            # table before quick_check; this changes neither data nor counters.
+            conn.execute("SAVEPOINT evolvmem_health_snapshot")
+            try:
+                for table in ("context_layers_fts", "context_layers_fts_trigram"):
+                    conn.execute(f"SELECT rowid FROM {table} LIMIT 1").fetchall()
+                rows = conn.execute("PRAGMA quick_check").fetchall()
+            finally:
+                conn.execute("RELEASE evolvmem_health_snapshot")
         except Exception:
             return ("quick_check_failed",)
         if rows and all(str(row[0]).lower() == "ok" for row in rows):
@@ -1017,6 +1027,13 @@ class ContextService:
         self._project_store().record_resolution(item_id, decision)
 
     # ---- candidate lifecycle and session archives ----
+
+    def experiences(self):
+        """Shared structured experience boundary for MCP and session adapters."""
+        from evolvmem.experience_service import ExperienceService
+        if not hasattr(self, "_experiences"):
+            self._experiences = ExperienceService(self)
+        return self._experiences
 
     def confirm(self, item_id: int) -> EvidenceReport:
         """Promote one candidate to active through the lifecycle state machine.
@@ -1733,7 +1750,7 @@ class ContextService:
                         write_replace=write_replace,
                         isolated_writer=(
                             self._write_isolated_candidate
-                            if source_archive_id is not None
+                            if source_archive_id is not None or any(i.experience_case for i in request.candidates)
                             else None
                         ),
                     )
@@ -1768,6 +1785,32 @@ class ContextService:
 
     # ---- rolling project summary trigger ----
 
+    def rollup_project(self, project: str, *, llm) -> ProjectRollupReport:
+        """Roll one project with the service-owned incremental vector handoff."""
+        if self._mode is None:
+            raise ContextServiceError(
+                "not_initialized", "service is not initialized"
+            )
+        return ProjectRollupGenerator(
+            self.config,
+            self.store,
+            llm=llm,
+            vector_sync=self._rollup_vector_sync,
+        ).rollup_project(project)
+
+    def rollup_projects(self, *, llm) -> tuple[ProjectRollupReport, ...]:
+        """Roll all source-bearing projects through the same vector handoff."""
+        if self._mode is None:
+            raise ContextServiceError(
+                "not_initialized", "service is not initialized"
+            )
+        return ProjectRollupGenerator(
+            self.config,
+            self.store,
+            llm=llm,
+            vector_sync=self._rollup_vector_sync,
+        ).rollup_all()
+
     def _maybe_rollup_project(self, summary_result, *, llm) -> None:
         """Best-effort rolling summary refresh after a persisted batch.
 
@@ -1786,12 +1829,7 @@ class ContextService:
             project = item.project if item is not None else ""
             if not project:
                 return
-            ProjectRollupGenerator(
-                self.config,
-                self.store,
-                llm=llm,
-                vector_sync=self._rollup_vector_sync,
-            ).rollup_project(project)
+            self.rollup_project(project, llm=llm)
         except Exception:
             logger.warning("project rollup trigger skipped: rollup failed")
 
@@ -1804,15 +1842,19 @@ class ContextService:
         the rollup row to ``vector_dirty``.
         """
         try:
+            engine = self.embedding_engine
+            if engine is not None and not getattr(engine, "is_loaded", False):
+                engine.initialize()
             synchronizer = self._context_synchronizer()
             if superseded_id is not None:
                 removal = synchronizer.remove_l0(superseded_id)
                 if removal.status != "synchronized":
                     return False
-            return (
+            upserted = (
                 synchronizer.upsert_active_l0(context_id, l0).status
                 == "synchronized"
             )
+            return upserted and not self.vector_index.is_dirty()
         except Exception:
             # the synchronizer itself exploded (single-item failures are
             # already contained inside it); leave the durable retry marker
@@ -1966,6 +2008,7 @@ class ContextService:
                         engine,
                         item.value,
                         self.config.add_merge_threshold,
+                        key=item.key, attribute=item.attribute, tags=item.tags,
                     )
                 if match:
                     # 合并目标是 pinned 记忆时保留 pinned tier，避免被候选的
@@ -2000,6 +2043,24 @@ class ContextService:
         exists) and is marked ``candidate`` explicitly; candidates produce
         no vector aftermath because the context cache is active-only.
         """
+        if item.experience_case is not None:
+            payload, identity_key, layers = self.experiences().prepare_case(item.experience_case)
+            row = self.store._connection().execute(
+                "SELECT id FROM context_items WHERE identity_key=? AND status != 'deleted' LIMIT 1", (identity_key,)
+            ).fetchone()
+            if row:
+                return None
+            created = self.store.create_item(ContextItemDraft(
+                identity_key=identity_key, content_type=ContextContentType.EXPERIENCE,
+                layers=layers,project=payload['project'],scope=ContextScope.PROJECT,
+                status=ContextStatus.CANDIDATE,confidence=.7,importance=item.importance,
+                tags=('经验案例',)))
+            self.store._connection().execute(
+                'UPDATE context_items SET experience_payload=? WHERE id=?',
+                (json.dumps(payload,ensure_ascii=False,sort_keys=True,separators=(',',':')),created.id))
+            return LegacyMutationResult(legacy_id=None,context_id=created.id,changed=True,
+                old_legacy_id=None,old_context_id=None,
+                available_layers=_ALL_LAYERS,context_status=ContextStatus.CANDIDATE.value)
         content_type = _extraction_content_type(item)
         scope = LegacyMemoryMigrator.scope_for(content_type)
         layers = self._legacy_migrator().layers_for(item.value, content_type)

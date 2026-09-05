@@ -11,12 +11,16 @@
         args: ['-m', 'evolvmem.mcp_server']
         env:
           PYTHONPATH: /home/jiangli/hermes-memory-plugin
+          EVOLVMEM_CONTEXT_MODE: primary
+          EVOLVMEM_ADAPTER: dsh
     - id: evolvmem-inject
       name: dsh-evolvmem/host-inject
       config:
         python: /home/jiangli/hermes-memory-plugin/.venv/bin/python3
         env:
           PYTHONPATH: /home/jiangli/hermes-memory-plugin
+          EVOLVMEM_CONTEXT_MODE: primary
+          EVOLVMEM_ADAPTER: dsh
         timeoutMs: 15000
     - id: evolvmem-extract
       name: dsh-evolvmem/host-extract
@@ -24,6 +28,8 @@
         python: /home/jiangli/hermes-memory-plugin/.venv/bin/python3
         env:
           PYTHONPATH: /home/jiangli/hermes-memory-plugin
+          EVOLVMEM_CONTEXT_MODE: primary
+          EVOLVMEM_ADAPTER: dsh
         minChars: 200
     - id: evolvmem-sweep
       name: dsh-evolvmem/host-sweep
@@ -31,6 +37,8 @@
         python: /home/jiangli/hermes-memory-plugin/.venv/bin/python3
         env:
           PYTHONPATH: /home/jiangli/hermes-memory-plugin
+          EVOLVMEM_CONTEXT_MODE: primary
+          EVOLVMEM_ADAPTER: dsh
         dataDir: /home/jiangli/.claude/evolvmem
         sweepIntervalMs: 1800000
         sweepIdleMs: 1800000

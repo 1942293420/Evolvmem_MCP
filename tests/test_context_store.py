@@ -68,7 +68,7 @@ EXPECTED_COLUMNS = {
         "tier", "tags", "importance", "confidence", "source_state",
         "source_count", "success_count", "failure_count", "access_count",
         "last_accessed", "last_verified_at", "expires_at", "supersedes",
-        "superseded_by", "created_at", "updated_at",
+        "superseded_by", "created_at", "updated_at", "experience_payload",
     },
     "context_layers": {
         "id", "item_id", "layer", "content", "content_hash", "generator",
@@ -80,7 +80,8 @@ EXPECTED_COLUMNS = {
     },
     "context_evidence": {
         "id", "item_id", "source_id", "outcome", "note", "observed_at",
-        "created_at",
+        "created_at", "event_key", "task_id", "verification_level",
+        "conditions_json", "revision", "experience_version",
     },
     "session_archives": {
         "id", "project", "adapter", "external_session_id", "payload_path",
@@ -121,6 +122,9 @@ def test_initialize_creates_the_required_schema_and_active_identity_index(test_c
         ).fetchone()[0]
         assert "identity_key, project, scope" in index_sql
         assert "WHERE status = 'active'" in index_sql
+        event_index = conn.execute("SELECT sql FROM sqlite_master WHERE name='idx_experience_event'").fetchone()[0]
+        assert "item_id,event_key,revision" in event_index.replace(' ', '')
+        assert "WHERE event_key != ''" in event_index
     finally:
         conn.close()
 
@@ -144,6 +148,32 @@ def test_initialize_does_not_modify_a_preexisting_legacy_memories_table(test_con
         assert conn.execute("SELECT * FROM memories").fetchall() == [(7, "legacy row")]
     finally:
         conn.close()
+
+
+def test_upgrade_preserves_old_evidence_and_adds_revision_defaults(test_config, draft_factory):
+    with ContextStore(test_config) as store:
+        item = store.create_item(draft_factory())
+        with store.transaction():
+            store.insert_evidence(item.id, None, 'success', 'old note', '2026-09-01 00:00:00')
+    conn = sqlite3.connect(test_config.db_path)
+    conn.execute('DROP INDEX idx_experience_event')
+    conn.execute('ALTER TABLE context_items DROP COLUMN experience_payload')
+    for name in ('event_key','task_id','verification_level','conditions_json','revision','experience_version'):
+        conn.execute(f'ALTER TABLE context_evidence DROP COLUMN {name}')
+    conn.commit()
+    conn.close()
+    with ContextStore(test_config) as store:
+        row = store.list_evidence(item.id)[0]
+        assert row['note'] == 'old note'
+        assert row['event_key'] == '' and row['revision'] == 1
+        assert row['conditions_json'] == '{}'
+        store._connection().execute(
+            "INSERT INTO context_evidence(item_id,outcome,note,observed_at,created_at,event_key,revision) VALUES(?,?,?,?,?,?,?)",
+            (item.id,'success','new note','2026-09-05','2026-09-05','event-1',1))
+        with pytest.raises(sqlite3.IntegrityError):
+            store._connection().execute(
+                "INSERT INTO context_evidence(item_id,outcome,note,observed_at,created_at,event_key,revision) VALUES(?,?,?,?,?,?,?)",
+                (item.id,'success','duplicate','2026-09-05','2026-09-05','event-1',1))
 
 
 def test_create_item_atomically_persists_typed_item_and_exactly_three_layers(

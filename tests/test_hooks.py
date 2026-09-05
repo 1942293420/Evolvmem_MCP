@@ -406,6 +406,7 @@ class TestSessionStartPrimaryCoreInjection:
         # session start 没有用户 query：项目名充当弱相关性信号（与 legacy
         # 评分的 cwd 项目加分同源），pinned 种子例外照常生效
         assert request.query == "final"
+        assert request.workspace_path == str(workdir)
 
     def test_primary_degraded_falls_back_to_legacy_render(self, test_config):
         # 索引 dirty（写入时无 embedding 引擎）→ primary 健康复查 degraded

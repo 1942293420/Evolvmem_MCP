@@ -466,6 +466,26 @@ class ContextStore:
                 "ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"
             )
 
+        # Experience metadata stays with Core; outcome revisions preserve evidence.
+        additions = {
+            "context_items": {"experience_payload": "TEXT NOT NULL DEFAULT ''"},
+            "context_evidence": {
+                "event_key": "TEXT NOT NULL DEFAULT ''",
+                "task_id": "TEXT NOT NULL DEFAULT ''",
+                "verification_level": "TEXT NOT NULL DEFAULT ''",
+                "conditions_json": "TEXT NOT NULL DEFAULT '{}'",
+                "revision": "INTEGER NOT NULL DEFAULT 1",
+                "experience_version": "INTEGER NOT NULL DEFAULT 1",
+            },
+        }
+        for table, columns in additions.items():
+            existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for name, declaration in columns.items():
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_experience_event "
+                     "ON context_evidence(item_id,event_key,revision) WHERE event_key != ''")
+
         conn.execute(_FTS_TABLE_STATEMENT)
         try:
             conn.execute(_FTS_TRIGRAM_TABLE_STATEMENT)
@@ -1306,11 +1326,13 @@ class ContextStore:
         return [self._row_to_item(row, self._load_layers(row["id"])) for row in rows]
 
     def list_vector_documents(self) -> list[ContextVectorDocument]:
+        """Return semantic-index documents; exact-pointer checkpoints stay out."""
         rows = self._connection().execute(
             "SELECT i.id AS item_id, l.content AS l0 "
             "FROM context_items i "
             "JOIN context_layers l ON l.item_id=i.id AND l.layer='l0' "
             "WHERE i.status='active' "
+            "AND i.content_type != 'workstream_checkpoint' "
             "AND (i.expires_at IS NULL OR i.expires_at > ?) "
             "ORDER BY i.id",
             (_now_iso(),),
@@ -1466,11 +1488,40 @@ class ContextStore:
         top_k: int = 20,
         statuses: tuple[ContextStatus, ...] | None = None,
         layers: tuple[ContextLayer, ...] = (ContextLayer.L0, ContextLayer.L1),
+        project: str | None = None,
+        now: str | None = None,
+        content_types: tuple[ContextContentType, ...] = (),
+        min_confidence: float = 0.0,
+        applicable_global_types: tuple[ContextContentType, ...] | None = None,
+        exclude_reference: bool = False,
+        exclude_checkpoints: bool = False,
+        item_ids: tuple[int, ...] | None = None,
     ) -> list[ContextSearchHit]:
-        if top_k <= 0 or not query.strip() or statuses == () or not layers:
+        if top_k <= 0 or not query.strip() or statuses == () or not layers or item_ids == ():
             return []
 
         layer_sql, layer_params = self._layer_filter(layers)
+        if item_ids is not None:
+            layer_sql += ' AND i.id IN (' + ','.join('?' for _ in item_ids) + ')'
+            layer_params += tuple(item_ids)
+        if project is not None:
+            layer_sql += " AND (i.scope = 'global' OR i.project = ?)"
+            layer_params += (project,)
+        if now is not None:
+            layer_sql += " AND (i.expires_at IS NULL OR i.expires_at > ?)"
+            layer_params += (now,)
+        if content_types:
+            layer_sql += ' AND i.content_type IN (' + ','.join('?' for _ in content_types) + ')'
+            layer_params += tuple(t.value for t in content_types)
+        layer_sql += ' AND i.confidence >= ?'
+        layer_params += (min_confidence,)
+        if applicable_global_types is not None:
+            layer_sql += " AND (i.scope != 'global' OR i.content_type IN (" + ','.join('?' for _ in applicable_global_types) + '))'
+            layer_params += tuple(t.value for t in applicable_global_types)
+        if exclude_reference:
+            layer_sql += " AND i.tier != 'reference'"
+        if exclude_checkpoints:
+            layer_sql += " AND i.content_type != 'workstream_checkpoint'"
         has_cjk = self._has_cjk(query)
         table = (
             "context_layers_fts_trigram"

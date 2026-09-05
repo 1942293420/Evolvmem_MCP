@@ -387,6 +387,76 @@ def test_failed_rollup_is_retried_not_skipped(test_config, store):
 # ---- prompt hygiene ----
 
 
+def test_prompt_redacts_source_and_old_summary_without_mutating_store(
+    test_config, store
+):
+    source_secret = "source-secret-value"
+    old_secret = "old-secret-value"
+    source_id = store.create_item(
+        ContextItemDraft(
+            identity_key="project:eva:progress:log:sensitive",
+            content_type=ContextContentType.SESSION_SUMMARY,
+            layers=ContextLayers(
+                l0="会话摘要记录联调结果。",
+                l1=f"进展：使用 token={source_secret} 完成联调。",
+                l2="完整正文保留在本地库。",
+                generator="test-suite",
+            ),
+            project="eva",
+            scope=ContextScope.PROJECT,
+            status=ContextStatus.ACTIVE,
+        )
+    ).id
+    old_id = store.create_item(
+        ContextItemDraft(
+            identity_key="project:eva:knowledge:current",
+            content_type=ContextContentType.PROJECT_SUMMARY,
+            layers=ContextLayers(
+                l0="项目已有滚动摘要。",
+                l1=f"旧摘要记录 token={old_secret} 需要轮换。",
+                l2="旧摘要完整细节保留在本地库。",
+                generator="test-suite",
+            ),
+            project="eva",
+            scope=ContextScope.PROJECT,
+            status=ContextStatus.ACTIVE,
+        )
+    ).id
+    llm = _SpyLlm(_ok_response())
+
+    report = ProjectRollupGenerator(test_config, store, llm=llm).rollup_project(
+        "eva"
+    )
+
+    assert report.status == "ready"
+    prompt = llm.prompts[0]
+    assert source_secret not in prompt
+    assert old_secret not in prompt
+    assert prompt.count("token=[已脱敏:token]") == 2
+    assert store.get_item(source_id).layers.l1 == (
+        f"进展：使用 token={source_secret} 完成联调。"
+    )
+    assert store.get_item(old_id).layers.l1 == (
+        f"旧摘要记录 token={old_secret} 需要轮换。"
+    )
+
+
+def test_prompt_uses_conservative_generation_targets(test_config, store):
+    _make_summary(store, "eva", "a")
+    llm = _SpyLlm(_ok_response())
+
+    report = ProjectRollupGenerator(test_config, store, llm=llm).rollup_project(
+        "eva"
+    )
+
+    assert report.status == "ready"
+    prompt = llm.prompts[0]
+    assert "l0 为一句话项目状态要点，不超过 160 字" in prompt
+    assert "l1 为当前进展、关键决定与待办，不超过 800 字" in prompt
+    assert "l2 为完整细节与来源脉络，不超过 3000 字" in prompt
+    assert "不超过 6000 字" not in prompt
+
+
 def test_prompt_carries_only_l1_layers_and_old_summary(test_config, store):
     _make_summary(store, "eva", "a")
     llm = _SpyLlm(_ok_response())

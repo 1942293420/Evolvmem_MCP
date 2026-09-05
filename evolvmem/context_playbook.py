@@ -256,8 +256,32 @@ class PlaybookGenerator:
             supersedes=stale_candidates[0].item_id if stale_candidates else None,
         )
         store = self._store
+        structured = []
+        for member_id in member_ids:
+            row = store._connection().execute(
+                'SELECT experience_payload FROM context_items WHERE id=?', (member_id,)
+            ).fetchone()
+            if row and row[0]:
+                structured.append(json.loads(row[0]))
+        payload = None
+        if structured:
+            shared = {k:v for k,v in structured[0]['conditions'].items()
+                      if all(c['conditions'].get(k)==v for c in structured)}
+            payload = json.dumps(dict(
+                project=cluster.project,problem=layers['l0'],conditions=shared,
+                steps=[layers['l1'][i:i+500] for i in range(0,len(layers['l1']),500)],
+                rationale='根据有来源的案例归纳；共同机制与步骤仍须在自然任务独立验证。',
+                result='',applicability=['来源案例共同条件'],
+                exclusions=list(dict.fromkeys(v for c in structured for v in c['exclusions']))[:15],
+                transferable=all(c['transferable'] for c in structured),parent_experience_id=None),
+                ensure_ascii=False,sort_keys=True,separators=(',',':'))
+            if len(payload) > self._config.context_l2_max_chars:
+                return PlaybookSkip(item_ids=member_ids,reason=_SKIP_LAYER_TOO_LONG)
         with store.transaction():
             item = store.create_item(draft)
+            if payload is not None:
+                store._connection().execute(
+                    'UPDATE context_items SET experience_payload=? WHERE id=?', (payload,item.id))
             for experience_id in member_ids:
                 store.record_experience_source(
                     item.id, experience_id, extraction_version=_EXTRACTION_VERSION
@@ -282,6 +306,9 @@ class PlaybookGenerator:
             "你是研发经验巩固助手。以下是同一主题下多条已验证的工程经验"
             "（只含摘要与细节，不含原始会话）。",
             "请将它们提炼成一份可复用的 Playbook。",
+            "先核对问题机制、目标、环境和约束。相似报错不代表同根因；若机制不一致请返回空对象。"
+            "只归纳来源明确支持的共同步骤，保留成功条件、例外和待验证假设；不得扩大验证范围。"
+            "本次归纳是待验证的方法建议，回放旧案例不算新成功。",
             "",
         ]
         if cluster.scope is ContextScope.GLOBAL:

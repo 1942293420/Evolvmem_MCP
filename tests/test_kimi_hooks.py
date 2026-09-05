@@ -85,6 +85,22 @@ def _write_wire(tmp_path, user_text: str, assistant_text: str = "处理完成"):
 
 
 class TestLLMConfig:
+    def test_load_llm_callable_adapts_existing_retrying_chat(self, monkeypatch):
+        config = _llm_config()
+        monkeypatch.setattr(hooks, "_load_llm_config", lambda: config)
+        calls = []
+        monkeypatch.setattr(
+            hooks,
+            "_call_llm_with_retry",
+            lambda prompt, actual: calls.append((prompt, actual)) or "模型结果",
+        )
+
+        llm = hooks._load_llm_callable()
+
+        assert callable(llm)
+        assert llm("滚动摘要") == "模型结果"
+        assert calls == [("滚动摘要", config)]
+
     def test_loads_deepseek_credentials_file(self, monkeypatch, tmp_path):
         config_path = tmp_path / "llm_credentials.json"
         config_path.write_text(json.dumps({
@@ -481,6 +497,10 @@ class TestFullConversationExtraction:
                     status_code,
                     '{"error":{"code":"context_length_exceeded"}}',
                 )
+            if len(prompts) == 4:
+                return _extraction_response(
+                    "总摘要覆盖第一块与第二块", "project:test:fact:synthesis"
+                )
             index = len(prompts) - 1
             return _extraction_response(
                 f"第{index}块摘要", f"project:test:fact:chunk{index}"
@@ -492,13 +512,15 @@ class TestFullConversationExtraction:
             messages, _llm_config(), fallback_chunk_chars=45
         )
 
-        assert len(prompts) == 3  # 一次全量失败，再按两条完整消息降级
+        assert len(prompts) == 4  # 全量失败、两块提取、一次总摘要合成
         assert messages[0]["content"] in prompts[1]
         assert messages[0]["content"] not in prompts[2]
         assert messages[1]["content"] in prompts[2]
         assert messages[1]["content"] not in prompts[1]
+        assert "第1块摘要" in prompts[3]
+        assert "第2块摘要" in prompts[3]
         summaries = [c for c in candidates if c.key == "SESSION_SUMMARY"]
-        assert [c.value for c in summaries] == ["第2块摘要"]
+        assert [c.value for c in summaries] == ["总摘要覆盖第一块与第二块"]
         assert [c.key for c in candidates if c.key != "SESSION_SUMMARY"] == [
             "project:test:fact:chunk1", "project:test:fact:chunk2",
         ]
@@ -1647,6 +1669,31 @@ class TestHooksLog:
 
 
 class TestHeartbeat:
+    def test_session_start_forwards_workspace_from_hook_payload(
+            self, monkeypatch, tmp_path, capsys):
+        captured = {}
+        monkeypatch.setattr(
+            "evolvmem.hooks.get_session_start_block",
+            lambda **kwargs: captured.update(kwargs) or "记忆块",
+        )
+        monkeypatch.setattr(hooks, "_LIVE_DIR", tmp_path / "live")
+        monkeypatch.setattr(sys, "argv", ["kimi_hooks", "session-start"])
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            io.StringIO(json.dumps({
+                "session_id": "session_workspace",
+                "cwd": "/workspace/eva",
+            })),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            hooks.main()
+
+        assert exc_info.value.code == 0
+        assert capsys.readouterr().out == "记忆块"
+        assert captured == {"workspace_path": "/workspace/eva"}
+
     def test_touch_heartbeat_creates_marker(self, monkeypatch, tmp_path):
         live_dir = tmp_path / "live"
         monkeypatch.setattr(hooks, "_LIVE_DIR", live_dir)
@@ -2000,13 +2047,38 @@ class TestSessionEndConsolidationWiring:
         assert callable(captured["llm"])
         # llm callable 包装既有 chat 能力：成功返回文本，异常降级为 None
         assert captured["llm"]("提炼 playbook") == "ok"
-        assert chats == ["提炼 playbook"]
+        assert chats[-1] == "提炼 playbook"
+        assert any("项目知识整理助手" in prompt for prompt in chats[:-1])
 
         def failing_chat(*args, **kwargs):
             raise hooks.RetryableExtractionError("provider down")
 
         monkeypatch.setattr(hooks, "_call_llm_with_retry", failing_chat)
         assert captured["llm"]("再试一次") is None
+
+    def test_session_end_passes_llm_callable_to_persistence(
+            self, monkeypatch, tmp_path, test_config):
+        from evolvmem.context_service import ContextService
+
+        self._prepare(monkeypatch, tmp_path, test_config, "shadow")
+        original = ContextService.persist_legacy_extraction
+        captured = {}
+
+        def spy(service, request, **kwargs):
+            captured["llm"] = kwargs.get("llm")
+            return original(service, request, **kwargs)
+
+        monkeypatch.setattr(ContextService, "persist_legacy_extraction", spy)
+        monkeypatch.setattr(ContextService, "run_consolidation", lambda *args, **kwargs: None)
+        monkeypatch.setattr(
+            hooks, "_call_llm_with_retry", lambda prompt, config: "滚动摘要模型结果"
+        )
+
+        result = hooks.session_end({"session_id": "session_rollup_wiring"})
+
+        assert result.status == "completed"
+        assert callable(captured["llm"])
+        assert captured["llm"]("更新项目摘要") == "滚动摘要模型结果"
 
     def test_consolidation_failure_does_not_change_result(
             self, monkeypatch, tmp_path, test_config):

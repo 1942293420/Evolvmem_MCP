@@ -55,6 +55,7 @@ _CONTEXT_TOOLS = {
     "context_session_start", "context_search", "context_read", "context_status",
     "context_confirm", "context_record_outcome",
     "context_archive_project", "context_sweep",
+    "experience_recall", "experience_record",
 }
 # 续接工具组：codex/kimi 的 compat/shadow/primary 均列出（不过 Core 门禁）
 _CONTINUITY_TOOLS = {
@@ -78,6 +79,8 @@ _PROBE_ARGS = {
     "context_record_outcome": {},
     "context_archive_project": {},
     "context_sweep": {},
+    "experience_recall": {},
+    "experience_record": {},
     "continuity_resume": {},
     "continuity_checkpoint": {},
     "continuity_list": {},
@@ -291,7 +294,7 @@ class TestModeAdapterHealthMatrix:
         })
         assert added["status"] == "added"
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_shadow_ready_serves_real_core_results(self, test_config, adapter):
         server = _make_server(test_config, mode="shadow", adapter=adapter)
         logs = []
@@ -410,7 +413,7 @@ class TestModeAdapterHealthMatrix:
         assert added["status"] == "added"
         assert added["context_id"] is not None
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_primary_memory_search_never_substitutes_unmapped_neighbor(
             self, test_config, adapter):
         server = _make_server(
@@ -458,7 +461,7 @@ class TestModeAdapterHealthMatrix:
         "mode,adapter",
         [
             ("shadow", "claude"), ("primary", "claude"),
-            ("shadow", "dsh"), ("primary", "web"),
+            ("primary", "web"),
             ("shadow", ""),
         ],
     )
@@ -495,7 +498,7 @@ class TestModeAdapterHealthMatrix:
         })
         assert added["status"] == "added"
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_invalid_config_fails_closed(self, test_config, adapter):
         server = _make_server(test_config, mode="turbo", adapter=adapter)
 
@@ -524,7 +527,7 @@ class TestModeAdapterHealthMatrix:
         assert status["diagnostics"]
         assert str(test_config.data_dir) not in json.dumps(status)
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_degraded_primary_hides_context_tools_but_keeps_continuity(
             self, test_config, adapter):
         server = _make_server(
@@ -571,7 +574,7 @@ class TestModeAdapterHealthMatrix:
         assert search["count"] == 1
         assert search["results"][0]["id"] == seeded_id
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_primary_write_gate_fails_closed_when_status_is_unknown(
             self, test_config, monkeypatch, adapter):
         """status() 瞬时异常等于健康未知：primary 写门禁必须 fail-closed，
@@ -659,7 +662,7 @@ class TestRegistry:
             expected |= _CONTINUITY_TOOLS
         assert {spec.name for spec in specs} == expected
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_shadow_ready_lists_all_tools(self, adapter):
         health = _health(mode=ContextMode.SHADOW, ready=True, adapter=adapter)
         specs = tool_specs(adapter=adapter, mode=ContextMode.SHADOW,
@@ -668,7 +671,7 @@ class TestRegistry:
             _LEGACY_TOOLS | _CONTEXT_TOOLS | _CONTINUITY_TOOLS
         )
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_primary_ready_lists_all_tools(self, adapter):
         specs = tool_specs(adapter=adapter, mode=ContextMode.PRIMARY,
                            health=_health(adapter=adapter))
@@ -677,14 +680,14 @@ class TestRegistry:
         )
 
     @pytest.mark.parametrize("mode", [ContextMode.SHADOW, ContextMode.PRIMARY])
-    @pytest.mark.parametrize("adapter", ["claude", "dsh", "web", ""])
+    @pytest.mark.parametrize("adapter", ["claude", "web", ""])
     def test_non_cutover_adapter_never_lists_context_tools(
             self, mode, adapter):
         specs = tool_specs(adapter=adapter, mode=mode,
                            health=_health(mode=mode, adapter=adapter))
         assert {spec.name for spec in specs} == _LEGACY_TOOLS
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     @pytest.mark.parametrize("health", [None, _health(ready=False)])
     def test_without_ready_health_lists_only_context_status(
             self, health, adapter):
@@ -748,7 +751,7 @@ class TestRegistry:
         assert record["properties"]["id"]["type"] == "integer"
         assert record["properties"]["id"]["minimum"] == 1
         assert record["properties"]["outcome"]["enum"] == [
-            "success", "failure", "confirmed", "contradicted",
+            "success", "failure", "confirmed", "contradicted", "used", "inapplicable", "unknown",
         ]
         assert record["properties"]["note"]["type"] == "string"
         assert record["additionalProperties"] is False
@@ -847,7 +850,6 @@ class TestInitializationInstructions:
             ("kimi", ContextMode.SHADOW),
             ("kimi", ContextMode.COMPAT),
             ("claude", ContextMode.PRIMARY),
-            ("dsh", ContextMode.PRIMARY),
         ],
     )
     def test_non_primary_states_never_issue_auto_call_instructions(
@@ -857,7 +859,7 @@ class TestInitializationInstructions:
                                                        adapter=adapter),
         ) is None
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_degraded_primary_instructions_only_diagnose(self, adapter):
         text = initialization_instructions(
             adapter=adapter, mode=ContextMode.PRIMARY,
@@ -983,7 +985,7 @@ class TestContextProtocolErrors:
 
 
 class TestPrimaryHealthRecheck:
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_degraded_service_cannot_continue_writes(
             self, test_config, adapter):
         server = _make_server(
@@ -1081,7 +1083,7 @@ class TestHandshakeBoundedHealthCheck:
 
 
 class TestLegacySearchModes:
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_shadow_records_threshold_exclusion_without_content(
             self, test_config, monkeypatch, adapter):
         import numpy as np
@@ -1201,7 +1203,7 @@ def _seed_archive(service, external_id, *, project="proj", now=None):
 
 
 class TestContextLifecycleTools:
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_shadow_serves_confirm_record_outcome_sweep_and_archive_project(
             self, test_config, adapter):
         server = _make_server(test_config, mode="shadow", adapter=adapter)
@@ -1247,7 +1249,7 @@ class TestContextLifecycleTools:
         reloaded = service.store.get_item(candidate.id, include_layers=False)
         assert reloaded.status is ContextStatus.ACTIVE
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_primary_ready_serves_the_lifecycle_tools(
             self, test_config, adapter):
         server = _make_server(
@@ -1320,7 +1322,7 @@ class TestContextLifecycleTools:
             ("context_record_outcome",
              {"id": 1, "outcome": "success", "note": 5}),
             ("context_record_outcome",
-             {"id": 1, "outcome": "success", "source_id": 3}),
+             {"id": 1, "outcome": "success", "source_id": "invalid"}),
             ("context_archive_project", {}),
             ("context_archive_project", {"project": ""}),
             ("context_archive_project", {"project": "   "}),
@@ -1390,7 +1392,7 @@ class TestContextLifecycleTools:
             assert result["isError"] is True
             assert "Unknown tool" in payload["error"]
 
-    @pytest.mark.parametrize("adapter", ["claude", "dsh", "web", ""])
+    @pytest.mark.parametrize("adapter", ["claude", "web", ""])
     def test_lifecycle_tools_stay_hidden_for_non_cutover_adapters(
             self, test_config, adapter):
         server = _make_server(test_config, mode="shadow", adapter=adapter)
@@ -1402,7 +1404,7 @@ class TestContextLifecycleTools:
             assert result["isError"] is True
             assert "Unknown tool" in payload["error"]
 
-    @pytest.mark.parametrize("adapter", ["codex", "kimi"])
+    @pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
     def test_degraded_primary_hides_the_lifecycle_write_tools(
             self, test_config, adapter):
         server = _make_server(

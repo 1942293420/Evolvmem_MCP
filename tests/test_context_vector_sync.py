@@ -39,10 +39,11 @@ def make_draft(
     l0: str,
     status: ContextStatus = ContextStatus.ACTIVE,
     expires_at: str | None = None,
+    content_type: ContextContentType = ContextContentType.FACT,
 ) -> ContextItemDraft:
     return ContextItemDraft(
         identity_key=identity_key,
-        content_type=ContextContentType.FACT,
+        content_type=content_type,
         layers=ContextLayers(
             l0=l0,
             l1=f"detail for {l0}",
@@ -67,6 +68,10 @@ def test_rebuild_embeds_only_active_unexpired_l0_documents_at_context_path(test_
         active = store.create_item(make_draft("active", l0="active l0"))
         store.create_item(make_draft("candidate", l0="candidate l0", status=ContextStatus.CANDIDATE))
         store.create_item(make_draft("expired", l0="expired l0", expires_at="2000-01-01 00:00:00"))
+        store.create_item(make_draft(
+            "checkpoint", l0="checkpoint l0",
+            content_type=ContextContentType.WORKSTREAM_CHECKPOINT,
+        ))
         synchronizer, context_index = make_synchronizer(test_config, store, engine)
 
         report = synchronizer.rebuild_active_l0()

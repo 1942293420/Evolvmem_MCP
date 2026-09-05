@@ -88,7 +88,7 @@ _LOW_INFO_PATTERNS = (
 # 分发层按次过写门禁的旧写工具；memory_consolidate 的 dry_run 是只读分支，
 # 其门禁留在处理器内部（仅 dry_run=False 拦截）
 _DISPATCH_WRITE_TOOLS = frozenset({
-    "memory_add", "memory_replace", "memory_remove",
+    "memory_add", "memory_replace", "memory_remove", "experience_record",
 })
 
 # context 协议错误的稳定文案：不含 traceback、正文或路径
@@ -276,6 +276,8 @@ class MemoryMCPServer:
             "memory_consolidate": self._memory_consolidate,
             "context_session_start": self._context_session_start,
             "context_search": self._context_search,
+            "experience_recall": self._experience_recall,
+            "experience_record": self._experience_record,
             "context_read": self._context_read,
             "context_status": self._context_status,
             "context_confirm": self._context_confirm,
@@ -544,7 +546,8 @@ class MemoryMCPServer:
             if self.engine.is_loaded and tier != "reference":
                 match = find_semantic_match(
                     facade, self.vidx, self.engine, value,
-                    self.config.add_merge_threshold)
+                    self.config.add_merge_threshold,
+                    key=key, attribute=args.get("attribute", "fact"), tags=args.get("tags", ()))
                 if match:
                     result = self.context_service.legacy_replace(
                         LegacyReplaceRequest(
@@ -817,8 +820,90 @@ class MemoryMCPServer:
             "evidence_id": report.evidence_id,
         }
 
+    def _experience_recall(self, args: dict) -> dict:
+        if not isinstance(args, dict) or set(args) - {"project", "query", "constraints", "workstream_id"}:
+            return self._context_error("invalid_arguments")
+        error = self._context_gate_error()
+        if error is not None:
+            return error
+        try:
+            return self.context_service.experiences().recall(
+                project=args.get("project", ""), query=args.get("query"),
+                constraints=args.get("constraints"), workstream_id=args.get("workstream_id"))
+        except (ValueError, TypeError, ContextValidationError):
+            return self._context_error("invalid_arguments")
+        except ContextServiceError as exc:
+            return self._context_error(exc.code)
+
+    def _experience_record(self, args: dict) -> dict:
+        error = self._context_gate_error()
+        if error is not None:
+            return error
+        try:
+            if not isinstance(args, dict) or set(args) - {"case", "evidence"}:
+                raise ValueError("invalid arguments")
+            return self._after_experience_write(self.context_service.experiences().record(
+                args.get("case"), evidence=args.get("evidence")))
+        except (ValueError, TypeError, ContextValidationError):
+            return self._context_error("invalid_arguments")
+        except ContextServiceError as exc:
+            return self._context_error(exc.code)
+
+    def _after_experience_write(self, result: dict) -> dict:
+        """Qualified new source sets may produce an unverified method.
+
+        Existing generator coverage deduplicates the LLM work. Generation is
+        best effort after the evidence commit; failure preserves saved cases.
+        """
+        core = self.context_service
+        engine = core.embedding_engine
+        if result.get('status') != 'active' or not getattr(engine, 'is_loaded', False):
+            return result
+        try:
+            eligibility = core._context_lifecycle().evaluate_playbook_eligibility(
+                embedding_engine=engine)
+            if eligibility.clusters:
+                from evolvmem.kimi_hooks import _load_llm_callable
+                report = core.run_consolidation(llm=_load_llm_callable(log_errors=False))
+                if report.playbook_created_ids:
+                    result['candidate_method_ids'] = list(report.playbook_created_ids)
+        except Exception:
+            result['method_generation'] = 'deferred'
+        return result
+
     def _context_record_outcome(self, args: dict) -> dict:
-        if not isinstance(args, dict) or set(args) - {"id", "outcome", "note"}:
+        if not isinstance(args, dict):
+            return self._context_error("invalid_arguments")
+        item_id = args.get("id")
+        if type(item_id) is not int or item_id <= 0:
+            return self._context_error("invalid_arguments")
+        error = self._context_gate_error()
+        if error is not None:
+            return error
+        structured = self.context_service.store._connection().execute(
+            'SELECT experience_payload FROM context_items WHERE id=?', (item_id,)
+        ).fetchone()
+        if (structured and structured[0]) or "task_id" in args or "event_id" in args:
+            error = self._context_gate_error()
+            if error is not None:
+                return error
+            try:
+                return self._after_experience_write(self.context_service.experiences().outcome(
+                    args.get("id"), {k:v for k,v in args.items() if k != "id"}))
+            except (ValueError, TypeError, ContextValidationError):
+                result = self._context_error("invalid_arguments")
+                result['requirements'] = (
+                    "Structured feedback needs event_id (a stable name for this "
+                    "verification), task_id (the actual native session ID, not ws_*; "
+                    "use current for the current Codex session), source_kind, exact "
+                    "quote, note and conditions. Positive outcomes also need level "
+                    "and exact case conditions. A source must resolve to a native "
+                    "transcript event; never invent an ID or source."
+                )
+                return result
+            except ContextServiceError as exc:
+                return self._context_error(exc.code)
+        if not isinstance(args, dict) or set(args) - {"id", "outcome", "note", "source_id"}:
             return self._context_error("invalid_arguments")
         item_id = args.get("id")
         outcome = args.get("outcome")
@@ -828,6 +913,8 @@ class MemoryMCPServer:
             or item_id <= 0
             or outcome not in ("success", "failure", "confirmed", "contradicted")
             or not isinstance(note, str)
+            or (args.get("source_id") is not None and
+                (type(args["source_id"]) is not int or args["source_id"] <= 0))
         ):
             return self._context_error("invalid_arguments")
         gate_error = self._context_gate_error()
@@ -835,7 +922,7 @@ class MemoryMCPServer:
             return gate_error
         try:
             report = self.context_service.record_outcome(
-                item_id, outcome, note=note
+                item_id, outcome, note=note, source_id=args.get("source_id")
             )
         except (ContextServiceError, ContextLifecycleError) as exc:
             return self._context_error(exc.code)

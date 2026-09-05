@@ -856,11 +856,16 @@ def _parse_args(argv=None) -> argparse.Namespace:
                              "isolated FTS-only allowance is used")
     parser.add_argument("--json", action="store_true",
                         help="print the JSON report")
+    parser.add_argument("--experience-suite", action="store_true",
+                        help="run the isolated local experience fixture suite")
     return parser.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = _parse_args(argv)
+    if args.experience_suite:
+        from scripts import experience_acceptance
+        return experience_acceptance.main(["--json"] if args.json else [])
     workdir = Path(args.workdir).resolve()
     plugin_root = Path(__file__).resolve().parent.parent
     if not workdir.is_dir():

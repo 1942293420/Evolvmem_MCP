@@ -16,6 +16,7 @@ from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.memory_store import MemoryStore
 from evolvmem.vector_index import VectorIndex
 from evolvmem.scoring import compute_score
+from evolvmem.semantic_merge import semantic_identity
 
 
 class Consolidator:
@@ -70,6 +71,11 @@ class Consolidator:
                 if not other or other["status"] != "active":
                     continue
                 if other.get("tier") == "reference":
+                    continue
+                identity = semantic_identity(m["key"], m.get("attribute"), m.get("tags"))
+                if identity is None or identity != semantic_identity(
+                    other["key"], other.get("attribute"), other.get("tags")
+                ):
                     continue
                 keep, drop = self._order(m, other)
                 pairs.append({"keep": keep, "drop": drop,

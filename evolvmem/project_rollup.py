@@ -12,8 +12,9 @@ generator's injected-LLM convention):
   ``covered_through`` watermark. When the set's sha256 — with the generator
   VERSION mixed in — matches a ``ready`` rollup row, the project is
   ``skipped``/``unchanged`` and the LLM is never called.
-- Prompt assembly: only the sources' L1 texts plus the previous summary's
-  L1 are sent. L2 and raw session material never leave the database.
+- Prompt assembly: redacted copies of the sources' L1 texts plus the
+  previous summary's L1 are sent. L2 and raw session material never leave
+  the database, and redaction never mutates the stored layers.
 - Output gates (the playbook generator's set, unchanged): JSON parse
   failure, a missing/non-string/empty layer, sensitive content,
   low-information content, or a layer over its configured character budget
@@ -53,7 +54,11 @@ from evolvmem.context_models import (
     ContextValidationError,
 )
 from evolvmem.context_store import ContextStore, _now_iso
-from evolvmem.extraction_policy import contains_cjk, contains_sensitive_text
+from evolvmem.extraction_policy import (
+    contains_cjk,
+    contains_sensitive_text,
+    redact_messages,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +94,7 @@ _FAILED_REASONS = frozenset(
 _REASONS = frozenset({_REASON_NONE} | _SKIP_REASONS | _FAILED_REASONS)
 
 _LAYER_NAMES = ("l0", "l1", "l2")
+_GENERATION_TARGETS = {"l0": 160, "l1": 800, "l2": 3000}
 _ATOMIC_SOURCE_TYPES = (
     ContextContentType.DECISION.value,
     ContextContentType.FACT.value,
@@ -362,8 +368,13 @@ class ProjectRollupGenerator:
         sources: tuple[ContextItem, ...],
         current: ContextItem | None,
     ) -> str:
-        """Assemble the prompt from source L1s and the old summary's L1 only."""
+        """Assemble the prompt from redacted copies of L1 content only."""
         config = self._config
+        limits = {
+            "l0": min(config.context_l0_max_chars, _GENERATION_TARGETS["l0"]),
+            "l1": min(config.context_l1_max_chars, _GENERATION_TARGETS["l1"]),
+            "l2": min(config.context_l2_max_chars, _GENERATION_TARGETS["l2"]),
+        }
         lines = [
             "你是项目知识整理助手。以下是同一项目的会话摘要与最新知识条目"
             "（只含细节层文本，不含原始会话）。",
@@ -373,18 +384,20 @@ class ProjectRollupGenerator:
             "",
         ]
         if current is not None and current.layers is not None:
-            lines.append(f"旧摘要: {current.layers.l1}")
+            lines.append(f"旧摘要: {_redacted_prompt_copy(current.layers.l1)}")
             lines.append("")
         for index, source in enumerate(sources, start=1):
-            lines.append(f"条目 {index} 细节: {source.layers.l1}")
+            lines.append(
+                f"条目 {index} 细节: {_redacted_prompt_copy(source.layers.l1)}"
+            )
             lines.append("")
         lines.extend(
             [
                 '只返回一个 JSON 对象：{"l0": "...", "l1": "...", "l2": "..."}，'
                 "不要输出任何其他文本。",
-                f"l0 为一句话项目状态要点，不超过 {config.context_l0_max_chars} 字；",
-                f"l1 为当前进展、关键决定与待办，不超过 {config.context_l1_max_chars} 字；",
-                f"l2 为完整细节与来源脉络，不超过 {config.context_l2_max_chars} 字；",
+                f"l0 为一句话项目状态要点，不超过 {limits['l0']} 字；",
+                f"l1 为当前进展、关键决定与待办，不超过 {limits['l1']} 字；",
+                f"l2 为完整细节与来源脉络，不超过 {limits['l2']} 字；",
                 "全部使用中文；不得包含密钥、token、密码等任何敏感信息。",
             ]
         )
@@ -551,6 +564,11 @@ class ProjectRollupGenerator:
             context_id=item.id,
             covered_through=covered_through,
         )
+
+
+def _redacted_prompt_copy(text: str) -> str:
+    messages, _ = redact_messages([{"role": "context", "content": text}])
+    return messages[0]["content"]
 
 
 def _rollup_identity_key(project: str) -> str:

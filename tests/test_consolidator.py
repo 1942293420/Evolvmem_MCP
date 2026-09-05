@@ -47,8 +47,8 @@ def _add_with_vector(store, vidx, engine, key, value, **kw):
 class TestFindCandidates:
     def test_identical_values_flagged(self, setup):
         store, vidx, engine, c = setup
-        _add_with_vector(store, vidx, engine, "a:x", "完全相同的内容")
-        _add_with_vector(store, vidx, engine, "b:y", "完全相同的内容")
+        _add_with_vector(store, vidx, engine, "project:demo:db:choice", "完全相同的内容")
+        _add_with_vector(store, vidx, engine, "demo:db:choice", "完全相同的内容")
         _add_with_vector(store, vidx, engine, "c:z", "完全不同的东西")
         pairs = c.find_candidates()
         assert len(pairs) == 1
@@ -56,8 +56,8 @@ class TestFindCandidates:
 
     def test_higher_score_is_keep(self, setup):
         store, vidx, engine, c = setup
-        _add_with_vector(store, vidx, engine, "a:x", "相同内容", importance=3.0)
-        _add_with_vector(store, vidx, engine, "b:y", "相同内容", importance=9.0)
+        _add_with_vector(store, vidx, engine, "project:demo:db:choice", "相同内容", importance=3.0)
+        _add_with_vector(store, vidx, engine, "demo:db:choice", "相同内容", importance=9.0)
         pairs = c.find_candidates()
         assert pairs[0]["keep"]["importance"] == 9.0
         assert pairs[0]["drop"]["importance"] == 3.0
@@ -72,9 +72,9 @@ class TestFindCandidates:
 
     def test_reference_tier_never_merged(self, setup):
         store, vidx, engine, c = setup
-        _add_with_vector(store, vidx, engine, "a:x", "相同内容",
+        _add_with_vector(store, vidx, engine, "project:demo:db:choice", "相同内容",
                          tier="reference")
-        _add_with_vector(store, vidx, engine, "b:y", "相同内容",
+        _add_with_vector(store, vidx, engine, "demo:db:choice", "相同内容",
                          tier="reference")
         _add_with_vector(store, vidx, engine, "c:z", "相同内容")
         # 两条 reference 不参与合并；normal 的 c:z 也没有可配对对象
@@ -85,16 +85,16 @@ class TestFindCandidates:
 class TestConsolidate:
     def test_dry_run_changes_nothing(self, setup):
         store, vidx, engine, c = setup
-        _add_with_vector(store, vidx, engine, "a:x", "相同内容")
-        _add_with_vector(store, vidx, engine, "b:y", "相同内容")
+        _add_with_vector(store, vidx, engine, "project:demo:db:choice", "相同内容")
+        _add_with_vector(store, vidx, engine, "demo:db:choice", "相同内容")
         result = c.consolidate(dry_run=True)
         assert len(result["pairs"]) == 1
         assert store.count_active() == 2
 
     def test_apply_archives_drop(self, setup):
         store, vidx, engine, c = setup
-        _add_with_vector(store, vidx, engine, "a:x", "相同内容", importance=3.0)
-        _add_with_vector(store, vidx, engine, "b:y", "相同内容", importance=9.0)
+        _add_with_vector(store, vidx, engine, "project:demo:db:choice", "相同内容", importance=3.0)
+        _add_with_vector(store, vidx, engine, "demo:db:choice", "相同内容", importance=9.0)
         result = c.consolidate(dry_run=False)
         assert result["merged"] == 1
         assert store.count_active() == 1
@@ -128,9 +128,9 @@ class TestConsolidatorThroughFacade:
     def test_consolidate_mirrors_access_and_archive_on_both_sides(
             self, test_config):
         service, facade, vidx, engine = self._env(test_config)
-        first = _add_with_vector(facade, vidx, engine, "a:x", "相同内容",
+        first = _add_with_vector(facade, vidx, engine, "project:demo:db:choice", "相同内容",
                                  importance=3.0)
-        second = _add_with_vector(facade, vidx, engine, "b:y", "相同内容",
+        second = _add_with_vector(facade, vidx, engine, "demo:db:choice", "相同内容",
                                   importance=9.0)
         first_ctx = service.store.resolve_legacy_mapping(first)
         second_ctx = service.store.resolve_legacy_mapping(second)
@@ -153,8 +153,8 @@ class TestConsolidatorThroughFacade:
 
     def test_dry_run_through_facade_changes_nothing(self, test_config):
         service, facade, vidx, engine = self._env(test_config)
-        first = _add_with_vector(facade, vidx, engine, "a:x", "相同内容")
-        second = _add_with_vector(facade, vidx, engine, "b:y", "相同内容")
+        first = _add_with_vector(facade, vidx, engine, "project:demo:db:choice", "相同内容")
+        second = _add_with_vector(facade, vidx, engine, "demo:db:choice", "相同内容")
 
         result = Consolidator(test_config, facade, vidx, engine).consolidate(
             dry_run=True)
@@ -179,9 +179,9 @@ class TestConsolidatorThroughFacade:
 
         service, facade, vidx, engine = self._env(
             test_config, store=FailingStore(test_config))
-        first = _add_with_vector(facade, vidx, engine, "a:x", "相同内容",
+        first = _add_with_vector(facade, vidx, engine, "project:demo:db:choice", "相同内容",
                                  importance=3.0)
-        _add_with_vector(facade, vidx, engine, "b:y", "相同内容",
+        _add_with_vector(facade, vidx, engine, "demo:db:choice", "相同内容",
                          importance=9.0)
         first_ctx = service.store.resolve_legacy_mapping(first)
 

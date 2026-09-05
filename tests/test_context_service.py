@@ -263,6 +263,23 @@ def make_service(config, store, *, mode=ContextMode.SHADOW, **dependencies):
     return instance
 
 
+def test_health_refreshes_fts_snapshot_after_another_client_write(service, store, test_config):
+    item = add_item(store, 'project:proj:fact:other-client')
+    assert service._quick_check_diagnostics() == ()
+    with sqlite3.connect(test_config.db_path) as other:
+        other.execute("UPDATE context_layers SET content='changed by another client' "
+                      "WHERE item_id=? AND layer='l0'", (item.id,))
+    assert service._quick_check_diagnostics() == ()
+
+
+def test_health_snapshot_refresh_still_detects_corrupt_fts(service, store, test_config):
+    add_item(store, 'project:proj:fact:corrupt-index')
+    assert service._quick_check_diagnostics() == ()
+    with sqlite3.connect(test_config.db_path) as other:
+        other.execute("UPDATE context_layers_fts_content SET c0='corrupted index content'")
+    assert service._quick_check_diagnostics() == ('quick_check_failed',)
+
+
 def _search_request(**overrides):
     return ContextSearchRequest(**{"query": "zebra", "project": "proj", **overrides})
 
@@ -1732,7 +1749,7 @@ def test_extraction_batch_semantic_merge_preserves_pinned_tier(test_config):
         _extraction_request(
             candidates=(
                 _extraction_item(
-                    "project:test:fact:db-alias",
+                    "test:decision:db",
                     "数据库长期选用 MySQL，因为它稳定。",
                     importance=7.0,
                     confidence=0.9,

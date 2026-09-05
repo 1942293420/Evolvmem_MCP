@@ -36,9 +36,11 @@ from pathlib import Path
 import sys
 
 from evolvmem.config import Config
+from evolvmem.context_models import ContextMode
+from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
 from evolvmem.cutover_cli import _scrubbed_environment
-from evolvmem.project_rollup import ProjectRollupGenerator
+from evolvmem.embedding import EmbeddingEngine
 from evolvmem.project_store import ProjectResolutionRow, ProjectStore, ProjectStoreError
 from evolvmem.workspace_identity import (
     WorkspaceIdentityError,
@@ -48,6 +50,13 @@ from evolvmem.workspace_identity import (
 # Binding rows created from this CLI carry the same method stamp the store
 # tests use for operator-driven binds.
 _BIND_METHOD = "cli"
+
+
+def _load_rollup_llm():
+    """Reuse the configured extraction provider for manual project rollups."""
+    from evolvmem.kimi_hooks import _load_llm_callable
+
+    return _load_llm_callable(log_errors=False)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -140,8 +149,8 @@ def _build_parser() -> argparse.ArgumentParser:
     rollup_sub = rollup.add_subparsers(dest="action", required=True)
     run = rollup_sub.add_parser(
         "run",
-        help="refresh rolling project summaries (one JSON line per project; "
-        "the operator CLI wires no LLM, so runs degrade to llm_unavailable)",
+        help="refresh rolling project summaries with the configured extraction "
+        "provider (one JSON line per project)",
     )
     run.add_argument("--project", default=None, help="roll up only this project")
     run.set_defaults(handler=_cmd_rollup_run)
@@ -411,20 +420,28 @@ def _cmd_resolutions_reject(args) -> int:
 def _cmd_rollup_run(args) -> int:
     """Print one JSON line per project: project/status/reason/context_id.
 
-    The CLI never carries content across its output boundary; the generator
-    runs with no LLM and no vector handoff, so projects report their honest
-    degradation (``llm_unavailable``) and nothing is written.
+    The CLI never carries content across its output boundary. The generator
+    uses the configured extraction provider through the shared narrow LLM
+    adapter; unavailable credentials preserve the explicit
+    ``llm_unavailable`` degradation.
     """
     if args.project is not None and not args.project.strip():
         _emit_error({"error": "invalid_project"})
         return 2
     config = Config(data_dir=args.data_dir)
-    with ContextStore(config) as store:
-        generator = ProjectRollupGenerator(config, store)
+    llm = _load_rollup_llm()
+    service = ContextService(
+        config,
+        embedding_engine=EmbeddingEngine(config) if llm is not None else None,
+    )
+    try:
+        service.initialize(mode=ContextMode.SHADOW, adapter="project_cli")
         if args.project is not None:
-            reports = (generator.rollup_project(args.project.strip()),)
+            reports = (service.rollup_project(args.project.strip(), llm=llm),)
         else:
-            reports = generator.rollup_all()
+            reports = service.rollup_projects(llm=llm)
+    finally:
+        service.close()
     for report in reports:
         _emit(
             {

@@ -57,6 +57,13 @@ from evolvmem.summary_retention import SummaryRetention, SummaryRetentionReport
 from evolvmem.vector_index import VectorIndex
 
 
+def _load_rollup_llm():
+    """Reuse the configured extraction provider for maintenance rollups."""
+    from evolvmem.kimi_hooks import _load_llm_callable
+
+    return _load_llm_callable(log_errors=False)
+
+
 # ---- apply report ----
 
 
@@ -187,6 +194,7 @@ def apply_plan(
     plan_digest: str,
     timestamp: datetime | None = None,
     embedding_engine=None,
+    llm=None,
 ) -> MaintenanceApplyReport:
     """Execute an approved plan under the exclusive cutover lock.
 
@@ -238,7 +246,9 @@ def apply_plan(
                         "migration_failed", backup_directory=backup_directory
                     ) from exc
                 try:
-                    rollups = ProjectRollupGenerator(config, store).rollup_all()
+                    rollups = ProjectRollupGenerator(
+                        config, store, llm=llm
+                    ).rollup_all()
                 except Exception as exc:
                     raise MaintenanceError(
                         "rollup_failed", backup_directory=backup_directory
@@ -356,7 +366,10 @@ def _cmd_apply(args) -> int:
     engine = _load_embedding_engine(config)
     try:
         report = apply_plan(
-            config, plan_digest=args.plan_digest, embedding_engine=engine
+            config,
+            plan_digest=args.plan_digest,
+            embedding_engine=engine,
+            llm=_load_rollup_llm(),
         )
     finally:
         close = getattr(engine, "close", None)

@@ -103,18 +103,29 @@ class ContextRetriever:
         self.embedding_engine = embedding_engine
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
-    def search(self, request: ContextSearchRequest) -> tuple[ContextSearchResult, ...]:
+    def search(self, request: ContextSearchRequest, *, eligible_ids=None) -> tuple[ContextSearchResult, ...]:
         """Return deterministic L0-only results without access-count side effects."""
         pool_size = request.top_k * _CANDIDATE_POOL_MULTIPLIER
         fts_hits = self.store.search_fts(
             request.query,
             top_k=pool_size,
             statuses=(ContextStatus.ACTIVE,),
-            layers=(ContextLayer.L0,),
+            layers=(ContextLayer.L0, ContextLayer.L1),
+            project=None if request.cross_project else request.project,
+            now=self._now().strftime(_TIMESTAMP_FORMAT),
+            content_types=request.content_types,
+            min_confidence=self.config.context_min_confidence,
+            applicable_global_types=None if request.cross_project else tuple(_APPLICABLE_GLOBAL_TYPES),
+            exclude_reference=ContextContentType.REFERENCE not in request.content_types,
+            exclude_checkpoints=ContextContentType.WORKSTREAM_CHECKPOINT not in request.content_types,
+            item_ids=None if eligible_ids is None else tuple(eligible_ids),
         )
         candidates = self._merge_candidates(
-            fts_hits, self._vector_candidates(request.query, pool_size)
+            fts_hits, self._scoped_vector_candidates(request, pool_size, eligible_ids)
         )
+        if eligible_ids is not None:
+            allowed = set(eligible_ids)
+            candidates = [c for c in candidates if c.item_id in allowed]
         if not candidates:
             return ()
         records = {
@@ -148,6 +159,23 @@ class ContextRetriever:
         return tuple(result for _, result in scored[: request.top_k])
 
     # ---- candidate generation ----
+
+    def _scoped_vector_candidates(self, request, pool_size, eligible_ids=None):
+        hits = self._vector_candidates(request.query, pool_size)
+        while len(hits) == pool_size:
+            records = self.store.get_retrieval_records([hit["id"] for hit in hits])
+            if sum(self._eligible(r.item, request, self._now()) and
+                   (eligible_ids is None or r.item.id in eligible_ids) for r in records) >= request.top_k:
+                break
+            try:
+                total = self.vector_index.count()
+            except Exception:
+                break
+            if pool_size >= total:
+                break
+            pool_size = min(total, pool_size * 2)
+            hits = self._vector_candidates(request.query, pool_size)
+        return hits
 
     def _vector_candidates(self, query: str, pool_size: int) -> list[dict]:
         """Return raw ANN neighbors, degrading to none on any vector failure."""

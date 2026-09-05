@@ -5,12 +5,12 @@
  * 事件（headless 进程退出、web 长闲置会话都可能不触发 disposed），每
  * sweepIntervalMs 扫一次持久化会话列表：
  *   - live 中的会话跳过（仍在被使用）
- *   - Python 侧标记已提取的跳过（零 LLM 开销，只读 JSON 标记文件）
+ *   - 当前投影内容版本已提取的跳过（零 LLM 开销，只读 JSON 标记文件）
  *   - 持久化物件 mtime 距今 < sweepIdleMs 的跳过（会话还在写入）
  *   - 压缩产物 < minArtifactBytes 的跳过（对话太短，必过不了 minChars 门）
  * 每轮最多处理 maxPerSweep 个会话。
  */
-import { alreadyExtracted, debugLog, dispatchExtraction, persistedStat, projectMessages } from "./common.js";
+import { alreadyExtracted, contentVersion, debugLog, dispatchExtraction, persistedStat, projectMessages } from "./common.js";
 
 export const name = "evolvmem-sweep";
 export const inject = ["timer", "sessionQuery"];
@@ -50,10 +50,6 @@ export function apply(ctx, config) {
           debugLog(`sweep skip id=${id.slice(0, 12)} reason=live`);
           continue;
         }
-        if (alreadyExtracted(dataDir, id)) {
-          debugLog(`sweep skip id=${id.slice(0, 12)} reason=marked`);
-          continue;
-        }
         const stat = persistedStat(sessionPersistence, id);
         if (stat.size > 0 && stat.size < minArtifactBytes) {
           debugLog(`sweep skip id=${id.slice(0, 12)} reason=small size=${stat.size}`);
@@ -72,6 +68,10 @@ export function apply(ctx, config) {
           continue;
         }
         const messages = projectMessages(session);
+        if (alreadyExtracted(dataDir, id, contentVersion(messages))) {
+          debugLog(`sweep skip id=${id.slice(0, 12)} reason=marked`);
+          continue;
+        }
         const cwd = session?.header?.cwd ?? rec?.header?.cwd ?? process.cwd();
         const project = cwd.split("/").filter(Boolean).pop() ?? "dsh";
         const dispatched = dispatchExtraction(config, messages, id, project);

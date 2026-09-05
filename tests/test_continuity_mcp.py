@@ -36,6 +36,7 @@ from evolvmem.mcp_server import MemoryMCPServer, _CONTEXT_ERROR_MESSAGES
 from evolvmem.memory_store import MemoryStore
 from evolvmem.project_store import ProjectStore
 from evolvmem.workspace_identity import WorkspaceIdentityProvider
+from evolvmem.vector_index import VectorIndex
 
 
 _CONTINUITY_TOOLS = {
@@ -183,7 +184,7 @@ def test_continuity_tools_listed_for_kimi_compat(server_kimi_compat):
 
 
 @pytest.mark.parametrize("mode", ["compat", "shadow", "primary"])
-@pytest.mark.parametrize("adapter", ["codex", "kimi"])
+@pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
 def test_cutover_adapters_list_continuity_tools(test_config, mode, adapter):
     server = _make_server(test_config, mode=mode, adapter=adapter)
     assert _CONTINUITY_TOOLS <= _tool_names(server)
@@ -207,7 +208,7 @@ def test_degraded_primary_still_lists_and_serves_continuity(
 
 
 @pytest.mark.parametrize("mode", ["legacy"])
-@pytest.mark.parametrize("adapter", ["codex", "kimi"])
+@pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
 def test_legacy_mode_does_not_list_continuity_tools(test_config, mode, adapter):
     server = _make_server(test_config, mode=mode, adapter=adapter)
     names = _tool_names(server)
@@ -219,7 +220,7 @@ def test_legacy_mode_does_not_list_continuity_tools(test_config, mode, adapter):
     assert "Unknown tool" in payload["error"]
 
 
-@pytest.mark.parametrize("adapter", ["claude", "dsh", "web", ""])
+@pytest.mark.parametrize("adapter", ["claude", "web", ""])
 @pytest.mark.parametrize("mode", ["compat", "shadow", "primary"])
 def test_non_cutover_adapters_never_list_continuity_tools(
     test_config, mode, adapter
@@ -233,7 +234,7 @@ def test_non_cutover_adapters_never_list_continuity_tools(
     assert "Unknown tool" in payload["error"]
 
 
-@pytest.mark.parametrize("adapter", ["codex", "kimi"])
+@pytest.mark.parametrize("adapter", ["codex", "kimi", "dsh"])
 def test_invalid_mode_does_not_list_continuity_tools(test_config, adapter):
     server = _make_server(test_config, mode="turbo", adapter=adapter)
     assert _tool_names(server).isdisjoint(_CONTINUITY_TOOLS)
@@ -256,6 +257,11 @@ class TestContinuityToolSchemas:
             schema = self._specs()[name].input_schema
             assert schema["type"] == "object"
             assert schema["additionalProperties"] is False, name
+
+    def test_primary_instructions_create_a_focused_workstream(self):
+        for text in (_PRIMARY_INSTRUCTIONS, _PRIMARY_INSTRUCTIONS_KIMI):
+            assert "make_focus=true" in text
+            assert "expected_focus_revision" in text
 
     def test_readonly_annotations(self):
         specs = self._specs()
@@ -460,6 +466,43 @@ def test_create_then_resume_roundtrip_returns_same_workstream(
     assert str(git_workspace) not in rendered
     assert "workspace.key" not in rendered
     assert "Traceback" not in rendered
+
+
+def test_checkpoint_keeps_fresh_primary_process_ready(
+    test_config, git_workspace
+):
+    index = VectorIndex(test_config, path=test_config.context_vector_path)
+    index.initialize(dim=test_config.embedding_dim)
+    index.rebuild([], [])
+    index.close()
+
+    server = _make_server(test_config, mode="compat", adapter="codex")
+    provider = _bootstrap_key(test_config)
+    _bind(server, provider, git_workspace)
+    result, created = _call(
+        server,
+        "continuity_checkpoint",
+        _create_args(
+            git_workspace, make_focus=True, expected_focus_revision=0,
+        ),
+    )
+    assert "isError" not in result
+    assert created["context_id"] > 0
+    server.shutdown()
+
+    fresh = ContextService(test_config)
+    fresh.initialize(mode=ContextMode.PRIMARY, adapter="codex")
+    fresh.vector_index.initialize(dim=test_config.embedding_dim)
+    fresh._refresh_health()
+    try:
+        assert fresh.status().ready is True
+        names = {spec.name for spec in tool_specs(
+            adapter="codex", mode=ContextMode.PRIMARY,
+            health=fresh.status(),
+        )}
+        assert "experience_recall" in names
+    finally:
+        fresh.close()
 
 
 def test_continuity_list_returns_l0_summaries_only(

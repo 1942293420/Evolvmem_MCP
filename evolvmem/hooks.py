@@ -149,7 +149,7 @@ def _session_context() -> dict:
         return {}
 
 
-def _session_project(config: Config) -> str:
+def _session_project(config: Config, workspace_path: str = "") -> str:
     """Session project identity for the Context Core boundary.
 
     cwd basename normalized through inject_project_aliases and
@@ -157,7 +157,7 @@ def _session_project(config: Config) -> str:
     boundary, never an absolute path.
     """
     try:
-        name = os.path.basename(os.getcwd())
+        name = os.path.basename(workspace_path or os.getcwd())
     except Exception:
         return ""
     if not name:
@@ -172,7 +172,8 @@ def _session_project(config: Config) -> str:
 
 
 def _core_session_start_block(config: Config,
-                              service: "ContextService") -> str:
+                              service: "ContextService",
+                              workspace_path: str = "") -> str:
     """Best-effort Core-rendered bounded L1 block for primary mode.
 
     Any Core-path failure — an unreadable vector cache, unmet primary
@@ -191,7 +192,11 @@ def _core_session_start_block(config: Config,
         service._refresh_health()
         if not service.status().ready:
             return ""
-        project = _session_project(config)
+        try:
+            effective_workspace = workspace_path.strip() or os.getcwd()
+        except Exception:
+            effective_workspace = workspace_path.strip()
+        project = _session_project(config, effective_workspace)
         if not project:
             return ""  # 无项目标识时不猜 query，回退 legacy 渲染
         from evolvmem.context_models import ContextSessionStartRequest
@@ -200,7 +205,11 @@ def _core_session_start_block(config: Config,
         # （与 legacy 评分的 cwd 项目加分同源）；pinned 种子例外在无 query
         # 命中时照常生效
         result = service.session_start(
-            ContextSessionStartRequest(project=project, query=project)
+            ContextSessionStartRequest(
+                project=project,
+                query=project,
+                workspace_path=effective_workspace,
+            )
         )
         return result.block
     except Exception:
@@ -292,7 +301,8 @@ def _maybe_sweep_archives(service: "ContextService", mode) -> None:
               file=sys.stderr, flush=True)
 
 
-def get_session_start_block(config: Config | None = None) -> str:
+def get_session_start_block(config: Config | None = None,
+                            workspace_path: str = "") -> str:
     """Build the SessionStart injection block with four layers:
 
     0. Digest layer — recent session-summary logs (key ends with
@@ -345,7 +355,8 @@ def get_session_start_block(config: Config | None = None) -> str:
         _maybe_run_forgetting(config, facade)
         _maybe_run_consolidation(config, facade)
         if mode is ContextMode.PRIMARY:
-            block = _core_session_start_block(config, service)
+            block = _core_session_start_block(
+                config, service, workspace_path=workspace_path)
             if block:
                 return block
         memories = facade.get_active()

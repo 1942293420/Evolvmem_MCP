@@ -40,6 +40,18 @@ logger = logging.getLogger(__name__)
 HOLD_REASON_ROLLUP_PENDING = "rollup_pending"
 
 
+def is_session_summary_projection(record: dict) -> bool:
+    """Return whether a legacy projection row is owned by summary retention."""
+    key = record.get("key", "")
+    attribute = record.get("attribute", "")
+    return (
+        isinstance(key, str)
+        and isinstance(attribute, str)
+        and attribute.strip().casefold() == "fact"
+        and ":progress:log:" in key.casefold()
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class SummaryRetentionReport:
     """One retention sweep's outcome: ids and project names, never content.

@@ -33,6 +33,7 @@ content, or exception messages from the embedding backend.
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import logging
 import math
 
@@ -268,6 +269,12 @@ class ContextLifecycle:
 
     # ---- evidence recording ----
 
+    def _structured_payload(self, item_id):
+        row = self._store._connection().execute(
+            'SELECT experience_payload FROM context_items WHERE id=?', (item_id,)
+        ).fetchone()
+        return row[0] if row else ''
+
     def record_outcome(
         self,
         item_id: int,
@@ -282,6 +289,8 @@ class ContextLifecycle:
         accepted here — only the caller-written, policy-checked note.
         """
         item_id = _validate_positive_int(item_id, "item_id")
+        if self._structured_payload(item_id):
+            raise ContextLifecycleError("invalid_source")
         outcome = _validate_outcome(outcome)
         note = _normalize_note(note)
         if source_id is not None:
@@ -356,6 +365,8 @@ class ContextLifecycle:
     def confirm(self, item_id: int) -> EvidenceReport:
         """Promote one candidate to active and record a confirmed evidence."""
         item_id = _validate_positive_int(item_id, "item_id")
+        if self._structured_payload(item_id):
+            raise ContextLifecycleError("invalid_source")
         store = self._store
         with store.transaction():
             item = store.get_item(item_id, include_layers=False)
@@ -397,6 +408,11 @@ class ContextLifecycle:
                 content_type=ContextContentType.EXPERIENCE,
             )
             for item_id in candidate_ids:
+                # Structured cases are promoted only by their revisioned,
+                # source-bound evidence boundary, never the legacy archive rule.
+                if self._structured_payload(item_id):
+                    skipped.append(PromotionSkip(item_id=item_id, reason=_REASON_INSUFFICIENT_ARCHIVES))
+                    continue
                 item = store.get_item(item_id, include_layers=False)
                 if item is None:  # pragma: no cover - id came from the same tx
                     continue
@@ -507,6 +523,35 @@ class ContextLifecycle:
             )
             if cluster is not None:
                 cluster_ids, min_similarity = cluster
+                structured = {i:json.loads(self._structured_payload(i)) for i in cluster_ids
+                              if self._structured_payload(i)}
+                if structured:
+                    # A summary may not mix old opaque notes with verified cases.
+                    # Similar words alone cannot establish a transferable mechanism.
+                    if len(structured) != len(cluster_ids):
+                        continue
+                    from evolvmem.experience_service import _terms
+                    cases = list(structured.values())
+                    compatible = True
+                    for position, first in enumerate(cases):
+                        for second in cases[position+1:]:
+                            if any(k in second['conditions'] and second['conditions'][k] != v
+                                   for k,v in first['conditions'].items()):
+                                compatible = False
+                            left = _terms(' '.join(first['steps']) + first['rationale'])
+                            right = _terms(' '.join(second['steps']) + second['rationale'])
+                            if len(left & right) / max(1, min(len(left),len(right))) < .35:
+                                compatible = False
+                    tasks = set()
+                    for i in cluster_ids:
+                        latest = {}
+                        for e in store.list_evidence(i):
+                            if e['event_key']:
+                                latest[e['event_key']] = e
+                        tasks.update(e['task_id'] for e in latest.values()
+                                     if e['outcome'] in {'success','confirmed'} and e['source_id'])
+                    if not compatible or len(tasks) < 2:
+                        continue
                 clusters.append(
                     PlaybookCluster(
                         scope=scope,
@@ -521,6 +566,9 @@ class ContextLifecycle:
 
     def _is_playbook_seed(self, item_id: int) -> bool:
         """Enough successes and no unresolved contradicted evidence."""
+        if self._structured_payload(item_id):
+            item = self._store.get_item(item_id, include_layers=False)
+            return item.status is ContextStatus.ACTIVE and item.success_count > 0
         rows = self._store.list_evidence(item_id)
         successes = sum(1 for row in rows if row["outcome"] == _OUTCOME_SUCCESS)
         if successes < self._config.context_promotion_min_successes:

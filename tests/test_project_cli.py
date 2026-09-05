@@ -3,18 +3,22 @@
 import json
 import os
 
+import numpy as np
 import pytest
 
 from evolvmem.context_models import (
     ContextContentType,
     ContextItemDraft,
     ContextLayers,
+    ContextMode,
     ContextStatus,
 )
+from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
 from evolvmem.project_models import ProjectResolutionDecision
 from evolvmem.project_store import ProjectStore
 from evolvmem.project_cli import main
+from evolvmem.vector_index import VectorIndex
 
 
 FP1 = "hmac-sha256:" + "1" * 64
@@ -292,7 +296,41 @@ def _make_session_summary(store, project: str, tag: str) -> int:
     ).id
 
 
-def test_rollup_run_without_llm_reports_llm_unavailable(test_config, store, capsys):
+def _seed_context_vector(test_config, item_id: int) -> None:
+    index = VectorIndex(test_config, path=test_config.context_vector_path)
+    index.initialize(dim=test_config.embedding_dim)
+    index.add(item_id, np.ones(test_config.embedding_dim, dtype=np.float32))
+    index.save()
+    index.close()
+
+
+class _LazyCliEmbedding:
+    instances = []
+
+    def __init__(self, config):
+        self.config = config
+        self.loaded = False
+        self.initialize_calls = 0
+        self.__class__.instances.append(self)
+
+    @property
+    def is_loaded(self):
+        return self.loaded
+
+    def initialize(self):
+        self.initialize_calls += 1
+        self.loaded = True
+
+    def encode_document(self, _text):
+        return np.ones(self.config.embedding_dim, dtype=np.float32)
+
+    def close(self):
+        self.loaded = False
+
+
+def test_rollup_run_without_llm_reports_llm_unavailable(
+        test_config, store, capsys, monkeypatch):
+    monkeypatch.setattr("evolvmem.project_cli._load_rollup_llm", lambda: None)
     _make_session_summary(store, "eva", "a")
     _make_session_summary(store, "hermes", "b")
     assert _run(test_config, "rollup", "run") == 0
@@ -320,7 +358,104 @@ def test_rollup_run_without_llm_reports_llm_unavailable(test_config, store, caps
     )
 
 
-def test_rollup_run_output_hygiene(test_config, store, capsys):
+def test_rollup_run_uses_configured_llm(test_config, store, capsys, monkeypatch):
+    source_id = _make_session_summary(store, "eva", "a")
+    _seed_context_vector(test_config, source_id)
+    response = json.dumps(
+        {
+            "l0": "项目正在完成滚动摘要接线。",
+            "l1": "进展：接入已有模型；决定：复用现有调用；待办：继续验证。",
+            "l2": "完整细节：来源是会话摘要，模型输出通过结构和内容门控。",
+        },
+        ensure_ascii=False,
+    )
+    prompts = []
+    monkeypatch.setattr(
+        "evolvmem.project_cli._load_rollup_llm",
+        lambda: lambda prompt: prompts.append(prompt) or response,
+    )
+    monkeypatch.setattr(
+        "evolvmem.project_cli.EmbeddingEngine", _LazyCliEmbedding
+    )
+
+    assert _run(test_config, "rollup", "run", "--project", "eva") == 0
+
+    payload = _out_json(capsys)
+    assert payload["project"] == "eva"
+    assert payload["status"] == "ready"
+    assert len(prompts) == 1
+
+
+def test_rollup_run_syncs_new_summary_before_fresh_primary_startup(
+    test_config, store, capsys, monkeypatch
+):
+    source_id = _make_session_summary(store, "eva", "a")
+    _seed_context_vector(test_config, source_id)
+    response = json.dumps(
+        {
+            "l0": "项目正在完成滚动摘要接线。",
+            "l1": "进展：接入已有模型；决定：复用现有调用；待办：继续验证。",
+            "l2": "完整细节：来源是会话摘要，模型输出通过结构和内容门控。",
+        },
+        ensure_ascii=False,
+    )
+    _LazyCliEmbedding.instances = []
+    monkeypatch.setattr(
+        "evolvmem.project_cli._load_rollup_llm", lambda: lambda _prompt: response
+    )
+    monkeypatch.setattr(
+        "evolvmem.project_cli.EmbeddingEngine", _LazyCliEmbedding, raising=False
+    )
+
+    assert _run(test_config, "rollup", "run", "--project", "eva") == 0
+
+    assert _out_json(capsys)["status"] == "ready"
+    assert len(_LazyCliEmbedding.instances) == 1
+    assert _LazyCliEmbedding.instances[0].initialize_calls == 1
+    fresh = ContextService(test_config)
+    fresh.initialize(mode=ContextMode.PRIMARY, adapter="codex")
+    fresh.vector_index.initialize(dim=test_config.embedding_dim)
+    fresh._refresh_health()
+    status = fresh.status()
+    assert status.ready is True
+    assert status.diagnostics == ()
+    fresh.close()
+
+
+def test_rollup_run_reports_vector_dirty_when_embedding_cannot_load(
+    test_config, store, capsys, monkeypatch
+):
+    source_id = _make_session_summary(store, "eva", "a")
+    _seed_context_vector(test_config, source_id)
+    response = json.dumps(
+        {
+            "l0": "项目正在完成滚动摘要接线。",
+            "l1": "进展：接入已有模型；决定：复用现有调用；待办：继续验证。",
+            "l2": "完整细节：来源是会话摘要，模型输出通过结构和内容门控。",
+        },
+        ensure_ascii=False,
+    )
+
+    class UnavailableEmbedding(_LazyCliEmbedding):
+        def initialize(self):
+            self.initialize_calls += 1
+            raise RuntimeError("synthetic model unavailable")
+
+    monkeypatch.setattr(
+        "evolvmem.project_cli._load_rollup_llm", lambda: lambda _prompt: response
+    )
+    monkeypatch.setattr(
+        "evolvmem.project_cli.EmbeddingEngine", UnavailableEmbedding, raising=False
+    )
+
+    assert _run(test_config, "rollup", "run", "--project", "eva") == 0
+
+    assert _out_json(capsys)["status"] == "vector_dirty"
+    assert test_config.context_vector_path.with_suffix(".usearch.dirty").exists()
+
+
+def test_rollup_run_output_hygiene(test_config, store, capsys, monkeypatch):
+    monkeypatch.setattr("evolvmem.project_cli._load_rollup_llm", lambda: None)
     _make_session_summary(store, "eva", "a")
     assert _run(test_config, "rollup", "run") == 0
     captured = capsys.readouterr()

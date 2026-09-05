@@ -3,6 +3,7 @@
 from evolvmem.config import Config
 from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.memory_store import MemoryStore, _now_iso
+from evolvmem.summary_retention import is_session_summary_projection
 
 
 class ForgettingEngine:
@@ -26,11 +27,15 @@ class ForgettingEngine:
 
     def find_candidates(self) -> list[dict]:
         """Find candidate memories eligible for downgrade."""
-        return self.store.get_forgetting_candidates(
+        candidates = self.store.get_forgetting_candidates(
             days_threshold=self.config.forget_days_threshold,
             access_threshold=self.config.forget_access_count_threshold,
             rate_limit_days=self.config.forget_rate_limit_days,
         )
+        return [
+            candidate for candidate in candidates
+            if not is_session_summary_projection(candidate)
+        ]
 
     def archive(self, mem_id: int) -> None:
         """Downgrade the specified memory to archived."""
@@ -39,8 +44,9 @@ class ForgettingEngine:
     def run(self) -> int:
         """Run one forgetting check, return number of archived memories.
 
-        Expired memories (expires_at <= now) are archived first, then the
-        regular access-decay rules run on the rest.
+        Expired ordinary memories are archived first, then the regular
+        access-decay rules run on the rest. Session summaries are excluded
+        from both paths because SummaryRetention owns their coverage gate.
         """
         expired = self._expired_ids()
         for mem_id in expired:
@@ -66,4 +72,5 @@ class ForgettingEngine:
             if row["status"] == "active"
             and row.get("expires_at") is not None
             and row["expires_at"] <= now
+            and not is_session_summary_projection(row)
         )

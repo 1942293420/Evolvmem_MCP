@@ -156,24 +156,30 @@ def _log(msg: str) -> None:
 
 # ---- session-start ----
 
-def session_start() -> None:
+def session_start(payload: dict | None = None) -> None:
     """Print the three-layer injection block to stdout (CLI appends it to context)."""
     from evolvmem.hooks import get_session_start_block
-    sys.stdout.write(get_session_start_block())
+    payload = payload or {}
+    workspace_path = str(
+        payload.get("cwd") or payload.get("workspace_path") or ""
+    ).strip()
+    sys.stdout.write(get_session_start_block(workspace_path=workspace_path))
 
 
 # ---- session-end ----
 
-def _load_llm_config() -> LLMConfig | None:
+def _load_llm_config(*, log_errors: bool = True) -> LLMConfig | None:
     try:
         data = json.loads(_LLM_CONFIG_PATH.read_text(encoding="utf-8"))
         provider = str(data.get("provider", "deepseek")).strip().casefold()
         if provider not in _PROVIDER_DEFAULTS:
-            _log(f"unsupported extraction provider: {provider!r}")
+            if log_errors:
+                _log(f"unsupported extraction provider: {provider!r}")
             return None
         api_key = str(data.get("api_key", "")).strip()
         if not api_key:
-            _log(f"{_LLM_CONFIG_PATH} has no api_key, skip extraction")
+            if log_errors:
+                _log(f"{_LLM_CONFIG_PATH} has no api_key, skip extraction")
             return None
         default_url, default_model = _PROVIDER_DEFAULTS[provider]
         return LLMConfig(
@@ -183,7 +189,8 @@ def _load_llm_config() -> LLMConfig | None:
             model=str(data.get("model") or default_model).strip(),
         )
     except Exception as e:
-        _log(f"LLM credential read failed: {e}")
+        if log_errors:
+            _log(f"LLM credential read failed: {e}")
         return None
 
 
@@ -420,6 +427,27 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
     raise AssertionError("unreachable")
 
 
+def _llm_callable(llm_config: LLMConfig):
+    """Adapt the existing provider call to ``callable(prompt) -> str | None``."""
+    def llm_call(prompt: str) -> str | None:
+        try:
+            return _call_llm_with_retry(prompt, llm_config)
+        except Exception:
+            return None
+
+    return llm_call
+
+
+def _load_llm_callable(*, log_errors: bool = True):
+    """Load configured provider credentials and return the narrow adapter."""
+    llm_config = (
+        _load_llm_config()
+        if log_errors
+        else _load_llm_config(log_errors=False)
+    )
+    return _llm_callable(llm_config) if llm_config is not None else None
+
+
 def _chunk_messages(messages: list[dict[str, str]],
                     max_chars: int) -> list[list[dict[str, str]]]:
     """Pack whole messages into fallback chunks without splitting content."""
@@ -482,9 +510,22 @@ def _extract_candidates(messages: list[dict[str, str]],
         return _keep_latest_summary(extract(messages))
     except ContextOverflowError:
         candidates = []
+        summaries = []
         for chunk in _chunk_messages(messages, fallback_chunk_chars):
-            candidates.extend(extract(chunk))
-        return _keep_latest_summary(candidates)
+            summary, atomic = _split_summary_candidate(extract(chunk))
+            candidates.extend(atomic)
+            summaries.append(summary)
+        if len(summaries) == 1:
+            return candidates + summaries
+        synthesis_messages = [
+            {
+                "role": "user",
+                "content": f"分块摘要 {index}：{summary.value}",
+            }
+            for index, summary in enumerate(summaries, start=1)
+        ]
+        combined, _ = _split_summary_candidate(extract(synthesis_messages))
+        return candidates + [combined]
 
 
 def _summary_value_is_persistable(config, value: str) -> bool:
@@ -565,14 +606,10 @@ def _run_consolidation_best_effort(service, mode, llm_config,
     if llm_config is None:
         return
 
-    def llm_call(prompt: str) -> str | None:
-        try:
-            return _call_llm_with_retry(prompt, llm_config)
-        except Exception:
-            return None
-
     try:
-        service.run_consolidation(llm=llm_call, embedding_engine=engine)
+        service.run_consolidation(
+            llm=_llm_callable(llm_config), embedding_engine=engine
+        )
     except Exception as error:
         _log(f"consolidation skipped: {type(error).__name__}")
 
@@ -694,6 +731,7 @@ def session_end(payload: dict) -> ExtractionResult:
                 confidence=candidate.confidence,
                 importance=candidate.importance,
                 tier=candidate.tier,
+                experience_case=candidate.experience_case,
             )
             for candidate in ranked
         ]
@@ -757,6 +795,7 @@ def session_end(payload: dict) -> ExtractionResult:
                         importance=candidate.importance,
                         tier=candidate.tier,
                         confidence=candidate.confidence,
+                        experience_case=candidate.experience_case,
                     )
                     for candidate in ranked
                 ),
@@ -764,6 +803,7 @@ def session_end(payload: dict) -> ExtractionResult:
                 source_session=source_session,
             ),
             source_archive_id=archive_id,
+            llm=_llm_callable(llm_config),
         )
         atomic_ids = [m.legacy_id for m in extraction.candidates]
         n = extraction.persisted
@@ -822,8 +862,13 @@ def main() -> None:
     sub = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
         if sub == "session-start":
-            _touch_heartbeat(_payload_session_id(sys.stdin.read()))
-            session_start()
+            raw = sys.stdin.read()
+            try:
+                payload = json.loads(raw) if raw.strip() else {}
+            except Exception:
+                payload = {}
+            _touch_heartbeat(str(payload.get("session_id", "")))
+            session_start(payload)
         elif sub == "session-end":
             raw = sys.stdin.read()
             payload = json.loads(raw) if raw.strip() else {}

@@ -3,6 +3,7 @@
  * inject.js / extract.js / sweep.js 共用。
  */
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
@@ -27,6 +28,10 @@ export function projectMessages(session) {
   if (!Array.isArray(events)) return [];
   const messages = [];
   for (const event of events) {
+    const source = event?.data?.source ?? event?.source;
+    if (source?.kind === "plugin" && source?.plugin === "evolvmem-inject") {
+      continue;
+    }
     if (event?.type === "user/message") {
       const parts = eventTextBlocks(event);
       if (parts.length > 0) messages.push({ role: "user", content: parts.join("\n") });
@@ -36,6 +41,11 @@ export function projectMessages(session) {
     }
   }
   return messages;
+}
+
+/** Stable version of exactly the projected content sent to Python. */
+export function contentVersion(messages) {
+  return `sha256:${createHash("sha256").update(JSON.stringify(messages)).digest("hex")}`;
 }
 
 export function sessionProject(session) {
@@ -48,11 +58,16 @@ export function sessionProject(session) {
   };
 }
 
-/** 读取 Python 侧提取标记（dataDir/.dsh_extracted.json），判断会话是否已提取。 */
-export function alreadyExtracted(dataDir, sessionId) {
+/** 读取 Python 侧提取标记，按投影内容版本判断；无版本时兼容旧 session 标记。 */
+export function alreadyExtracted(dataDir, sessionId, version = "") {
   try {
     const markers = JSON.parse(readFileSync(join(dataDir, ".dsh_extracted.json"), "utf-8"));
-    return Object.prototype.hasOwnProperty.call(markers, sessionId);
+    const marker = markers?.[sessionId];
+    if (version) {
+      return marker !== null && typeof marker === "object"
+        && marker.content_version === version;
+    }
+    return marker !== undefined;
   } catch {
     return false;
   }
@@ -83,6 +98,7 @@ export function dispatchExtraction(config, messages, sessionId, project) {
     "--messages-file", file,
     "--session-id", sessionId,
     "--project", project,
+    "--content-version", contentVersion(messages),
   ];
   const child = spawn(python, args, { env, stdio: ["ignore", "ignore", "ignore"] });
   child.on("error", () => {});

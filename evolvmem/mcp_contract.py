@@ -38,7 +38,7 @@ CODEX_ADAPTER = "codex"
 KIMI_ADAPTER = "kimi"
 
 # 已完成 Context Core 切换、shadow/primary 下暴露 context_* 工具的 adapter
-CONTEXT_CORE_ADAPTERS = frozenset({CODEX_ADAPTER, KIMI_ADAPTER})
+CONTEXT_CORE_ADAPTERS = frozenset({CODEX_ADAPTER, KIMI_ADAPTER, "dsh"})
 
 _READ_ONLY: dict[str, object] = {"readOnlyHint": True}
 _WRITE_TOOL_ANNOTATIONS: dict[str, object] = {}
@@ -47,7 +47,9 @@ _WRITE_TOOL_ANNOTATIONS: dict[str, object] = {}
 # 不改变冻结首段（前 512 字符自包含不变量只对首段生效）。
 _CONTINUITY_INSTRUCTIONS = (
     " For workstream continuity, after the user confirms the objective call "
-    "continuity_checkpoint with action=create; call it with action=update at "
+    "continuity_checkpoint with action=create, make_focus=true and "
+    "expected_focus_revision=<the latest focus_revision from session start or "
+    "resume>; call it with action=update at "
     "every milestone, blocker, and completion. Always write with the latest "
     "revisions; after a revision_conflict call continuity_resume again "
     "before retrying. Complete a workstream only when continuity_resume "
@@ -80,6 +82,37 @@ _PRIMARY_INSTRUCTIONS_KIMI = (
     "tool is unavailable, errors, or times out, continue without memory."
     + _CONTINUITY_INSTRUCTIONS
 )
+
+# Proactive lookup is a client action: normal tasks, topic changes and new failures.
+_EXPERIENCE_INSTRUCTIONS = (
+    " For every substantive new task, topic/project change or new failure evidence, "
+    "proactively call experience_recall with concise problem keywords, project and "
+    "known constraints even when the user never asks for history. Constraints must "
+    "be directly observed facts comparable with stored case conditions; do not put "
+    "requested actions or limits there. Keep uncertain causes in query and omit "
+    "guessed canonical keys. Reuse matching "
+    "results already obtained for the unchanged task; skip acknowledgments/chitchat. "
+    "Compare mechanism, environment and constraints before adopting a case. Briefly "
+    "cite its ID and explain reused steps, changes and assumptions. If no applicable "
+    "case exists, solve normally. Record only actually used cases via "
+    "context_record_outcome outcome=used with task_id/event_id and an actual source. "
+    "After relevant tool verification or explicit user feedback, record the outcome "
+    "with actual session/task_id,event_id,source_kind,quote,note,level and conditions. "
+    "Use source_ref=<absolute transcript path>#<1-based JSONL line> or a local "
+    "fix-record path quoting its verification section; a known session/task_id "
+    "plus exact quote can resolve its event without source_ref. Never invent a source. One event "
+    "is counted once; corrections increment revision. Never infer success from your "
+    "own claim, silence, unrelated tests or retrieval frequency. Use inapplicable for "
+    "a scenario mismatch: when the user explicitly corrects an already referenced "
+    "case's applicability, record that case's inapplicable outcome with the exact "
+    "user quote even without executing its steps; checkpoint updates alone do not "
+    "persist this feedback. This does not count as a failed execution. Use unknown "
+    "without an outcome. Save a newly verified method "
+    "with experience_record; altered conditions/steps become a derived case with "
+    "parent_experience_id. All experience use remains within the user's current task."
+)
+_PRIMARY_INSTRUCTIONS += _EXPERIENCE_INSTRUCTIONS
+_PRIMARY_INSTRUCTIONS_KIMI += _EXPERIENCE_INSTRUCTIONS
 
 # Degraded/invalid states: say memory is unavailable; never claim injection.
 _DIAGNOSTIC_INSTRUCTIONS = (
@@ -341,7 +374,7 @@ _CONTEXT_CONFIRM_SPEC = McpToolSpec(
 
 _CONTEXT_RECORD_OUTCOME_SPEC = McpToolSpec(
     name="context_record_outcome",
-    description="Record one outcome for an exact context ID and apply the frozen confidence/archive rules: failure or contradicted lowers confidence; an active experience whose failures reach its successes is archived. The optional note must pass the sensitive-content policy.",
+    description="Record an outcome for an exact context ID. Structured experiences require actual task_id/event_id, source_id or source_kind plus quote/source_ref, note and conditions; positive outcomes also require level. Replays are idempotent; corrections increment revision. Used/unknown/inapplicable never count as success. Generic context IDs retain legacy lifecycle semantics.",
     input_schema={
         "type": "object",
         "properties": {
@@ -365,6 +398,16 @@ _CONTEXT_RECORD_OUTCOME_SPEC = McpToolSpec(
     },
     annotations=_WRITE_TOOL_ANNOTATIONS,
 )
+
+_CONTEXT_RECORD_OUTCOME_SPEC.input_schema["properties"].update({
+    "task_id":{"type":"string","description":"Required for structured cases: actual native client session ID, never a ws_* workstream ID. Use current in the current Codex session to resolve its native ID."},
+    "event_id":{"type":"string","description":"Required for every structured feedback, including inapplicable: choose a stable name for this verification (for example user-applicability-correction); reuse on retries."},
+    "source_id":{"type":"integer"}, "source_kind":{"type":"string","enum":["tool_result","user_confirmation","historical_record"]},
+    "source_ref":{"type":"string"}, "quote":{"type":"string","description":"Exact excerpt from native tool result, user feedback, or historical verification section; the server resolves and checks it."}, "level":{"type":"string","enum":["technical","business","user_confirmed"]},
+    "conditions":{"type":"object","additionalProperties":{"type":"string"}},
+    "revision":{"type":"integer","minimum":1}, "experience_version":{"type":"integer","minimum":1},
+})
+_CONTEXT_RECORD_OUTCOME_SPEC.input_schema["properties"]["outcome"]["enum"].extend(["used","inapplicable","unknown"])
 
 _CONTEXT_ARCHIVE_PROJECT_SPEC = McpToolSpec(
     name="context_archive_project",
@@ -394,7 +437,35 @@ _CONTEXT_SWEEP_SPEC = McpToolSpec(
     annotations=_WRITE_TOOL_ANNOTATIONS,
 )
 
+_EXPERIENCE_RECALL_SPEC = McpToolSpec(
+    name="experience_recall",
+    description="Proactively find verified successful cases for a natural task, topic change or failure. Returns conditions, steps, evidence scope and source IDs; compare the new scenario before adopting.",
+    input_schema={"type":"object", "additionalProperties":False, "properties": {
+        "project":{"type":"string","description":"Canonical project, or empty for transferable methods only"},
+        "query":{"type":"string","description":"Concise problem keywords from current task"},
+        "constraints":{"type":"object","additionalProperties":{"type":"string"},
+                       "description":"Only directly observed facts comparable with stored case conditions. Do not encode requested actions or limits; keep uncertain causes in query and omit guessed canonical keys."},
+        "workstream_id":{"type":"string","description":"Stable task ID for reuse within unchanged tasks"},
+    }, "required":["query"]}, annotations=_READ_ONLY)
+_EXPERIENCE_RECORD_SPEC = McpToolSpec(
+    name="experience_record",
+    description="Save a structured case: problem, conditions, steps, rationale, result, applicability, exclusions, transferable, optional parent_experience_id. Supply actual evidence to establish success; otherwise it remains a candidate. Changed scenarios create derived cases.",
+    input_schema={"type":"object", "additionalProperties":False, "properties": {
+        "case":{"type":"object","additionalProperties":False,"properties":{
+            "project":{"type":"string"},"problem":{"type":"string"},
+            "conditions":{"type":"object","additionalProperties":{"type":"string"}},
+            "steps":{"type":"array","items":{"type":"string"}},
+            "rationale":{"type":"string"},"result":{"type":"string"},
+            "applicability":{"type":"array","items":{"type":"string"}},
+            "exclusions":{"type":"array","items":{"type":"string"}},
+            "transferable":{"type":"boolean"},"parent_experience_id":{"type":"integer"}},
+            "required":["project","problem","steps"]},
+        "evidence":{"type":"object","description":"Actual verification: task_id,event_id,outcome,level(technical/business/user_confirmed),source_kind(tool_result/user_confirmation/historical_record),source_ref,note,conditions; optional revision"}
+    },"required":["case"]},annotations=_WRITE_TOOL_ANNOTATIONS)
+
 _CONTEXT_TOOL_SPECS: tuple[McpToolSpec, ...] = (
+    _EXPERIENCE_RECALL_SPEC,
+    _EXPERIENCE_RECORD_SPEC,
     _CONTEXT_SESSION_START_SPEC,
     _CONTEXT_SEARCH_SPEC,
     _CONTEXT_READ_SPEC,
@@ -501,7 +572,7 @@ _CONTINUITY_CHECKPOINT_SPEC = McpToolSpec(
             "make_focus": {
                 "type": "boolean",
                 "default": False,
-                "description": "Also CAS the focus pointer onto this workstream (requires expected_focus_revision)",
+                "description": "Also CAS the focus pointer onto this workstream. Set true for normal task creation and pass the latest expected_focus_revision from session start/resume.",
             },
             "expected_checkpoint_revision": {
                 "type": "integer",
@@ -621,7 +692,7 @@ def initialization_instructions(
         if health is not None and health.ready:
             if adapter == CODEX_ADAPTER:
                 return _PRIMARY_INSTRUCTIONS
-            if adapter == KIMI_ADAPTER:
+            if adapter in (KIMI_ADAPTER, "dsh"):
                 return _PRIMARY_INSTRUCTIONS_KIMI
             return None
         return _DIAGNOSTIC_INSTRUCTIONS

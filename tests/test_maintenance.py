@@ -424,6 +424,17 @@ def test_verify_ignores_non_legacy_pending_resolutions(legacy_db_with_rows):
 
 # ---- CLI ----
 
+def test_verify_review_counts_ignore_mapping_without_surviving_legacy_row(legacy_db_with_rows):
+    config = Config(data_dir=legacy_db_with_rows)
+    apply_plan(config, plan_digest=build_plan(config).digest,
+               embedding_engine=_fake_engine(config))
+    with ContextStore(config) as store:
+        with store.transaction():
+            store._connection().execute("DELETE FROM memories WHERE key='random-note'")
+    report = verify_invariants(config)
+    checks = {check.name: check for check in report.invariants}
+    assert checks['review_counts_match_plan'].passed is True
+
 
 def _cli(*argv):
     return cli_main(list(argv))
@@ -471,6 +482,20 @@ def test_cli_apply_then_verify_roundtrip(legacy_db_with_rows, capsys, monkeypatc
     monkeypatch.setattr(
         maintenance_cli, "_load_embedding_engine", _fake_engine
     )
+    response = json.dumps(
+        {
+            "l0": "项目维护已生成滚动摘要。",
+            "l1": "进展：完成历史迁移；决定：保留项目归属；待办：继续验收。",
+            "l2": "完整细节：维护流程迁移条目后，使用已有模型生成项目知识摘要。",
+        },
+        ensure_ascii=False,
+    )
+    prompts = []
+    monkeypatch.setattr(
+        maintenance_cli,
+        "_load_rollup_llm",
+        lambda: lambda prompt: prompts.append(prompt) or response,
+    )
     plan = build_plan(Config(data_dir=legacy_db_with_rows))
     rc = _cli(
         "--data-dir",
@@ -485,6 +510,8 @@ def test_cli_apply_then_verify_roundtrip(legacy_db_with_rows, capsys, monkeypatc
     applied = json.loads(capsys.readouterr().out)
     assert applied["ok"] is True
     assert applied["backup_directory"]
+    assert any(report["status"] == "ready" for report in applied["rollups"])
+    assert prompts
     assert str(legacy_db_with_rows) not in json.dumps(applied)
 
     rc = _cli("--data-dir", str(legacy_db_with_rows), "verify", "--json")
