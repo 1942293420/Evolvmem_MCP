@@ -1,7 +1,7 @@
 {
   "name": "dsh-evolvmem",
-  "version": "0.1.0",
-  "description": "EvolvMem DSH bundle: session-start L0 memory injection, session-end extraction, and the MCP bridge row",
+  "version": "0.2.0",
+  "description": "EvolvMem DSH bundle: task-triggered experience recall, incremental extraction, and the shared Context MCP bridge",
   "type": "module",
   "exports": {
     "./host-inject": "./src/inject.js",
