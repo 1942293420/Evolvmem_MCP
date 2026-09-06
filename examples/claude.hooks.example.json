@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "env EVOLVMEM_DATA_DIR='/absolute/path/evolvmem-data' EVOLVMEM_CONTEXT_MODE=legacy EVOLVMEM_ADAPTER=claude '/absolute/path/evolvmem/.venv/bin/python' -c 'import json, sys; from evolvmem.hooks import get_session_start_block; payload = json.load(sys.stdin); print(get_session_start_block(workspace_path=payload.get(\"cwd\", \"\")))'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

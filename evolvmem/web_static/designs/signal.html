@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f1f2f2">
+  <title>Signal · 星图研究室 — EvolvMem</title>
+  <link rel="stylesheet" href="/designs/common.css">
+  <link rel="stylesheet" href="/designs/signal.css">
+</head>
+<body data-design="signal">
+  <header class="signal-masthead">
+    <a href="/" class="signal-brand" aria-label="EvolvMem 星图研究室首页"><span class="signal-brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="11" stroke="currentColor" stroke-width="1.4"/><path d="M20 3v34M3 20h34M8 8l24 24M8 32 32 8" stroke="currentColor" stroke-width="1.1"/><circle cx="20" cy="20" r="4" fill="currentColor"/></svg></span><span>EvolvMem<span class="signal-brand-sub">SIGNAL / 星图研究室</span></span></a>
+    <nav class="signal-nav" aria-label="主导航"><a href="#home" data-page-link="home" aria-current="page"><span>01</span>总览</a><a href="#memories" data-page-link="memories"><span>02</span>记忆库</a><a href="#experiences" data-page-link="experiences"><span>03</span>经验案例</a><a href="#progress" data-page-link="progress"><span>04</span>项目进展</a></nav>
+    <a class="signal-back" href="/workflow">工作原理 <span>↗</span></a>
+  </header>
+  <div class="signal-utility"><span>记忆工作台 · 实时数据</span><span class="signal-utility-center">EVIDENCE BEFORE ASSUMPTION.</span><span class="signal-edition">SIGNAL / LIGHT</span></div>
+  <main class="signal-main">
+    <section data-page-panel="home">
+      <div class="signal-intro"><div class="signal-intro-copy"><span class="signal-eyebrow">A FIELD GUIDE TO YOUR KNOWLEDGE</span><h1>记忆有坐标。<br>经验有来处<span>。</span></h1></div><div class="signal-intro-aside"><p>把散落的信息，连成可追溯的星图。<br>从项目、记忆与验证记录中，<br>找到下一步的依据。</p><label class="signal-global-search"><input data-ui-search type="search" placeholder="搜索记忆与线索" aria-label="搜索记忆与线索"><span aria-hidden="true">↗</span></label><span class="signal-search-hint">输入关键词，按回车探索</span></div><div class="signal-intro-index" aria-hidden="true">S<span>04 — SIGNAL</span></div></div>
+
+      <section class="signal-observatory" aria-labelledby="signal-map-title">
+        <div class="signal-section-bar"><div><span class="signal-index">A /</span><h2 id="signal-map-title">知识坐标系</h2><span class="signal-section-en">KNOWLEDGE CONSTELLATION</span></div><span class="signal-map-key"><i></i>项目 <b>·</b> <i></i>记忆</span></div>
+        <div class="signal-observatory-grid">
+          <div class="signal-map"><div class="signal-map-meta"><span>PROJECT × MEMORY</span><span>RELATIONAL VIEW</span></div><div class="signal-map-cross cross-one" aria-hidden="true">+</div><div class="signal-map-cross cross-two" aria-hidden="true">+</div><div data-galaxy="signal" class="signal-galaxy" aria-label="知识星图，可点击项目节点查看关联内容"></div><div class="signal-map-bottom"><span><span class="signal-map-dot"></span> 由真实项目与记忆生成</span><span>选择节点 → 读取上下文</span></div></div>
+          <aside class="signal-register" aria-label="知识数据与项目索引"><div class="signal-register-header"><span>LIVE REGISTER</span><button data-refresh aria-label="刷新实时数据" class="signal-refresh">刷新 <span>↻</span></button></div><div class="signal-metrics"><div><span class="signal-metric-index">01 / MEMORIES</span><strong data-stat="total_active">—</strong><span>活跃记忆</span></div><div><span class="signal-metric-index">02 / VERIFIED</span><strong data-stat="verified_experiences">—</strong><span>已验证经验</span></div><div><span class="signal-metric-index">03 / PROJECTS</span><strong data-stat="project_count">—</strong><span>关联项目</span></div><div><span class="signal-metric-index">04 / IN PROGRESS</span><strong data-stat="unfinished_workstreams">—</strong><span>未完成工作流</span></div></div><div class="signal-project-index"><div class="signal-small-heading"><h3>项目索引</h3><a href="#progress" data-page-link="progress" aria-label="查看全部项目进展">↗</a></div><div data-slot="project-list"></div></div></aside>
+        </div>
+      </section>
+
+      <div class="signal-records-grid"><section class="signal-experiences"><div class="signal-section-bar"><div><span class="signal-index">B /</span><h2>经验样本</h2><span class="signal-section-en">FIELD NOTES</span></div><a href="#experiences" data-page-link="experiences">全部案例 ↗</a></div><p class="signal-section-description">读取条件、方法与证据，让经验回到适用的现场。</p><div data-slot="featured-experiences" class="signal-featured-list"></div></section><section class="signal-continuity"><div class="signal-section-bar"><div><span class="signal-index">C /</span><h2>工作断点</h2></div><a href="#progress" data-page-link="progress">继续项目 ↗</a></div><p class="signal-section-description">下一步，从已有的上下文开始。</p><div data-slot="task-list" class="signal-task-list"></div></section></div>
+      <div class="signal-principle"><svg viewBox="0 0 38 38" fill="none" aria-hidden="true"><path d="M19 0v38M0 19h38M5.6 5.6l26.8 26.8M5.6 32.4 32.4 5.6" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="19" r="12" stroke="currentColor" stroke-width="1"/></svg><span>被记录，才可追溯。<br>经验证，才有依据。</span><span class="signal-principle-en">OBSERVE.<br>CONNECT.<br>EVOLVE.</span></div>
+    </section>
+
+    <section data-page-panel="memories" class="data-page" hidden><header class="data-page-header"><h1>记忆库</h1><p>按内容、项目和状态查找记录。</p></header><div data-slot="memory-browser" class="signal-browser"></div></section>
+    <section data-page-panel="experiences" class="data-page" hidden><header class="data-page-header"><h1>经验案例</h1><p>核对方法、适用条件和验证结果。</p></header><div data-slot="experience-browser" class="signal-browser"></div></section>
+    <section data-page-panel="progress" class="data-page" hidden><header class="data-page-header"><h1>项目进展</h1><p>查看项目摘要与任务断点。</p></header><div data-slot="progress-browser" class="signal-browser"></div></section>
+    <footer class="signal-footer"><span class="signal-footer-brand">EvolvMem <span> / SIGNAL</span></span><span data-data-status role="status" aria-live="polite">正在连接实时数据…</span><a href="/architecture">系统架构 ↗</a></footer>
+  </main>
+  <script src="/designs/galaxy.js"></script>
+  <script src="/designs/organizer.js"></script>
+  <script src="/designs/app.js"></script>
+</body>
+</html>

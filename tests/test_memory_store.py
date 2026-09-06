@@ -1,6 +1,15 @@
 """MemoryStore tests."""
 
+import sqlite3
+
 import pytest
+
+from evolvmem.legacy_projection import (
+    LegacyProjectionInsert,
+    LegacyProjectionReplace,
+    LegacyProjectionRepository,
+    LegacyProjectionUpdate,
+)
 from evolvmem.memory_store import MemoryStore
 
 
@@ -8,6 +17,12 @@ from evolvmem.memory_store import MemoryStore
 def store(test_config):
     with MemoryStore(test_config) as instance:
         yield instance
+
+
+@pytest.fixture
+def projection(store):
+    """A repository borrowing the MemoryStore connection and transaction guard."""
+    return LegacyProjectionRepository(store._conn, store._require_transaction)
 
 
 def test_transaction_commits_all_writes(store):
@@ -300,3 +315,304 @@ class TestMemoryStore:
         store.add(key="p:t:fact:durable", value="长期事实")
         assert store.count_active() == 1
         store.close()
+
+
+class TestLegacyProjectionRepository:
+    """A borrowed-connection projection repository with no lifecycle powers."""
+
+    def test_borrows_an_existing_connection_and_transaction_guard(
+        self, store, projection
+    ):
+        with store.transaction():
+            legacy_id = projection.insert(
+                LegacyProjectionInsert(key="p:b:fact:1", value="借连接写入")
+            )
+
+        assert projection.get_by_id(legacy_id)["value"] == "借连接写入"
+        assert store.get_by_id(legacy_id) == projection.get_by_id(legacy_id)
+
+    def test_rejects_a_non_connection_or_non_callable_guard(self, store):
+        with pytest.raises(TypeError):
+            LegacyProjectionRepository(object(), store._require_transaction)
+        with pytest.raises(TypeError):
+            LegacyProjectionRepository(store._conn, "not-a-guard")
+
+    def test_has_no_lifecycle_or_commit_powers(self, projection):
+        for forbidden in ("initialize", "close", "commit", "transaction"):
+            assert not hasattr(projection, forbidden)
+
+    def test_reads_preserve_legacy_dict_fields_and_order(self, store, projection):
+        first = store.add(
+            key="p:r:fact:1",
+            value="第一条记录内容",
+            attribute="fact",
+            tags=["a", "b"],
+            source_session="s1",
+            importance=6.5,
+            tier="pinned",
+        )
+        second = store.add(key="p:r:fact:2", value="第二条记录内容")
+        expired = store.add(
+            key="p:r:fact:exp", value="过期记录", expires_at="2000-01-01 00:00:00"
+        )
+        store.update_access(first)
+
+        assert list(projection.get_by_id(first)) == [
+            "id", "key", "value", "status", "attribute", "tags",
+            "source_session", "access_count", "last_accessed", "supersedes",
+            "superseded_by", "created_at", "updated_at", "importance", "tier",
+            "expires_at",
+        ]
+        assert projection.get_by_id(first) == store.get_by_id(first)
+        assert projection.get_by_id(9999) is None
+        assert projection.get_by_key("p:r:fact:1") == store.get_by_key("p:r:fact:1")
+        assert projection.get_by_ids([second, first, 9999]) == store.get_by_ids(
+            [second, first, 9999]
+        )
+        assert projection.get_by_ids([]) == []
+        assert projection.get_active() == store.get_active()
+        assert projection.all_ids() == store.all_ids()
+        assert projection.count_active() == store.count_active()
+        assert projection.get_forgetting_candidates(
+            days_threshold=0, access_threshold=100, rate_limit_days=0
+        ) == store.get_forgetting_candidates(0, 100, 0)
+        assert projection.get_expired_ids("2026-01-01 00:00:00") == [expired]
+        assert projection.get_expired_ids("1999-01-01 00:00:00") == []
+
+    def test_search_matches_legacy_fts_and_like_results(self, store, projection):
+        store.add(key="p:s:fact:1", value="破损商品直接退款，不再补发", tags=["售后"])
+        store.add(key="p:s:fact:2", value="Python 版本需要 3.10 以上")
+        deleted = store.add(key="p:s:fact:3", value="已删除的退款记录")
+        store.remove(deleted)
+
+        assert projection.search_fts("退款") == store.search_fts("退款")
+        assert [row["key"] for row in projection.search_fts("退款")] == ["p:s:fact:1"]
+        assert projection.search_fts("Python") == store.search_fts("Python")
+        assert projection.search_fts("破损") == store.search_fts("破损")
+
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            "insert",
+            "replace",
+            "soft_delete",
+            "set_status",
+            "update_metadata",
+            "update_access",
+            "hard_delete",
+        ],
+    )
+    def test_writes_require_the_owner_transaction(
+        self, store, projection, operation
+    ):
+        existing = store.add(key="p:g:fact:1", value="v1", tags=["old"])
+        calls = {
+            "insert": lambda: projection.insert(
+                LegacyProjectionInsert(key="p:g:fact:2", value="v2")
+            ),
+            "replace": lambda: projection.replace(
+                LegacyProjectionReplace(key="p:g:fact:1", new_value="v2")
+            ),
+            "soft_delete": lambda: projection.soft_delete(existing),
+            "set_status": lambda: projection.set_status(existing, "archived"),
+            "update_metadata": lambda: projection.update_metadata(
+                LegacyProjectionUpdate(existing, importance=8.0)
+            ),
+            "update_access": lambda: projection.update_access((existing,)),
+            "hard_delete": lambda: projection.hard_delete(existing),
+        }
+
+        with pytest.raises(RuntimeError, match="transaction"):
+            calls[operation]()
+
+        row = store.get_by_id(existing)
+        assert row["status"] == "active"
+        assert row["importance"] == 5.0
+        assert row["access_count"] == 0
+        assert store.get_by_key("p:g:fact:2") == []
+
+    def test_writes_roll_back_with_the_owner_transaction(self, store, projection):
+        with pytest.raises(RuntimeError, match="synthetic failure"):
+            with store.transaction():
+                legacy_id = projection.insert(
+                    LegacyProjectionInsert(key="p:rb:fact:1", value="会回滚")
+                )
+                raise RuntimeError("synthetic failure")
+
+        assert projection.get_by_id(legacy_id) is None
+        assert store.get_by_key("p:rb:fact:1") == []
+
+    def test_insert_normalizes_csv_tags_date_only_expiry_and_autoincrement(
+        self, store, projection
+    ):
+        with store.transaction():
+            first = projection.insert(
+                LegacyProjectionInsert(
+                    key="p:i:fact:1",
+                    value="v1",
+                    tags=["a", "b"],
+                    expires_at="2031-04-05",
+                )
+            )
+            second = projection.insert(
+                LegacyProjectionInsert(key="p:i:fact:2", value="v2")
+            )
+
+        row = projection.get_by_id(first)
+        assert row["tags"] == "a,b"
+        assert row["expires_at"] == "2031-04-05 00:00:00"
+        assert row["created_at"] and row["updated_at"]
+        assert row["status"] == "active"
+        assert second > first
+
+    def test_replace_inherits_omitted_fields_and_links_predecessor(
+        self, store, projection
+    ):
+        old_id = store.add(
+            key="p:rp:decision:db",
+            value="用 MySQL",
+            attribute="decision",
+            tags=["db", "arch"],
+            importance=9.0,
+            tier="pinned",
+            expires_at="2031-04-05 06:07:08",
+            source_session="s-old",
+        )
+
+        with store.transaction():
+            previous, new_id = projection.replace(
+                LegacyProjectionReplace(key="p:rp:decision:db", new_value="改用 PostgreSQL")
+            )
+
+        assert previous == old_id
+        old = projection.get_by_id(old_id)
+        new = projection.get_by_id(new_id)
+        assert old["status"] == "superseded"
+        assert old["superseded_by"] == new_id
+        assert new["status"] == "active"
+        assert new["supersedes"] == old_id
+        assert new["attribute"] == "decision"
+        assert new["tags"] == "db,arch"
+        assert new["importance"] == 9.0
+        assert new["tier"] == "pinned"
+        assert new["expires_at"] == "2031-04-05 06:07:08"
+
+    def test_replace_without_predecessor_inserts_and_reports_none(
+        self, store, projection
+    ):
+        with store.transaction():
+            previous, new_id = projection.replace(
+                LegacyProjectionReplace(
+                    key="p:rp:fact:new",
+                    new_value="v2",
+                    tags=["x"],
+                    expires_at="2031-04-05",
+                )
+            )
+
+        assert previous is None
+        row = projection.get_by_id(new_id)
+        assert row["status"] == "active"
+        assert row["supersedes"] is None
+        assert row["tags"] == "x"
+        assert row["expires_at"] == "2031-04-05 00:00:00"
+
+    def test_soft_delete_nonexistent_is_a_compatible_noop(self, store, projection):
+        existing = store.add(key="p:sd:fact:1", value="待软删除")
+
+        with store.transaction():
+            assert projection.soft_delete(9999) is False
+            assert projection.soft_delete(existing) is True
+
+        assert projection.get_by_id(existing)["status"] == "deleted"
+        assert projection.get_active() == []
+        assert projection.search_fts("待软删除") == []
+
+    def test_set_status_supports_archive_and_restore(self, store, projection):
+        existing = store.add(key="p:ss:fact:1", value="状态切换")
+
+        with store.transaction():
+            assert projection.set_status(existing, "archived") is True
+        assert projection.get_by_id(existing)["status"] == "archived"
+        with store.transaction():
+            assert projection.set_status(existing, "active") is True
+            assert projection.set_status(9999, "active") is False
+        assert projection.get_by_id(existing)["status"] == "active"
+
+    def test_update_metadata_updates_only_supplied_fields(self, store, projection):
+        existing = store.add(key="p:um:fact:1", value="v")
+
+        with store.transaction():
+            assert (
+                projection.update_metadata(
+                    LegacyProjectionUpdate(existing, importance=8.5)
+                )
+                is True
+            )
+        row = projection.get_by_id(existing)
+        assert row["importance"] == 8.5
+        assert row["tier"] == "normal"
+        with store.transaction():
+            assert (
+                projection.update_metadata(
+                    LegacyProjectionUpdate(existing, tier="pinned")
+                )
+                is True
+            )
+            assert (
+                projection.update_metadata(
+                    LegacyProjectionUpdate(9999, importance=1.0)
+                )
+                is False
+            )
+        row = projection.get_by_id(existing)
+        assert row["importance"] == 8.5
+        assert row["tier"] == "pinned"
+
+    def test_update_access_skips_unknown_ids_and_keeps_updated_at(
+        self, store, projection
+    ):
+        first = store.add(key="p:ua:fact:1", value="v1")
+        before = store.get_by_id(first)["updated_at"]
+
+        with store.transaction():
+            updated = projection.update_access((first, 9999))
+
+        assert updated == (first,)
+        row = projection.get_by_id(first)
+        assert row["access_count"] == 1
+        assert row["last_accessed"] is not None
+        assert row["updated_at"] == before
+        with store.transaction():
+            assert projection.update_access(()) == ()
+
+    def test_hard_delete_removes_row_and_fts_entries(self, store, projection):
+        legacy_id = store.add(key="p:hd:fact:1", value="彻底删除的目标内容", tags=["清理"])
+        assert projection.search_fts("彻底删除")
+
+        with store.transaction():
+            assert projection.hard_delete(legacy_id) is True
+            assert projection.hard_delete(9999) is False
+
+        assert projection.get_by_id(legacy_id) is None
+        assert projection.search_fts("彻底删除") == []
+        assert store._conn.execute(
+            "SELECT COUNT(*) FROM memories_fts WHERE rowid=?", (legacy_id,)
+        ).fetchone()[0] == 0
+
+    def test_projection_never_commits_the_owner_transaction(
+        self, store, projection, test_config
+    ):
+        with store.transaction():
+            legacy_id = projection.insert(
+                LegacyProjectionInsert(key="p:nc:fact:1", value="未提交不可见")
+            )
+            other = sqlite3.connect(test_config.db_path)
+            try:
+                assert other.execute(
+                    "SELECT COUNT(*) FROM memories WHERE key='p:nc:fact:1'"
+                ).fetchone()[0] == 0
+            finally:
+                other.close()
+
+        assert projection.get_by_id(legacy_id) is not None

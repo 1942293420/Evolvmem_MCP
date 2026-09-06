@@ -1,0 +1,18 @@
+# Merge into ~/.kimi-code/config.toml; replace both paths in every command.
+# MCP and hooks must use the same data directory and intended run mode.
+[[hooks]]
+event = "SessionStart"
+command = "env EVOLVMEM_DATA_DIR='/absolute/path/evolvmem-data' EVOLVMEM_CONTEXT_MODE=legacy EVOLVMEM_ADAPTER=kimi '/absolute/path/evolvmem/.venv/bin/python' -m evolvmem.kimi_hooks session-start"
+timeout = 30
+
+# Optional: enables paid extraction when llm_credentials.json is configured.
+[[hooks]]
+event = "SessionEnd"
+command = "env EVOLVMEM_DATA_DIR='/absolute/path/evolvmem-data' EVOLVMEM_CONTEXT_MODE=legacy EVOLVMEM_ADAPTER=kimi '/absolute/path/evolvmem/.venv/bin/python' -m evolvmem.kimi_hooks session-end"
+timeout = 300
+
+# Recommended when the stale-session worker is used.
+[[hooks]]
+event = "SessionHeartbeat"
+command = "env EVOLVMEM_DATA_DIR='/absolute/path/evolvmem-data' EVOLVMEM_CONTEXT_MODE=legacy EVOLVMEM_ADAPTER=kimi '/absolute/path/evolvmem/.venv/bin/python' -m evolvmem.kimi_hooks heartbeat"
+timeout = 5

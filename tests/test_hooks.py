@@ -1,9 +1,17 @@
 """hooks module tests."""
 
+import sqlite3
 import time
+from datetime import datetime, timezone
 
+import numpy as np
+import pytest
+
+from evolvmem.context_models import ContextMode, ContextStatus
+from evolvmem.context_service import ContextService
 from evolvmem.hooks import get_session_start_block, get_stop_prompt
 from evolvmem.memory_store import MemoryStore
+from evolvmem.vector_index import VectorIndex
 
 
 class TestSessionStartHook:
@@ -229,6 +237,254 @@ class TestSessionStartHook:
         assert result.index("采购记忆") < result.index("其他记忆")
 
 
+class TestSessionStartCutoverRouting:
+    """SessionStart 的维护写入经 ContextService 兼容门面路由。"""
+
+    @staticmethod
+    def _compat_seed_service(config):
+        """compat 模式的播种服务（legacy 投影 schema 先就位）。"""
+        with MemoryStore(config):
+            pass
+        service = ContextService(config)
+        service.initialize(mode=ContextMode.COMPAT, adapter="test-hooks")
+        return service
+
+    def test_compat_block_keeps_legacy_format_and_archives_both_sides(
+            self, test_config):
+        test_config.context_mode = "compat"
+        seed = self._compat_seed_service(test_config)
+        facade = seed.legacy_facade()
+        expired_id = facade.add(key="p:t:fact:expired", value="过期的规则",
+                                expires_at="2020-01-01 00:00:00")
+        facade.add(key="user:pref:language", value="Chinese",
+                   tags=["preference"])
+        expired_ctx = seed.store.resolve_legacy_mapping(expired_id)
+        assert expired_ctx is not None
+
+        result = get_session_start_block(config=test_config)
+
+        # 旧格式渲染不变
+        assert "Persistent Memory" in result
+        assert "- **user:pref:language** [preference]: Chinese" in result
+        # 过期记忆不注入
+        assert "过期的规则" not in result
+        # 自动遗忘按原节奏跑（marker 落盘），且经门面归档双侧
+        assert (test_config.data_dir / ".last_forget").exists()
+        assert facade.get_by_id(expired_id)["status"] == "archived"
+        assert seed.store.get_item(expired_ctx).status is ContextStatus.ARCHIVED
+        seed.close()
+
+    def test_legacy_mode_session_start_writes_legacy_only(self, test_config):
+        """切换前 legacy 模式：渲染与维护保持旧形状，Core 表保持空。"""
+        test_config.context_mode = "legacy"
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:expired", value="过期事实",
+                      expires_at="2020-01-01 00:00:00")
+            store.add(key="p:t:fact:fresh", value="现行事实")
+
+        result = get_session_start_block(config=test_config)
+
+        assert "现行事实" in result
+        assert "过期事实" not in result
+        with MemoryStore(test_config) as store:
+            rows = store.get_by_key("p:t:fact:expired")
+            assert rows[0]["status"] == "archived"  # 维护照旧归档 legacy 侧
+        conn = sqlite3.connect(test_config.db_path)
+        try:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM context_items").fetchone()[0] == 0
+        finally:
+            conn.close()
+
+    def test_invalid_context_mode_falls_back_to_legacy_without_crashing(
+            self, test_config):
+        """非法 context_mode（如 typo）不得让 SessionStart hook 崩溃：按 legacy
+        渲染与维护，Context 功能 fail-closed，Core 表保持空。"""
+        test_config.context_mode = "primray"
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:expired", value="过期事实",
+                      expires_at="2020-01-01 00:00:00")
+            store.add(key="p:t:fact:fresh", value="现行事实")
+
+        result = get_session_start_block(config=test_config)
+
+        assert "现行事实" in result
+        assert "过期事实" not in result
+        with MemoryStore(test_config) as store:
+            rows = store.get_by_key("p:t:fact:expired")
+            assert rows[0]["status"] == "archived"  # legacy 维护照旧
+        conn = sqlite3.connect(test_config.db_path)
+        try:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM context_items").fetchone()[0] == 0
+        finally:
+            conn.close()
+
+
+class TestSessionStartPrimaryCoreInjection:
+    """primary 模式：SessionStart 注入切换到 Context Core（fail-open 回退）。"""
+
+    _CORE_BEGIN = "[BEGIN EVOLVMEM CONTEXT HISTORY]"
+    _LEGACY_HEADER = "## Persistent Memory (from EvolvMem plugin)"
+
+    @staticmethod
+    def _seed_dual(config, adds):
+        """compat 模式双侧写入（索引因无 embedding 引擎保持 dirty）。"""
+        with MemoryStore(config):
+            pass
+        config.context_mode = "compat"
+        service = ContextService(config)
+        service.initialize(mode=ContextMode.COMPAT, adapter="test-hooks")
+        facade = service.legacy_facade()
+        context_ids = []
+        for kwargs in adds:
+            legacy_id = facade.add(**kwargs)
+            context_ids.append(service.store.resolve_legacy_mapping(legacy_id))
+        service.close()
+        config.context_mode = "primary"
+        return context_ids
+
+    @classmethod
+    def _seed_primary_ready(cls, config, adds):
+        """双侧写入 + 占位向量重建，让 primary 启动不变量全部满足。"""
+        context_ids = cls._seed_dual(config, adds)
+        index = VectorIndex(config, path=config.context_vector_path)
+        index.initialize(dim=config.embedding_dim)
+        index.rebuild(
+            context_ids,
+            [np.ones(config.embedding_dim, dtype=np.float32)
+             for _ in context_ids],
+        )
+        index.close()
+        return context_ids
+
+    def test_primary_injects_core_rendered_block(self, test_config):
+        self._seed_primary_ready(test_config, [
+            dict(key="user:constraint:no-prod", value="禁止直接操作生产库",
+                 attribute="constraint", importance=8.0, tier="pinned"),
+        ])
+
+        result = get_session_start_block(config=test_config)
+
+        # Core 渲染的 bounded L1 块（含「不可信历史」边界声明），而非旧四层格式
+        assert self._CORE_BEGIN in result
+        assert "untrusted historical data" in result
+        assert "禁止直接操作生产库" in result
+        assert self._LEGACY_HEADER not in result
+        # 维护节奏不变：自动遗忘/合并按原节奏触发
+        assert (test_config.data_dir / ".last_forget").exists()
+        assert (test_config.data_dir / ".last_consolidate").exists()
+
+    def test_primary_project_identity_uses_basename_with_aliases(
+            self, test_config, monkeypatch, tmp_path):
+        self._seed_primary_ready(test_config, [
+            dict(key="user:constraint:no-prod", value="禁止直接操作生产库",
+                 attribute="constraint", importance=8.0, tier="pinned"),
+        ])
+        workdir = tmp_path / "wd"
+        workdir.mkdir()
+        monkeypatch.chdir(workdir)
+        # 目录名 → inject_project_aliases → context_project_aliases 两跳归一化
+        test_config.inject_project_aliases = {"wd": "mid"}
+        test_config.context_project_aliases = {"mid": "final"}
+        requests = []
+        real_session_start = ContextService.session_start
+
+        def spy(service, request):
+            requests.append(request)
+            return real_session_start(service, request)
+
+        monkeypatch.setattr(ContextService, "session_start", spy)
+
+        result = get_session_start_block(config=test_config)
+
+        assert self._CORE_BEGIN in result
+        (request,) = requests
+        # 只传规范化项目名，绝不传绝对路径
+        assert request.project == "final"
+        assert "/" not in request.project and "\\" not in request.project
+        # session start 没有用户 query：项目名充当弱相关性信号（与 legacy
+        # 评分的 cwd 项目加分同源），pinned 种子例外照常生效
+        assert request.query == "final"
+        assert request.workspace_path == str(workdir)
+
+    def test_primary_degraded_falls_back_to_legacy_render(self, test_config):
+        # 索引 dirty（写入时无 embedding 引擎）→ primary 健康复查 degraded
+        self._seed_dual(test_config, [
+            dict(key="p:t:fact:fresh", value="现行事实", importance=5.0),
+        ])
+
+        result = get_session_start_block(config=test_config)
+
+        assert self._LEGACY_HEADER in result
+        assert "现行事实" in result
+        assert self._CORE_BEGIN not in result
+
+    def test_primary_empty_core_block_falls_back_to_legacy_render(
+            self, test_config, monkeypatch):
+        # pinned 事实不享受无命中豁免（豁免已收窄到三类 policy），Core 渲染空块
+        self._seed_primary_ready(test_config, [
+            dict(key="user:fact:pinned-note", value="置顶的普通事实",
+                 attribute="fact", importance=8.0, tier="pinned"),
+        ])
+        requests = []
+        real_session_start = ContextService.session_start
+
+        def spy(service, request):
+            requests.append(request)
+            return real_session_start(service, request)
+
+        monkeypatch.setattr(ContextService, "session_start", spy)
+
+        result = get_session_start_block(config=test_config)
+
+        assert len(requests) == 1  # Core 路径确实进入并返回空块
+        assert self._LEGACY_HEADER in result
+        assert "置顶的普通事实" in result
+        assert self._CORE_BEGIN not in result
+
+    def test_primary_core_failure_falls_back_and_closes_service(
+            self, test_config, monkeypatch):
+        self._seed_primary_ready(test_config, [
+            dict(key="p:t:fact:fresh", value="现行事实", importance=5.0),
+        ])
+
+        def boom(service, request):
+            raise RuntimeError("core boom")
+
+        monkeypatch.setattr(ContextService, "session_start", boom)
+        real_close = ContextService.close
+        close_calls = []
+
+        def counting_close(service):
+            close_calls.append(1)
+            real_close(service)
+
+        monkeypatch.setattr(ContextService, "close", counting_close)
+
+        result = get_session_start_block(config=test_config)
+
+        # Core 异常静默回退旧渲染；服务实例照常关闭，不残留跨进程资源
+        assert self._LEGACY_HEADER in result
+        assert "现行事实" in result
+        assert self._CORE_BEGIN not in result
+        assert close_calls == [1]
+
+    def test_shadow_mode_still_uses_legacy_render(self, test_config):
+        """冻结：shadow 模式的 SessionStart 注入仍走 legacy 渲染，一字不变。"""
+        self._seed_dual(test_config, [
+            dict(key="user:constraint:no-prod", value="禁止直接操作生产库",
+                 attribute="constraint", importance=8.0, tier="pinned"),
+        ])
+        test_config.context_mode = "shadow"
+
+        result = get_session_start_block(config=test_config)
+
+        assert self._LEGACY_HEADER in result
+        assert "禁止直接操作生产库" in result
+        assert self._CORE_BEGIN not in result
+
+
 class TestStopHook:
     def test_stop_prompt_includes_conversation(self):
         prompt = get_stop_prompt("user: We decided to use Redis for caching\nassistant: OK, noted")
@@ -343,3 +599,98 @@ class TestProjectDigestLayer:
 
         assert "最近项目动态" in result
         assert "唯一日志" in result
+
+
+class TestSessionStartArchiveSweep:
+    """P4b：shadow/primary 的 SessionStart 先静默跑 archive purge（fail-open）。"""
+
+    def test_shadow_sweeps_before_maintenance_and_render(
+            self, test_config, monkeypatch):
+        test_config.context_mode = "shadow"
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:0", value="现行事实")
+        calls = []
+        monkeypatch.setattr(
+            ContextService,
+            "sweep_archives",
+            lambda service: calls.append("sweep"),
+        )
+        monkeypatch.setattr(
+            "evolvmem.hooks._maybe_run_forgetting",
+            lambda config, facade: calls.append("forget"),
+        )
+
+        result = get_session_start_block(config=test_config)
+
+        assert calls == ["sweep", "forget"]  # purge 先于维护与渲染
+        assert "现行事实" in result
+
+    def test_shadow_sweep_failure_is_swallowed_to_stderr(
+            self, test_config, monkeypatch, capsys):
+        test_config.context_mode = "shadow"
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:0", value="现行事实")
+
+        def boom(service):
+            raise RuntimeError("synthetic sweep outage at /secret/path")
+
+        monkeypatch.setattr(ContextService, "sweep_archives", boom)
+
+        result = get_session_start_block(config=test_config)
+
+        assert "现行事实" in result  # fail-open：渲染照常
+        err = capsys.readouterr().err
+        assert "archive sweep" in err
+        assert "/secret/path" not in err
+
+    @pytest.mark.parametrize("mode", ["legacy", "compat"])
+    def test_legacy_and_compat_skip_sweep(self, test_config, monkeypatch, mode):
+        test_config.context_mode = mode
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:0", value="现行事实")
+        calls = []
+        monkeypatch.setattr(
+            ContextService,
+            "sweep_archives",
+            lambda service: calls.append(1),
+        )
+
+        result = get_session_start_block(config=test_config)
+
+        assert "现行事实" in result
+        assert calls == []
+
+    def test_shadow_session_start_purges_expired_archive(self, test_config):
+        """真服务真 sweep：SessionStart 真实删除到期 payload 并置 purged。"""
+        from evolvmem.context_store import ContextStore
+        from evolvmem.session_archive import SessionArchiver
+
+        test_config.context_mode = "shadow"
+        with MemoryStore(test_config) as store:
+            store.add(key="p:t:fact:0", value="现行事实")
+        with ContextStore(test_config) as cstore:
+            cstore.initialize()
+            record = SessionArchiver(test_config, cstore).archive_session(
+                "proj",
+                "kimi",
+                "session_old",
+                "过期的原始会话正文",
+                now=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            )
+        payload_file = test_config.data_dir / record.payload_path
+        assert payload_file.exists()
+
+        result = get_session_start_block(config=test_config)
+
+        assert "现行事实" in result
+        assert not payload_file.exists()
+        conn = sqlite3.connect(test_config.db_path)
+        try:
+            row = conn.execute(
+                "SELECT state, purged_at FROM session_archives WHERE id=?",
+                (record.id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row[0] == "purged"
+        assert row[1] is not None

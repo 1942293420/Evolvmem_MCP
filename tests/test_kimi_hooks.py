@@ -1,9 +1,14 @@
 """kimi_hooks module tests (external LLM/IO is replaced at the boundary)."""
 
+import io
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 from email.message import Message
 from io import BytesIO
+from pathlib import Path
 from urllib.error import HTTPError
 
 import pytest
@@ -83,6 +88,66 @@ def _write_wire(tmp_path, user_text: str, assistant_text: str = "处理完成"):
 
 
 class TestLLMConfig:
+    @pytest.mark.parametrize("custom_data_dir", [False, True], ids=["default", "override"])
+    def test_runtime_directory_routes_credentials_log_and_heartbeat(
+            self, tmp_path, custom_data_dir):
+        home = tmp_path / "home"
+        data_dir = home / "custom-data" if custom_data_dir else home / ".claude" / "evolvmem"
+        data_dir.mkdir(parents=True)
+        (data_dir / "llm_credentials.json").write_text(json.dumps({
+            "provider": "kimi",
+            "api_key": "test-only-key",
+            "model": "test-only-model",
+        }), encoding="utf-8")
+        repository = Path(__file__).resolve().parents[1]
+        env = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith("EVOLVMEM_")
+        }
+        env.update({
+            "HOME": str(home),
+            "PYTHONPATH": str(repository),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        })
+        if custom_data_dir:
+            env["EVOLVMEM_DATA_DIR"] = "~/custom-data"
+        probe = subprocess.run(
+            [sys.executable, "-c", """
+from evolvmem import kimi_hooks
+
+config = kimi_hooks._load_llm_config(log_errors=False)
+assert config is not None, "fake credentials were not found in the data directory"
+assert config.provider == "kimi"
+assert config.api_key == "test-only-key"
+assert config.model == "test-only-model"
+kimi_hooks._log("isolated-path-probe")
+kimi_hooks._touch_heartbeat("test-session")
+"""],
+            cwd=repository, env=env, capture_output=True, text=True, timeout=20,
+        )
+
+        assert probe.returncode == 0, probe.stderr
+        assert "isolated-path-probe" in (data_dir / "hooks.log").read_text()
+        assert (data_dir / "live" / "test-session").is_file()
+        if custom_data_dir:
+            assert not (home / ".claude").exists()
+
+    def test_load_llm_callable_adapts_existing_retrying_chat(self, monkeypatch):
+        config = _llm_config()
+        monkeypatch.setattr(hooks, "_load_llm_config", lambda: config)
+        calls = []
+        monkeypatch.setattr(
+            hooks,
+            "_call_llm_with_retry",
+            lambda prompt, actual: calls.append((prompt, actual)) or "模型结果",
+        )
+
+        llm = hooks._load_llm_callable()
+
+        assert callable(llm)
+        assert llm("滚动摘要") == "模型结果"
+        assert calls == [("滚动摘要", config)]
+
     def test_loads_deepseek_credentials_file(self, monkeypatch, tmp_path):
         config_path = tmp_path / "llm_credentials.json"
         config_path.write_text(json.dumps({
@@ -479,6 +544,10 @@ class TestFullConversationExtraction:
                     status_code,
                     '{"error":{"code":"context_length_exceeded"}}',
                 )
+            if len(prompts) == 4:
+                return _extraction_response(
+                    "总摘要覆盖第一块与第二块", "project:test:fact:synthesis"
+                )
             index = len(prompts) - 1
             return _extraction_response(
                 f"第{index}块摘要", f"project:test:fact:chunk{index}"
@@ -490,13 +559,15 @@ class TestFullConversationExtraction:
             messages, _llm_config(), fallback_chunk_chars=45
         )
 
-        assert len(prompts) == 3  # 一次全量失败，再按两条完整消息降级
+        assert len(prompts) == 4  # 全量失败、两块提取、一次总摘要合成
         assert messages[0]["content"] in prompts[1]
         assert messages[0]["content"] not in prompts[2]
         assert messages[1]["content"] in prompts[2]
         assert messages[1]["content"] not in prompts[1]
+        assert "第1块摘要" in prompts[3]
+        assert "第2块摘要" in prompts[3]
         summaries = [c for c in candidates if c.key == "SESSION_SUMMARY"]
-        assert [c.value for c in summaries] == ["第2块摘要"]
+        assert [c.value for c in summaries] == ["总摘要覆盖第一块与第二块"]
         assert [c.key for c in candidates if c.key != "SESSION_SUMMARY"] == [
             "project:test:fact:chunk1", "project:test:fact:chunk2",
         ]
@@ -762,8 +833,9 @@ class TestSessionEndOutcome:
 
     def test_session_end_syncs_vectors_after_commit_and_keeps_completed_on_failure(
             self, monkeypatch, tmp_path, test_config):
-        from evolvmem import embedding, vector_index
+        from evolvmem import context_service, embedding
 
+        test_config.embedding_dim = 2  # LoadedEngine 的 [0.0, 1.0] 与契约维度一致
         self._wire_session(monkeypatch, tmp_path, test_config)
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
         monkeypatch.setattr(
@@ -783,6 +855,7 @@ class TestSessionEndOutcome:
             ]}, ensure_ascii=False),
         )
         committed_batches = []
+        preserve_calls = []
 
         class LoadedEngine:
             is_loaded = True
@@ -800,11 +873,27 @@ class TestSessionEndOutcome:
                 pass
 
         class FailingIndex:
-            def __init__(self, config):
+            def __init__(self, config, path=None):
                 self.config = config
+                self.path = path
 
-            def initialize(self, dim):
+            def initialize(self, dim=512):
                 pass
+
+            def count(self):
+                return 0
+
+            def is_dirty(self):
+                return False
+
+            def mark_dirty(self):
+                pass
+
+            def preserve_dirty(self):
+                preserve_calls.append("preserve_dirty")
+
+            def search(self, embedding_value, k):
+                return []
 
             def add(self, memory_id, embedding_value):
                 connection = sqlite3.connect(str(self.config.db_path))
@@ -821,6 +910,9 @@ class TestSessionEndOutcome:
                 committed_batches.append((active_count, row[0] if row else None))
                 raise RuntimeError("synthetic vector failure")
 
+            def remove(self, memory_id):
+                return False
+
             def save(self):
                 raise AssertionError("save must not run after add failure")
 
@@ -828,7 +920,7 @@ class TestSessionEndOutcome:
                 pass
 
         monkeypatch.setattr(embedding, "EmbeddingEngine", LoadedEngine)
-        monkeypatch.setattr(vector_index, "VectorIndex", FailingIndex)
+        monkeypatch.setattr(context_service, "VectorIndex", FailingIndex)
         logs = []
         monkeypatch.setattr(hooks, "_log", logs.append)
 
@@ -836,12 +928,12 @@ class TestSessionEndOutcome:
 
         assert result.status == "completed"
         assert result.persisted == 2
-        assert committed_batches == [(2, "active")]
+        assert committed_batches == [(2, "active")]  # 向量写入发生在提交之后
+        assert preserve_calls  # 失败留下独立 dirty 重试标记，而非假回滚
         with MemoryStore(test_config) as store:
             records = store.get_active()
         assert len(records) == 2
         assert all(record["status"] == "active" for record in records)
-        assert "vector sync skipped: RuntimeError" in logs
 
     def test_session_end_redacts_before_llm_without_mutating_wire(
             self, monkeypatch, tmp_path, test_config):
@@ -1059,44 +1151,6 @@ class TestSessionEndOutcome:
             records = store.get_active()
         assert len(records) == 1
         assert records[0]["tier"] == "normal"
-
-    def test_persist_summary_repairs_equivalent_active_metadata(
-            self, test_config):
-        key = "project:test:progress:log:2026-08-04-1200"
-        value = "本次确认了长期架构约束并完成安全检查。"
-        local_summary = CandidateMemory(
-            key=key,
-            value=value,
-            attribute="fact",
-            tags=["日志", "分类:test"],
-            confidence=1.0,
-            importance=5.0,
-            tier="normal",
-        )
-        with MemoryStore(test_config) as store:
-            old_id = store.add(
-                key,
-                value,
-                attribute="constraint",
-                tags=['password="Synthetic-Legacy-Summary-Metadata"'],
-                importance=10.0,
-                tier="pinned",
-            )
-
-            memory_ids, satisfied = hooks._persist_summary(
-                store,
-                local_summary,
-                "session_synthetic",
-            )
-
-            assert satisfied is True
-            assert len(memory_ids) == 1
-            assert store.get_by_id(old_id)["status"] == "superseded"
-            active = store.get_by_id(memory_ids[0])
-        assert active["attribute"] == "fact"
-        assert active["tags"] == "日志,分类:test"
-        assert active["importance"] == 5.0
-        assert active["tier"] == "normal"
 
     def test_session_end_filters_before_dedupe_and_fills_actual_write_quota(
             self, monkeypatch, tmp_path, test_config):
@@ -1387,91 +1441,6 @@ class TestSessionEndOutcome:
         )
         assert "Synthetic-Pass" not in "\n".join(logs)
 
-    def test_persist_candidates_stops_after_eight_actual_writes(
-            self, test_config):
-        existing_key = "project:test:decision:existing"
-        existing_value = "采用既有长期决定，因为它能够减少重复写入。"
-        candidates = [CandidateMemory(
-            key=existing_key,
-            value=existing_value,
-            attribute="decision",
-            tier="pinned",
-        )]
-        candidates.extend([
-            CandidateMemory(
-                key=f"project:test:decision:uncapped_{index}",
-                value=f"这是调用方已经筛选完成的长期决定第{index}条。",
-                attribute="decision",
-            )
-            for index in range(9)
-        ])
-
-        with MemoryStore(test_config) as store:
-            store.add(existing_key, existing_value, attribute="decision")
-            memory_ids = hooks._persist_candidates(
-                test_config, store, None, None, candidates, "synthetic",
-                max_writes=8,
-            )
-            records = store.get_active()
-
-        assert memory_ids == list(range(2, 10))
-        assert len(records) == 9
-
-    def test_persist_candidates_preserves_source_session_on_replace_paths(
-            self, monkeypatch, test_config):
-        from evolvmem import semantic_merge
-
-        same_key = "project:test:decision:api"
-        semantic_key = "project:test:decision:storage"
-        with MemoryStore(test_config) as store:
-            old_same_key_id = store.add(
-                same_key,
-                "采用旧接口。",
-                source_session="old-session",
-            )
-            old_semantic_id = store.add(
-                semantic_key,
-                "采用旧存储方案。",
-                source_session="old-session",
-            )
-            monkeypatch.setattr(
-                semantic_merge,
-                "find_semantic_match",
-                lambda *_args, **_kwargs: store.get_by_id(old_semantic_id),
-            )
-
-            same_key_ids = hooks._persist_candidates(
-                test_config,
-                store,
-                None,
-                None,
-                [CandidateMemory(
-                    key=same_key,
-                    value="采用统一接口，因为它能够长期减少重复实现。",
-                )],
-                "replacement-session",
-            )
-            semantic_ids = hooks._persist_candidates(
-                test_config,
-                store,
-                object(),
-                type("LoadedEngine", (), {"is_loaded": True})(),
-                [CandidateMemory(
-                    key="project:test:fact:storage-alias",
-                    value="采用统一存储方案，因为它能够长期减少维护成本。",
-                )],
-                "semantic-session",
-            )
-
-            assert store.get_by_id(old_same_key_id)["status"] == "superseded"
-            assert store.get_by_id(same_key_ids[0])["source_session"] == (
-                "replacement-session"
-            )
-            assert store.get_by_id(old_semantic_id)["status"] == "superseded"
-            assert store.get_by_id(semantic_ids[0])["source_session"] == (
-                "semantic-session"
-            )
-
     def test_completed_extraction_returns_count_and_persists(
             self, monkeypatch, tmp_path, test_config):
         self._wire_session(monkeypatch, tmp_path, test_config)
@@ -1500,3 +1469,698 @@ class TestSessionEndOutcome:
         assert result.persisted == 2
         with MemoryStore(test_config) as store:
             assert store.count_active() == 2
+
+    def test_session_end_compat_mode_writes_projection_and_core_atomically(
+            self, monkeypatch, tmp_path, test_config):
+        from evolvmem.context_models import ContextStatus
+        from evolvmem.context_store import ContextStore
+
+        test_config.context_mode = "compat"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        # compat 模式以既有 legacy 库为前提（正式切换在迁移后才开启）
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks,
+            "_extract_candidates",
+            lambda _messages, _token: [
+                CandidateMemory(
+                    key="project:test:decision:dual",
+                    value="采用双侧原子写入，因为它能够长期保持一致。",
+                    attribute="decision",
+                    confidence=0.9,
+                    importance=8.0,
+                ),
+                CandidateMemory(
+                    key="SESSION_SUMMARY",
+                    value="本次确认了双侧原子写入的长期价值。",
+                    confidence=0.9,
+                    tags=["日志"],
+                ),
+            ],
+        )
+
+        result = hooks.session_end({"session_id": "session_dual"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2
+        with MemoryStore(test_config) as store:
+            records = store.get_active()
+        assert len(records) == 2
+        with ContextStore(test_config) as context_store:
+            for record in records:
+                context_id = context_store.resolve_legacy_mapping(record["id"])
+                assert context_id is not None
+                item = context_store.get_item(context_id)
+                assert item.status is ContextStatus.ACTIVE
+                assert item.layers is not None  # L0/L1/L2 三层齐备
+                assert item.layers.l1 == record["value"]
+                assert item.layers.l2 == record["value"]
+                if record["key"] == "project:test:decision:dual":
+                    assert item.confidence == 0.9
+                    assert item.importance == 8.0
+
+    def test_session_end_compat_mode_rolls_back_both_sides_on_write_failure(
+            self, monkeypatch, tmp_path, test_config):
+        test_config.context_mode = "compat"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        # compat 模式以既有 legacy 库为前提（正式切换在迁移后才开启）
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+            CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次确认了三项长期架构规则。",
+                tags=["日志"],
+            ),
+            CandidateMemory(
+                key="project:x:decision:first",
+                value="采用第一项长期架构决定。",
+            ),
+            CandidateMemory(
+                key="project:x:decision:second",
+                value="采用第二项长期架构决定。",
+            ),
+            CandidateMemory(
+                key="project:x:constraint:third",
+                value="必须遵守第三项长期安全约束。",
+            ),
+        ])
+        from evolvmem.context_store import ContextStore
+        from evolvmem.legacy_projection import LegacyProjectionRepository
+        real_insert = LegacyProjectionRepository.insert
+        calls = 0
+
+        def fail_on_third(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise sqlite3.OperationalError(
+                    "synthetic third write failure"
+                )
+            return real_insert(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            LegacyProjectionRepository, "insert", fail_on_third
+        )
+
+        result = hooks.session_end({"session_id": "synthetic"})
+
+        assert result.status == "retry"
+        with MemoryStore(test_config) as store:
+            assert store.count_active() == 0
+        with ContextStore(test_config) as context_store:
+            assert context_store.count_by_status() == {}
+
+    def test_session_end_invalid_context_mode_persists_via_legacy_backend(
+            self, monkeypatch, tmp_path, test_config):
+        """非法 context_mode（如 typo）不得让提炼永远 retry：按 legacy 落库，
+        Context 功能 fail-closed，Core 表无写入。"""
+        from evolvmem.context_store import ContextStore
+
+        test_config.context_mode = "primray"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks,
+            "_extract_candidates",
+            lambda _messages, _token: [
+                CandidateMemory(
+                    key="project:test:fact:invalid-mode",
+                    value="非法模式也必须持久化的长期事实",
+                    confidence=0.9,
+                ),
+                CandidateMemory(
+                    key="SESSION_SUMMARY",
+                    value="本次会话验证了非法模式的 legacy 兜底",
+                    confidence=0.9,
+                    tags=["日志"],
+                ),
+            ],
+        )
+
+        result = hooks.session_end({"session_id": "session_invalid_mode"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2
+        with MemoryStore(test_config) as store:
+            assert store.count_active() == 2
+        with ContextStore(test_config) as context_store:
+            assert context_store.count_by_status() == {}
+
+
+
+class TestExtractionBackoff:
+    def test_backoff_delays_grow_exponentially(self, monkeypatch):
+        attempts = 0
+        delays = []
+
+        def fake_call(prompt, token, *, deadline=None):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise _http_error(429)
+            return _extraction_response("退避后成功摘要", "project:p:fact:backoff")
+
+        monkeypatch.setattr(hooks, "_call_llm", fake_call)
+        monkeypatch.setattr(hooks.time, "sleep", delays.append)
+        monkeypatch.setattr(hooks.random, "uniform", lambda _a, _b: 0.0)
+
+        candidates = hooks._extract_candidates(
+            [{"role": "user", "content": "限流后恢复的会话"}],
+            _llm_config(),
+        )
+
+        assert attempts == 3
+        assert delays == [2.0, 4.0]
+        assert candidates[-1].value == "退避后成功摘要"
+
+    def test_retry_after_header_overrides_backoff(self, monkeypatch):
+        attempts = 0
+        delays = []
+
+        def fake_call(prompt, token, *, deadline=None):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise _http_error(429, retry_after="7")
+            return _extraction_response("服从RetryAfter摘要", "project:p:fact:ra")
+
+        monkeypatch.setattr(hooks, "_call_llm", fake_call)
+        monkeypatch.setattr(hooks.time, "sleep", delays.append)
+
+        candidates = hooks._extract_candidates(
+            [{"role": "user", "content": "限流带Retry-After的会话"}],
+            _llm_config(),
+        )
+
+        assert delays == [7.0]
+        assert candidates[-1].value == "服从RetryAfter摘要"
+
+    def test_quota_error_halts_run_without_retry(self, monkeypatch):
+        attempts = 0
+
+        def fake_call(prompt, token, *, deadline=None):
+            nonlocal attempts
+            attempts += 1
+            raise _http_error(402)
+
+        monkeypatch.setattr(hooks, "_call_llm", fake_call)
+
+        with pytest.raises(hooks.RetryableExtractionError) as exc_info:
+            hooks._extract_candidates(
+                [{"role": "user", "content": "账户欠费的会话"}],
+                _llm_config(),
+            )
+
+        assert attempts == 1
+        assert exc_info.value.halt_run is True
+        assert exc_info.value.rate_limited is False
+
+
+class TestHooksLog:
+    def test_log_appends_timestamped_line(self, monkeypatch, tmp_path):
+        log_path = tmp_path / "hooks.log"
+        monkeypatch.setattr(hooks, "_HOOKS_LOG_PATH", log_path)
+
+        hooks._log("测试落盘")
+
+        content = log_path.read_text(encoding="utf-8")
+        assert "测试落盘" in content
+        assert "[evolvmem]" in content
+        assert content[0].isdigit()  # 时间戳在行首
+
+    def test_log_rotates_when_oversized(self, monkeypatch, tmp_path):
+        log_path = tmp_path / "hooks.log"
+        log_path.write_text("x" * 100, encoding="utf-8")
+        monkeypatch.setattr(hooks, "_HOOKS_LOG_PATH", log_path)
+        monkeypatch.setattr(hooks, "_HOOKS_LOG_MAX_BYTES", 10)
+
+        hooks._log("轮转后的新行")
+
+        rotated = tmp_path / "hooks.log.1"
+        assert rotated.exists()
+        assert rotated.read_text(encoding="utf-8") == "x" * 100
+        assert "轮转后的新行" in log_path.read_text(encoding="utf-8")
+
+    def test_log_file_failure_still_prints_stderr(
+            self, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(
+            hooks, "_HOOKS_LOG_PATH", tmp_path / "nonexistent_dir" / "h.log")
+
+        hooks._log("只到stderr")
+
+        assert "只到stderr" in capsys.readouterr().err
+
+
+class TestHeartbeat:
+    def test_session_start_forwards_workspace_from_hook_payload(
+            self, monkeypatch, tmp_path, capsys):
+        captured = {}
+        monkeypatch.setattr(
+            "evolvmem.hooks.get_session_start_block",
+            lambda **kwargs: captured.update(kwargs) or "记忆块",
+        )
+        monkeypatch.setattr(hooks, "_LIVE_DIR", tmp_path / "live")
+        monkeypatch.setattr(sys, "argv", ["kimi_hooks", "session-start"])
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            io.StringIO(json.dumps({
+                "session_id": "session_workspace",
+                "cwd": "/workspace/eva",
+            })),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            hooks.main()
+
+        assert exc_info.value.code == 0
+        assert capsys.readouterr().out == "记忆块"
+        assert captured == {"workspace_path": "/workspace/eva"}
+
+    def test_touch_heartbeat_creates_marker(self, monkeypatch, tmp_path):
+        live_dir = tmp_path / "live"
+        monkeypatch.setattr(hooks, "_LIVE_DIR", live_dir)
+
+        hooks._touch_heartbeat("session_abc")
+        hooks._touch_heartbeat("")
+
+        assert (live_dir / "session_abc").exists()
+        assert len(list(live_dir.iterdir())) == 1
+
+    def test_touch_heartbeat_sanitizes_session_id(
+            self, monkeypatch, tmp_path):
+        live_dir = tmp_path / "live"
+        monkeypatch.setattr(hooks, "_LIVE_DIR", live_dir)
+
+        hooks._touch_heartbeat("../evil/../../x")
+
+        names = [p.name for p in live_dir.iterdir()]
+        assert names
+        assert all("/" not in name and ".." not in name for name in names)
+
+    def test_heartbeat_subcommand_writes_no_stdout(
+            self, monkeypatch, tmp_path, capsys):
+        live_dir = tmp_path / "live"
+        monkeypatch.setattr(hooks, "_LIVE_DIR", live_dir)
+        monkeypatch.setattr(sys, "argv", ["kimi_hooks", "heartbeat"])
+        monkeypatch.setattr(
+            sys, "stdin", io.StringIO('{"session_id": "session_hb"}'))
+
+        with pytest.raises(SystemExit) as exc_info:
+            hooks.main()
+
+        assert exc_info.value.code == 0
+        assert capsys.readouterr().out == ""
+        assert (live_dir / "session_hb").exists()
+
+
+class TestSessionEndArchiveLinking:
+    """P4b：session_end 加密归档 + 候选隔离 + 来源链接（同一事务）。"""
+
+    @staticmethod
+    def _wire_session(monkeypatch, tmp_path, test_config, text="甲" * 250):
+        wire = _write_wire(tmp_path, text)
+        monkeypatch.setattr(hooks, "_find_wire", lambda _session_id: str(wire))
+        monkeypatch.setattr(
+            Config,
+            "from_file",
+            classmethod(lambda cls, path=None: test_config),
+        )
+        return wire
+
+    @staticmethod
+    def _candidates():
+        return [
+            CandidateMemory(
+                key="project:proj:experience:stdio-hang",
+                value="MCP 握手卡住时先检查 stdin 预读竞争，改为单一读取路径。",
+                attribute="experience",
+                confidence=0.8,
+                importance=7.0,
+            ),
+            CandidateMemory(
+                key="project:proj:decision:archive",
+                value="采用本地加密归档保存原始会话，因为它能够长期保护隐私。",
+                attribute="decision",
+                confidence=0.9,
+                importance=8.0,
+            ),
+            CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次会话验证了归档与候选隔离的接线。",
+                confidence=0.9,
+                tags=["日志"],
+            ),
+        ]
+
+    @staticmethod
+    def _rows(config, table):
+        conn = sqlite3.connect(config.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def test_session_end_archives_payload_and_links_sources(
+            self, monkeypatch, tmp_path, test_config):
+        import stat
+
+        from evolvmem.context_models import ContextStatus
+        from evolvmem.context_store import ContextStore
+        from evolvmem.session_archive import SessionArchiver
+
+        test_config.context_mode = "compat"
+        secret = "sk-live-secret-123456"
+        self._wire_session(
+            monkeypatch, tmp_path, test_config,
+            text=f"我的临时 key 是 {secret}，请勿外发。" + "甲" * 250,
+        )
+        # compat 模式以既有 legacy 库为前提
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks, "_extract_candidates", lambda *_: self._candidates(),
+        )
+
+        result = hooks.session_end({"session_id": "session_archive_link"})
+
+        assert result.status == "completed"
+        assert result.persisted == 3  # summary + decision + 隔离的 experience
+
+        # 加密归档：一行、payload 落盘且零明文、密钥 owner-only
+        archives = self._rows(test_config, "session_archives")
+        assert len(archives) == 1
+        archive = archives[0]
+        assert archive["adapter"] == "kimi"
+        assert archive["external_session_id"] == "session_archive_link"
+        assert archive["state"] == "available"
+        payload_file = test_config.data_dir / archive["payload_path"]
+        blob = payload_file.read_bytes()
+        assert secret.encode("utf-8") not in blob
+        key_file = test_config.data_dir / "archive.key"
+        assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+
+        # 解密后是原始消息列表 JSON（脱敏前的本地证据，绝不外发）
+        with ContextStore(test_config) as store:
+            payload = SessionArchiver(test_config, store).read_payload(
+                archive["id"]
+            )
+        parsed = json.loads(payload)
+        assert set(parsed) == {"messages"}
+        roles = [message["role"] for message in parsed["messages"]]
+        assert roles == ["user", "assistant"]
+        assert secret in parsed["messages"][0]["content"]
+
+        # 候选隔离：experience 是 Core candidate，无 legacy 投影行
+        items = self._rows(test_config, "context_items")
+        by_key = {item["identity_key"]: item for item in items}
+        isolated = by_key["project:proj:experience:stdio-hang"]
+        assert isolated["status"] == "candidate"
+        assert isolated["content_type"] == "experience"
+        assert isolated["source_state"] == "available"
+        assert isolated["source_count"] == 1
+        memories = self._rows(test_config, "memories")
+        assert "project:proj:experience:stdio-hang" not in {
+            row["key"] for row in memories
+        }
+        # 其他类型保持 active 双写
+        assert by_key["project:proj:decision:archive"]["status"] == (
+            ContextStatus.ACTIVE.value
+        )
+        assert len(memories) == 2  # summary + decision
+
+        # 来源链接随提炼同事务落库：每个写入项一条 session 来源
+        sources = self._rows(test_config, "context_sources")
+        assert {row["item_id"] for row in sources} == {
+            item["id"] for item in items
+        }
+        for row in sources:
+            assert row["archive_id"] == archive["id"]
+            assert row["source_kind"] == "session"
+            assert row["extraction_version"] == "kimi-extraction-v1"
+
+    def test_session_end_repeat_same_session_adds_no_rows(
+            self, monkeypatch, tmp_path, test_config):
+        test_config.context_mode = "compat"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks, "_extract_candidates", lambda *_: self._candidates(),
+        )
+
+        first = hooks.session_end({"session_id": "session_repeat"})
+        second = hooks.session_end({"session_id": "session_repeat"})
+
+        assert first.status == "completed" and first.persisted == 3
+        assert second.status == "completed" and second.persisted == 0
+        assert len(self._rows(test_config, "session_archives")) == 1
+        assert len(self._rows(test_config, "context_items")) == 3
+        assert len(self._rows(test_config, "context_sources")) == 3
+
+    def test_session_end_without_crypto_backend_persists_without_archive(
+            self, monkeypatch, tmp_path, test_config):
+        """无加密库：归档返回 None，提炼照常（隔离不生效），零明文落盘。"""
+        test_config.context_mode = "compat"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks, "_extract_candidates", lambda *_: self._candidates(),
+        )
+        monkeypatch.setattr("evolvmem.session_archive.AESGCM", None)
+
+        result = hooks.session_end({"session_id": "session_no_crypto"})
+
+        assert result.status == "completed"
+        assert result.persisted == 3
+        assert self._rows(test_config, "session_archives") == []
+        assert self._rows(test_config, "context_sources") == []
+        assert not (test_config.data_dir / "session_archives").exists()
+        # 无 archive 时 experience 走旧路径：active 双写
+        items = self._rows(test_config, "context_items")
+        by_key = {item["identity_key"]: item for item in items}
+        assert by_key["project:proj:experience:stdio-hang"]["status"] == "active"
+        assert len(self._rows(test_config, "memories")) == 3
+
+    def test_session_end_archive_failure_still_persists(
+            self, monkeypatch, tmp_path, test_config):
+        from evolvmem.session_archive import SessionArchiver
+
+        test_config.context_mode = "compat"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks, "_extract_candidates", lambda *_: self._candidates(),
+        )
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("synthetic archive failure at /secret/path")
+
+        monkeypatch.setattr(SessionArchiver, "archive_session", boom)
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+
+        result = hooks.session_end({"session_id": "session_archive_fail"})
+
+        assert result.status == "completed"
+        assert result.persisted == 3
+        assert self._rows(test_config, "session_archives") == []
+        assert self._rows(test_config, "context_sources") == []
+        assert any("archive" in line for line in logs)
+        assert "/secret/path" not in "\n".join(logs)
+
+    def test_session_end_isolates_playbook_candidate(
+            self, monkeypatch, tmp_path, test_config):
+        """P5 合约矩阵：playbook 与 experience 一样只建 Core candidate。"""
+        test_config.context_mode = "compat"
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks,
+            "_extract_candidates",
+            lambda *_: [
+                CandidateMemory(
+                    key="project:proj:playbook:stdio-triage",
+                    value="排查握手卡死先确认症状，再定位读取路径，最后回归验证。",
+                    attribute="playbook",
+                    confidence=0.8,
+                    importance=7.0,
+                ),
+                CandidateMemory(
+                    key="SESSION_SUMMARY",
+                    value="本次会话验证了 playbook 的候选隔离。",
+                    confidence=0.9,
+                    tags=["日志"],
+                ),
+            ],
+        )
+
+        result = hooks.session_end({"session_id": "session_playbook_isolation"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2  # summary + 隔离的 playbook
+        items = self._rows(test_config, "context_items")
+        by_key = {item["identity_key"]: item for item in items}
+        isolated = by_key["project:proj:playbook:stdio-triage"]
+        assert isolated["status"] == "candidate"
+        assert isolated["content_type"] == "playbook"
+        assert isolated["source_count"] == 1
+        # 候选隔离：无 legacy 投影行，memories 表只有 summary
+        memories = self._rows(test_config, "memories")
+        assert len(memories) == 1
+        assert ":progress:log:" in memories[0]["key"]
+
+
+class TestSessionEndConsolidationWiring:
+    """P4b：persist 成功后用既有 LLM chat 能力跑一次 consolidation。"""
+
+    @staticmethod
+    def _wire_session(monkeypatch, tmp_path, test_config, text="甲" * 250):
+        wire = _write_wire(tmp_path, text)
+        monkeypatch.setattr(hooks, "_find_wire", lambda _session_id: str(wire))
+        monkeypatch.setattr(
+            Config,
+            "from_file",
+            classmethod(lambda cls, path=None: test_config),
+        )
+        return wire
+
+    @staticmethod
+    def _persisted_candidates():
+        return [
+            CandidateMemory(
+                key="project:proj:fact:consolidation",
+                value="consolidation 接线后跑一次晋升与 playbook 评估。",
+                attribute="fact",
+                confidence=0.9,
+                importance=6.0,
+            ),
+            CandidateMemory(
+                key="SESSION_SUMMARY",
+                value="本次会话验证了 consolidation 的 LLM 接线。",
+                confidence=0.9,
+                tags=["日志"],
+            ),
+        ]
+
+    def _prepare(self, monkeypatch, tmp_path, test_config, mode):
+        test_config.context_mode = mode
+        self._wire_session(monkeypatch, tmp_path, test_config)
+        with MemoryStore(test_config):
+            pass
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(
+            hooks, "_extract_candidates", lambda *_: self._persisted_candidates(),
+        )
+
+    def test_shadow_mode_runs_consolidation_with_llm_callable(
+            self, monkeypatch, tmp_path, test_config):
+        from evolvmem.context_service import ContextService
+
+        self._prepare(monkeypatch, tmp_path, test_config, "shadow")
+        captured = {}
+
+        def spy(service, *, llm=None, embedding_engine=None):
+            captured["llm"] = llm
+            captured["embedding_engine"] = embedding_engine
+
+        monkeypatch.setattr(ContextService, "run_consolidation", spy)
+        chats = []
+
+        def fake_chat(prompt, config, *args, **kwargs):
+            chats.append(prompt)
+            return "ok"
+
+        monkeypatch.setattr(hooks, "_call_llm_with_retry", fake_chat)
+
+        result = hooks.session_end({"session_id": "session_consolidation"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2
+        assert callable(captured["llm"])
+        # llm callable 包装既有 chat 能力：成功返回文本，异常降级为 None
+        assert captured["llm"]("提炼 playbook") == "ok"
+        assert chats[-1] == "提炼 playbook"
+        assert any("项目知识整理助手" in prompt for prompt in chats[:-1])
+
+        def failing_chat(*args, **kwargs):
+            raise hooks.RetryableExtractionError("provider down")
+
+        monkeypatch.setattr(hooks, "_call_llm_with_retry", failing_chat)
+        assert captured["llm"]("再试一次") is None
+
+    def test_session_end_passes_llm_callable_to_persistence(
+            self, monkeypatch, tmp_path, test_config):
+        from evolvmem.context_service import ContextService
+
+        self._prepare(monkeypatch, tmp_path, test_config, "shadow")
+        original = ContextService.persist_legacy_extraction
+        captured = {}
+
+        def spy(service, request, **kwargs):
+            captured["llm"] = kwargs.get("llm")
+            return original(service, request, **kwargs)
+
+        monkeypatch.setattr(ContextService, "persist_legacy_extraction", spy)
+        monkeypatch.setattr(ContextService, "run_consolidation", lambda *args, **kwargs: None)
+        monkeypatch.setattr(
+            hooks, "_call_llm_with_retry", lambda prompt, config: "滚动摘要模型结果"
+        )
+
+        result = hooks.session_end({"session_id": "session_rollup_wiring"})
+
+        assert result.status == "completed"
+        assert callable(captured["llm"])
+        assert captured["llm"]("更新项目摘要") == "滚动摘要模型结果"
+
+    def test_consolidation_failure_does_not_change_result(
+            self, monkeypatch, tmp_path, test_config):
+        from evolvmem.context_service import ContextService
+
+        self._prepare(monkeypatch, tmp_path, test_config, "shadow")
+
+        def boom(service, **kwargs):
+            raise RuntimeError("synthetic consolidation failure at /secret/path")
+
+        monkeypatch.setattr(ContextService, "run_consolidation", boom)
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+
+        result = hooks.session_end({"session_id": "session_consolidation_fail"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2
+        assert any("consolidation" in line for line in logs)
+        assert "/secret/path" not in "\n".join(logs)
+
+    @pytest.mark.parametrize("mode", ["legacy", "compat"])
+    def test_legacy_and_compat_skip_consolidation(
+            self, monkeypatch, tmp_path, test_config, mode):
+        from evolvmem.context_service import ContextService
+
+        self._prepare(monkeypatch, tmp_path, test_config, mode)
+        calls = []
+        monkeypatch.setattr(
+            ContextService,
+            "run_consolidation",
+            lambda service, **kwargs: calls.append(1),
+        )
+
+        result = hooks.session_end({"session_id": f"session_{mode}_skip"})
+
+        assert result.status == "completed"
+        assert calls == []

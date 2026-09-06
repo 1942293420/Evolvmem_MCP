@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090f19">
+  <meta name="color-scheme" content="dark">
+  <title>Nocturne 深空航行 · EvolvMem</title>
+  <link rel="stylesheet" href="/designs/common.css">
+  <link rel="stylesheet" href="/designs/nocturne.css">
+</head>
+<body data-design="nocturne">
+  <svg class="nc-symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="nc-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="nc-diagonal" viewBox="0 0 24 24"><path d="M6 18 18 6M6 6h12v12"/></symbol>
+    <symbol id="nc-star" viewBox="0 0 24 24"><path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4Z"/></symbol>
+    <symbol id="nc-memory" viewBox="0 0 24 24"><path d="M5 5h14v14H5zM8 9h8M8 13h5M8 17h8"/></symbol>
+    <symbol id="nc-steps" viewBox="0 0 24 24"><path d="M4 18h5v-5h5V8h6M17 5l3 3-3 3"/></symbol>
+    <symbol id="nc-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="nc-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></symbol>
+  </svg>
+
+  <div class="nc-shell">
+    <header class="nc-topbar">
+      <a class="nc-brand" href="/designs/nocturne.html" aria-label="EvolvMem Nocturne 首页">
+        <svg class="nc-brand-mark" viewBox="0 0 42 42" fill="none" aria-hidden="true"><circle cx="21" cy="21" r="11.5"/><ellipse cx="21" cy="21" rx="20" ry="6.5" transform="rotate(-38 21 21)"/><circle cx="31.1" cy="10.3" r="2.7" class="nc-logo-star"/></svg>
+        <span>EvolvMem<span class="nc-brand-edition">NOCTURNE</span></span>
+      </a>
+      <nav class="nc-navigation" aria-label="主导航">
+        <button type="button" class="nc-nav-link" data-page-link="home" aria-current="page"><span>概览</span></button>
+        <button type="button" class="nc-nav-link" data-page-link="memories"><span>记忆库</span></button>
+        <button type="button" class="nc-nav-link" data-page-link="experiences"><span>经验案例</span></button>
+        <button type="button" class="nc-nav-link" data-page-link="progress"><span>项目进展</span></button>
+      </nav>
+      <a href="/designs/" class="nc-compare">比较设计 <svg aria-hidden="true"><use href="#nc-diagonal"/></svg></a>
+    </header>
+
+    <main>
+      <section data-page-panel="home" class="nc-home">
+        <div class="nc-observation-bar">
+          <p class="nc-kicker"><span class="nc-crosshair" aria-hidden="true">+</span> THE MEMORY OBSERVATORY <span class="nc-observation-name">/ 深空航行</span></p>
+          <span class="nc-preview-label"><i aria-hidden="true"></i>设计预览 · 实时数据</span>
+        </div>
+
+        <section class="nc-universe" aria-labelledby="nc-home-title">
+          <div class="nc-hero-copy">
+            <p class="nc-eyebrow">把过去的探索，带向下一程</p>
+            <h1 id="nc-home-title">记忆有引力。<br><span>经验有回响。</span></h1>
+            <p class="nc-hero-description">散落的记忆，在这里彼此连接。<br>找回已验证的经验，从上次停下的地方继续。</p>
+            <div class="nc-hero-actions">
+              <button type="button" class="nc-primary-link" data-page-link="memories">进入记忆库 <svg aria-hidden="true"><use href="#nc-arrow"/></svg></button>
+              <button type="button" class="nc-quiet-link" data-page-link="progress">继续项目 <svg aria-hidden="true"><use href="#nc-diagonal"/></svg></button>
+            </div>
+            <div class="nc-hero-note"><span class="nc-note-line" aria-hidden="true"></span><span>积累 · 连接 · 再出发</span></div>
+          </div>
+
+          <div class="nc-cosmos" data-galaxy="deep" aria-label="由真实项目与记忆构成的交互星图"></div>
+
+          <div class="nc-galaxy-caption" aria-hidden="true">
+            <span class="nc-caption-line"></span>
+            <span>PERSONAL KNOWLEDGE UNIVERSE<small>属于你的知识宇宙</small></span>
+          </div>
+        </section>
+
+        <section class="nc-readouts" aria-label="记忆与项目数据概览">
+          <div class="nc-readout"><span class="nc-readout-name"><i class="nc-dot nc-dot-cyan"></i>活跃记忆</span><span class="nc-readout-value" data-stat="total_active">—</span><span class="nc-readout-code">MEMORIES</span></div>
+          <div class="nc-readout"><span class="nc-readout-name"><i class="nc-dot nc-dot-violet"></i>已验证经验</span><span class="nc-readout-value" data-stat="verified_experiences">—</span><span class="nc-readout-code">VERIFIED</span></div>
+          <div class="nc-readout"><span class="nc-readout-name"><i class="nc-dot nc-dot-white"></i>项目星系</span><span class="nc-readout-value" data-stat="project_count">—</span><span class="nc-readout-code">PROJECTS</span></div>
+          <div class="nc-readout"><span class="nc-readout-name"><i class="nc-dot nc-dot-amber"></i>待续任务</span><span class="nc-readout-value" data-stat="unfinished_workstreams">—</span><span class="nc-readout-code">TO CONTINUE</span></div>
+        </section>
+
+        <div class="nc-content-heading"><div><p class="nc-kicker">FROM EXPLORATION TO EXPERIENCE</p><h2>让每次出发，都有迹可循。</h2></div><label class="nc-global-search"><svg aria-hidden="true"><use href="#nc-search"/></svg><input type="search" data-ui-search aria-label="搜索记忆，按回车查看结果" placeholder="寻找一段记忆…"><span aria-hidden="true">↵</span></label></div>
+
+        <div class="nc-workspace-grid">
+          <section class="nc-surface nc-experiences-panel">
+            <header class="nc-section-header"><div><span class="nc-section-code">01 / EXPERIENCE</span><h3><svg aria-hidden="true"><use href="#nc-star"/></svg>值得带走的经验</h3></div><button type="button" data-page-link="experiences" class="nc-text-link">全部案例 <svg aria-hidden="true"><use href="#nc-arrow"/></svg></button></header>
+            <div class="nc-featured" data-slot="featured-experiences"><p class="ui-empty">正在读取经验案例…</p></div>
+            <p class="nc-panel-footnote">保留验证状态与原始来源，让每次复用都有依据。</p>
+          </section>
+          <section class="nc-surface nc-projects-panel" id="nc-projects">
+            <header class="nc-section-header"><div><span class="nc-section-code">02 / CONSTELLATIONS</span><h3><svg aria-hidden="true"><use href="#nc-memory"/></svg>你的项目星系</h3></div><button type="button" data-page-link="progress" class="nc-icon-link" aria-label="查看所有项目进展"><svg aria-hidden="true"><use href="#nc-diagonal"/></svg></button></header>
+            <div class="nc-project-list" data-slot="project-list"><p class="ui-empty">正在读取项目…</p></div>
+          </section>
+        </div>
+
+        <section class="nc-continuation">
+          <div class="nc-continuation-heading"><span class="nc-continue-symbol" aria-hidden="true"><svg><use href="#nc-steps"/></svg></span><div><p class="nc-kicker">PICK UP WHERE YOU LEFT OFF</p><h3>下一步，从这里开始。</h3></div><button type="button" data-page-link="progress" class="nc-text-link">查看进展 <svg aria-hidden="true"><use href="#nc-arrow"/></svg></button></div>
+          <div data-slot="task-list"><p class="ui-empty">正在读取任务断点…</p></div>
+        </section>
+      </section>
+
+      <section data-page-panel="memories" class="nc-library-page data-page" hidden>
+        <header class="data-page-header"><h1>记忆库</h1><p>按内容、项目和状态查找记录。</p></header>
+        <div class="nc-browser-surface" data-slot="memory-browser"><p class="ui-empty">正在打开记忆库…</p></div>
+      </section>
+
+      <section data-page-panel="experiences" class="nc-library-page data-page" hidden>
+        <header class="data-page-header"><h1>经验案例</h1><p>核对方法、适用条件和验证结果。</p></header>
+        <div class="nc-browser-surface" data-slot="experience-browser"><p class="ui-empty">正在打开经验案例…</p></div>
+      </section>
+
+      <section data-page-panel="progress" class="nc-library-page data-page" hidden>
+        <header class="data-page-header"><h1>项目进展</h1><p>查看项目摘要与任务断点。</p></header>
+        <div class="nc-browser-surface" data-slot="progress-browser"><p class="ui-empty">正在打开项目进展…</p></div>
+      </section>
+    </main>
+
+    <footer class="nc-footer"><div class="nc-footer-brand"><span class="nc-footer-star" aria-hidden="true">✧</span><span>EVOLVMEM <span class="nc-footer-divider">/</span> NOCTURNE</span></div><div class="nc-connection"><span class="nc-status-light" aria-hidden="true"></span><span data-data-status role="status" aria-live="polite">正在连接真实数据…</span><button type="button" data-refresh class="nc-refresh" aria-label="刷新数据"><svg aria-hidden="true"><use href="#nc-refresh"/></svg></button></div><a href="/designs/">返回五版设计 <span aria-hidden="true">↗</span></a></footer>
+  </div>
+  <script src="/designs/galaxy.js"></script>
+  <script src="/designs/app.js"></script>
+</body>
+</html>

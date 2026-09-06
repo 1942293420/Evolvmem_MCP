@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "evolvmem": {
+      "type": "stdio",
+      "command": "/absolute/path/evolvmem/.venv/bin/python",
+      "args": ["-m", "evolvmem.mcp_server"],
+      "env": {
+        "EVOLVMEM_DATA_DIR": "/absolute/path/evolvmem-data",
+        "EVOLVMEM_ADAPTER": "claude",
+        "EVOLVMEM_CONTEXT_MODE": "legacy"
+      }
+    }
+  }
+}

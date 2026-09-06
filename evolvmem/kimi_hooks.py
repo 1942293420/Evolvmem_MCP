@@ -13,6 +13,7 @@ import glob
 import hashlib
 import json
 import os
+import random
 import re
 import socket
 import sys
@@ -24,6 +25,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from pathlib import Path
 
+from evolvmem.config import Config
 from evolvmem.extraction_policy import (
     contains_sensitive_text,
     evaluate_candidate,
@@ -35,8 +37,9 @@ from evolvmem.extraction_policy import (
 _KIMI_API = "https://api.kimi.com/coding/v1/chat/completions"
 _SESSIONS_DIR = Path.home() / ".kimi-code" / "sessions"
 _MODEL = "kimi-for-coding"
-_LLM_CONFIG_PATH = (Path.home() / ".claude" / "evolvmem"
-                    / "llm_credentials.json")
+# Resolve once per hook process; keep individual paths replaceable by callers.
+_DATA_DIR = Config().data_dir
+_LLM_CONFIG_PATH = _DATA_DIR / "llm_credentials.json"
 _PROVIDER_DEFAULTS = {
     "deepseek": (
         "https://api.deepseek.com/chat/completions",
@@ -54,6 +57,9 @@ _MAX_PROJECT_CHARS = 48
 _MAX_SOURCE_SESSION_CHARS = 128
 _SESSION_SUMMARY_KEY = "SESSION_SUMMARY"
 _WD_DIR_RE = re.compile(r"^wd_(.+)_[0-9a-f]{8,}$")
+_HOOKS_LOG_PATH = _DATA_DIR / "hooks.log"
+_HOOKS_LOG_MAX_BYTES = 1024 * 1024
+_LIVE_DIR = _DATA_DIR / "live"
 
 
 class ContextOverflowError(RuntimeError):
@@ -63,9 +69,12 @@ class ContextOverflowError(RuntimeError):
 class RetryableExtractionError(RuntimeError):
     """Extraction did not complete and must remain pending for a later run."""
 
-    def __init__(self, message: str, *, rate_limited: bool = False):
+    def __init__(self, message: str, *, rate_limited: bool = False,
+                 halt_run: bool = False):
         super().__init__(message)
         self.rate_limited = rate_limited
+        # 认证/欠费等提供商硬故障：同批其余会话不必再试，整轮停止
+        self.halt_run = halt_run
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,7 @@ class ExtractionResult:
     persisted: int = 0
     reason: str = ""
     rate_limited: bool = False
+    halt_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -134,28 +144,44 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 def _log(msg: str) -> None:
     print(f"[evolvmem] {msg}", file=sys.stderr, flush=True)
+    try:  # 落盘失败不影响 hook 本身
+        if (_HOOKS_LOG_PATH.exists()
+                and _HOOKS_LOG_PATH.stat().st_size > _HOOKS_LOG_MAX_BYTES):
+            _HOOKS_LOG_PATH.replace(
+                _HOOKS_LOG_PATH.with_name("hooks.log.1"))
+        with _HOOKS_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} [evolvmem] {msg}\n")
+    except Exception:
+        pass
 
 
 # ---- session-start ----
 
-def session_start() -> None:
+def session_start(payload: dict | None = None) -> None:
     """Print the three-layer injection block to stdout (CLI appends it to context)."""
     from evolvmem.hooks import get_session_start_block
-    sys.stdout.write(get_session_start_block())
+    payload = payload or {}
+    workspace_path = str(
+        payload.get("cwd") or payload.get("workspace_path") or ""
+    ).strip()
+    sys.stdout.write(get_session_start_block(workspace_path=workspace_path))
 
 
 # ---- session-end ----
 
-def _load_llm_config() -> LLMConfig | None:
+def _load_llm_config(*, log_errors: bool = True) -> LLMConfig | None:
     try:
         data = json.loads(_LLM_CONFIG_PATH.read_text(encoding="utf-8"))
         provider = str(data.get("provider", "deepseek")).strip().casefold()
         if provider not in _PROVIDER_DEFAULTS:
-            _log(f"unsupported extraction provider: {provider!r}")
+            if log_errors:
+                _log(f"unsupported extraction provider: {provider!r}")
             return None
         api_key = str(data.get("api_key", "")).strip()
         if not api_key:
-            _log(f"{_LLM_CONFIG_PATH} has no api_key, skip extraction")
+            if log_errors:
+                _log(f"{_LLM_CONFIG_PATH} has no api_key, skip extraction")
             return None
         default_url, default_model = _PROVIDER_DEFAULTS[provider]
         return LLMConfig(
@@ -165,7 +191,8 @@ def _load_llm_config() -> LLMConfig | None:
             model=str(data.get("model") or default_model).strip(),
         )
     except Exception as e:
-        _log(f"LLM credential read failed: {e}")
+        if log_errors:
+            _log(f"LLM credential read failed: {e}")
         return None
 
 
@@ -362,6 +389,12 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
                     f"{llm_config.provider} context window exceeded"
                 ) from error
             rate_limited = error.code == 429
+            if error.code in (401, 402, 403):
+                raise RetryableExtractionError(
+                    f"{llm_config.provider} HTTP {error.code} "
+                    "credentials/quota unavailable",
+                    halt_run=True,
+                ) from error
             if error.code not in (408, 429, 500, 502, 503, 504):
                 raise RetryableExtractionError(
                     f"{llm_config.provider} HTTP {error.code}; "
@@ -373,11 +406,13 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
                     f"{llm_config.provider} HTTP {error.code} retries exhausted",
                     rate_limited=rate_limited,
                 ) from error
+            # 指数退避 + 抖动；优先服从 provider 的 Retry-After
+            backoff = min(2.0 ** (attempt + 1), 30.0) + random.uniform(0.0, 1.0)
             retry_after = error.headers.get("Retry-After") if error.headers else None
             try:
-                delay = float(retry_after) if retry_after is not None else (2, 5)[attempt]
+                delay = float(retry_after) if retry_after is not None else backoff
             except ValueError:
-                delay = (2, 5)[attempt]
+                delay = backoff
         except (TimeoutError, socket.timeout, URLError) as error:
             # A second blocking read timeout can already consume the hook's
             # 240-second budget, so timeout-like failures get one retry only.
@@ -392,6 +427,27 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
             raise RetryableExtractionError("extraction retry budget exhausted")
         time.sleep(max(0.0, min(delay, 30.0, remaining)))
     raise AssertionError("unreachable")
+
+
+def _llm_callable(llm_config: LLMConfig):
+    """Adapt the existing provider call to ``callable(prompt) -> str | None``."""
+    def llm_call(prompt: str) -> str | None:
+        try:
+            return _call_llm_with_retry(prompt, llm_config)
+        except Exception:
+            return None
+
+    return llm_call
+
+
+def _load_llm_callable(*, log_errors: bool = True):
+    """Load configured provider credentials and return the narrow adapter."""
+    llm_config = (
+        _load_llm_config()
+        if log_errors
+        else _load_llm_config(log_errors=False)
+    )
+    return _llm_callable(llm_config) if llm_config is not None else None
 
 
 def _chunk_messages(messages: list[dict[str, str]],
@@ -456,61 +512,22 @@ def _extract_candidates(messages: list[dict[str, str]],
         return _keep_latest_summary(extract(messages))
     except ContextOverflowError:
         candidates = []
+        summaries = []
         for chunk in _chunk_messages(messages, fallback_chunk_chars):
-            candidates.extend(extract(chunk))
-        return _keep_latest_summary(candidates)
-
-
-def _persist_candidates(
-        config, store, vidx, engine, candidates, session_id: str,
-        *, max_writes: int | None = None,
-) -> list[int]:
-    """Persist extraction candidates: gate checks → conflict detection → write.
-
-    The add branch (no same-key conflict) also checks for a semantically
-    identical active memory: a hit supersedes the old record instead of
-    coexisting as a fragmented duplicate. vidx/engine may be None (embedding
-    unavailable) — semantic merge is then skipped. Returns the IDs written to
-    SQLite; vector synchronization is deliberately handled after commit.
-    """
-    from evolvmem.conflict_detector import ConflictDetector
-    from evolvmem.semantic_merge import find_semantic_match
-
-    detector = ConflictDetector(store)
-    added_ids: list[int] = []
-    for c in candidates:
-        if max_writes is not None and len(added_ids) >= max_writes:
-            break
-        value = c.value.strip()
-        decision = detector.check(c.key, value)
-        if decision.action == "skip":
-            continue
-        if decision.action == "replace":
-            new_id = store.replace(key=c.key, new_value=value,
-                                   importance=c.importance, tier=c.tier,
-                                   source_session=session_id)
-        else:
-            # 同 key 无冲突或 conflict → 再做跨 key 语义合并
-            # （tier == "reference" 的候选不参与合并：永不 supersede 别人，
-            #   与 mcp_server._memory_add 的守卫一致）
-            if (engine is not None and getattr(engine, "is_loaded", False)
-                    and c.tier != "reference"):
-                match = find_semantic_match(store, vidx, engine, value,
-                                            config.add_merge_threshold)
-                if match:
-                    # 合并目标是 pinned 记忆时保留 pinned tier，避免被候选的
-                    # 默认 "normal" 静默降级、掉出每会话必注入层
-                    merged_tier = "pinned" if match.get("tier") == "pinned" else c.tier
-                    added_ids.append(store.replace(
-                        key=match["key"], new_value=value,
-                        importance=c.importance, tier=merged_tier,
-                        source_session=session_id))
-                    continue
-            new_id = store.add(key=c.key, value=value, attribute=c.attribute,
-                               tags=c.tags, importance=c.importance, tier=c.tier,
-                               source_session=session_id)
-        added_ids.append(new_id)
-    return added_ids
+            summary, atomic = _split_summary_candidate(extract(chunk))
+            candidates.extend(atomic)
+            summaries.append(summary)
+        if len(summaries) == 1:
+            return candidates + summaries
+        synthesis_messages = [
+            {
+                "role": "user",
+                "content": f"分块摘要 {index}：{summary.value}",
+            }
+            for index, summary in enumerate(summaries, start=1)
+        ]
+        combined, _ = _split_summary_candidate(extract(synthesis_messages))
+        return candidates + [combined]
 
 
 def _summary_value_is_persistable(config, value: str) -> bool:
@@ -522,46 +539,6 @@ def _summary_value_is_persistable(config, value: str) -> bool:
         config.value_min_chars <= len(stripped) <= config.value_max_chars
         and not _is_low_info(stripped)
     )
-
-
-def _persist_summary(store, summary, session_id: str) -> tuple[list[int], bool]:
-    """Write a locally constructed summary or accept an existing equivalent."""
-    active = next(
-        (
-            record
-            for record in store.get_by_key(summary.key)
-            if record["status"] == "active"
-        ),
-        None,
-    )
-    if active is not None:
-        metadata_equivalent = (
-            active["attribute"] == summary.attribute
-            and active["tags"] == ",".join(summary.tags)
-            and active["importance"] == summary.importance
-            and active["tier"] == summary.tier
-        )
-        if (
-            active["value"].strip() == summary.value.strip()
-            and metadata_equivalent
-        ):
-            return [], True
-    metadata = {
-        "attribute": summary.attribute,
-        "tags": summary.tags,
-        "importance": summary.importance,
-        "tier": summary.tier,
-        "source_session": session_id,
-    }
-    if active is None:
-        memory_id = store.add(summary.key, summary.value.strip(), **metadata)
-    else:
-        memory_id = store.replace(
-            summary.key,
-            summary.value.strip(),
-            **metadata,
-        )
-    return [memory_id], True
 
 
 def _sync_candidate_vectors(store, vidx, engine,
@@ -592,10 +569,56 @@ def _sync_candidate_vectors(store, vidx, engine,
         _log(f"vector sync skipped: {type(error).__name__}")
 
 
+def _archive_raw_session(config, service, project: str,
+                         source_session: str,
+                         messages: list[dict[str, str]]) -> int | None:
+    """Encrypt the raw messages into the local session archive; None on failure.
+
+    The archive is local encrypted evidence and never leaves the machine; it
+    is not a precondition for extraction — without an encryption backend or
+    on any write failure the hook logs content-free and persists unlinked.
+    Re-archiving the same session replaces the payload instead of adding rows.
+    """
+    try:
+        from evolvmem.session_archive import SessionArchiver
+
+        payload = json.dumps({"messages": messages}, ensure_ascii=False)
+        record = SessionArchiver(config, service.store).archive_session(
+            project, "kimi", source_session, payload
+        )
+    except Exception:
+        _log("session archive failed; extraction continues without source links")
+        return None
+    return record.id if record is not None else None
+
+
+def _run_consolidation_best_effort(service, mode, llm_config,
+                                   engine) -> None:
+    """One promotion + playbook pass after a successful persist; never fails.
+
+    Only shadow/primary modes serve the lifecycle APIs. The existing LLM
+    chat capability is wrapped as the narrow ``callable(prompt) -> str | None``
+    the playbook generator expects; provider failures degrade to None, and
+    any consolidation failure is logged content-free and skipped.
+    """
+    from evolvmem.context_models import ContextMode
+
+    if mode not in (ContextMode.SHADOW, ContextMode.PRIMARY):
+        return
+    if llm_config is None:
+        return
+
+    try:
+        service.run_consolidation(
+            llm=_llm_callable(llm_config), embedding_engine=engine
+        )
+    except Exception as error:
+        _log(f"consolidation skipped: {type(error).__name__}")
+
+
 def session_end(payload: dict) -> ExtractionResult:
     """Distill the closed session into memories via the extractor + live gate."""
     from evolvmem.config import Config
-    from evolvmem.memory_store import MemoryStore
 
     session_id = payload.get("session_id", "")
     wire = _find_wire(session_id)
@@ -627,7 +650,8 @@ def session_end(payload: dict) -> ExtractionResult:
     except RetryableExtractionError as e:
         _log(f"extraction deferred: {e}")
         return ExtractionResult(
-            "retry", reason=str(e), rate_limited=e.rate_limited
+            "retry", reason=str(e), rate_limited=e.rate_limited,
+            halt_run=e.halt_run,
         )
     except ContextOverflowError as e:
         _log(f"fallback extraction still exceeded context: {e}")
@@ -676,6 +700,14 @@ def session_end(payload: dict) -> ExtractionResult:
         importance=5.0,
         tier="normal",
     )
+    # 摘要 TTL：到期后仅当被滚动摘要覆盖才归档（覆盖门控见 summary_retention）；
+    # 日期精度沿用 legacy_projection 的 date-only 填充约定（写入侧补 " 00:00:00"）
+    summary_expires_at = time.strftime(
+        "%Y-%m-%d",
+        time.localtime(
+            summary_time + config.context_session_summary_ttl_days * 86400
+        ),
+    )
     source_session = _canonical_session_id(session_id, wire)
 
     try:
@@ -701,6 +733,7 @@ def session_end(payload: dict) -> ExtractionResult:
                 confidence=candidate.confidence,
                 importance=candidate.importance,
                 tier=candidate.tier,
+                experience_case=candidate.experience_case,
             )
             for candidate in ranked
         ]
@@ -711,50 +744,83 @@ def session_end(payload: dict) -> ExtractionResult:
         )
         return ExtractionResult("retry", reason="candidate policy failed")
 
-    # embedding/向量索引先就绪：事务内只读索引做跨 key 语义合并；
+    # embedding 引擎先就绪：服务在事务内用共享 legacy 索引做跨 key 语义合并；
     # 加载失败则传 None，退化为纯 SQLite 写入（不阻塞持久化）
     engine = None
-    vidx = None
     try:
         from evolvmem.embedding import EmbeddingEngine
-        from evolvmem.vector_index import VectorIndex
         eng = EmbeddingEngine(config)
         eng.initialize()
         if eng.is_loaded:
             engine = eng
-            vidx = VectorIndex(config)
-            vidx.initialize(dim=config.embedding_dim)
     except Exception as e:
         _log(f"embedding init failed, semantic merge/vector sync skipped: {e}")
-        engine, vidx = None, None
+        engine = None
 
+    from evolvmem.context_models import ContextMode, parse_context_mode
+    from evolvmem.context_service import ContextService
+    from evolvmem.legacy_models import (
+        LegacyExtractionItem,
+        LegacyExtractionRequest,
+    )
+
+    service = None
     try:
-        with MemoryStore(config) as store:
-            with store.transaction():
-                summary_ids, summary_satisfied = _persist_summary(
-                    store, summary, source_session,
-                )
-                if not summary_satisfied:
-                    raise RuntimeError("SESSION_SUMMARY was not persisted")
-                atomic_ids = _persist_candidates(
-                    config,
-                    store,
-                    vidx,
-                    engine,
-                    ranked,
-                    source_session,
-                    max_writes=_MAX_MEMORIES_PER_SESSION,
-                )
-                memory_ids = [*summary_ids, *atomic_ids]
-            _sync_candidate_vectors(store, vidx, engine, memory_ids)
-            n = len(memory_ids)
+        service = ContextService(config, embedding_engine=engine)
+        # 未知 context_mode 按 legacy 落库：提炼正常持久化，Context 功能 fail-closed
+        mode = parse_context_mode(config.context_mode)
+        resolved_mode = mode if mode is not None else ContextMode.LEGACY
+        service.initialize(mode=resolved_mode, adapter="kimi")
+        # 原始消息先落加密归档（本地证据，绝不外发）；归档不是提炼的前置，
+        # 失败只记无正文日志，提炼以无来源链接的旧行为继续
+        archive_id = _archive_raw_session(
+            config, service, project, source_session, messages
+        )
+        extraction = service.persist_legacy_extraction(
+            LegacyExtractionRequest(
+                summary=LegacyExtractionItem(
+                    key=summary.key,
+                    value=summary.value,
+                    attribute=summary.attribute,
+                    tags=tuple(summary.tags),
+                    importance=summary.importance,
+                    tier=summary.tier,
+                    confidence=summary.confidence,
+                    expires_at=summary_expires_at,
+                ),
+                candidates=tuple(
+                    LegacyExtractionItem(
+                        key=candidate.key,
+                        value=candidate.value,
+                        attribute=candidate.attribute,
+                        tags=tuple(candidate.tags),
+                        importance=candidate.importance,
+                        tier=candidate.tier,
+                        confidence=candidate.confidence,
+                        experience_case=candidate.experience_case,
+                    )
+                    for candidate in ranked
+                ),
+                max_writes=_MAX_MEMORIES_PER_SESSION,
+                source_session=source_session,
+            ),
+            source_archive_id=archive_id,
+            llm=_llm_callable(llm_config),
+        )
+        atomic_ids = [m.legacy_id for m in extraction.candidates]
+        n = extraction.persisted
+        # 提炼落库成功后用既有 LLM chat 能力跑一次晋升+playbook 评估；
+        # 仅 shadow/primary 提供服务面，任何失败都不改变提炼结果
+        _run_consolidation_best_effort(
+            service, resolved_mode, llm_config, engine
+        )
     except Exception as error:
         _log(f"persistence failed: {type(error).__name__}")
         return ExtractionResult("retry", reason="persistence failed")
     finally:
-        if vidx is not None:
-            vidx.close()
-        if engine is not None:
+        if service is not None:
+            service.close()
+        elif engine is not None:
             engine.close()
     _log(
         f"provider={llm_config.provider} redacted={redacted_count} "
@@ -771,17 +837,46 @@ def session_end(payload: dict) -> ExtractionResult:
     return ExtractionResult("completed", persisted=n)
 
 
+# ---- heartbeat ----
+
+def _touch_heartbeat(session_id: str) -> None:
+    """Mark a session as alive; the stale-session worker skips live sessions."""
+    safe = re.sub(r"[^\w-]", "_", str(session_id)).strip("_")
+    if not safe:
+        return
+    try:
+        _LIVE_DIR.mkdir(parents=True, exist_ok=True)
+        (_LIVE_DIR / safe).touch()
+    except Exception:
+        pass  # fail-open：心跳失败不影响会话
+
+
+def _payload_session_id(raw: str) -> str:
+    try:
+        return str(json.loads(raw).get("session_id", ""))
+    except Exception:
+        return ""
+
+
 # ---- entry ----
 
 def main() -> None:
     sub = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
         if sub == "session-start":
-            session_start()
+            raw = sys.stdin.read()
+            try:
+                payload = json.loads(raw) if raw.strip() else {}
+            except Exception:
+                payload = {}
+            _touch_heartbeat(str(payload.get("session_id", "")))
+            session_start(payload)
         elif sub == "session-end":
             raw = sys.stdin.read()
             payload = json.loads(raw) if raw.strip() else {}
             session_end(payload)
+        elif sub == "heartbeat":
+            _touch_heartbeat(_payload_session_id(sys.stdin.read()))
         else:
             _log(f"unknown subcommand: {sub!r}")
     except Exception as e:  # fail-open: hook errors must never block a session

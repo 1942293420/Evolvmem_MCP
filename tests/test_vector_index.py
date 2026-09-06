@@ -14,6 +14,19 @@ def make_embedding(dim=512):
 
 
 class TestVectorIndex:
+    def test_custom_path_uses_its_own_dirty_marker(self, test_config, temp_dir):
+        """A Context Core index must not mark the legacy index as unsynchronized."""
+        custom_path = temp_dir / "context_vectors.usearch"
+        idx = VectorIndex(test_config, path=custom_path)
+        idx.initialize(dim=2)
+
+        idx.add(1, np.array([1.0, 0.0], dtype=np.float32))
+
+        assert idx.path == custom_path.resolve()
+        assert custom_path.with_suffix(".usearch.dirty").exists()
+        assert not test_config.vector_path.with_suffix(".usearch.dirty").exists()
+        idx.close()
+
     def test_initialize_creates_index(self, test_config):
         idx = VectorIndex(test_config)
         idx.initialize(dim=512)

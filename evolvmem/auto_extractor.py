@@ -17,6 +17,7 @@ class CandidateMemory:
     confidence: float = 0.5
     importance: float = 5.0
     tier: str = "normal"
+    experience_case: dict | None = None
 
 
 class AutoExtractor:
@@ -29,7 +30,7 @@ class AutoExtractor:
     EXTRACTION_PROMPT = """你是 EvolvMem 长期记忆提炼器。请审阅完整会话，只提炼跨会话仍有价值的信息。
 
 ## 保留规则
-保留：用户长期偏好和画像、硬约束与安全开关、业务规则、架构或技术决策及原因、废弃方案及替代原因、可复用故障根因和防复发规则。
+保留：用户长期偏好和画像、硬约束与安全开关、业务规则、架构或技术决策及原因、废弃方案及替代原因、可复用故障根因和防复发规则（标为 experience）。
 
 ## 丢弃规则
 丢弃：临时密码、等待输入或稍后确认、一次性测试、单次测试通过或测试数量、单次部署完成、纯提交号、已完成且没有长期决策或原因的待办、可直接从代码或 git 获得的事实。
@@ -48,11 +49,14 @@ class AutoExtractor:
 "memories" 的值必须是数组；数组条目包含：
 - key：稳定标识符
 - value：记忆内容，必须为单句且最多 200 个字符；更长内容必须拆分或压缩。
-- attribute：decision | preference | fact | constraint | user_profile
+- attribute：decision | preference | fact | constraint | user_profile | experience | playbook
+  - experience：可复用的排查/操作经验——验证过的方法步骤、故障根因与修复路径；新提炼的 experience 先进入候选隔离，经确认或自动晋升后才生效。
+  - playbook：多经验汇总的标准操作流程；通常不由提炼直接产出（由系统自动生成），但合约允许标记。
 - tags：相关标签列表
 - confidence：0.0-1.0 的置信度
 - importance：1-10 的整数。9-10 为硬约束或成败关键决策；7-8 为重要架构或业务决策；5-6 为普通偏好和事实；3-4 为边缘参考资料。
 - tier：若该记忆必须在每个会话可见（约束、长期用户偏好、用户画像）则为 "pinned"；若为只应在相关时通过 memory_search 获取、绝不注入的长参考资料则为 "reference"；否则为 "normal"。
+- case：仅 experience 条目使用的结构化对象（其 value 仍为短摘要）。对象字段为 project、problem、conditions（字符串键值）、steps（步骤数组）、rationale、result、applicability（数组）、exclusions（数组）、transferable（布尔）、parent_experience_id（已知时填写）。case 总长最多 6000 字，保留机制、条件和步骤，不受 value 的 200 字限制。仅据会话提炼，推测原因注明推测；助手自称成功、无回复或无关测试不能证明方法有效。提炼结果只成为候选，实际成功必须另由真实工具结果/用户确认绑定来源。
 
 ## 会话摘要条目
 必须包含且只包含一个 key 为 SESSION_SUMMARY 的会话摘要；即使没有原子记忆也不能省略。SESSION_SUMMARY 不占 8 条原子记忆配额。
@@ -137,6 +141,8 @@ class AutoExtractor:
                 confidence=confidence,
                 importance=importance,
                 tier=tier,
+                experience_case=(item.get("case") if item.get("attribute") == "experience"
+                                 and isinstance(item.get("case"), dict) else None),
             ))
         return candidates
 

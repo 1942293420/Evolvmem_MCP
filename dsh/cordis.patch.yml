@@ -1,0 +1,44 @@
+# dsh-evolvmem bundle patch layer — applied over the profile's base tree at boot.
+# name 用包名自引用（dsh-evolvmem/host-*）：经 profile 的 node_modules 父级查找
+# 解析；挂进 profile 的 bundles 列表即生效。
+# python3 必须已安装本项目；若使用虚拟环境，将下方 command/python
+# 改为该环境解释器的绝对路径。环境变量 EVOLVMEM_DATA_DIR 可选择共享数据目录，
+# 未设置时使用当前用户的 ~/.claude/evolvmem。此文件是可移植示例。
+- insert:
+    - id: mcp-evolvmem
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: evolvmem
+        transport: stdio
+        command: python3
+        args: ['-m', 'evolvmem.mcp_server']
+        env:
+          EVOLVMEM_CONTEXT_MODE: primary
+          EVOLVMEM_ADAPTER: dsh
+    - id: evolvmem-inject
+      name: dsh-evolvmem/host-inject
+      config:
+        python: python3
+        env:
+          EVOLVMEM_CONTEXT_MODE: primary
+          EVOLVMEM_ADAPTER: dsh
+        timeoutMs: 15000
+    - id: evolvmem-extract
+      name: dsh-evolvmem/host-extract
+      config:
+        python: python3
+        env:
+          EVOLVMEM_CONTEXT_MODE: primary
+          EVOLVMEM_ADAPTER: dsh
+        minChars: 200
+    - id: evolvmem-sweep
+      name: dsh-evolvmem/host-sweep
+      config:
+        python: python3
+        env:
+          EVOLVMEM_CONTEXT_MODE: primary
+          EVOLVMEM_ADAPTER: dsh
+        sweepIntervalMs: 1800000
+        sweepIdleMs: 1800000
+        maxPerSweep: 3
+        minChars: 200

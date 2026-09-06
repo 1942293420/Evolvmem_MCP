@@ -5,18 +5,39 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "evolvmem"
 version = "0.1.0"
-description = "EvolvMem — evolving memory plugin for Claude Code with FTS5/trigram + HNSW vector search"
+description = "Local memory, evidence-backed experience recall and task continuity for AI assistants"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "cryptography>=42,<46",
     "usearch>=2.14",
-    "llama-cpp-python>=0.3.0",
     "numpy>=1.24",
+    "tomlkit>=0.13,<1",
 ]
 
 [project.optional-dependencies]
+embedding = [
+    "llama-cpp-python>=0.3.0",
+]
 dev = [
     "pytest>=8.0",
+    "setuptools>=68.0",
 ]
+
+[tool.setuptools]
+include-package-data = false
+license-files = ["LICENSES/*.txt", "THIRD_PARTY_NOTICES.md"]
 
 [tool.setuptools.packages.find]
 include = ["evolvmem*"]
+
+[tool.setuptools.package-data]
+evolvmem = [
+    "web_static/*.html",
+    "web_static/*.css",
+    "web_static/*.js",
+    "web_static/designs/*.html",
+    "web_static/designs/*.css",
+    "web_static/designs/*.js",
+    "web_static/designs/*.png",
+]

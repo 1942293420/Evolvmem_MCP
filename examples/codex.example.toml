@@ -1,0 +1,11 @@
+# Merge this section into ~/.codex/config.toml. Replace both absolute paths.
+# Start in legacy mode; see docs/codex-context-core-runbook.md for a Core cutover.
+[mcp_servers.evolvmem]
+command = "/absolute/path/evolvmem/.venv/bin/python"
+args = ["-m", "evolvmem.mcp_server"]
+startup_timeout_sec = 20
+
+[mcp_servers.evolvmem.env]
+EVOLVMEM_DATA_DIR = "/absolute/path/evolvmem-data"
+EVOLVMEM_ADAPTER = "codex"
+EVOLVMEM_CONTEXT_MODE = "legacy"

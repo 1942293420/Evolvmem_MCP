@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f8f4">
+  <title>Orbit 白昼观测站 · EvolvMem</title>
+  <link rel="stylesheet" href="/designs/common.css">
+  <link rel="stylesheet" href="/designs/orbit.css">
+</head>
+<body data-design="orbit">
+  <a class="skip-link" href="#orbit-main">跳转到内容</a>
+  <header class="orbit-header">
+    <a class="orbit-brand" href="/designs/orbit.html" aria-label="EvolvMem 白昼观测站首页">
+      <svg class="orbit-brand-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="11" stroke="currentColor" stroke-width="1.2"/><ellipse cx="20" cy="20" rx="19" ry="6.2" transform="rotate(-34 20 20)" stroke="currentColor" stroke-width="1.2"/><circle cx="20" cy="20" r="3" fill="currentColor"/><circle cx="32.5" cy="9.5" r="2.5" fill="currentColor"/></svg>
+      <span>EvolvMem<span class="orbit-brand-caption">白昼观测站</span></span>
+    </a>
+    <nav class="orbit-nav" aria-label="主要导航">
+      <button type="button" data-page-link="home" class="active" aria-current="page">总览</button>
+      <button type="button" data-page-link="memories">记忆库</button>
+      <button type="button" data-page-link="experiences">经验案例</button>
+      <button type="button" data-page-link="progress">项目进展</button>
+    </nav>
+    <a class="orbit-compare" href="/designs/">全部设计 <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main id="orbit-main" class="orbit-main">
+    <div class="orbit-meta">
+      <span class="orbit-edition"><span class="orbit-dot" aria-hidden="true"></span> ORBIT <span class="orbit-edition-divider">/</span> 01</span>
+      <div class="orbit-status"><span>设计预览 · 实时数据</span><span class="orbit-meta-line" aria-hidden="true"></span><span data-data-status role="status" aria-live="polite">正在连接记忆库…</span><button type="button" data-refresh aria-label="刷新实时数据" class="orbit-refresh"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M15.9 7a6.3 6.3 0 1 0 .4 4M16 3.8V7h-3.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+    </div>
+
+    <section data-page-panel="home" class="orbit-page">
+      <div class="orbit-intro">
+        <div class="orbit-intro-title">
+          <p class="orbit-eyebrow">A SPACE FOR WHAT YOU LEARN</p>
+          <h1>让每次探索，<br>都成为<span>下一次的起点。</span></h1>
+        </div>
+        <div class="orbit-intro-aside">
+          <svg class="orbit-spark" viewBox="0 0 36 36" fill="none" aria-hidden="true"><path d="M18 1v34M1 18h34M6 6l24 24M6 30 30 6" stroke="currentColor" stroke-width="1.2"/><circle cx="18" cy="18" r="7" fill="var(--bg)" stroke="currentColor" stroke-width="1.2"/></svg>
+          <p>散落的记忆，在这里连成星系。<br>找到可复用的经验，接续未完的工作。</p>
+          <button type="button" class="orbit-text-link" data-page-link="memories">探索记忆库 <span aria-hidden="true">↗</span></button>
+        </div>
+      </div>
+
+      <div class="orbit-observatory">
+        <section class="orbit-galaxy-panel" aria-labelledby="orbit-galaxy-title">
+          <div class="orbit-galaxy-heading"><div><span class="orbit-kicker">YOUR KNOWLEDGE, CONNECTED</span><h2 id="orbit-galaxy-title">记忆星系</h2></div><span class="orbit-galaxy-index">FIG. 01 <span aria-hidden="true">＋</span></span></div>
+          <div class="orbit-galaxy" data-galaxy="orbital" aria-label="由真实记忆与项目生成的可交互星系，项目也可以从右侧列表选择"></div>
+          <div class="orbit-galaxy-caption"><span><i aria-hidden="true"></i> 项目为星，记忆成轨</span><span>选择星体，查看项目 <span aria-hidden="true">↗</span></span></div>
+        </section>
+        <aside class="orbit-project-rail" aria-labelledby="orbit-project-title">
+          <div class="orbit-rail-heading"><span class="orbit-kicker">IN YOUR ORBIT</span><span class="orbit-rail-number" data-stat="project_count">—</span></div>
+          <h2 id="orbit-project-title">正在生长的项目</h2>
+          <p class="orbit-rail-note">从一颗星，回到一个具体的上下文。</p>
+          <div class="orbit-project-list" data-slot="project-list"><p class="ui-empty">正在读取项目…</p></div>
+          <button type="button" class="orbit-rail-link" data-page-link="progress">查看全部项目进展 <span aria-hidden="true">↗</span></button>
+        </aside>
+      </div>
+
+      <div class="orbit-metrics" data-slot="metrics" aria-label="记忆库实时概览"><p class="ui-empty">正在汇总记忆库…</p></div>
+
+      <section class="orbit-section" aria-labelledby="orbit-experience-title">
+        <div class="orbit-section-heading"><div><p class="orbit-eyebrow">KNOWLEDGE THAT CARRIES FORWARD</p><h2 id="orbit-experience-title">值得带到下一次的经验<span class="orbit-heading-dot">.</span></h2></div><button type="button" class="orbit-text-link" data-page-link="experiences">阅读经验案例 <span aria-hidden="true">↗</span></button></div>
+        <div class="orbit-experiences" data-slot="featured-experiences"><p class="ui-empty">正在读取经验案例…</p></div>
+      </section>
+
+      <div class="orbit-bottom-grid">
+        <section class="orbit-section" aria-labelledby="orbit-task-title"><div class="orbit-section-heading"><div><p class="orbit-eyebrow">PICK UP WHERE YOU LEFT OFF</p><h2 id="orbit-task-title">接着上次，继续向前</h2></div><button type="button" class="orbit-small-arrow" data-page-link="progress" aria-label="查看全部任务断点">↗</button></div><div data-slot="task-list"><p class="ui-empty">正在读取工作断点…</p></div></section>
+        <section class="orbit-section" aria-labelledby="orbit-recent-title"><div class="orbit-section-heading"><div><p class="orbit-eyebrow">RECENTLY REMEMBERED</p><h2 id="orbit-recent-title">新近收录</h2></div><button type="button" class="orbit-small-arrow" data-page-link="memories" aria-label="查看全部记忆">↗</button></div><div data-slot="recent-memories"><p class="ui-empty">正在读取近期记忆…</p></div></section>
+      </div>
+    </section>
+
+    <section data-page-panel="memories" class="orbit-page orbit-library-page data-page" hidden>
+      <header class="data-page-header"><h1>记忆库</h1><p>按内容、项目和状态查找记录。</p></header>
+      <div class="orbit-browser" data-slot="memory-browser"><p class="ui-empty">正在准备记忆库…</p></div>
+    </section>
+
+    <section data-page-panel="experiences" class="orbit-page orbit-library-page data-page" hidden>
+      <header class="data-page-header"><h1>经验案例</h1><p>核对方法、适用条件和验证结果。</p></header>
+      <div class="orbit-browser" data-slot="experience-browser"><p class="ui-empty">正在准备经验案例…</p></div>
+    </section>
+
+    <section data-page-panel="progress" class="orbit-page orbit-library-page data-page" hidden>
+      <header class="data-page-header"><h1>项目进展</h1><p>查看项目摘要与任务断点。</p></header>
+      <div class="orbit-browser" data-slot="progress-browser"><p class="ui-empty">正在准备项目进展…</p></div>
+    </section>
+
+    <footer class="orbit-footer"><span>EvolvMem <span class="orbit-footer-note">为下一次探索，保留这一次的理解。</span></span><span>ORBIT · 白昼观测站 <span aria-hidden="true">✳</span></span></footer>
+  </main>
+  <script src="/designs/galaxy.js"></script>
+  <script src="/designs/app.js"></script>
+</body>
+</html>

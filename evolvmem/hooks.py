@@ -5,22 +5,29 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from evolvmem.config import Config
-from evolvmem.memory_store import MemoryStore
 from evolvmem.auto_extractor import AutoExtractor
 from evolvmem.forgetting import ForgettingEngine
+from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.scoring import compute_score
+
+if TYPE_CHECKING:
+    from evolvmem.context_service import ContextService
 
 
 def _last_forget_path(config: Config) -> Path:
     return config.data_dir / ".last_forget"
 
 
-def _maybe_run_forgetting(config: Config, store: MemoryStore) -> None:
+def _maybe_run_forgetting(config: Config,
+                          facade: LegacyCompatibilityFacade) -> None:
     """Run the forgetting engine at most once per forget_auto_run_hours.
 
-    Failures are swallowed — memory maintenance must never block session start.
+    Archive mutations route through the facade (ContextService), landing on
+    both mapped sides in compat/shadow/primary modes. Failures are swallowed
+    — memory maintenance must never block session start.
     """
     try:
         marker = _last_forget_path(config)
@@ -29,7 +36,7 @@ def _maybe_run_forgetting(config: Config, store: MemoryStore) -> None:
             last_run = marker.stat().st_mtime
             if time.time() - last_run < interval_s:
                 return
-        archived = ForgettingEngine(config, store).run()
+        archived = ForgettingEngine(config, facade).run()
         marker.touch()
         if archived:
             print(f"[evolvmem] auto-forgetting archived {archived} memories",
@@ -42,11 +49,14 @@ def _last_consolidate_path(config: Config) -> Path:
     return config.data_dir / ".last_consolidate"
 
 
-def _maybe_run_consolidation(config: Config, store: MemoryStore) -> None:
+def _maybe_run_consolidation(config: Config,
+                             facade: LegacyCompatibilityFacade) -> None:
     """Run auto-consolidation at most once per consolidate_auto_run_hours.
 
-    Conservative threshold (0.97) — only near-identical pairs merge.
-    Failures are swallowed — maintenance must never block session start.
+    Conservative threshold (0.97) — only near-identical pairs merge. The
+    kept pair's access and the dropped pair's archive go through the facade
+    onto both mapped sides. Failures are swallowed — maintenance must never
+    block session start.
     """
     if config.consolidate_auto_run_hours <= 0:
         return
@@ -67,7 +77,7 @@ def _maybe_run_consolidation(config: Config, store: MemoryStore) -> None:
             return  # 无 embedding 时跳过，marker 已记避免每次都尝试
         vidx = VectorIndex(config)
         vidx.initialize(dim=config.embedding_dim)
-        merged = Consolidator(config, store, vidx, engine).consolidate(
+        merged = Consolidator(config, facade, vidx, engine).consolidate(
             dry_run=False, threshold=0.97)
         if merged.get("merged"):
             print(f"[evolvmem] auto-consolidation merged {merged['merged']} pairs",
@@ -139,6 +149,73 @@ def _session_context() -> dict:
         return {}
 
 
+def _session_project(config: Config, workspace_path: str = "") -> str:
+    """Session project identity for the Context Core boundary.
+
+    cwd basename normalized through inject_project_aliases and
+    context_project_aliases; only the normalized project name crosses the
+    boundary, never an absolute path.
+    """
+    try:
+        name = os.path.basename(workspace_path or os.getcwd())
+    except Exception:
+        return ""
+    if not name:
+        return ""
+    project = config.inject_project_aliases.get(name, name)
+    aliases = config.context_project_aliases
+    if isinstance(aliases, dict):
+        mapped = aliases.get(project)
+        if isinstance(mapped, str) and mapped.strip():
+            project = mapped.strip()
+    return project
+
+
+def _core_session_start_block(config: Config,
+                              service: "ContextService",
+                              workspace_path: str = "") -> str:
+    """Best-effort Core-rendered bounded L1 block for primary mode.
+
+    Any Core-path failure — an unreadable vector cache, unmet primary
+    invariants, a degraded service, a raised error, or an empty render —
+    returns "" so the caller silently falls back to the legacy render; the
+    hook never crashes on the Core path. The service lifecycle stays with
+    the caller (opened before, closed after this attempt).
+    """
+    try:
+        # 与 MCP 服务器同一惯例：先打开 context 向量缓存（mmap 恢复或空
+        # 索引），再用与正式门禁相同的评估器按次复查 primary 不变量
+        try:
+            service.vector_index.initialize(dim=config.embedding_dim)
+        except Exception:
+            pass  # 打不开的索引由健康评估如实报告为不可用
+        service._refresh_health()
+        if not service.status().ready:
+            return ""
+        try:
+            effective_workspace = workspace_path.strip() or os.getcwd()
+        except Exception:
+            effective_workspace = workspace_path.strip()
+        project = _session_project(config, effective_workspace)
+        if not project:
+            return ""  # 无项目标识时不猜 query，回退 legacy 渲染
+        from evolvmem.context_models import ContextSessionStartRequest
+
+        # session start 没有用户 query：以规范化项目名充当弱相关性信号
+        # （与 legacy 评分的 cwd 项目加分同源）；pinned 种子例外在无 query
+        # 命中时照常生效
+        result = service.session_start(
+            ContextSessionStartRequest(
+                project=project,
+                query=project,
+                workspace_path=effective_workspace,
+            )
+        )
+        return result.block
+    except Exception:
+        return ""
+
+
 def _is_session_log(key: str) -> bool:
     """Session-summary log keys end with ':progress:log:<date...>'.
 
@@ -205,7 +282,27 @@ def _build_digest_lines(logs: list[dict], config: Config) -> list[str]:
     ]
 
 
-def get_session_start_block(config: Config | None = None) -> str:
+def _maybe_sweep_archives(service: "ContextService", mode) -> None:
+    """Shadow/primary SessionStart: one silent TTL purge before rendering.
+
+    The sweep's lock and transaction discipline stays with the service; like
+    every other maintenance step it is fail-open — any failure only prints a
+    content-free stderr line and never blocks the injection. legacy/compat
+    modes skip it entirely.
+    """
+    from evolvmem.context_models import ContextMode
+
+    if mode not in (ContextMode.SHADOW, ContextMode.PRIMARY):
+        return
+    try:
+        service.sweep_archives()
+    except Exception:
+        print("[evolvmem] session archive sweep skipped",
+              file=sys.stderr, flush=True)
+
+
+def get_session_start_block(config: Config | None = None,
+                            workspace_path: str = "") -> str:
     """Build the SessionStart injection block with four layers:
 
     0. Digest layer — recent session-summary logs (key ends with
@@ -221,6 +318,15 @@ def get_session_start_block(config: Config | None = None) -> str:
        tier='reference' memories (long documents) always land here and are
        never injected in full.
 
+    In primary mode the injection first attempts the Context Core read
+    path (maintenance still runs through the compatibility facade, then
+    the service renders its bounded L1 history block); any Core failure —
+    service not ready, degraded_legacy, an exception, or an empty block —
+    silently falls back to the legacy render. legacy/compat/shadow modes
+    keep the legacy render byte-for-byte. In shadow/primary modes one
+    silent session-archive TTL sweep runs before any maintenance; it is
+    fail-open and legacy/compat modes skip it entirely.
+
     Args:
         config: Configuration object, uses defaults when None.
 
@@ -230,10 +336,32 @@ def get_session_start_block(config: Config | None = None) -> str:
     if config is None:
         config = Config.from_file()
 
-    with MemoryStore(config) as store:
-        _maybe_run_forgetting(config, store)
-        _maybe_run_consolidation(config, store)
-        memories = store.get_active()
+    # 维护与读取统一经 ContextService 兼容门面：archive/access 变更按配置
+    # mode 落到 legacy 投影或 Core 双侧；primary 的注入渲染先尝试 Core 读
+    # 路径，失败静默回退旧格式
+    from evolvmem.context_models import ContextMode, parse_context_mode
+    from evolvmem.context_service import ContextService
+
+    # 未知 context_mode 按 legacy 兜底：注入与维护照旧，Context 功能 fail-closed
+    mode = parse_context_mode(config.context_mode)
+    service = ContextService(config)
+    service.initialize(
+        mode=mode if mode is not None else ContextMode.LEGACY,
+        adapter=config.adapter or "claude",
+    )
+    try:
+        _maybe_sweep_archives(service, mode)
+        facade = service.legacy_facade()
+        _maybe_run_forgetting(config, facade)
+        _maybe_run_consolidation(config, facade)
+        if mode is ContextMode.PRIMARY:
+            block = _core_session_start_block(
+                config, service, workspace_path=workspace_path)
+            if block:
+                return block
+        memories = facade.get_active()
+    finally:
+        service.close()
 
     # 会话摘要日志走独立的「最近项目动态」层，不参与 pinned/精选/索引三层
     logs = [m for m in memories if _is_session_log(m["key"])]

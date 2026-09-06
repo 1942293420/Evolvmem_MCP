@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f5f6fa">
+  <title>Halo · 光晕工作台 — EvolvMem</title>
+  <link rel="stylesheet" href="/designs/common.css">
+  <link rel="stylesheet" href="/designs/halo.css">
+</head>
+<body data-design="halo">
+  <aside class="halo-sidebar">
+    <a class="halo-brand" href="/designs/halo.html" aria-label="EvolvMem 光晕工作台首页">
+      <svg class="halo-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="8" stroke="currentColor" stroke-width="2.4"/><ellipse cx="20" cy="20" rx="18" ry="7" transform="rotate(-40 20 20)" stroke="currentColor" stroke-width="1.7"/><circle cx="31.7" cy="10.1" r="3.1" fill="currentColor"/></svg>
+      <span>EvolvMem<small>HALO WORKSPACE</small></span>
+    </a>
+    <div class="halo-workspace"><span class="halo-workspace-mark">E</span><span>我的记忆空间<small>让每次积累彼此连接</small></span><span class="halo-workspace-dot" aria-hidden="true"></span></div>
+    <span class="halo-nav-label">工作空间</span>
+    <nav class="halo-nav" aria-label="主导航">
+      <a href="#home" data-page-link="home" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1.7"/><rect x="14" y="4" width="6" height="6" rx="1.7"/><rect x="4" y="14" width="6" height="6" rx="1.7"/><rect x="14" y="14" width="6" height="6" rx="1.7"/></svg><span>工作概览</span><span class="halo-nav-key">01</span></a>
+      <a href="#memories" data-page-link="memories"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg><span>记忆库</span><span class="halo-nav-key">02</span></a>
+      <a href="#experiences" data-page-link="experiences"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/><circle cx="12" cy="12" r="4"/></svg><span>经验案例</span><span class="halo-nav-key">03</span></a>
+      <a href="#progress" data-page-link="progress"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16h15M9 15l4-5 3 2 4-7"/><circle cx="9" cy="15" r="1"/><circle cx="16" cy="12" r="1"/></svg><span>项目进展</span><span class="halo-nav-key">04</span></a>
+    </nav>
+    <div class="halo-sidebar-note"><svg viewBox="0 0 80 50" fill="none" aria-hidden="true"><ellipse cx="39" cy="25" rx="31" ry="13" transform="rotate(-16 39 25)" stroke="currentColor"/><ellipse cx="39" cy="25" rx="18" ry="23" transform="rotate(-16 39 25)" stroke="currentColor"/><circle cx="39" cy="25" r="5" fill="currentColor"/><circle cx="67" cy="12" r="3" fill="currentColor"/></svg><p>从一次记录，<br>到持续生长的经验。</p><span>YOUR KNOWLEDGE, CONNECTED.</span></div>
+    <div class="halo-sidebar-bottom"><span class="halo-preview-label">设计预览 · 实时数据</span><a href="/designs/">← 返回五版设计</a><span class="halo-edition">03 / HALO</span></div>
+  </aside>
+
+  <div class="halo-shell">
+    <header class="halo-topbar"><div class="halo-breadcrumb">工作空间 <span>/</span> <strong>光晕工作台</strong></div><div class="halo-top-actions"><label class="halo-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/></svg><input data-ui-search type="search" placeholder="搜索一段记忆…" aria-label="搜索记忆"><span>↵</span></label><button class="halo-refresh" data-refresh aria-label="刷新实时数据" title="刷新实时数据"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 11-2l3 3M4 16l3 3a7 7 0 0 0 11-2"/></svg></button></div></header>
+    <main class="halo-main">
+      <section data-page-panel="home">
+        <div class="halo-page-heading"><div><span class="halo-eyebrow">A LITTLE MORE CONNECTED, EVERY DAY</span><h1>让下一步，有迹可循<span>。</span></h1><p>回到项目现场，找到值得带走的经验。</p></div><a href="#progress" data-page-link="progress" class="halo-primary-link">继续我的项目 <span>↗</span></a></div>
+
+        <div class="halo-focus-layout">
+          <section class="halo-galaxy-card" aria-labelledby="halo-galaxy-title">
+            <div class="halo-galaxy-heading"><div><span class="halo-section-kicker">YOUR MEMORY UNIVERSE</span><h2 id="halo-galaxy-title">记忆在这里相遇</h2></div><span class="halo-live-tag"><span></span> 实时星系</span></div>
+            <div data-galaxy="halo" class="halo-galaxy" aria-label="项目与记忆星系，可点击项目查看详情"></div>
+            <div class="halo-galaxy-caption"><span><i></i> 每颗星，都是一次真实积累</span><span>点击星点，探索关联 ↗</span></div>
+            <div class="halo-stat-strip"><div><strong data-stat="total_active">—</strong><span>活跃记忆</span></div><div><strong data-stat="verified_experiences">—</strong><span>已验证经验</span></div><div><strong data-stat="project_count">—</strong><span>关联项目</span></div><div><strong data-stat="unfinished_workstreams">—</strong><span>未完成工作流</span></div></div>
+          </section>
+          <section class="halo-continuation" aria-labelledby="halo-continue-title"><div class="halo-section-head"><div><span class="halo-section-kicker">PICK UP WHERE YOU LEFT OFF</span><h2 id="halo-continue-title">从这里继续</h2></div><span class="halo-section-icon" aria-hidden="true">↗</span></div><p class="halo-section-copy">保留上下文，也保留下一步。</p><div data-slot="task-list" class="halo-task-list"></div><a href="#progress" data-page-link="progress" class="halo-quiet-link">打开项目进展 <span>→</span></a><div class="halo-continuation-note"><span class="halo-note-orbit" aria-hidden="true">✳</span><span>让断点留有线索。<br><small>从真实记录，继续你的工作。</small></span></div></section>
+        </div>
+
+        <div class="halo-bottom-layout"><section class="halo-experience-section"><div class="halo-section-head"><div><span class="halo-section-kicker">LEARN ONCE. BUILD ON IT.</span><h2>值得再用一次的经验</h2></div><a href="#experiences" data-page-link="experiences" class="halo-text-link">查看全部 <span>↗</span></a></div><div data-slot="featured-experiences" class="halo-experience-list"></div></section><section class="halo-project-section"><div class="halo-section-head"><div><span class="halo-section-kicker">CONNECTED PROJECTS</span><h2>正在生长的项目</h2></div><span class="halo-count" data-stat="project_count">—</span></div><div data-slot="project-list" class="halo-project-list"></div></section></div>
+      </section>
+
+      <section data-page-panel="memories" class="data-page" hidden><header class="data-page-header"><h1>记忆库</h1><p>按内容、项目和状态查找记录。</p></header><div data-slot="memory-browser" class="halo-browser"></div></section>
+      <section data-page-panel="experiences" class="data-page" hidden><header class="data-page-header"><h1>经验案例</h1><p>核对方法、适用条件和验证结果。</p></header><div data-slot="experience-browser" class="halo-browser"></div></section>
+      <section data-page-panel="progress" class="data-page" hidden><header class="data-page-header"><h1>项目进展</h1><p>查看项目摘要与任务断点。</p></header><div data-slot="progress-browser" class="halo-browser"></div></section>
+      <footer class="halo-footer"><span class="halo-mobile-preview">设计预览 · 实时数据</span><span>EvolvMem <i>—</i> 让经验随着工作生长</span><span data-data-status role="status" aria-live="polite">正在连接实时数据…</span></footer>
+    </main>
+  </div>
+  <script src="/designs/galaxy.js"></script>
+  <script src="/designs/app.js"></script>
+</body>
+</html>

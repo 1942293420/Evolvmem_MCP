@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f2e9">
+  <title>Atlas 知识图鉴 · EvolvMem</title>
+  <link rel="stylesheet" href="/designs/common.css">
+  <link rel="stylesheet" href="/designs/atlas.css">
+</head>
+<body data-design="atlas">
+  <a class="skip-link" href="#atlas-main">跳转到内容</a>
+  <aside class="atlas-sidebar">
+    <a class="atlas-brand" href="/designs/atlas.html" aria-label="EvolvMem 知识图鉴首页">
+      <svg class="atlas-emblem" viewBox="0 0 72 72" fill="none" aria-hidden="true"><circle cx="36" cy="36" r="28" stroke="currentColor" stroke-width=".7"/><circle cx="36" cy="36" r="20" stroke="currentColor" stroke-width=".7"/><ellipse cx="36" cy="36" rx="28" ry="10" transform="rotate(-38 36 36)" stroke="currentColor" stroke-width=".7"/><path d="M36 2v9m0 50v9M2 36h9m50 0h9" stroke="currentColor" stroke-width=".7"/><path d="m36 28 2 6 6 2-6 2-2 6-2-6-6-2 6-2 2-6Z" fill="currentColor"/><circle cx="57.8" cy="18.5" r="3" fill="var(--bg)" stroke="currentColor" stroke-width=".8"/></svg>
+      <span class="atlas-wordmark">EvolvMem<span>THE KNOWLEDGE ATLAS</span></span>
+    </a>
+    <div class="atlas-sidebar-rule"></div>
+    <p class="atlas-index-label">目 录 <span>INDEX</span></p>
+    <nav class="atlas-nav" aria-label="图鉴目录">
+      <button type="button" data-page-link="home" class="active" aria-current="page"><span class="atlas-nav-number">00</span><span>图鉴序章<small>Overview</small></span><span class="atlas-nav-mark" aria-hidden="true">↗</span></button>
+      <button type="button" data-page-link="memories"><span class="atlas-nav-number">01</span><span>记忆馆藏<small>Memories</small></span><span class="atlas-nav-mark" aria-hidden="true">↗</span></button>
+      <button type="button" data-page-link="experiences"><span class="atlas-nav-number">02</span><span>经验札记<small>Experiences</small></span><span class="atlas-nav-mark" aria-hidden="true">↗</span></button>
+      <button type="button" data-page-link="progress"><span class="atlas-nav-number">03</span><span>未完篇章<small>Continuity</small></span><span class="atlas-nav-mark" aria-hidden="true">↗</span></button>
+    </nav>
+    <div class="atlas-side-note"><span class="atlas-small-star" aria-hidden="true">✳</span><p>知识不是静止的收藏。<br>每一次重读，<br>都是新的出发。</p><span class="atlas-side-note-en">A living collection<br>of things understood.</span></div>
+    <a class="atlas-back" href="/designs/">← 返回全部设计 <span>02 / 05</span></a>
+  </aside>
+
+  <main id="atlas-main" class="atlas-main">
+    <header class="atlas-running-head"><span>知识图鉴 <span class="atlas-running-separator">/</span> A LIVING ARCHIVE</span><span>设计预览 · 实时数据</span></header>
+
+    <section data-page-panel="home" class="atlas-page">
+      <div class="atlas-cover">
+        <div><p class="atlas-kicker">THE ART OF REMEMBERING</p><h1>将经验，辑成<br>下一次的<span>答案。</span></h1></div>
+        <div class="atlas-cover-note"><span class="atlas-note-number">序 · 00</span><p>记下值得留下的事实，<br>理解曾经有效的方法，<br>让未完的思考有处接续。</p><button type="button" class="atlas-text-link" data-page-link="memories">翻开记忆馆藏 <span aria-hidden="true">↗</span></button></div>
+      </div>
+
+      <div class="atlas-vitals" aria-label="图鉴实时概览">
+        <div class="atlas-vital"><span data-stat="total_active">—</span><div>记忆收录<small>MEMORIES</small></div></div>
+        <div class="atlas-vital"><span data-stat="verified_experiences">—</span><div>已有验证的案例<small>VERIFIED CASES</small></div></div>
+        <div class="atlas-vital"><span data-stat="ready_summaries">—</span><div>可续接的项目摘要<small>READY SUMMARIES</small></div></div>
+        <div class="atlas-vital"><span data-stat="unfinished_workstreams">—</span><div>未完工作流<small>OPEN THREADS</small></div></div>
+      </div>
+
+      <div class="atlas-observation">
+        <figure class="atlas-map-figure">
+          <figcaption class="atlas-figure-title"><span><span class="atlas-figure-number">图 01.</span> 记忆的星群索引</span><span class="atlas-figure-subtitle">CELESTIAL INDEX</span></figcaption>
+          <div class="atlas-map" data-galaxy="atlas" aria-label="项目与记忆的平面轨道图，也可从下方项目目录进入项目"></div>
+          <div class="atlas-map-caption"><span>每个项目，都有自己的知识轨道。</span><span>选择星体以查阅 <span aria-hidden="true">↗</span></span></div>
+        </figure>
+        <section class="atlas-continuity" aria-labelledby="atlas-continuity-title">
+          <p class="atlas-kicker">CHAPTERS IN PROGRESS</p>
+          <h2 id="atlas-continuity-title">书签停在这里<span>接续未完的篇章</span></h2>
+          <div class="atlas-bookmark" aria-hidden="true"><svg viewBox="0 0 19 35" fill="none"><path d="M1 0v32l8.5-6 8.5 6V0" stroke="currentColor" stroke-width="1"/><path d="M5 0v24l4.5-3 4.5 3V0" fill="currentColor" opacity=".12"/></svg></div>
+          <div class="atlas-task-list" data-slot="task-list"><p class="ui-empty">正在寻找工作断点…</p></div>
+          <button type="button" class="atlas-text-link atlas-continue-link" data-page-link="progress">阅读项目进展 <span aria-hidden="true">→</span></button>
+        </section>
+      </div>
+
+      <section class="atlas-project-section" aria-labelledby="atlas-project-title">
+        <div class="atlas-section-label"><h2 id="atlas-project-title">项目目录</h2><span>PROJECT INDEX <span class="atlas-inline-count" data-stat="project_count">—</span></span></div>
+        <div class="atlas-project-list" data-slot="project-list"><p class="ui-empty">正在编排项目目录…</p></div>
+      </section>
+
+      <section class="atlas-notes-section" aria-labelledby="atlas-notes-title">
+        <div class="atlas-section-heading"><div><p class="atlas-kicker">FIELD NOTES / METHODS & EVIDENCE</p><h2 id="atlas-notes-title">重读经验，理解方法。</h2></div><button type="button" class="atlas-text-link" data-page-link="experiences">全部经验札记 <span aria-hidden="true">↗</span></button></div>
+        <div class="atlas-notes" data-slot="featured-experiences"><p class="ui-empty">正在读取经验札记…</p></div>
+      </section>
+
+      <section class="atlas-recent-section" aria-labelledby="atlas-recent-title"><div class="atlas-section-label"><h2 id="atlas-recent-title">馆藏新页</h2><span>RECENT ACQUISITIONS</span></div><div class="atlas-recent" data-slot="recent-memories"><p class="ui-empty">正在读取新近记忆…</p></div></section>
+    </section>
+
+    <section data-page-panel="memories" class="atlas-page atlas-library-page data-page" hidden>
+      <header class="data-page-header"><h1>记忆库</h1><p>按内容、项目和状态查找记录。</p></header>
+      <div class="atlas-browser" data-slot="memory-browser"><p class="ui-empty">正在打开记忆馆藏…</p></div>
+    </section>
+
+    <section data-page-panel="experiences" class="atlas-page atlas-library-page data-page" hidden>
+      <header class="data-page-header"><h1>经验案例</h1><p>核对方法、适用条件和验证结果。</p></header>
+      <div class="atlas-browser" data-slot="experience-browser"><p class="ui-empty">正在打开经验札记…</p></div>
+    </section>
+
+    <section data-page-panel="progress" class="atlas-page atlas-library-page data-page" hidden>
+      <header class="data-page-header"><h1>项目进展</h1><p>查看项目摘要与任务断点。</p></header>
+      <div class="atlas-browser" data-slot="progress-browser"><p class="ui-empty">正在打开未完篇章…</p></div>
+    </section>
+
+    <footer class="atlas-footer"><div><span class="atlas-footer-brand">EvolvMem</span><span>知识不止被收藏，也被再次使用。</span></div><div class="atlas-live"><span data-data-status role="status" aria-live="polite">正在连接记忆库…</span><button type="button" data-refresh>刷新 <span aria-hidden="true">↻</span></button></div><span class="atlas-footer-page">ATLAS / 02</span></footer>
+  </main>
+  <script src="/designs/galaxy.js"></script>
+  <script src="/designs/app.js"></script>
+</body>
+</html>

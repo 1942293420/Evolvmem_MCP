@@ -12,15 +12,24 @@ to a true cosine of ≈ 0.84; for real merges use threshold >= 0.97 (≈ cosine 
 import numpy as np
 
 from evolvmem.config import Config
+from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.memory_store import MemoryStore
 from evolvmem.vector_index import VectorIndex
 from evolvmem.scoring import compute_score
+from evolvmem.semantic_merge import semantic_identity
 
 
 class Consolidator:
-    """Detects and merges near-duplicate active memories."""
+    """Detects and merges near-duplicate active memories.
 
-    def __init__(self, config: Config, store: MemoryStore,
+    The store is the legacy compatibility facade in production, so the kept
+    pair's access increment and the dropped pair's archive route through
+    ContextService onto both mapped sides; isolated tests may still pass a
+    raw MemoryStore.
+    """
+
+    def __init__(self, config: Config,
+                 store: "MemoryStore | LegacyCompatibilityFacade",
                  vidx: VectorIndex, engine) -> None:
         self.config = config
         self.store = store
@@ -62,6 +71,11 @@ class Consolidator:
                 if not other or other["status"] != "active":
                     continue
                 if other.get("tier") == "reference":
+                    continue
+                identity = semantic_identity(m["key"], m.get("attribute"), m.get("tags"))
+                if identity is None or identity != semantic_identity(
+                    other["key"], other.get("attribute"), other.get("tags")
+                ):
                     continue
                 keep, drop = self._order(m, other)
                 pairs.append({"keep": keep, "drop": drop,

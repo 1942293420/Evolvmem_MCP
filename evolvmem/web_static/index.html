@@ -1,193 +1,677 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="galaxy">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EvolvMem 记忆图书馆</title>
 <style>
+  :root {
+    color-scheme: light;
+    --bg0: #ffffff; --bg1: #f5f8fa; --bg2: #eef3f5;
+    --ink: rgba(21,34,43,.90); --ink-dim: rgba(21,34,43,.64); --ink-faint: rgba(21,34,43,.46);
+    --line: rgba(21,34,43,.10); --line-strong: rgba(21,34,43,.18);
+    --flare: #0f9b8e; --flare-deep: #0b7c72;
+    --accent: #8fc7a4; --accent-ink: #2f8f6b; --accent-soft: rgba(143,199,164,.16);
+    --danger: #c05a50; --danger-deep: #a83a30;
+    --ai: #6a58d8; --ai-deep: #5243bb;
+    --shadow-panel: 0 1px 2px rgba(21,34,43,.06), 0 12px 32px rgba(21,34,43,.09);
+    --ease-out: cubic-bezier(0.22,0.61,0.36,1);
+    --ease-sine: cubic-bezier(0.45,0.05,0.55,0.95);
+    --font-display: Palatino,"Palatino Linotype","Book Antiqua",Georgia,"Songti SC",serif;
+    --font-body: "Helvetica Neue",Arial,"Noto Sans SC",system-ui,sans-serif;
+    --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --pad-x: clamp(1.25rem,4.5vw,3rem);
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+  button, input, select { color: inherit; font: inherit; }
+  button { cursor: pointer; }
   body {
-    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
-    background: #f3f4f6;
-    color: #1a1a2e;
-    font-size: 14px;
-    line-height: 1.5;
+    font-family: var(--font-body);
+    background: linear-gradient(180deg, var(--bg0) 0%, var(--bg1) 46%, var(--bg2) 100%);
+    background-attachment: fixed;
+    color: var(--ink);
+    font-size: 15px;
+    line-height: 1.75;
+    padding-top: 4.25rem;
+    overflow-x: hidden;
   }
-  .wrap { max-width: 1760px; width: 96vw; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-  header h1 { font-size: 20px; color: #1a1a2e; }
-  header .sub { color: #8b8b9e; font-size: 13px; }
-  .panel { background: #fff; border-radius: 12px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(26,26,46,.06); }
+  .mono { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .15em; }
 
-  /* 统计卡片 */
-  .stats { display: flex; flex-wrap: wrap; gap: 12px; }
-  .stat-card {
-    flex: 1 1 140px; background: #fff; border-radius: 12px; padding: 14px 18px;
-    box-shadow: 0 1px 3px rgba(26,26,46,.06); border-top: 3px solid #8b5cf6;
+  /* ---- 固定顶栏 ---- */
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 50; height: 4.25rem;
+    display: flex; align-items: center; gap: 1.8rem; padding: 0 var(--pad-x);
+    background: rgba(255,255,255,.72);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line);
   }
-  .stat-card .num { font-size: 26px; font-weight: 700; color: #1a1a2e; }
-  .stat-card .label { font-size: 12px; color: #8b8b9e; }
-  .stat-card.muted { border-top-color: #c4b5fd; }
-  .stat-card.gray { border-top-color: #d1d5db; }
+  .brand { display: flex; align-items: center; gap: .7rem; flex: none; }
+  .brand-mark { position: relative; width: 26px; height: 26px; border: 1px solid var(--flare); border-radius: 50%; }
+  .brand-mark::before { content: ""; position: absolute; inset: 6px; border-radius: 50%; background: var(--flare); box-shadow: 0 0 14px rgba(15,155,142,.5); }
+  .brand-mark::after { content: ""; position: absolute; left: -5px; right: -5px; top: 12px; height: 1px; background: var(--flare); transform: rotate(-18deg); opacity: .7; }
+  .brand-text b { display: block; font-family: var(--font-display); font-weight: 400; font-size: 1.05rem; letter-spacing: .02em; line-height: 1.25; }
+  .brand-text small { display: block; font-family: var(--font-mono); font-size: .55rem; letter-spacing: .18em; color: var(--ink-faint); text-transform: uppercase; }
+  .tabs.top { display: flex; gap: .3rem; margin-left: auto; }
+  .tab {
+    position: relative; padding: .55rem .9rem; border: 1px solid transparent; background: transparent;
+    color: var(--ink-dim); font-family: var(--font-mono); font-size: .7rem;
+    letter-spacing: .14em; text-transform: uppercase;
+    transition: color .25s var(--ease-sine);
+  }
+  .tab:hover { color: var(--flare); }
+  .tab.active { color: var(--flare); }
+  .tab.active::after { content: ""; position: absolute; left: .9rem; right: .9rem; bottom: 1px; height: 1px; background: var(--flare); }
+  .tab .badge { margin-left: .45rem; }
+  .theme-tag {
+    flex: none; font-family: var(--font-mono); font-size: .58rem; letter-spacing: .16em;
+    color: var(--ink-faint); text-transform: uppercase; border: 1px solid var(--line);
+    padding: .34rem .6rem; white-space: nowrap;
+  }
+  .archive-home { display: none; margin-left: auto; color: var(--flare-deep); font-size: .85rem; }
 
-  /* 热门榜 */
-  .hot-list { display: flex; flex-direction: column; gap: 8px; }
-  .hot-item { display: flex; align-items: center; gap: 10px; }
-  .hot-item .rank { width: 22px; color: #8b5cf6; font-weight: 700; text-align: right; }
-  .hot-item .k { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .hot-item .bar-wrap { flex: 0 1 220px; height: 10px; background: #f3f4f6; border-radius: 5px; overflow: hidden; }
-  .hot-item .bar { height: 100%; background: linear-gradient(90deg, #c4b5fd, #8b5cf6); border-radius: 5px; }
-  .hot-item .cnt { width: 64px; text-align: right; font-variant-numeric: tabular-nums; color: #1a1a2e; font-weight: 600; }
+  /* ---- 视图切换 ---- */
+  #view-dashboard, #view-archive, #view-arch { flex-direction: column; animation: viewIn .45s var(--ease-out); }
+  @keyframes viewIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 
-  /* 过滤器 */
-  .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-  .filters label { font-size: 12px; color: #8b8b9e; }
+  /* ---- 系统架构视图：iframe 铺满顶栏之外的剩余高度 ---- */
+  #view-arch { height: calc(100vh - 4.25rem); }
+  #view-arch iframe { flex: 1 1 auto; width: 100%; border: 0; display: block; background: #fff; }
+
+  /* ---- 星图 hero ---- */
+  .hero {
+    position: relative; height: min(74vh, 780px); min-height: 540px; overflow: hidden;
+    background: #f6f8f9; border-bottom: 1px solid var(--line);
+  }
+  .hero canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .hero::after {
+    content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background-image: linear-gradient(rgba(21,34,43,.03) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(21,34,43,.03) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(115% 100% at 50% 55%, #000 25%, transparent 80%);
+    -webkit-mask-image: radial-gradient(115% 100% at 50% 55%, #000 25%, transparent 80%);
+  }
+  .stage-title { position: absolute; z-index: 4; left: var(--pad-x); top: 2.4rem; pointer-events: none; }
+  .stage-title .kicker { margin: 0 0 .8rem; color: var(--flare); font-family: var(--font-mono); font-size: .66rem; letter-spacing: .18em; text-transform: uppercase; }
+  .stage-title h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: clamp(2.6rem, 5vw, 4.2rem); line-height: 1.08; color: var(--ink); }
+  .stage-title h1 em { display: block; margin-top: .55rem; font-style: normal; font-size: .4em; letter-spacing: .05em; color: var(--accent-ink); }
+  .legend {
+    position: absolute; z-index: 4; right: var(--pad-x); top: 2.4rem; display: grid; gap: .5rem;
+    padding: .8rem .95rem; border: 1px solid var(--line); background: rgba(255,255,255,.85);
+    font-family: var(--font-mono); font-size: .58rem; letter-spacing: .08em; color: var(--ink-dim);
+  }
+  .legend div { display: flex; align-items: center; gap: .55rem; }
+  .legend i { width: 8px; height: 8px; border-radius: 50%; }
+  .legend .l-pin { background: #0b7c72; }
+  .legend .l-nor { background: #22323d; }
+  .legend .l-ref { background: #8da4ad; }
+  .legend .l-dust { background: #b6c2c7; }
+  .stage-hint {
+    position: absolute; z-index: 4; left: var(--pad-x); bottom: 1.7rem; pointer-events: none;
+    color: var(--ink-faint); font-family: var(--font-mono); font-size: .6rem; letter-spacing: .1em;
+  }
+  .stage-hint b { color: var(--flare); font-weight: 500; }
+  .stage-ruler {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 16px; z-index: 3; pointer-events: none;
+    background-image: repeating-linear-gradient(90deg, rgba(95,110,118,.5) 0 1px, transparent 1px 96px),
+                      repeating-linear-gradient(90deg, rgba(95,110,118,.22) 0 1px, transparent 1px 12px);
+    background-size: 100% 9px, 100% 4px; background-position: bottom left, bottom left; background-repeat: no-repeat;
+    mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+  }
+  .stage-ruler::after { content: ""; position: absolute; left: 50%; bottom: 0; width: 1px; height: 14px; background: var(--flare); }
+  .core-label {
+    position: absolute; z-index: 3; left: 0; top: 0; transform: translate(-50%,-50%);
+    text-align: center; pointer-events: none; padding: .5rem .9rem .55rem;
+    background: rgba(255,255,255,.94); border: 1px solid var(--line); box-shadow: 0 4px 18px rgba(21,34,43,.08);
+  }
+  .core-label b { display: block; font-family: var(--font-display); font-weight: 400; font-size: .9rem; letter-spacing: .04em; white-space: nowrap; }
+  .core-label small { display: block; margin-top: .25rem; color: var(--ink-faint); font-family: var(--font-mono); font-size: .55rem; letter-spacing: .18em; }
+  .tooltip {
+    position: absolute; z-index: 6; min-width: 190px; max-width: 290px; padding: .7rem .85rem;
+    border: 1px solid var(--line); background: rgba(255,255,255,.96); pointer-events: none;
+    box-shadow: 0 8px 28px rgba(21,34,43,.12);
+  }
+  .tooltip .tt-no { color: var(--flare); font-family: var(--font-mono); font-size: .58rem; letter-spacing: .12em; }
+  .tooltip b { display: block; margin: .45rem 0 .5rem; font-size: .8rem; line-height: 1.5; word-break: break-all; }
+  .tooltip .tt-meta { color: var(--ink-faint); font-family: var(--font-mono); font-size: .62rem; line-height: 1.7; }
+  .tooltip .tt-meta em { color: var(--ink); font-style: normal; }
+
+  /* ---- 区块（发丝线分区，无卡片） ---- */
+  .sec { width: 100%; max-width: 78rem; margin: 0 auto; padding: clamp(3rem,8vh,5.5rem) var(--pad-x) 0; }
+  .sec.tail { padding-bottom: 5.5rem; }
+  .sec-head { display: flex; align-items: baseline; gap: 1.2rem; flex-wrap: wrap; margin-bottom: 2.2rem; border-top: 1px solid var(--line-strong); padding-top: 1.1rem; }
+  .sec-head .kicker { margin: 0; color: var(--flare); font-family: var(--font-mono); font-size: .64rem; letter-spacing: .17em; text-transform: uppercase; }
+  .sec-head h2 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: clamp(1.6rem,3vw,2.3rem); line-height: 1.15; }
+  .sec-head .sec-note { font-family: var(--font-mono); font-size: .62rem; letter-spacing: .1em; color: var(--ink-faint); }
+  .sec-head button { margin-left: auto; }
+  .reveal { opacity: 0; transform: translateY(24px); transition: opacity .6s var(--ease-out), transform .6s var(--ease-out); }
+  .reveal.in { opacity: 1; transform: none; }
+
+  /* ---- 统计卡（衬线大数字 + 发丝线） ---- */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 1.9rem 1.5rem; }
+  .stat-card { border-top: 1px solid var(--line-strong); padding-top: .95rem; transition: border-color .25s var(--ease-sine); }
+  .stat-card .num { font-family: var(--font-display); font-weight: 400; font-size: clamp(1.9rem,3vw,2.6rem); line-height: 1; color: var(--ink); font-variant-numeric: tabular-nums; transition: color .25s var(--ease-sine); }
+  .stat-card .label { margin-top: .55rem; font-family: var(--font-mono); font-size: .58rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); line-height: 1.6; }
+  .stat-card.muted .num { color: var(--ink-dim); }
+  .stat-card.gray .num { color: var(--ink-faint); }
+  .stat-card[data-preset]:hover { border-top-color: var(--flare); }
+  .stat-card[data-preset]:hover .num { color: var(--flare); }
+
+  /* ---- 条形行（分布概览 / 热度榜 / 命中条） ---- */
+  .hot-list { display: flex; flex-direction: column; }
+  .hot-item { display: flex; align-items: center; gap: .9rem; padding: .55rem .15rem; border-bottom: 1px solid var(--line); }
+  .hot-item .rank { flex: none; width: 1.7rem; text-align: right; font-family: var(--font-display); font-size: 1.05rem; color: var(--flare); }
+  .hot-item .k { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85rem; color: var(--ink); }
+  .hot-item .bar-wrap { flex: 0 1 220px; height: 3px; background: rgba(21,34,43,.08); overflow: hidden; }
+  .hot-item .bar { height: 100%; background: linear-gradient(90deg, #22323d, var(--flare)); transform-origin: left; animation: barGrow 1s var(--ease-out) both; }
+  .hot-item .cnt { flex: none; min-width: 5.6rem; text-align: right; font-family: var(--font-mono); font-size: .68rem; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+  @keyframes barGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  .dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 2.6rem; }
+  .dash-h { margin-bottom: .5rem; font-family: var(--font-mono); font-weight: 400; font-size: .62rem; letter-spacing: .15em; text-transform: uppercase; color: var(--ink-faint); }
+
+  /* ---- 筛选条 ---- */
+  .filters { display: flex; flex-wrap: wrap; gap: .7rem .75rem; align-items: center; }
+  .filters label { font-family: var(--font-mono); font-size: .6rem; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-faint); }
   select, input[type=text], input[type=number] {
-    padding: 6px 10px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff;
-    color: #1a1a2e; font-size: 13px; outline: none;
+    padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 0; background: #fff;
+    color: var(--ink); font-size: .8rem; outline: none;
+    transition: border-color .25s var(--ease-sine);
   }
-  select:focus, input:focus { border-color: #8b5cf6; }
-  input[type=text] { flex: 1 1 200px; }
+  select:focus, input:focus { border-color: var(--flare); }
+  input[type=text]#f-q { flex: 1 1 200px; min-width: 170px; }
+  .toggle { display: flex; align-items: center; gap: .45rem; cursor: pointer; user-select: none; font-family: var(--font-mono); font-size: .64rem; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-dim); }
+  .toggle input { accent-color: var(--flare); }
+
+  /* ---- 按钮：透明底 + 1px 线 + mono 小字 ---- */
   button {
-    padding: 6px 14px; border: none; border-radius: 8px; background: #8b5cf6; color: #fff;
-    font-size: 13px; cursor: pointer;
+    padding: .52rem .95rem; border: 1px solid var(--flare); background: var(--flare); color: #fff;
+    font-family: var(--font-mono); font-size: .66rem; letter-spacing: .1em; text-transform: uppercase;
+    transition: color .25s var(--ease-sine), background .25s var(--ease-sine), border-color .25s var(--ease-sine);
   }
-  button:hover { background: #7c3aed; }
-  button.ghost { background: #f3f4f6; color: #1a1a2e; border: 1px solid #e5e7eb; }
-  button.ghost:hover { background: #e5e7eb; }
-  button.danger { background: #f3f4f6; color: #dc2626; border: 1px solid #fecaca; }
-  button.danger:hover { background: #fee2e2; }
-  button.small { padding: 3px 10px; font-size: 12px; }
-  .toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
-  .toggle input { accent-color: #8b5cf6; }
+  button:hover { background: var(--flare-deep); border-color: var(--flare-deep); }
+  button:disabled { opacity: .4; cursor: default; }
+  button:disabled:hover { background: var(--flare); border-color: var(--flare); }
+  button.ghost { background: transparent; color: var(--ink-dim); border-color: var(--line-strong); }
+  button.ghost:hover { background: transparent; color: var(--flare); border-color: var(--flare); }
+  button.ghost:disabled:hover { color: var(--ink-dim); border-color: var(--line-strong); }
+  button.danger { background: transparent; color: var(--danger); border-color: rgba(192,90,80,.4); }
+  button.danger:hover { background: rgba(192,90,80,.07); color: var(--danger); border-color: var(--danger); }
+  button.small { padding: .26rem .5rem; font-size: .58rem; letter-spacing: .06em; }
 
-  /* 表格 */
+  /* ---- 暂存条 / 批量条 ---- */
+  .bar-note {
+    width: calc(100% - 2 * var(--pad-x)); max-width: 78rem; margin: 1.4rem auto 0;
+    align-items: center; gap: .9rem; flex-wrap: wrap;
+    padding: .85rem 1.1rem; border: 1px solid var(--line); border-left: 2px solid var(--flare);
+    background: rgba(255,255,255,.85); font-size: .8rem; color: var(--ink-dim);
+  }
+  .bar-note b { color: var(--flare); font-family: var(--font-mono); }
+  .bar-note .hint { font-size: .68rem; color: var(--ink-faint); font-family: var(--font-mono); letter-spacing: .05em; }
+
+  /* ---- 表格（发丝线行式列表） ---- */
   .table-scroll { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
-  th { color: #8b8b9e; font-weight: 600; font-size: 12px; white-space: nowrap; }
-  tr:hover td { background: #faf9ff; }
-  td.key { max-width: 260px; word-break: break-all; font-weight: 600; color: #1a1a2e; }
-  td.val { max-width: 560px; }
-  .val-preview { color: #55556b; cursor: pointer; word-break: break-all; }
-  .val-full { color: #1a1a2e; white-space: pre-wrap; word-break: break-all; background: #faf9ff; border-radius: 6px; padding: 8px; margin-top: 4px; cursor: pointer; }
-  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; }
-  .badge-pinned { background: #ede9fe; color: #7c3aed; }
-  .badge-normal { background: #f3f4f6; color: #55556b; }
-  .badge-reference { background: #e0f2fe; color: #0369a1; }
-  .badge-skill { background: #fef3c7; color: #b45309; margin-left: 4px; }
-  .badge-cat { background: #f3f4f6; color: #55556b; }
+  table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+  th, td { padding: .65rem .55rem; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: var(--font-mono); font-weight: 400; font-size: .58rem; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-faint); white-space: nowrap; border-bottom: 1px solid var(--line-strong); }
+  tbody tr { transition: background .25s var(--ease-sine); }
+  tbody tr:hover td { background: rgba(143,199,164,.06); }
+  td.key { max-width: 240px; word-break: break-all; font-weight: 600; color: var(--ink); }
+  td.val { max-width: 520px; }
+  .val-preview { color: var(--ink-dim); cursor: pointer; word-break: break-all; }
+  .val-preview:hover { color: var(--flare); }
+  td .badge { margin-top: .1rem; }
+  .badge { display: inline-block; padding: 2px 7px; border: 1px solid var(--line); font-family: var(--font-mono); font-size: .58rem; letter-spacing: .06em; color: var(--ink-dim); white-space: nowrap; line-height: 1.6; }
+  .badge-pinned { color: #0b7c72; border-color: rgba(11,124,114,.35); }
+  .badge-normal { color: var(--ink-dim); }
+  .badge-reference { color: #7b939e; border-color: rgba(123,147,158,.4); }
+  .badge-skill { color: var(--flare); border-color: rgba(15,155,142,.45); margin-left: .4rem; }
+  .badge-cat { color: var(--ink-dim); }
+  .badge-proj { color: var(--flare); border-color: rgba(15,155,142,.45); }
+  .badge-noproj { color: var(--ink-faint); }
+  #tab-pending { border-color: var(--flare); color: var(--flare); padding: 0 5px; }
+  .freq { display: flex; align-items: center; gap: .5rem; }
+  .freq .n { font-family: var(--font-mono); font-size: .72rem; min-width: 1.6rem; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .freq .bar-wrap { flex: 1 1 60px; min-width: 40px; height: 3px; background: rgba(21,34,43,.08); overflow: hidden; }
+  .freq .bar { height: 100%; transform-origin: left; animation: barGrow 1s var(--ease-out) both; }
+  .heat-0 { background: #d9e1e4; }
+  .heat-1 { background: #a9d2c8; }
+  .heat-2 { background: #8fc7a4; }
+  .heat-3 { background: #2f8f6b; }
+  .heat-4 { background: #0f9b8e; }
+  .actions { white-space: nowrap; display: flex; gap: .3rem; flex-wrap: wrap; }
+  .empty { text-align: center; color: var(--ink-faint); padding: 3rem 0; font-family: var(--font-mono); font-size: .7rem; letter-spacing: .12em; }
 
-  /* 频率条 */
-  .freq { display: flex; align-items: center; gap: 8px; }
-  .freq .n { font-weight: 700; min-width: 24px; text-align: right; font-variant-numeric: tabular-nums; }
-  .freq .bar-wrap { flex: 1 1 60px; min-width: 40px; height: 8px; background: #f3f4f6; border-radius: 4px; overflow: hidden; }
-  .freq .bar { height: 100%; border-radius: 4px; }
-  .heat-0 { background: #e5e7eb; }
-  .heat-1 { background: #c4b5fd; }
-  .heat-2 { background: #a78bfa; }
-  .heat-3 { background: #8b5cf6; }
-  .heat-4 { background: #7c3aed; }
-
-  .actions { white-space: nowrap; display: flex; gap: 6px; }
-  .empty { text-align: center; color: #8b8b9e; padding: 40px 0; }
-  .toast {
-    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-    background: #1a1a2e; color: #fff; padding: 8px 18px; border-radius: 8px;
-    font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none;
+  /* ---- 暂存行高亮 / AI 建议描边 ---- */
+  tr.staged td { background: rgba(15,155,142,.05); }
+  tr.staged td:first-child { box-shadow: inset 3px 0 0 var(--flare); }
+  select.proj-pick {
+    max-width: 170px; padding: .28rem .45rem; font-size: .72rem;
+    border: 1px solid transparent; background: rgba(21,34,43,.05); border-radius: 0;
+    color: var(--ink); cursor: pointer;
   }
-  .toast.show { opacity: .95; }
+  select.proj-pick:hover { border-color: rgba(15,155,142,.4); background: #fff; }
+  select.proj-pick:focus { border-color: var(--flare); background: #fff; }
+  .mem-proj.ai-staged { border-color: var(--flare); background: #fff; box-shadow: 0 0 0 3px rgba(15,155,142,.16); }
+  td.sel, th.sel { width: 28px; }
+  input[type=checkbox] { accent-color: var(--flare); }
 
-  /* 编辑弹窗 */
+  /* ---- 分页条 ---- */
+  .pager-sec { display: flex; align-items: center; gap: .9rem; flex-wrap: wrap; font-family: var(--font-mono); font-size: .68rem; color: var(--ink-dim); letter-spacing: .06em; }
+  .pager-sec label { font-size: .6rem; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-faint); }
+
+  /* ---- 项目名映射名录 ---- */
+  details.sec summary { cursor: pointer; list-style: none; font-family: var(--font-display); font-weight: 400; font-size: 1.15rem; color: var(--ink); border-top: 1px solid var(--line-strong); padding-top: 1.1rem; }
+  details.sec summary::-webkit-details-marker { display: none; }
+  details.sec summary::after { content: "▸"; float: right; color: var(--ink-faint); }
+  details.sec[open] summary::after { content: "▾"; }
+  #dir-count { font-family: var(--font-mono); font-size: .62rem; color: var(--ink-faint); letter-spacing: .08em; margin-left: .6rem; }
+  .dir-row { display: flex; align-items: center; gap: .9rem; padding: .5rem 0; border-bottom: 1px solid var(--line); }
+  .dir-row:last-child { border-bottom: none; }
+  .dir-slug { min-width: 180px; font-family: var(--font-mono); font-size: .72rem; color: var(--ink); }
+  .dir-count { width: 70px; text-align: right; color: var(--ink-faint); font-size: .62rem; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .dir-input { flex: 0 1 260px; }
+  .dir-input.dirty { border-color: var(--flare); background: rgba(15,155,142,.05); }
+  #dir-dirty { font-family: var(--font-mono); font-size: .64rem; color: var(--flare); letter-spacing: .06em; }
+
+  /* ---- 弹窗：白底 + 发丝线 + 轻投影 ---- */
   .modal-mask {
-    position: fixed; inset: 0; background: rgba(26,26,46,.35);
-    display: none; align-items: center; justify-content: center; z-index: 10;
+    position: fixed; inset: 0; background: rgba(21,34,43,.30);
+    display: none; align-items: center; justify-content: center; z-index: 100;
   }
   .modal-mask.open { display: flex; }
-  .modal { background: #fff; border-radius: 12px; padding: 20px 24px; width: min(640px, 94vw); display: flex; flex-direction: column; gap: 12px; }
-  .modal h3 { font-size: 16px; }
-  .modal .row { display: flex; flex-direction: column; gap: 4px; }
-  .modal .row label { font-size: 12px; color: #8b8b9e; }
-  .modal .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
-  .modal .m-key { font-size: 12px; color: #8b8b9e; word-break: break-all; }
-
-  /* 详情弹窗（二级页面） */
+  .modal {
+    background: #fff; border: 1px solid var(--line-strong); border-radius: 8px;
+    box-shadow: 0 18px 50px rgba(21,34,43,.18);
+    padding: 1.5rem 1.7rem; width: min(640px, 94vw);
+    display: flex; flex-direction: column; gap: .85rem;
+    animation: viewIn .3s var(--ease-out);
+  }
+  .modal h3 { font-family: var(--font-display); font-weight: 400; font-size: 1.25rem; }
+  .modal .row { display: flex; flex-direction: column; gap: .3rem; }
+  .modal .row label { font-family: var(--font-mono); font-size: .6rem; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-faint); }
+  .modal .btns { display: flex; justify-content: flex-end; gap: .55rem; margin-top: .3rem; }
+  .modal .m-key { font-family: var(--font-mono); font-size: .68rem; color: var(--ink-faint); word-break: break-all; }
   .modal.detail { width: min(1100px, 94vw); max-height: 88vh; overflow-y: auto; }
-  .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 16px; font-size: 13px; }
-  .detail-grid .k { color: #8b8b9e; font-size: 12px; }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .55rem 1.2rem; font-size: .8rem; }
+  .detail-grid .k { color: var(--ink-faint); font-family: var(--font-mono); font-size: .58rem; letter-spacing: .11em; text-transform: uppercase; }
   .detail-value {
-    background: #faf9ff; border-radius: 8px; padding: 14px 16px;
+    background: #f7faf9; border: 1px solid var(--line); padding: .95rem 1.15rem;
     white-space: pre-wrap; word-break: break-word;
     max-height: 52vh; overflow-y: auto;
-    font-size: 13px; line-height: 1.7; color: #1a1a2e;
+    font-size: .82rem; line-height: 1.75; color: var(--ink);
+  }
+
+  /* ---- toast ---- */
+  .toast {
+    position: fixed; left: 50%; bottom: 2rem; z-index: 200;
+    transform: translate(-50%, 5rem);
+    padding: .7rem 1.4rem; border: 1px solid var(--flare); background: #fff; color: var(--ink);
+    font-family: var(--font-mono); font-size: .68rem; letter-spacing: .06em;
+    opacity: 0; transition: transform .3s var(--ease-out), opacity .3s var(--ease-out);
+    pointer-events: none; box-shadow: 0 10px 30px rgba(21,34,43,.14);
+  }
+  .toast.show { transform: translate(-50%, 0); opacity: 1; }
+
+  /* ===== 归档整理视图：高对比工具台（全部 scoped 在 #view-archive，不动仪表盘） ===== */
+  #view-archive { color: rgba(17,28,36,.94); }
+
+  /* -- 面板化：筛选工具条 / 列表 / 分页 / 名录 从浅背景里立起来 -- */
+  #view-archive .filters,
+  #view-archive .arch-panel,
+  #view-archive .pager-sec,
+  #view-archive details.sec,
+  #view-archive .bar-note {
+    background: #fff; border: 1px solid var(--line-strong);
+    border-radius: 10px; box-shadow: var(--shadow-panel);
+  }
+
+  /* -- 筛选工具条：主行（搜索为主入口）+ 分组对齐的筛选行 -- */
+  #view-archive .filters { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 1rem; padding: 1.1rem 1.25rem 1.2rem; }
+  #view-archive .fbar-main { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; }
+  #view-archive input[type=text]#f-q {
+    flex: 1 1 260px; min-width: 200px; font-size: .95rem; padding: .7rem 1rem;
+    border: 1px solid var(--line-strong); border-radius: 6px;
+    background: #f7fafb; color: var(--ink);
+  }
+  #view-archive input[type=text]#f-q::placeholder { color: var(--ink-faint); }
+  #view-archive input[type=text]#f-q:focus { background: #fff; border-color: var(--flare); box-shadow: 0 0 0 3px rgba(15,155,142,.16); }
+  #view-archive .fbar-main #preset-chip { margin-left: auto; }
+  #view-archive .fbar-groups {
+    display: flex; flex-wrap: wrap; gap: .6rem 1.1rem; align-items: flex-end;
+    border-top: 1px solid var(--line); padding-top: .95rem;
+  }
+  #view-archive .fgroup { display: flex; flex-direction: column; gap: .3rem; }
+  #view-archive .fgroup > label { color: rgba(21,34,43,.58); }
+  #view-archive .fgroup select, #view-archive .frow select {
+    min-width: 112px; border-color: var(--line-strong); background: #fff;
+  }
+  #view-archive .frow { display: flex; gap: .4rem; }
+  #view-archive .frow select { min-width: 96px; }
+  #view-archive .fbar-groups .toggle { margin-left: auto; padding-bottom: .5rem; }
+
+  /* -- 按钮分级：主操作实心 flare，AI 实心极光紫，危险红两级，次要幽灵 -- */
+  #view-archive button {
+    transition: color .25s var(--ease-sine), background .25s var(--ease-sine),
+                border-color .25s var(--ease-sine), box-shadow .25s var(--ease-sine),
+                transform .12s var(--ease-sine);
+  }
+  #view-archive button:not(:disabled):hover { transform: translateY(-1px); }
+  #view-archive button:not(:disabled):active { transform: translateY(0); }
+  #view-archive button:not(.ghost):not(.danger):not(.btn-ai) { box-shadow: 0 2px 8px rgba(15,155,142,.28); }
+  #view-archive button:not(.ghost):not(.danger):not(.btn-ai):not(:disabled):hover {
+    background: var(--flare-deep); border-color: var(--flare-deep);
+    box-shadow: 0 5px 16px rgba(15,155,142,.34);
+  }
+  #view-archive button.btn-ai { background: var(--ai); border-color: var(--ai); color: #fff; box-shadow: 0 2px 8px rgba(106,88,216,.32); }
+  #view-archive button.btn-ai:not(:disabled):hover { background: var(--ai-deep); border-color: var(--ai-deep); box-shadow: 0 5px 16px rgba(106,88,216,.38); }
+  #view-archive button.btn-ai:disabled:hover { background: var(--ai); border-color: var(--ai); }
+  #view-archive button.danger { border-color: rgba(192,90,80,.55); }
+  #view-archive button.danger:not(.danger-hard):not(:disabled):hover { background: rgba(192,90,80,.10); color: var(--danger); border-color: var(--danger); }
+  #view-archive button.danger-hard { background: var(--danger-deep); border-color: var(--danger-deep); color: #fff; box-shadow: 0 2px 8px rgba(168,58,48,.30); }
+  #view-archive button.danger-hard:not(:disabled):hover { background: #8f2e25; border-color: #8f2e25; color: #fff; box-shadow: 0 5px 14px rgba(168,58,48,.36); }
+
+  /* -- 列表：表头沉着、斑马纹清晰、hover 明确、暂存行更强 -- */
+  #view-archive .arch-panel { padding: .3rem 1.05rem .95rem; margin-top: 1.4rem; }
+  #view-archive thead th { background: #f2f6f7; color: rgba(21,34,43,.62); border-bottom: 1px solid var(--line-strong); }
+  #view-archive tbody tr:nth-child(even) td { background: rgba(21,34,43,.030); }
+  #view-archive tbody tr:hover td { background: rgba(15,155,142,.10); }
+  #view-archive tbody tr.staged td { background: rgba(15,155,142,.11); }
+  #view-archive tbody tr.staged:hover td { background: rgba(15,155,142,.15); }
+  #view-archive .val-preview { color: rgba(21,34,43,.80); }
+  #view-archive .badge { background: #fff; border-color: rgba(21,34,43,.20); }
+
+  /* -- 暂存/批量操作条：更高对比，AI 条用紫色左边线呼应 -- */
+  #view-archive .bar-note { border-radius: 8px; }
+  #view-archive #ai-bar { border-left: 3px solid var(--ai); }
+  #view-archive #b-batchbar { border-left: 3px solid var(--flare); }
+
+  /* -- 分页条：计数醒目居左，控件聚右 -- */
+  #view-archive .pager-sec { margin-top: 1.1rem; padding: .75rem 1.15rem; }
+  #view-archive #pg-info {
+    margin-right: auto; font-family: var(--font-display); font-size: 1.02rem;
+    font-weight: 400; letter-spacing: .03em; color: var(--ink);
+  }
+  #view-archive .pager-sec button.ghost { border-color: var(--line-strong); color: var(--ink-dim); background: #fff; }
+
+  /* -- 项目名映射名录：紧凑行内编辑的面板（默认折叠） -- */
+  #view-archive details.sec { padding: 1rem 1.25rem 1.15rem; margin-top: 1.1rem; margin-bottom: 5rem; }
+  #view-archive details.sec summary { border-top: none; padding-top: 0; font-size: 1.05rem; }
+  #view-archive .dir-row { padding: .3rem 0; gap: .7rem; }
+  #view-archive .dir-slug { min-width: 150px; font-size: .68rem; }
+  #view-archive .dir-count { width: 56px; font-size: .6rem; }
+  #view-archive .dir-input { flex: 0 1 220px; padding: .32rem .5rem; font-size: .75rem; }
+
+  @media (max-width: 900px) {
+    .theme-tag { display: none; }
+    .archive-home { display: inline-flex; }
+    .brand-text small { display: none; }
+    .topbar { gap: .9rem; }
+    .legend { display: none; }
+    /* 三个页签在窄屏放不下：顶栏页签条横向滑动 */
+    .tabs.top { overflow-x: auto; scrollbar-width: none; }
+    .tabs.top::-webkit-scrollbar { display: none; }
+    .tab { white-space: nowrap; padding: .55rem .6rem; }
+    /* 归档工具台在窄屏下折行铺排 */
+    #view-archive .filters { padding: .9rem .9rem 1rem; }
+    #view-archive input[type=text]#f-q { flex: 1 1 100%; }
+    #view-archive .fgroup { flex: 1 1 44%; }
+    #view-archive .fgroup select, #view-archive .frow select { min-width: 0; width: 100%; }
+    #view-archive .fbar-groups .toggle { margin-left: 0; }
+    #view-archive .arch-panel { padding: .2rem .6rem .7rem; }
+    #view-archive .dir-slug { min-width: 0; flex: 1 1 auto; }
+    #view-archive .dir-input { flex: 1 1 100%; }
   }
 </style>
+<link rel="stylesheet" href="/insights.css">
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1>📚 EvolvMem 记忆图书馆</h1>
-    <span class="sub">按检索命中与重要性管理记忆，高频知识可考虑生成 skill</span>
-  </header>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div class="brand-text">
+      <b>EvolvMem 记忆图书馆</b>
+      <small>Galactic Memory Library · Live</small>
+    </div>
+  </div>
+  <!-- 视图页签 -->
+  <nav class="tabs top" aria-label="视图">
+    <button class="tab" data-view="dashboard">仪表盘<span class="tab-en"> Dashboard</span></button>
+    <button class="tab active" data-view="archive">归档整理<span class="tab-en"> Archive</span><span class="badge badge-pinned" id="tab-pending" style="display:none;"></span></button>
+    <button class="tab" data-view="insights">经验与进展</button>
+    <button class="tab" data-view="arch">系统架构<span class="tab-en"> Architecture</span></button>
+  </nav>
+  <a class="theme-tag" href="/" title="返回 Signal 首页">← 返回首页</a>
+</header>
 
-  <!-- 统计卡片 -->
-  <section class="stats" id="stats"></section>
+<main>
+  <!-- 仪表盘视图：星图 hero + 统计 + 分布 + 热度榜 -->
+  <div id="view-dashboard" style="display:none;">
+    <section class="hero" id="hero">
+      <canvas id="galaxy" aria-label="记忆银河：每个项目一座星系，每颗星一条记忆"></canvas>
+      <div class="stage-title">
+        <p class="kicker">Galactic Memory Field · Live</p>
+        <h1>记忆银河系<em>每颗星，都是一条记忆。</em></h1>
+      </div>
+      <div class="legend" aria-label="图例">
+        <div><i class="l-pin"></i>注入 PINNED</div>
+        <div><i class="l-nor"></i>RANK评分 NORMAL</div>
+        <div><i class="l-ref"></i>地下书库 REFERENCE</div>
+        <div><i class="l-dust"></i>流浪星尘 UNMAPPED</div>
+      </div>
+      <div class="core-label" id="coreLabel"><b id="coreTitle">记忆图书馆</b><small>Galactic Core / Memory Library</small></div>
+      <div class="stage-hint"><b>HOVER</b> 读取星体信号 · 星体大小与亮度 ∝ 检索命中 · 虚线 = 星系关联</div>
+      <div class="stage-ruler" aria-hidden="true"></div>
+      <div class="tooltip" id="tooltip" hidden></div>
+    </section>
 
-  <!-- 热门榜 -->
-  <section class="panel">
-    <h2 style="font-size:15px;margin-bottom:10px;">🔥 综合热度 Top 10（重要性 × 检索命中）</h2>
-    <div class="hot-list" id="hot"></div>
-  </section>
+    <!-- 统计卡片（可点击下钻到归档整理） -->
+    <section class="sec reveal">
+      <div class="sec-head">
+        <p class="kicker">Field Telemetry / 实时统计</p>
+        <h2>观测面板</h2>
+        <button class="ghost" id="d-refresh">↻ 刷新</button>
+      </div>
+      <section class="stats" id="stats"></section>
+    </section>
 
+    <section class="sec insights-dashboard">
+      <div class="sec-head">
+        <p class="kicker">Learning &amp; Continuity / 经验与进展</p>
+        <h2>记住做法，也记住依据。</h2>
+      </div>
+      <p class="insights-note" id="dash-insights-note">正在读取经验与项目进展…</p>
+      <div class="insights-overview" id="dash-insights-overview" aria-label="经验与进展统计"></div>
+    </section>
+
+    <!-- 分布概览 -->
+    <section class="sec reveal">
+      <div class="sec-head">
+        <p class="kicker">Distribution / 分布概览</p>
+        <h2>星图分布</h2>
+      </div>
+      <div class="dash-grid">
+        <div><h3 class="dash-h">层级分布</h3><div class="hot-list" id="dash-tier"></div></div>
+        <div><h3 class="dash-h">属性分布</h3><div class="hot-list" id="dash-attr"></div></div>
+        <div><h3 class="dash-h">项目映射 Top</h3><div class="hot-list" id="dash-proj"></div></div>
+      </div>
+    </section>
+
+    <!-- 热门榜 -->
+    <section class="sec tail reveal">
+      <div class="sec-head">
+        <p class="kicker">Top Recall / 综合热度</p>
+        <h2>热度 Top 10</h2>
+        <span class="sec-note">热度 = 重要性 × (检索命中 + 1)</span>
+      </div>
+      <div class="hot-list" id="hot"></div>
+    </section>
+  </div>
+
+  <!-- 归档整理视图：筛选 + 归属审核合并在同一个列表 -->
+  <div id="view-archive" style="display:flex;">
   <!-- 过滤器 -->
-  <section class="panel filters">
-    <label>状态</label>
-    <select id="f-status">
-      <option value="active" selected>active</option>
-      <option value="archived">archived</option>
-      <option value="all">全部</option>
-    </select>
-    <label>层级</label>
-    <select id="f-tier">
-      <option value="">全部</option>
-      <option value="pinned">注入</option>
-      <option value="normal">rank评分</option>
-      <option value="reference">地下书库</option>
-    </select>
-    <label>属性</label>
-    <select id="f-attribute"><option value="">全部</option></select>
-    <label>分类</label>
-    <select id="f-project"><option value="">全部</option></select>
-    <label>排序</label>
-    <select id="f-sort">
-      <option value="access_count" selected>检索命中</option>
-      <option value="last_accessed">最近访问</option>
-      <option value="importance">重要性</option>
-      <option value="created_at">创建时间</option>
-    </select>
-    <select id="f-order">
-      <option value="desc" selected>降序</option>
-      <option value="asc">升序</option>
-    </select>
-    <input type="text" id="f-q" placeholder="搜索 key / value …">
-    <label class="toggle"><input type="checkbox" id="f-skill"> 只看技能候选（≥3 次命中）</label>
-    <button id="btn-refresh">刷新</button>
+  <section class="sec">
+    <div class="sec-head">
+      <p class="kicker">Archive / 归档整理</p>
+      <h2>亮星档案室</h2>
+      <a class="archive-home" href="/">← 返回首页</a>
+    </div>
+    <div class="filters">
+      <div class="fbar-main">
+        <input type="text" id="f-q" placeholder="🔍 搜索 key / value …">
+        <button id="btn-refresh">刷新</button>
+        <button class="btn-ai" id="ai-organize" title="让 AI 给当前页的未映射记忆建议项目，确认后再保存">✨ AI 一键整理</button>
+        <span class="badge badge-proj" id="preset-chip" style="display:none;cursor:pointer;" title="点击清除该筛选"></span>
+      </div>
+      <div class="fbar-groups">
+        <span class="fgroup"><label>状态</label>
+          <select id="f-status">
+            <option value="active" selected>active</option>
+            <option value="archived">archived</option>
+            <option value="all">全部</option>
+          </select></span>
+        <span class="fgroup"><label>层级</label>
+          <select id="f-tier">
+            <option value="">全部</option>
+            <option value="pinned">注入</option>
+            <option value="normal">rank评分</option>
+            <option value="reference">地下书库</option>
+          </select></span>
+        <span class="fgroup"><label>属性</label>
+          <select id="f-attribute"><option value="">全部</option></select></span>
+        <span class="fgroup"><label>项目名映射</label>
+          <select id="f-attribution"><option value="">全部</option></select></span>
+        <span class="fgroup"><label>分类标签</label>
+          <select id="f-project"><option value="">全部</option></select></span>
+        <span class="fgroup"><label>审核</label>
+          <select id="f-review" title="归属审核状态；选中后自动包含 archived 条目">
+            <option value="">全部</option>
+            <option value="pending">待审核</option>
+            <option value="accepted">已采纳</option>
+            <option value="rejected">暂不归属</option>
+            <option value="not_required">无需审核</option>
+            <option value="none">无决议行</option>
+          </select></span>
+        <span class="fgroup"><label>排序</label>
+          <span class="frow">
+            <select id="f-sort">
+              <option value="access_count" selected>检索命中</option>
+              <option value="last_accessed">最近访问</option>
+              <option value="importance">重要性</option>
+              <option value="created_at">创建时间</option>
+            </select>
+            <select id="f-order">
+              <option value="desc" selected>降序</option>
+              <option value="asc">升序</option>
+            </select>
+          </span></span>
+        <label class="toggle"><input type="checkbox" id="f-skill"> 只看高频记忆（≥3 次命中）</label>
+      </div>
+    </div>
   </section>
 
-  <!-- 主表格 -->
-  <section class="panel table-scroll">
+  <!-- AI 整理暂存条：建议未保存，人工确认后批量落库 -->
+  <section class="bar-note" id="ai-bar" style="display:none;">
+    <span>✨ <b id="ai-count">0</b> 条映射待保存<span style="color:#b45309;">（AI 建议或手动修改，均未落库）</span></span>
+    <button id="ai-save">保存全部映射</button>
+    <button class="ghost" id="ai-discard">丢弃</button>
+    <span class="hint">青碧描边的下拉 = AI 建议值；确认无误再保存</span>
+  </section>
+
+  <!-- 批量映射条 -->
+  <section class="bar-note" id="b-batchbar" style="display:none;">
+    <span>已选 <b id="b-selcount">0</b> 条 →</span>
+    <select id="b-batch-project" class="proj-pick"></select>
+    <button id="b-batch-apply">批量映射</button>
+    <span class="hint">每条按各自 revision 单独提交，互不影响</span>
+  </section>
+
+  <!-- 主表格（筛选与归属审核共用；待审核行带信号列与暂不归属操作） -->
+  <section class="sec table-scroll arch-panel">
     <table>
       <thead>
         <tr>
+          <th class="sel"><input type="checkbox" id="b-all"></th>
           <th>ID</th><th>Key</th><th>Value</th><th>层级</th><th>属性</th>
-          <th>重要性</th><th style="min-width:130px;">检索命中</th><th>最近访问</th><th>操作</th>
+          <th>项目名映射</th><th>重要性</th><th style="min-width:130px;">检索命中</th><th>最近访问</th><th>操作</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
     </table>
     <div class="empty" id="empty" style="display:none;">没有符合条件的记忆</div>
   </section>
-</div>
+
+  <!-- 分页条 -->
+  <section class="sec pager-sec">
+    <span id="pg-info"></span>
+    <label>每页</label>
+    <select id="pg-size">
+      <option value="20">20</option>
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+    </select>
+    <button class="ghost small" id="pg-prev">上一页</button>
+    <button class="ghost small" id="pg-next">下一页</button>
+  </section>
+
+  <!-- 项目名映射名录：默认折叠，行内编辑 + 批量保存 + AI 一键填充 -->
+  <details class="sec tail" id="dir-panel">
+    <summary>📇 项目名映射（slug ↔ 中文显示名）<span id="dir-count"></span></summary>
+    <div id="dir-list" style="margin-top:12px;"></div>
+    <div class="bar-note" style="width:100%;margin:1rem 0 0;display:flex;">
+      <button class="ghost" id="dir-new">＋ 新建项目</button>
+      <button class="btn-ai" id="dir-ai">✨ AI 一键填充</button>
+      <button id="dir-save">保存全部</button>
+      <span id="dir-dirty"></span>
+    </div>
+  </details>
+  </div><!-- /view-archive -->
+
+  <div id="view-insights" style="display:none;">
+    <div class="insights-wrap">
+      <div class="insights-heading">
+        <div>
+          <p class="insights-kicker">Experience &amp; Continuity / 经验与进展</p>
+          <h1>让有效的做法，<em>有迹可循。</em></h1>
+          <p class="insights-lede">查看过去怎么做、在什么条件下成功，以及项目走到了哪一步。新的结果会留下依据，新的场景会形成自己的经验。</p>
+        </div>
+        <button class="ghost" id="insights-refresh">↻ 刷新</button>
+      </div>
+      <div class="insights-overview" id="insights-overview" aria-label="全库经验与进展统计"></div>
+      <p class="insights-note" id="insights-asof" role="status"></p>
+      <nav class="insights-tabs" aria-label="经验与进展内容">
+        <button class="insights-tab" data-insights-tab="experiences" aria-pressed="true">经验案例</button>
+        <button class="insights-tab" data-insights-tab="summaries" aria-pressed="false">项目摘要</button>
+        <button class="insights-tab" data-insights-tab="workstreams" aria-pressed="false">任务断点</button>
+      </nav>
+      <div class="insights-filters">
+        <label>搜索<input type="search" id="insights-query" maxlength="500" autocomplete="off"></label>
+        <label>项目<select id="insights-project"><option value="">全部项目</option></select></label>
+        <label>状态<select id="insights-status"></select></label>
+      </div>
+      <div class="insights-results-meta"><span class="insights-note" id="insights-context-note"></span><span class="insights-note" id="insights-count" role="status"></span></div>
+      <div class="insights-error" id="insights-error" role="alert" hidden></div>
+      <div class="insights-layout">
+        <div>
+          <div class="insights-list" id="insights-list" aria-label="记录列表"></div>
+          <div class="insights-pager">
+            <button class="ghost small" id="insights-prev" disabled>上一页</button>
+            <span id="insights-page">1 / 1</span>
+            <button class="ghost small" id="insights-next" disabled>下一页</button>
+          </div>
+        </div>
+        <article class="insights-detail" id="insights-detail" aria-label="记录详情"></article>
+      </div>
+    </div>
+  </div>
+
+  <!-- 系统架构视图：自包含交互式架构图，整框铺满剩余视口高度 -->
+  <div id="view-arch" style="display:none;">
+    <iframe id="arch-frame" src="/architecture" title="evolvmem 系统架构流程图" loading="lazy"></iframe>
+  </div>
+</main>
 
 <!-- 编辑弹窗 -->
 <div class="modal-mask" id="modal-mask">
@@ -223,12 +707,35 @@
   </div>
 </div>
 
+<!-- 新建项目弹窗（英文名 + 中文显示名） -->
+<div class="modal-mask" id="newproj-mask">
+  <div class="modal">
+    <h3>新建项目</h3>
+    <div class="row">
+      <label>英文规范名（slug，小写字母/数字开头，可含 . _ -；自动归属链路按它识别）</label>
+      <input type="text" id="np-name" placeholder="如 ai_purchase">
+    </div>
+    <div class="row">
+      <label>中文显示名（可留空，仅用于界面展示）</label>
+      <input type="text" id="np-display" placeholder="如 AI 采购" maxlength="32">
+    </div>
+    <div class="btns">
+      <button class="ghost" id="np-cancel">取消</button>
+      <button id="np-ok">创建</button>
+    </div>
+  </div>
+</div>
+
 <!-- 详情弹窗（二级页面） -->
 <div class="modal-mask" id="detail-mask">
   <div class="modal detail">
     <h3 id="d-key"></h3>
     <div class="detail-grid" id="d-meta"></div>
     <div class="detail-value" id="d-value"></div>
+    <div id="d-context" style="display:none;">
+      <h3 style="font-size:1rem;margin:10px 0 8px;">📎 来源上下文（判断归属用）</h3>
+      <div id="d-context-body" style="font-size:.82rem;">加载中…</div>
+    </div>
     <div class="btns" style="display:flex;justify-content:flex-end;">
       <button class="ghost" id="d-close">关闭</button>
     </div>
@@ -249,6 +756,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="/insights.js"></script>
 <script>
 (function () {
   "use strict";
@@ -288,18 +796,54 @@
   }
 
   // ---- 统计与热门榜 ----
+  let activePreset = "";  // today | skill | forgetting，点击统计卡下钻
+
   async function loadStats() {
     const s = await api("/api/stats");
     const cards = [
-      [s.total_active, "总记忆数 (active)", ""],
+      [s.today_new ?? 0, "今日新增记忆", "", "today"],
+      [s.forgetting_candidates ?? 0, "待归档候选", "gray", "forgetting"],
+      [s.skill_candidates ?? 0, "高频记忆（≥3 命中）", "", "skill"],
+      [s.pending_review || 0, "待审核", "gray", "__review"],
+      [s.total_active, "普通记忆数 (active)", ""],
       [s.by_tier.pinned || 0, "注入 (pinned)", ""],
       [s.by_tier.normal || 0, "rank评分 (normal)", "muted"],
       [s.by_tier.reference || 0, "地下书库 (reference)", "muted"],
+      [s.attributed_active || 0, "已映射项目", ""],
+      [(s.unattributed_active || 0), "未映射", "muted"],
       [s.never_accessed, "从未被调用", "gray"],
     ];
     $("stats").innerHTML = cards.map(c =>
-      `<div class="stat-card ${c[2]}"><div class="num">${c[0]}</div><div class="label">${c[1]}</div></div>`
+      `<div class="stat-card ${c[2]}" ${c[3] ? `data-preset="${c[3]}" style="cursor:pointer;" title="点击筛选该列表"` : ""}><div class="num">${c[0]}</div><div class="label">${c[1]}</div></div>`
     ).join("");
+
+    const pendingBadge = $("tab-pending");
+    if (s.pending_review > 0) {
+      pendingBadge.style.display = "";
+      pendingBadge.textContent = s.pending_review;
+    } else {
+      pendingBadge.style.display = "none";
+    }
+
+    // 仪表盘分布概览（与热门榜同款条形行）
+    const barRows = (entries, target) => {
+      const maxCnt = Math.max(1, ...entries.map(e => e[1]));
+      $(target).innerHTML = entries.length ? entries.map(([k, n]) =>
+        `<div class="hot-item">
+          <span class="k" title="${esc(k)}">${esc(k)}</span>
+          <span class="bar-wrap"><span class="bar" style="display:block;width:${(n / maxCnt * 100).toFixed(1)}%"></span></span>
+          <span class="cnt">${n}</span>
+        </div>`
+      ).join("") : '<div class="empty">暂无数据</div>';
+    };
+    const TIER_LABEL = { pinned: "注入 pinned", normal: "rank评分 normal", reference: "地下书库 reference" };
+    barRows(Object.entries(s.by_tier || {}).map(([k, v]) => [TIER_LABEL[k] || k, v]), "dash-tier");
+    barRows(Object.entries(s.by_attribute || {}).sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => [attrCN(k), v]), "dash-attr");
+    const projEntries = Object.entries(s.by_attribution || {}).sort((a, b) => b[1] - a[1]).slice(0, 8)
+      .map(([k, v]) => [projDisplay[k] ? `${projDisplay[k]}（${k}）` : k, v]);
+    if ((s.unattributed_active || 0) > 0) projEntries.push(["（未映射）", s.unattributed_active]);
+    barRows(projEntries, "dash-proj");
 
     const heat = t => t.importance * (t.access_count + 1);
     const max = Math.max(1, ...s.top_accessed.map(heat));
@@ -329,6 +873,197 @@
   }
 
   let allProjects = [];
+  let registryProjects = [];  // 项目注册表（归属筛选 / 审核下拉共用）
+  let projDisplay = {};       // 规范名 -> 中文显示名
+
+  // 项目展示名：有中文名时显示「中文（slug）」，否则原样
+  function projLabel(p) {
+    return p.display_name ? `${p.display_name}（${p.project}）` : p.project;
+  }
+  function projName(slug) {
+    const d = projDisplay[slug];
+    return d ? `${d}（${slug}）` : slug;
+  }
+
+  // ---- 项目注册表：归属筛选 + 审核下拉 ----
+  async function loadProjects() {
+    const payload = await api("/api/projects");
+    registryProjects = payload.projects.filter(p => p.status === "active");
+    projDisplay = {};
+    registryProjects.forEach(p => { if (p.display_name) projDisplay[p.project] = p.display_name; });
+    const sel = $("f-attribution"), cur = sel.value;
+    sel.innerHTML = '<option value="">全部</option>' +
+      '<option value="__none__">（未归属）</option>' +
+      registryProjects.map(p =>
+        `<option value="${esc(p.project)}">${esc(projLabel(p))} (${p.active_items})</option>`
+      ).join("");
+    sel.value = cur;
+    renderProjectDirectory();
+  }
+
+  // 审核用的项目下拉（含新建入口）
+  function projectOptions() {
+    const opts = ['<option value="">（选择项目）</option>']
+      .concat(registryProjects.map(p =>
+        `<option value="${esc(p.project)}">${esc(projLabel(p))}</option>`))
+      .concat(['<option value="__new__">＋ 新建项目…</option>']);
+    const html = opts.join("");
+    return html;
+  }
+
+  // 新建项目弹窗：返回 {name, display} 或 null（取消）
+  function askNewProject() {
+    return new Promise((resolve) => {
+      $("np-name").value = "";
+      $("np-display").value = "";
+      $("newproj-mask").classList.add("open");
+      setTimeout(() => $("np-name").focus(), 50);
+      const done = (val) => {
+        $("newproj-mask").classList.remove("open");
+        $("np-ok").onclick = $("np-cancel").onclick = $("newproj-mask").onclick = null;
+        resolve(val);
+      };
+      $("np-ok").onclick = () => {
+        const name = $("np-name").value.trim();
+        if (!name) { toast("请填写英文规范名"); return; }
+        done({ name, display: $("np-display").value.trim() });
+      };
+      $("np-cancel").onclick = () => done(null);
+      $("newproj-mask").onclick = (e) => {
+        if (e.target === $("newproj-mask")) done(null);
+      };
+    });
+  }
+
+  // 下拉选中「新建项目…」时的统一处理：弹窗填英文名+中文名，注册后重写所有项目下拉
+  async function handleProjectPick(selectEl, onDone) {
+    if (selectEl.value !== "__new__") return true;
+    const fallback = selectEl.dataset.current || "";
+    const picked = await askNewProject();
+    if (!picked) {
+      selectEl.value = fallback;
+      return false;
+    }
+    try {
+      await api("/api/projects/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: picked.name, display_name: picked.display }),
+      });
+      await loadProjects();
+      selectEl.innerHTML = projectOptions();
+      selectEl.value = picked.name;
+      toast("已注册项目: " + picked.name +
+            (picked.display ? `（${picked.display}）` : ""));
+      if (onDone) onDone(picked.name);
+      return true;
+    } catch (e) {
+      toast("注册失败: " + e.message);
+      selectEl.value = fallback;
+      return false;
+    }
+  }
+
+  // ---- 项目名映射名录：紧凑行内编辑 + 批量保存 + AI 一键填充 ----
+  function renderProjectDirectory() {
+    const box = $("dir-list");
+    if (!box) return;
+    $("dir-count").textContent = registryProjects.length
+      ? `（${registryProjects.length} 个项目，展开编辑）` : "";
+    if (!registryProjects.length) {
+      box.innerHTML = '<div class="empty">注册表为空</div>';
+      return;
+    }
+    box.innerHTML = registryProjects.map(p => `
+      <div class="dir-row">
+        <span class="dir-slug" title="规范名">${esc(p.project)}</span>
+        <span class="dir-count">${p.active_items} 条</span>
+        <input type="text" class="dir-input" data-slug="${esc(p.project)}"
+               data-orig="${esc(p.display_name)}"
+               value="${esc(p.display_name)}" placeholder="中文显示名（可留空）" maxlength="32">
+      </div>`).join("");
+    updateDirDirty();
+  }
+
+  function updateDirDirty() {
+    let n = 0;
+    document.querySelectorAll(".dir-input").forEach(input => {
+      const dirty = input.value.trim() !== input.dataset.orig;
+      input.classList.toggle("dirty", dirty);
+      if (dirty) n++;
+    });
+    $("dir-dirty").textContent = n ? `${n} 项未保存` : "";
+  }
+  $("dir-list").addEventListener("input", updateDirDirty);
+
+  // 批量保存：逐条 CAS，互不影响
+  $("dir-save").addEventListener("click", async () => {
+    const items = [];
+    document.querySelectorAll(".dir-input").forEach(input => {
+      if (input.value.trim() === input.dataset.orig) return;
+      const p = registryProjects.find(x => x.project === input.dataset.slug);
+      if (p) items.push({
+        project: p.project, display_name: input.value.trim(),
+        expected_revision: p.revision,
+      });
+    });
+    if (!items.length) { toast("没有改动"); return; }
+    try {
+      const res = await api("/api/projects/display_names", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      toast(`显示名保存完成：成功 ${res.saved} 项，失败 ${res.failed} 项`);
+      await refresh();
+    } catch (e) { toast("保存失败: " + e.message); }
+  });
+
+  // 名录面板的「新建项目」入口（与下拉里的 ＋新建项目 共用弹窗）
+  $("dir-new").addEventListener("click", async () => {
+    const picked = await askNewProject();
+    if (!picked) return;
+    try {
+      await api("/api/projects/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: picked.name, display_name: picked.display }),
+      });
+      toast("已注册项目: " + picked.name + (picked.display ? `（${picked.display}）` : ""));
+      await refresh();
+      $("dir-panel").open = true;
+    } catch (e) { toast("注册失败: " + e.message); }
+  });
+
+  // AI 一键填充：deepseek-v4-flash 按 slug + 样本记忆生成中文名，填入行待人工确认
+  $("dir-ai").addEventListener("click", async () => {
+    const btn = $("dir-ai");
+    btn.disabled = true;
+    btn.textContent = "✨ 生成中…";
+    try {
+      const res = await api("/api/projects/suggest_display_names", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const names = res.names || {};
+      let filled = 0;
+      document.querySelectorAll(".dir-input").forEach(input => {
+        const name = names[input.dataset.slug];
+        if (name && input.value.trim() !== name) {
+          input.value = name;
+          filled++;
+        }
+      });
+      updateDirDirty();
+      toast(filled ? `AI 已填 ${filled} 项，确认后点「保存全部」` : "AI 没有给出新建议");
+    } catch (e) {
+      toast("AI 填充失败: " + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "✨ AI 一键填充";
+    }
+  });
 
   // ---- 列表 ----
   let listCache = {};
@@ -341,20 +1076,85 @@
     return "heat-4";
   }
 
+  // 统计卡下钻：今日新增 / 待归档候选 / skill 候选；待审核卡跳审核页
+  const PRESET_LABEL = { today: "今日新增", skill: "高频记忆", forgetting: "待归档候选" };
+
+  function updatePresetChip() {
+    const chip = $("preset-chip");
+    if (activePreset) {
+      chip.style.display = "";
+      chip.textContent = "预设：" + PRESET_LABEL[activePreset] + " ✕";
+    } else {
+      chip.style.display = "none";
+    }
+  }
+  $("preset-chip").addEventListener("click", () => {
+    activePreset = "";
+    pageNum = 1;
+    updatePresetChip();
+    loadList();
+  });
+  $("stats").addEventListener("click", async (e) => {
+    const card = e.target.closest("[data-preset]");
+    if (!card) return;
+    const p = card.dataset.preset;
+    if (p === "__review") {
+      // 待审核 = 归档整理页 + 审核筛选
+      $("f-review").value = "pending";
+      showMain("archive");
+      pageNum = 1;
+      try { await loadList(); } catch (err) { toast("加载失败: " + err.message); }
+      return;
+    }
+    activePreset = (activePreset === p) ? "" : p;  // 再点同一张卡取消筛选
+    updatePresetChip();
+    showMain("archive");
+    pageNum = 1;
+    loadList();
+  });
+
+  // 分页状态
+  let pageNum = 1, pageSize = 50, pageTotal = 0;
+
   function currentParams() {
+    const review = $("f-review").value;
     return new URLSearchParams({
-      status: $("f-status").value,
+      // 审核视图必须包含 archived 条目（待审队列里有已归档记忆）
+      status: review ? "all" : $("f-status").value,
       tier: $("f-tier").value,
       attribute: $("f-attribute").value,
       project: $("f-project").value,
+      attribution: $("f-attribution").value,
+      review,
+      preset: activePreset,
       q: $("f-q").value.trim(),
       sort: $("f-sort").value,
       order: $("f-order").value,
+      page: pageNum,
+      page_size: pageSize,
     });
   }
 
+  // 浏览列表的项目映射下拉：无归属时给占位项；当前项目已归档时补一个临时项
+  function memProjOptions(current) {
+    const names = registryProjects.map(p => p.project);
+    const opts = [];
+    if (!current) opts.push('<option value="" selected disabled>（未映射）</option>');
+    if (current && !names.includes(current)) {
+      opts.push(`<option value="${esc(current)}">${esc(projDisplay[current] || current)}</option>`);
+    }
+    registryProjects.forEach(p =>
+      opts.push(`<option value="${esc(p.project)}">${esc(projLabel(p))}</option>`));
+    opts.push('<option value="__new__">＋ 新建项目…</option>');
+    return opts.join("");
+  }
+
   async function loadList() {
-    const rows = await api("/api/memories?" + currentParams());
+    pendingChanges = {};  // 列表重载即丢弃未落库的暂存（AI 流程在加载后重敷）
+    updateAiBar();
+    const payload = await api("/api/memories?" + currentParams());
+    const rows = payload.rows;
+    pageTotal = payload.total;
     listCache = {};
     rows.forEach(r => listCache[r.id] = r);
     const skillOnly = $("f-skill").checked;
@@ -363,25 +1163,39 @@
     $("empty").style.display = filtered.length ? "none" : "block";
     $("tbody").innerHTML = filtered.map(r => {
       const skill = r.access_count >= 3
-        ? '<span class="badge badge-skill">高频，可考虑生成 skill</span>' : "";
+        ? '<span class="badge badge-skill" title="命中 ≥3 次；检索频率不代表已验证有效">高频记忆</span>' : "";
+      const isPending = r.review_state === "pending";
       const ops = [];
+      // 单行保存：有暂存改动时亮出（操作栏第一位，紫色实心）
+      ops.push(`<button class="small mem-save" data-act="save_staged" data-id="${r.id}" style="display:none;" title="保存这一条的映射改动">保存</button>`);
       ops.push(`<button class="ghost small" data-act="raw" data-id="${r.id}">全量</button>`);
       ops.push(`<button class="ghost small" data-act="edit" data-id="${r.id}">编辑</button>`);
+      if (isPending && r.resolution_revision != null) {
+        ops.push(`<button class="ghost small" data-act="reject" data-id="${r.id}" title="不属于任何项目：保持未映射并离开待审核（之后仍可改派）">暂不归属</button>`);
+      }
       if (r.status === "active") {
         ops.push(`<button class="ghost small" data-act="archive" data-id="${r.id}">软删除</button>`);
       } else if (r.status === "archived") {
         ops.push(`<button class="ghost small" data-act="restore" data-id="${r.id}">恢复</button>`);
       }
       ops.push(`<button class="danger small" data-act="delete" data-id="${r.id}">删除</button>`);
-      ops.push(`<button class="danger small" data-act="hard_delete" data-id="${r.id}">彻底删除</button>`);
+      ops.push(`<button class="danger danger-hard small" data-act="hard_delete" data-id="${r.id}">彻底删除</button>`);
       const val = esc(r.value);
-      const short = r.value.length > 80 ? esc(r.value.slice(0, 80)) + "…" : val;
+      const short = r.value.length > 160 ? esc(r.value.slice(0, 160)) + "…" : val;
+      // 项目名映射：有决议行的行可直接改派；无决议行的行只读
+      const projCell = r.resolution_revision != null && r.item_id != null
+        ? `<select class="proj-pick mem-proj" data-id="${r.id}" data-current="${esc(r.project)}">${memProjOptions(r.project)}</select>`
+        : (r.project
+            ? `<span class="badge badge-proj" title="项目名映射: ${esc(r.project)}（无决议行，不可改派）">${esc(projDisplay[r.project] || r.project)}</span>`
+            : '<span class="badge badge-noproj" title="无决议行，不可改派">未映射</span>');
       return `<tr data-id="${r.id}">
+        <td class="sel"><input type="checkbox" class="b-check" data-id="${r.id}" ${bselected.has(r.id) ? "checked" : ""}></td>
         <td>${r.id}</td>
         <td class="key" title="${val}">${esc(r.key)}${skill}</td>
         <td class="val"><span class="val-preview">${short}</span></td>
         <td><span class="badge badge-${esc(r.tier)}" title="${esc(r.tier)}">${tierCN(r.tier)}</span></td>
         <td>${r.attribute ? `<span class="badge badge-cat" title="${esc(r.attribute)}">${esc(attrCN(r.attribute))}</span>` : ""}</td>
+        <td>${projCell}</td>
         <td>${Number(r.importance).toFixed(1)}</td>
         <td><div class="freq">
           <span class="n">${r.access_count}</span>
@@ -391,11 +1205,86 @@
         <td class="actions">${ops.join("")}</td>
       </tr>`;
     }).join("");
+    // 全选框与 bselected 集合保持一致（批量后集合清空即自动取消勾选）
+    $("b-all").checked = filtered.length > 0 &&
+      filtered.every(r => bselected.has(r.id));
+    updateBrowseBatchbar();
+    updatePager();
   }
+
+  // ---- 分页 ----
+  function updatePager() {
+    const pages = Math.max(1, Math.ceil(pageTotal / pageSize));
+    $("pg-info").textContent = `共 ${pageTotal} 条 · 第 ${pageNum}/${pages} 页`;
+    $("pg-prev").disabled = pageNum <= 1;
+    $("pg-next").disabled = pageNum >= pages;
+  }
+  $("pg-prev").onclick = () => { if (pageNum > 1) { pageNum--; loadList(); } };
+  $("pg-next").onclick = () => {
+    if (pageNum * pageSize < pageTotal) { pageNum++; loadList(); }
+  };
+  $("pg-size").addEventListener("change", () => {
+    pageSize = Number($("pg-size").value);
+    pageNum = 1;
+    loadList();
+  });
+
+  // ---- 浏览视图的批量映射 ----
+  const bselected = new Set();  // 勾选的 legacy id
+
+  function updateBrowseBatchbar() {
+    const n = bselected.size;
+    $("b-batchbar").style.display = n > 0 ? "flex" : "none";
+    $("b-selcount").textContent = n;
+    const bp = $("b-batch-project");
+    if (!bp.options.length) bp.innerHTML = projectOptions();
+  }
+
+  $("b-all").addEventListener("change", () => {
+    bselected.clear();
+    if ($("b-all").checked) {
+      Object.values(listCache).forEach(r => bselected.add(r.id));
+    }
+    loadList();
+  });
+
+  $("b-batch-project").addEventListener("change", () =>
+    handleProjectPick($("b-batch-project")));
+
+  $("b-batch-apply").addEventListener("click", async () => {
+    const project = $("b-batch-project").value;
+    if (!project || project === "__new__") { toast("先选择批量映射的项目"); return; }
+    const items = [];
+    let skipped = 0;
+    [...bselected].forEach(id => {
+      const r = listCache[id];
+      if (r && r.item_id != null && r.resolution_revision != null) {
+        items.push({ item_id: r.item_id, expected_revision: r.resolution_revision });
+      } else {
+        skipped++;
+      }
+    });
+    if (!items.length) { toast("选中的条目都没有决议行，请在审核页处理"); return; }
+    if (!confirm(`把选中的 ${items.length} 条映射到「${projDisplay[project] || project}」？`)) return;
+    try {
+      const res = await api("/api/resolutions/batch_accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, items }),
+      });
+      toast(`批量映射完成：成功 ${res.accepted} 条，失败 ${res.failed} 条` +
+            (skipped ? `，跳过 ${skipped} 条（无决议行）` : ""));
+      bselected.clear();
+      await refresh();
+    } catch (e) { toast("批量映射失败: " + e.message); }
+  });
 
   async function refresh() {
     try {
-      await Promise.all([loadStats(), loadList()]);
+      await loadProjects();  // 项目下拉/徽标依赖注册表，先加载
+      await loadStats();
+      await window.EvolvMemInsights.refreshOverview();
+      await loadActive();
     } catch (e) {
       toast("加载失败: " + e.message);
     }
@@ -408,6 +1297,7 @@
     const meta = [
       ["层级", `${tierCN(r.tier)} (${r.tier})`],
       ["属性", attrCN(r.attribute) + (r.attribute ? ` (${r.attribute})` : "")],
+      ["项目名映射", r.project ? projName(r.project) : "—"],
       ["标签", r.tags || "—"],
       ["重要性", Number(r.importance).toFixed(1)],
       ["检索命中", r.access_count],
@@ -421,6 +1311,45 @@
       `<div><div class="k">${esc(k)}</div><div>${esc(v)}</div></div>`).join("");
     $("d-value").textContent = r.value;
     $("detail-mask").classList.add("open");
+    loadContextIntoDetail(r.id);
+  }
+
+  // 来源上下文：会话摘要 + 同会话兄弟记忆（整理归属时单看原子记忆判读不了）
+  async function loadContextIntoDetail(id) {
+    const box = $("d-context"), body = $("d-context-body");
+    box.style.display = "";
+    body.textContent = "加载中…";
+    try {
+      const c = await api(`/api/memory/${id}/context`);
+      if (!c.source_session) {
+        body.innerHTML = '<div style="color:#8b8b9e;">这条记忆没有会话来源信息</div>';
+        return;
+      }
+      const summaryHtml = c.session_summary
+        ? `<div class="detail-value" style="max-height:18vh;margin-bottom:10px;">${esc(c.session_summary.value)}</div>`
+        : '<div style="color:#8b8b9e;font-size:12px;margin-bottom:8px;">该会话没有摘要条目</div>';
+      const sibsHtml = c.siblings.length
+        ? c.siblings.map(s =>
+            `<div style="padding:5px 0;border-bottom:1px solid #f3f4f6;">
+              <div style="font-size:12px;">
+                <b>#${s.id}</b> ${esc(s.key)}
+                ${s.project
+                  ? `<span class="badge badge-proj">${esc(projDisplay[s.project] || s.project)}</span>`
+                  : '<span class="badge badge-noproj">未映射</span>'}
+                ${s.status !== "active" ? `<span class="badge badge-noproj">${esc(s.status)}</span>` : ""}
+              </div>
+              <div style="color:#55556b;font-size:12px;">${esc(s.preview)}</div>
+            </div>`).join("")
+        : '<div style="color:#8b8b9e;font-size:12px;">同会话没有其他记忆</div>';
+      body.innerHTML =
+        `<div style="font-size:12px;color:#8b8b9e;margin-bottom:6px;">会话 ${esc(c.source_session)}</div>`
+        + `<div style="font-size:12px;color:#8b8b9e;margin-bottom:4px;">这次会话在干什么（会话摘要）：</div>`
+        + summaryHtml
+        + `<div style="font-size:12px;color:#8b8b9e;margin:8px 0 4px;">同会话提取的兄弟记忆（${c.siblings.length} 条）：</div>`
+        + sibsHtml;
+    } catch (e) {
+      body.textContent = "加载失败: " + e.message;
+    }
   }
   $("d-close").onclick = () => $("detail-mask").classList.remove("open");
   $("detail-mask").addEventListener("click", (e) => {
@@ -445,6 +1374,148 @@
     } catch (e) { toast("复制失败: " + e.message); }
   };
 
+  // ---- AI 一键整理：建议暂存，人工确认后才批量落库 ----
+  let pendingChanges = {};  // legacy_id -> 暂存的项目 slug（AI 建议或手动改动，均未落库）
+
+  function updateAiBar() {
+    const n = Object.keys(pendingChanges).length;
+    $("ai-bar").style.display = n ? "flex" : "none";
+    $("ai-count").textContent = n;
+  }
+
+  function applyStaging() {
+    // 把建议值写进可见下拉（程序赋值不触发 change，不会自动保存）：
+    // 整行高亮 + 下拉描边 + 操作栏亮出该行「保存」按钮
+    Object.entries(pendingChanges).forEach(([id, project]) => {
+      const sel = document.querySelector(`#tbody select.mem-proj[data-id="${id}"]`);
+      if (sel && [...sel.options].some(o => o.value === project)) {
+        sel.value = project;
+        sel.classList.add("ai-staged");
+        sel.closest("tr").classList.add("staged");
+        const saveBtn = document.querySelector(`#tbody button.mem-save[data-id="${id}"]`);
+        if (saveBtn) saveBtn.style.display = "";
+      }
+    });
+    updateAiBar();
+  }
+
+  $("ai-organize").addEventListener("click", async () => {
+    // 整理目标：当前页里未映射的记忆
+    const targets = Object.values(listCache).filter(r => !r.project);
+    if (!targets.length) { toast("当前页没有未映射的记忆"); return; }
+    const btn = $("ai-organize");
+    btn.disabled = true;
+    btn.textContent = "✨ 整理中…";
+    try {
+      const res = await api("/api/memories/organize_suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ legacy_ids: targets.map(r => r.id) }),
+      });
+      // AI 造的新项目先注册，下拉里才有对应选项
+      for (const slug of (res.new_projects || [])) {
+        await api("/api/projects/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: slug }),
+        });
+      }
+      if ((res.new_projects || []).length) await loadProjects();
+      const suggestions = res.assignments || {};
+      if (!Object.keys(suggestions).length) {
+        toast("AI 没把握，未给出建议");
+        return;
+      }
+      await loadList();  // 重建下拉（带新注册项目；会清空旧暂存）
+      pendingChanges = suggestions;
+      applyStaging();
+      const keyN = res.key_decided || 0;
+      const aiN = Object.keys(suggestions).length - keyN;
+      toast(`整理完成：${keyN} 条按 key 直判，${aiN} 条 AI 建议——过目后可逐行保存或「保存全部映射」`);
+    } catch (e) {
+      toast("AI 整理失败: " + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "✨ AI 一键整理";
+    }
+  });
+
+  $("ai-discard").addEventListener("click", () => {
+    pendingChanges = {};
+    updateAiBar();
+    loadList();
+  });
+
+  $("ai-save").addEventListener("click", async () => {
+    // 按项目分组，复用批量采纳（逐条 CAS）
+    const byProject = {};
+    let skipped = 0;
+    Object.entries(pendingChanges).forEach(([id, project]) => {
+      const r = listCache[id];
+      if (r && r.item_id != null && r.resolution_revision != null) {
+        (byProject[project] = byProject[project] || []).push({
+          item_id: r.item_id, expected_revision: r.resolution_revision,
+        });
+      } else {
+        skipped++;
+      }
+    });
+    const groups = Object.entries(byProject);
+    if (!groups.length) { toast("暂存的建议都无法保存（无决议行）"); return; }
+    if (!confirm(`保存这 ${Object.keys(pendingChanges).length} 条映射变更？`)) return;
+    let okCount = 0, failCount = 0;
+    try {
+      for (const [project, items] of groups) {
+        const res = await api("/api/resolutions/batch_accept", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project, items }),
+        });
+        okCount += res.accepted;
+        failCount += res.failed;
+      }
+      toast(`映射已保存：成功 ${okCount} 条，失败 ${failCount} 条` +
+            (skipped ? `，跳过 ${skipped} 条（无决议行）` : ""));
+      pendingChanges = {};
+      updateAiBar();
+      await refresh();
+    } catch (e) { toast("保存失败: " + e.message); }
+  });
+
+  // 行内改派项目名映射 / 勾选（change 事件；点击操作在下面的 click 监听里）
+  $("tbody").addEventListener("change", async (e) => {
+    const cb = e.target.closest(".b-check");
+    if (cb) {
+      const id = Number(cb.dataset.id);
+      cb.checked ? bselected.add(id) : bselected.delete(id);
+      updateBrowseBatchbar();
+      return;
+    }
+    const sel = e.target.closest("select.mem-proj");
+    if (!sel) return;
+    const r = listCache[sel.dataset.id];
+    if (!r) return;
+    const ok = await handleProjectPick(sel);  // 「＋ 新建项目…」流程（注册后立即返回新值）
+    if (!ok) { sel.value = r.project; return; }
+    const project = sel.value;
+    const saveBtn = document.querySelector(`#tbody button.mem-save[data-id="${sel.dataset.id}"]`);
+    if (!project || project === r.project) {
+      // 改回原始值 = 取消这条的暂存
+      delete pendingChanges[sel.dataset.id];
+      sel.classList.remove("ai-staged");
+      sel.closest("tr").classList.remove("staged");
+      if (saveBtn) saveBtn.style.display = "none";
+      updateAiBar();
+      return;
+    }
+    // 手动改动只暂存不落库：整行高亮 + 紫框标记 + 操作栏「保存」按钮 + 顶部暂存条
+    pendingChanges[sel.dataset.id] = project;
+    sel.classList.add("ai-staged");
+    sel.closest("tr").classList.add("staged");
+    if (saveBtn) saveBtn.style.display = "";
+    updateAiBar();
+  });
+
   $("tbody").addEventListener("click", async (e) => {
     const prev = e.target.closest(".val-preview");
     if (prev) {
@@ -458,6 +1529,34 @@
     try {
       if (act === "raw") openRaw(listCache[id]);
       else if (act === "edit") openModal(listCache[id]);
+      else if (act === "save_staged") {
+        // 单独保存这一行的映射（AI 建议或手动改动后的当前下拉值）
+        const r = listCache[id];
+        const sel = document.querySelector(`#tbody select.mem-proj[data-id="${id}"]`);
+        const project = sel ? sel.value : "";
+        if (!r || r.resolution_revision == null || !project) return;
+        await api(`/api/resolution/${r.item_id}/accept`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project, expected_revision: r.resolution_revision }),
+        });
+        delete pendingChanges[id];
+        updateAiBar();
+        toast(`#${id} 已映射到 ${projDisplay[project] || project}`);
+        refresh();
+      }
+      else if (act === "reject") {
+        const r = listCache[id];
+        if (!r || r.resolution_revision == null) return;
+        if (!confirm(`确认 #${id} 暂不归属？\n保持未映射、离开待审核（之后仍可改派项目）。`)) return;
+        await api(`/api/resolution/${r.item_id}/reject`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ expected_revision: r.resolution_revision }),
+        });
+        toast("已标记为暂不归属");
+        refresh();
+      }
       else if (act === "archive") { await post(id, "archive"); toast("已软删除"); refresh(); }
       else if (act === "restore") { await post(id, "restore"); toast("已恢复"); refresh(); }
       else if (act === "delete") {
@@ -531,17 +1630,545 @@
     } catch (e) { toast("保存失败: " + e.message); }
   };
 
-  // ---- 过滤器事件 ----
-  ["f-status", "f-tier", "f-attribute", "f-project", "f-sort", "f-order", "f-skill"]
-    .forEach(id => $(id).addEventListener("change", loadList));
+  // ---- 过滤器事件（任何筛选变化回到第一页） ----
+  ["f-status", "f-tier", "f-attribute", "f-project", "f-attribution", "f-review", "f-sort", "f-order", "f-skill"]
+    .forEach(id => $(id).addEventListener("change", () => { pageNum = 1; loadList(); }));
   let debounce;
   $("f-q").addEventListener("input", () => {
     clearTimeout(debounce);
-    debounce = setTimeout(loadList, 250);
+    debounce = setTimeout(() => { pageNum = 1; loadList(); }, 250);
   });
   $("btn-refresh").onclick = refresh;
 
+  // ---- 一级导航：仪表盘 / 归档整理（筛选与归属审核合并在同一列表） ----
+  let mainView = "archive";
+
+  function showMain(view) {
+    mainView = view;
+    document.querySelectorAll(".tabs.top .tab").forEach(b =>
+      b.classList.toggle("active", b.dataset.view === view));
+    $("view-dashboard").style.display = view === "dashboard" ? "flex" : "none";
+    $("view-archive").style.display = view === "archive" ? "flex" : "none";
+    $("view-arch").style.display = view === "arch" ? "flex" : "none";
+    $("view-insights").style.display = view === "insights" ? "flex" : "none";
+  }
+
+  async function loadActive() {
+    // 只加载当前可见页的数据：仪表盘只拉统计，归档整理拉列表
+    if (mainView === "archive") await loadList();
+    if (mainView === "insights") await window.EvolvMemInsights.load();
+  }
+
+  document.querySelectorAll(".tabs.top .tab").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      showMain(btn.dataset.view);
+      try { await loadActive(); } catch (e) { toast("加载失败: " + e.message); }
+    });
+  });
+  document.addEventListener("evolvmem:open-insights", event => {
+    showMain("insights");
+    window.EvolvMemInsights.open(event.detail.kind, event.detail.status);
+    window.scrollTo({top: 0});
+  });
+  $("d-refresh").onclick = refresh;
+
   refresh();
+
+
+})();
+</script>
+
+<script>
+/* ===== 亮色银河星图 + 数字 count-up + scroll-reveal（纯新增，不触碰上面的业务逻辑） ===== */
+(function () {
+  "use strict";
+
+  /* ---- 统计数字 count-up：#stats 每次重渲染后滚动数字 ---- */
+  const statsBox = document.getElementById("stats");
+  if (statsBox) {
+    const animateNum = (el) => {
+      const target = parseInt(el.textContent, 10);
+      if (isNaN(target) || target <= 0) return;
+      const t0 = performance.now(), dur = 900;
+      const step = (now) => {
+        const k = Math.min(1, (now - t0) / dur);
+        const e = 1 - Math.pow(1 - k, 3);
+        el.textContent = Math.round(target * e);
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    };
+    new MutationObserver(() => {
+      statsBox.querySelectorAll(".num").forEach(animateNum);
+    }).observe(statsBox, { childList: true });  // 不监听 subtree，动画改写 textContent 不会回环触发
+  }
+
+  /* ---- scroll-reveal：进视口加 .in ---- */
+  const io = new IntersectionObserver((es) => {
+    es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+  }, { threshold: 0.06 });
+  document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+
+  /* ================= 银河星图 ================= */
+  const stage = document.getElementById("hero");
+  const canvas = document.getElementById("galaxy");
+  if (!stage || !canvas) return;
+  const ctx = canvas.getContext("2d");
+  const tooltip = document.getElementById("tooltip");
+  const coreLabel = document.getElementById("coreLabel");
+  const coreTitle = document.getElementById("coreTitle");
+  const h01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+  const TIER_ZH = { pinned: "注入", normal: "rank评分", reference: "地下书库" };
+  const TILT = 0.62;
+  const INK_RGB = "21,34,43", ACCENT_RGB = "15,155,142";
+
+  let W = 0, H = 0, DPR = 1, base = 1, cx = 0, cy = 0;
+  let diskAngle = 0;
+  const bootT = performance.now();
+  let t = 0, last = bootT;
+  const par = { x: 0, y: 0, tx: 0, ty: 0 };
+  let hoverStar = null, hoverSys = null;
+  let built = false;
+
+  const systems = [], stars = [], wanderers = [], LINKS = [];
+  let sysBySlug = {}, labelOrder = [];
+
+  function resizeCanvas() {
+    const r = stage.getBoundingClientRect();
+    if (r.width < 10) return;
+    DPR = Math.min(2, window.devicePixelRatio || 1);
+    W = r.width; H = r.height;
+    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+    base = Math.min(W, H) / 1040;
+    cx = W / 2; cy = H * 0.57;
+  }
+  new ResizeObserver(resizeCanvas).observe(stage);
+  resizeCanvas();
+
+  /* ---- 数据：全部走实时 API ---- */
+  Promise.all([
+    fetch("/api/stats").then(r => r.json()),
+    fetch("/api/projects").then(r => r.json()),
+    fetch("/api/memories?status=active&sort=access_count&order=desc&page=1&page_size=200").then(r => r.json()),
+  ]).then(([s, p, m]) => build(s, p, m)).catch(() => build(null, { projects: [] }, { rows: [] }));
+
+  function build(stats, projPayload, memPayload) {
+    const PROJECTS = (projPayload.projects || []).filter(p => p.status === "active" && p.active_items > 0);
+    const MEMS = (memPayload.rows || []);
+    const disp = {};
+    PROJECTS.forEach(p => { if (p.display_name) disp[p.project] = p.display_name; });
+    const dispName = (slug) => disp[slug] || slug;
+    if (stats && coreTitle) coreTitle.textContent = "记忆图书馆 · " + (stats.total_active || 0);
+
+    /* 星系布局：3 旋臂 + 扭转，半径/大小 ∝ √记忆数 */
+    const actives = PROJECTS.slice().sort((a, b) => b.active_items - a.active_items);
+    const maxItems = actives.length ? actives[0].active_items : 1;
+    const ARMS = 3, ARM_TWIST = 0.0052;
+    actives.forEach((p, i) => {
+      const s = Math.sqrt(p.active_items / maxItems);
+      const arm = i % ARMS, j = Math.floor(i / ARMS), perArm = Math.ceil(actives.length / ARMS);
+      const tt = (j + 0.6) / (perArm + 0.4);
+      const rad = 175 + 305 * Math.pow(tt, 0.9) + (h01(i * 3 + 1) - 0.5) * 44;
+      const ang = arm * (Math.PI * 2 / ARMS) + rad * ARM_TWIST + (h01(i * 5 + 2) - 0.5) * 0.2;
+      systems.push({
+        slug: p.project, name: dispName(p.project), items: p.active_items,
+        wx: Math.cos(ang) * rad, wy: Math.sin(ang) * rad,
+        coreR: 5.5 + 8.5 * s, orbitR: 30 + 56 * s, sizeN: s,
+        breathPh: h01(i * 7 + 3) * 6.283, dim: 1, dimT: 1, stars: [],
+        sx: 0, sy: 0, scr: 10, glow: null, nb: {},
+      });
+    });
+    systems.forEach((sys, i) => {
+      sys.sphereR = sys.coreR * 2.0;
+      sys.rotSpd = 0.12 + 0.13 * h01(i * 97 + 3);
+      sys.rotPh = h01(i * 101) * 6.283;
+      sys.tiltX = 0.30 + 0.20 * h01(i * 103);
+      sys.bobAmp = 4 + 5 * h01(i * 107 + 1);
+      sys.bobSpd = 0.22 + 0.26 * h01(i * 109 + 2);
+      sys.bobPh = h01(i * 113 + 3) * 6.283;
+    });
+    systems.forEach(s => { sysBySlug[s.slug] = s; });
+    labelOrder = systems.slice().sort((a, b) => b.sizeN - a.sizeN);
+
+    /* 星体：大小/亮度 ∝ 命中数，归属项目的入轨，未映射的做流浪星尘 */
+    let minAcc = Infinity, maxAcc = 0;
+    MEMS.forEach(m => { minAcc = Math.min(minAcc, m.access_count); maxAcc = Math.max(maxAcc, m.access_count); });
+    if (!MEMS.length) { minAcc = 0; maxAcc = 1; }
+    MEMS.forEach(m => {
+      const an = (m.access_count - minAcc) / Math.max(1, maxAcc - minAcc);
+      const st = {
+        m, an, r: 1.5 + 2.8 * an, baseA: 0.5 + 0.5 * an,
+        twF: 1.1 + h01(m.id * 3) * 2.6, twP: h01(m.id * 7) * 6.283,
+        tier: m.tier, glow: m.access_count >= 3, sx: 0, sy: 0, srPx: 1, alpha: 1, sys: null,
+      };
+      const sys = m.project && sysBySlug[m.project];
+      if (sys) {
+        const rr = sys.orbitR * (0.34 + 0.62 * h01(m.id * 11));
+        st.sys = sys; st.orb = rr; st.ang0 = h01(m.id * 13) * 6.283;
+        st.om = (0.05 + 0.09 * h01(m.id * 17)) * Math.pow(sys.orbitR / rr, 1.4);
+        sys.stars.push(st);
+      } else {
+        const rr = 95 + 395 * h01(m.id * 19);
+        st.orb = rr; st.ang0 = h01(m.id * 23) * 6.283;
+        st.om = (0.010 + 0.022 * h01(m.id * 29)) / Math.pow(rr / 200, 0.55);
+        wanderers.push(st);
+      }
+      stars.push(st);
+    });
+
+    /* 星系关联连线：共享 tag 词数 ≥2，按权重降序、每节点度数 ≤3 贪心选边 */
+    const tagsByProj = {};
+    MEMS.forEach(m => {
+      if (!m.project || !sysBySlug[m.project]) return;
+      const tags = (m.tags || "").split(",").map(x => x.trim())
+        .filter(x => x.length > 1 && x.indexOf("分类:") !== 0 && x.indexOf("project:") !== 0);
+      if (!tagsByProj[m.project]) tagsByProj[m.project] = new Set();
+      tags.forEach(x => tagsByProj[m.project].add(x));
+    });
+    const slugs = Object.keys(tagsByProj), pairs = [];
+    for (let i = 0; i < slugs.length; i++) for (let j = i + 1; j < slugs.length; j++) {
+      const a = tagsByProj[slugs[i]], b = tagsByProj[slugs[j]];
+      let w = 0; a.forEach(x => { if (b.has(x)) w++; });
+      if (w >= 2) pairs.push([slugs[i], slugs[j], w]);
+    }
+    pairs.sort((x, y) => y[2] - x[2]);
+    const deg = {};
+    pairs.forEach((p, i) => {
+      if ((deg[p[0]] || 0) >= 3 || (deg[p[1]] || 0) >= 3) return;
+      deg[p[0]] = (deg[p[0]] || 0) + 1; deg[p[1]] = (deg[p[1]] || 0) + 1;
+      const A = sysBySlug[p[0]], B = sysBySlug[p[1]];
+      const pk = [];
+      const nPk = p[2] >= 4 ? 2 : 1;
+      for (let q = 0; q < nPk; q++) pk.push({ u0: h01(i * 13 + q * 7), spd: 0.05 + 0.09 * h01(i * 17 + q * 11), dir: q % 2 ? -1 : 1 });
+      LINKS.push({ a: A, b: B, w: p[2], curveDir: (i % 2 ? 1 : -1) * (0.14 + 0.10 * h01(i * 23)), alpha: 0, packets: pk });
+    });
+    LINKS.forEach(L => { L.a.nb[L.b.slug] = L; L.b.nb[L.a.slug] = L; });
+
+    /* 预渲染精灵（亮底：墨点 + 极淡色晕，全程 source-over） */
+    const TIER_RGB = { pinned: [11,124,114], normal: [34,51,61], reference: [141,164,173] };
+    Object.keys(TIER_RGB).forEach(k => {
+      const c = TIER_RGB[k];
+      tierSprite[k] = radialSprite(96, [
+        [0, "rgba(" + c[0] + "," + c[1] + "," + c[2] + ",0.95)"],
+        [0.35, "rgba(" + c[0] + "," + c[1] + "," + c[2] + ",0.45)"],
+        [1, "rgba(" + c[0] + "," + c[1] + "," + c[2] + ",0)"]]);
+    });
+    systems.forEach(sys => {
+      const tint = sys.sizeN > 0.5 ? ACCENT_RGB : "70,90,100";
+      sys.glow = radialSprite(200, [
+        [0, "rgba(" + tint + "," + (0.10 + 0.06 * sys.sizeN) + ")"],
+        [0.5, "rgba(" + tint + ",0.045)"],
+        [1, "rgba(" + tint + ",0)"]]);
+    });
+    built = true;
+  }
+
+  function mkCanvas(w, h) { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; }
+  function radialSprite(size, stops) {
+    const c = mkCanvas(size, size), g = c.getContext("2d");
+    const gr = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    stops.forEach(s => gr.addColorStop(s[0], s[1]));
+    g.fillStyle = gr; g.fillRect(0, 0, size, size); return c;
+  }
+  const tierSprite = {};
+  const dotSprite = radialSprite(32, [[0, "rgba(" + INK_RGB + ",1)"], [0.5, "rgba(" + INK_RGB + ",0.9)"], [1, "rgba(" + INK_RGB + ",0)"]]);
+  const galCoreSprite = radialSprite(360, [
+    [0, "rgba(" + ACCENT_RGB + ",0.13)"], [0.45, "rgba(" + ACCENT_RGB + ",0.05)"], [1, "rgba(" + ACCENT_RGB + ",0)"]]);
+  const globeFillSprite = radialSprite(128, [
+    [0, "rgba(255,255,255,0.8)"], [0.55, "rgba(255,255,255,0.3)"], [1, "rgba(255,255,255,0)"]]);
+  const CORE_R = 40, CORE_ROT = 0.055, CORE_TILT = 0.42;
+
+  /* 线框地球仪：经线随自转开合，纬线扁平椭圆，轮廓 + rim light */
+  function drawGlobe(cx0, cy0, R, rot, tiltX, dim, nMer, isCore) {
+    if (R < 2.5 || dim < 0.05) return;
+    const ink = (a) => "rgba(" + INK_RGB + "," + (a * dim).toFixed(3) + ")";
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = Math.min(1, 0.9 * dim);
+    ctx.drawImage(globeFillSprite, cx0 - R, cy0 - R, R * 2, R * 2);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = ink(0.4);
+    ctx.beginPath(); ctx.arc(cx0, cy0, R, 0, 6.2832); ctx.stroke();
+    ctx.strokeStyle = "rgba(" + ACCENT_RGB + "," + (0.7 * dim).toFixed(3) + ")";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(cx0, cy0, R, Math.PI * 0.96, Math.PI * 1.56); ctx.stroke();
+    ctx.lineWidth = 1;
+    ctx.save();
+    ctx.translate(cx0, cy0);
+    ctx.rotate(-tiltX * 0.55);
+    const latFlat = 0.30, latCos = 0.88;
+    const lats = isCore ? [0.62, 0.34, 0, -0.34, -0.62] : [0.45, 0, -0.45];
+    for (let Li = 0; Li < lats.length; Li++) {
+      const lat = lats[Li];
+      const cl = Math.cos(lat), rx = R * cl, ry = R * cl * latFlat, oy = -R * Math.sin(lat) * latCos;
+      ctx.strokeStyle = ink(lat === 0 ? 0.10 : 0.07);
+      ctx.beginPath(); ctx.ellipse(0, oy, rx, ry, 0, Math.PI, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = ink(lat === 0 ? 0.20 : 0.13);
+      ctx.beginPath(); ctx.ellipse(0, oy, rx, ry, 0, 0, Math.PI); ctx.stroke();
+    }
+    for (let k = 0; k < nMer; k++) {
+      const th = rot + k * Math.PI / nMer;
+      const cs = Math.cos(th), sn = Math.sin(th);
+      const rx = Math.max(R * Math.abs(cs), 0.4);
+      ctx.strokeStyle = ink(0.09);
+      ctx.beginPath(); ctx.ellipse(0, 0, rx, R, 0, 0, 6.2832); ctx.stroke();
+      ctx.strokeStyle = ink(0.32);
+      ctx.beginPath();
+      if (sn * cs > 0) ctx.ellipse(0, 0, rx, R, 0, -1.5708, 1.5708);
+      else ctx.ellipse(0, 0, rx, R, 0, 1.5708, 4.7124);
+      ctx.stroke();
+    }
+    ctx.restore();
+    if (isCore) {
+      ctx.save();
+      ctx.translate(cx0, cy0);
+      ctx.rotate(-0.32);
+      ctx.strokeStyle = "rgba(" + ACCENT_RGB + "," + (0.22 * dim).toFixed(3) + ")";
+      ctx.beginPath(); ctx.ellipse(0, 0, R * 1.45, R * 0.42, 0, 0, 6.2832); ctx.stroke();
+      const sa = t * 0.3 + 2.1;
+      const sx = Math.cos(sa) * R * 1.45, sy = Math.sin(sa) * R * 0.42;
+      ctx.fillStyle = "rgba(" + ACCENT_RGB + "," + (0.85 * dim).toFixed(3) + ")";
+      ctx.beginPath(); ctx.arc(sx, sy, 2.4, 0, 6.2832); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function sc() { return base; }
+  function project(wx, wy, layerF) {
+    const c = Math.cos(diskAngle), s = Math.sin(diskAngle);
+    let x = wx * c - wy * s, y = wx * s + wy * c;
+    x *= sc(); y *= sc() * TILT;
+    return [cx + x + par.x * layerF, cy + y + par.y * layerF];
+  }
+
+  function frame(now) {
+    let dt = (now - last) / 1000; last = now;
+    if (dt > 0.05) dt = 0.05; if (dt < 0) dt = 0;
+    t = (now - bootT) / 1000;
+    diskAngle = t * 0.0055;                       /* 盘面整体极缓旋转 */
+    par.x += (par.tx - par.x) * (1 - Math.exp(-dt * 5));
+    par.y += (par.ty - par.y) * (1 - Math.exp(-dt * 5));
+    systems.forEach(sys => {                      /* hover 高暗过渡 */
+      let target = 1;
+      if (hoverSys) target = sys === hoverSys ? 1.25 : (hoverSys.nb[sys.slug] ? 0.9 : 0.3);
+      sys.dimT = target; sys.dim += (sys.dimT - sys.dim) * (1 - Math.exp(-dt * 7));
+    });
+    draw(dt);
+    requestAnimationFrame(frame);
+  }
+
+  function draw(dt) {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = "#f6f8f9"; ctx.fillRect(0, 0, W, H);
+    if (!built) return;
+    const s = sc();
+    const gp = project(0, 0, 1);
+    systems.forEach(sys => { sys.wyB = sys.wy + Math.sin(t * sys.bobSpd + sys.bobPh) * sys.bobAmp; });
+    /* 流浪星尘（未映射记忆，绕银心缓行） */
+    for (let i = 0; i < wanderers.length; i++) {
+      const st = wanderers[i];
+      const ang = st.ang0 + st.om * t;
+      const p = project(Math.cos(ang) * st.orb, Math.sin(ang) * st.orb, 1);
+      st.sx = p[0]; st.sy = p[1];
+      const tw = 0.7 + 0.3 * Math.sin(t * st.twF + st.twP);
+      const r = Math.max(0.8, st.r * 0.8 * s);
+      st.srPx = r;
+      st.alpha = st.baseA * 0.5 * tw;
+      const gs = r * 5;
+      ctx.globalAlpha = Math.min(1, st.alpha * 0.8);
+      ctx.drawImage(tierSprite[st.tier] || tierSprite.normal, p[0] - gs / 2, p[1] - gs / 2, gs, gs);
+    }
+    ctx.globalAlpha = 1;
+    /* 星系轨道环 */
+    ctx.lineWidth = 1;
+    systems.forEach(sys => {
+      const p = project(sys.wx, sys.wyB, 1);
+      sys.sx = p[0]; sys.sy = p[1]; sys.scr = Math.max(5, sys.sphereR * s);
+      const rx = sys.orbitR * s, ry = rx * TILT;
+      if (rx > 6) {
+        ctx.strokeStyle = "rgba(21,34,43," + (0.11 * sys.dim).toFixed(3) + ")";
+        ctx.beginPath(); ctx.ellipse(p[0], p[1], rx, ry, 0, 0, 6.2832); ctx.stroke();
+        ctx.strokeStyle = "rgba(21,34,43," + (0.05 * sys.dim).toFixed(3) + ")";
+        ctx.beginPath(); ctx.ellipse(p[0], p[1], rx * 0.62, ry * 0.62, 0, 0, 6.2832); ctx.stroke();
+      }
+    });
+    /* 关联连线（贝塞尔发丝线） + 流动光点 */
+    const linkF = 1 - Math.exp(-dt * 6);
+    for (let i = 0; i < LINKS.length; i++) {
+      const L = LINKS[i];
+      const x0 = L.a.sx, y0 = L.a.sy, x1 = L.b.sx, y1 = L.b.sy;
+      const mx = (x0 + x1) * 0.5, my = (y0 + y1) * 0.5;
+      const nx = -(y1 - y0), ny = (x1 - x0);
+      const cxp = mx + nx * L.curveDir, cyp = my + ny * L.curveDir;
+      const hot = hoverSys && (L.a === hoverSys || L.b === hoverSys);
+      let targetA;
+      if (hoverSys) targetA = hot ? 0.5 : 0.03;
+      else targetA = Math.min(0.22, 0.08 + 0.03 * L.w);
+      L.alpha += (targetA - L.alpha) * linkF;
+      if (L.alpha < 0.006) continue;
+      ctx.strokeStyle = "rgba(" + ACCENT_RGB + "," + L.alpha.toFixed(3) + ")";
+      ctx.lineWidth = hot ? 1.4 : 1;
+      ctx.setLineDash([4, 5]);
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(cxp, cyp, x1, y1); ctx.stroke();
+      ctx.setLineDash([]);
+      for (let q = 0; q < L.packets.length; q++) {
+        const pk = L.packets[q];
+        let u = pk.u0 + t * pk.spd * pk.dir * (hot ? 2.4 : 1);
+        u -= Math.floor(u);
+        const iu = 1 - u;
+        const px = iu * iu * x0 + 2 * iu * u * cxp + u * u * x1;
+        const py = iu * iu * y0 + 2 * iu * u * cyp + u * u * y1;
+        ctx.fillStyle = "rgba(" + ACCENT_RGB + "," + (Math.min(1, L.alpha * 4) * 0.9).toFixed(3) + ")";
+        ctx.beginPath(); ctx.arc(px, py, hot ? 2.6 : 2, 0, 6.2832); ctx.fill();
+      }
+    }
+    /* 记忆星体（较差自转 + 闪烁 + 热星拖尾） */
+    systems.forEach(sys => {
+      for (let i = 0; i < sys.stars.length; i++) {
+        const st = sys.stars[i];
+        const ang = st.ang0 + st.om * t;
+        const p = project(sys.wx + Math.cos(ang) * st.orb, sys.wyB + Math.sin(ang) * st.orb, 1);
+        st.sx = p[0]; st.sy = p[1];
+        const tw = 0.72 + 0.28 * Math.sin(t * st.twF + st.twP);
+        let r = Math.max(0.9, st.r * s);
+        const hovered = st === hoverStar;
+        if (hovered) r *= 1.8;
+        st.srPx = r;
+        st.alpha = st.baseA * tw * sys.dim * (hovered ? 1 : 0.95);
+        const spr = tierSprite[st.tier] || tierSprite.normal;
+        const gs = r * (st.glow ? (5 + 7 * st.an) : 3);
+        if (st.m.access_count >= 10) {           /* 高热度星：轨道后方两点渐隐拖尾 */
+          for (let g2 = 1; g2 <= 2; g2++) {
+            const a2 = ang - st.om * (0.10 * g2);
+            const p2 = project(sys.wx + Math.cos(a2) * st.orb, sys.wyB + Math.sin(a2) * st.orb, 1);
+            const tgs = gs * (1 - g2 * 0.26);
+            ctx.globalAlpha = st.alpha * (g2 === 1 ? 0.32 : 0.14);
+            ctx.drawImage(spr, p2[0] - tgs / 2, p2[1] - tgs / 2, tgs, tgs);
+          }
+        }
+        ctx.globalAlpha = Math.min(1, st.alpha * 0.9);
+        ctx.drawImage(spr, p[0] - gs / 2, p[1] - gs / 2, gs, gs);
+        const ds = r * 2.2;
+        ctx.globalAlpha = Math.min(1, st.alpha);
+        ctx.drawImage(dotSprite, p[0] - ds / 2, p[1] - ds / 2, ds, ds);
+      }
+    });
+    ctx.globalAlpha = 1;
+    /* 星系核心：呼吸色晕 + 线框地球仪 */
+    systems.forEach(sys => {
+      const breath = 1 + 0.11 * Math.sin(t * 0.75 + sys.breathPh);
+      const gs = (sys.orbitR * 0.78 + 16) * s * breath;
+      ctx.globalAlpha = Math.min(1, 0.72 * sys.dim);
+      ctx.drawImage(sys.glow, sys.sx - gs / 2, sys.sy - gs / 2, gs, gs);
+      ctx.globalAlpha = 1;
+      const R = sys.sphereR * s;
+      const nMer = R >= 26 ? 7 : (R >= 13 ? 5 : 4);
+      drawGlobe(sys.sx, sys.sy, R, t * sys.rotSpd + sys.rotPh, sys.tiltX, sys.dim, nMer, false);
+    });
+    /* 银心：极淡色晕 + 10 经线线框球 + 斜光环 */
+    const gbreath = 1 + 0.07 * Math.sin(t * 0.5);
+    const ggs = 260 * s * gbreath;
+    ctx.drawImage(galCoreSprite, gp[0] - ggs / 2, gp[1] - ggs / 2, ggs, ggs);
+    drawGlobe(gp[0], gp[1], CORE_R * s, t * CORE_ROT + 1.2, CORE_TILT, 0.95, 10, true);
+    /* 悬停标记 */
+    if (hoverStar) {
+      ctx.strokeStyle = "rgba(15,155,142,0.85)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(hoverStar.sx, hoverStar.sy, hoverStar.srPx + 6, 0, 6.2832); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(hoverStar.sx - 14, hoverStar.sy); ctx.lineTo(hoverStar.sx - 8, hoverStar.sy);
+      ctx.moveTo(hoverStar.sx + 8, hoverStar.sy); ctx.lineTo(hoverStar.sx + 14, hoverStar.sy);
+      ctx.stroke();
+    }
+    if (hoverSys) {
+      ctx.strokeStyle = "rgba(15,155,142,0.6)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(hoverSys.sx, hoverSys.sy, hoverSys.scr + 9, 0, 6.2832); ctx.stroke();
+    }
+    /* 星系名称标注（大星系优先，避让重叠） */
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.shadowColor = "rgba(246,248,249,0.95)"; ctx.shadowBlur = 7;
+    const placed = [[gp[0], gp[1] - (52 * s + 40) + 8]];
+    labelOrder.forEach(sys => {
+      const a = Math.min(1, sys.dim) * 0.82;
+      if (a < 0.12) return;
+      const lx = sys.sx, ly = sys.sy + sys.scr + 8;
+      const urgent = sys === hoverSys;
+      if (!urgent) {
+        for (let i = 0; i < placed.length; i++) {
+          if (Math.abs(placed[i][0] - lx) < 64 && Math.abs(placed[i][1] - ly) < 15) return;
+        }
+      }
+      placed.push([lx, ly]);
+      ctx.font = "600 " + (sys.sizeN > 0.55 ? "12px" : "11px") + ' "Noto Sans SC",sans-serif';
+      ctx.fillStyle = "rgba(21,34,43," + (a * 0.92).toFixed(3) + ")";
+      ctx.fillText(sys.name, lx, ly);
+      if (urgent) {
+        ctx.font = "9px ui-monospace,monospace";
+        ctx.fillStyle = "rgba(95,110,118," + a.toFixed(3) + ")";
+        ctx.fillText(sys.slug.toUpperCase() + " / " + sys.items + " UNITS", sys.sx, sys.sy + sys.scr + 24);
+      }
+    });
+    ctx.shadowBlur = 0;
+    /* DOM 覆盖层跟随 */
+    if (coreLabel) {
+      coreLabel.style.transform = "translate(" + gp[0] + "px," + (gp[1] - 52 * s - 40) + "px) translate(-50%,-50%)";
+    }
+    if (hoverStar && !tooltip.hidden) {
+      let px = hoverStar.sx + 16, py = hoverStar.sy - 14;
+      px = Math.max(8, Math.min(W - 300, px)); py = Math.max(8, Math.min(H - 120, py));
+      tooltip.style.left = px + "px"; tooltip.style.top = py + "px";
+    }
+  }
+
+  /* ---- hover：拾取星体/星系 ---- */
+  function pick(mx, my) {
+    let best = null, bestD = 1e9;
+    systems.forEach(sys => {
+      const d = Math.hypot(mx - sys.sx, my - sys.sy);
+      if (d < Math.max(17, sys.scr + 9) && d < bestD) { best = { type: "sys", sys }; bestD = d; }
+    });
+    if (best) return best;
+    for (let i = 0; i < stars.length; i++) {
+      const st = stars[i];
+      if (st.alpha < 0.08) continue;
+      const d = Math.hypot(mx - st.sx, my - st.sy);
+      if (d < st.srPx + 6 && d < bestD) { best = { type: "star", st }; bestD = d; }
+    }
+    return best;
+  }
+  stage.addEventListener("pointermove", (e) => {
+    const r = stage.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    par.tx = -(mx / r.width - 0.5) * 2 * 22;
+    par.ty = -(my / r.height - 0.5) * 2 * 16;
+    if (!built) return;
+    const hit = pick(mx, my);
+    hoverSys = hit && hit.type === "sys" ? hit.sys : null;
+    const ns = hit && hit.type === "star" ? hit.st : null;
+    if (ns !== hoverStar) {
+      hoverStar = ns;
+      if (ns) {
+        const m = ns.m;
+        tooltip.innerHTML = "";
+        const no = document.createElement("div"); no.className = "tt-no";
+        no.textContent = "EV-" + String(m.id).padStart(3, "0") + " · " + m.tier.toUpperCase() + " / " + (TIER_ZH[m.tier] || m.tier);
+        const b = document.createElement("b"); b.textContent = m.key;
+        const meta = document.createElement("div"); meta.className = "tt-meta";
+        meta.innerHTML = "命中 <em></em> · 重要性 <em></em><br><em></em>";
+        const ems = meta.querySelectorAll("em");
+        ems[0].textContent = m.access_count;
+        ems[1].textContent = Number(m.importance).toFixed(1);
+        ems[2].textContent = ns.sys ? ns.sys.name : "流浪星尘 · 未映射";
+        tooltip.appendChild(no); tooltip.appendChild(b); tooltip.appendChild(meta);
+        tooltip.hidden = false;
+      } else tooltip.hidden = true;
+    }
+    stage.style.cursor = hit ? "pointer" : "default";
+  });
+  stage.addEventListener("pointerleave", () => {
+    par.tx = 0; par.ty = 0;
+    hoverStar = null; hoverSys = null; tooltip.hidden = true;
+  });
+
+  requestAnimationFrame(frame);
 })();
 </script>
 </body>

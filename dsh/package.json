@@ -1,0 +1,17 @@
+{
+  "name": "dsh-evolvmem",
+  "version": "0.2.0",
+  "description": "EvolvMem DSH bundle: task-triggered experience recall, incremental extraction, and the shared Context MCP bridge",
+  "type": "module",
+  "exports": {
+    "./host-inject": "./src/inject.js",
+    "./host-extract": "./src/extract.js",
+    "./host-sweep": "./src/sweep.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

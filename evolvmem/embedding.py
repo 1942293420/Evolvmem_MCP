@@ -4,6 +4,10 @@ from pathlib import Path
 from evolvmem.config import Config
 
 
+class RuntimeConfigurationError(RuntimeError, FileNotFoundError):
+    """An invalid optional embedding runtime, compatible with legacy callers."""
+
+
 class EmbeddingEngine:
     """Local embedding engine.
 
@@ -20,30 +24,43 @@ class EmbeddingEngine:
 
     def initialize(self) -> None:
         """Load the GGUF embedding model."""
-        model_path = self.config.model_path
-        if not model_path.exists():
-            raise FileNotFoundError(
-                f"Model file not found: {model_path}\n"
-                f"Place the GGUF embedding model in "
-                f"{self.config.data_dir / 'models'}/ directory"
-            )
+        diagnostics = self.config.validate_runtime(require_model=True)
+        if diagnostics:
+            raise RuntimeConfigurationError("\n".join(diagnostics))
 
+        model_path = self.config.model_path
         # Lazy import to avoid crashing the whole module if llama-cpp-python is not installed
         from llama_cpp import Llama
 
-        self._model = Llama(
+        model = Llama(
             model_path=str(model_path),
             embedding=True,
             n_ctx=512,          # embedding doesn't need long context
             n_batch=32,         # batch processing
             verbose=False,
         )
-        self._dim = self.config.embedding_dim
+        self._model = model
+        try:
+            probe = self._normalize_embedding(
+                model.embed(self.config.embedding_doc_prefix + "evolvmem dimension probe")
+            )
+            observed_dim = len(probe)
+            if observed_dim != self.config.embedding_dim:
+                raise RuntimeError(
+                    f"embedding_dim mismatch: configured {self.config.embedding_dim}, "
+                    f"model returned {observed_dim}"
+                )
+            self._dim = observed_dim
+        except Exception:
+            self.close()
+            raise
 
     def close(self) -> None:
-        if self._model is not None:
-            self._model.close()
-            self._model = None
+        model = self._model
+        self._model = None
+        self._dim = None
+        if model is not None:
+            model.close()
 
     def __enter__(self):
         self.initialize()
@@ -67,7 +84,11 @@ class EmbeddingEngine:
     def encode(self, text: str) -> list[float]:
         """Encode a single text to an embedding vector."""
         self._ensure_loaded()
-        result = self._model.embed(text)
+        return self._normalize_embedding(self._model.embed(text))
+
+    @staticmethod
+    def _normalize_embedding(result) -> list[float]:
+        """Normalize llama-cpp's single-embedding response shape."""
         # llama-cpp-python returns embeddings as list of lists, take the first
         if isinstance(result, list) and len(result) > 0:
             if isinstance(result[0], list):
