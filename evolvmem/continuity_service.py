@@ -45,11 +45,19 @@ from evolvmem.context_models import (
 from evolvmem.context_store import ContextStore, _now_iso
 from evolvmem.continuity_models import (
     ContinuityAction,
+    ContinuityBeginRequest,
+    ContinuityBeginResult,
     ContinuityCheckpointRequest,
     ContinuityCheckpointResult,
     ContinuityError,
+    ContinuityFindRequest,
+    ContinuityFindResult,
+    ContinuityImportRequest,
+    ContinuityImportResult,
     ContinuityResumeRequest,
     ContinuityResumeResult,
+    FindProjectCandidate,
+    FindWorkstreamSummary,
     WorkstreamSummary,
     _FOCUS_ACTIONS,
     _STATE_TRANSITIONS,
@@ -57,6 +65,7 @@ from evolvmem.continuity_models import (
     _ALL_ACTIONS,
 )
 from evolvmem.extraction_policy import contains_sensitive_text
+from evolvmem.project_store import ProjectStore, ProjectStoreError
 from evolvmem.workspace_identity import (
     WorkspaceIdentityError,
     WorkspaceIdentityProvider,
@@ -71,7 +80,43 @@ MAX_CHECKPOINT_STRING_CHARS = 2000
 MAX_CHECKPOINT_ARRAY_ITEMS = 50
 
 _MAX_CANDIDATES = 50
+_FIND_SCAN_LIMIT = 200
+_FIND_WORKSTREAMS_PER_PROJECT = 10
 _GIT_TIMEOUT_SECONDS = 5
+
+# begin/import 复用判定时只比较这六个内容键；parent/source 由写入路径自管
+_CONTENT_COMPARE_KEYS = (
+    "objective",
+    "accepted_decisions",
+    "completed_steps",
+    "current_step",
+    "next_action",
+    "blockers",
+)
+
+
+def _content_unchanged(previous: Mapping, merged: Mapping) -> bool:
+    """Content-key equality: a repeated begin/import with no new content
+    must not burn a checkpoint revision."""
+    for key in _CONTENT_COMPARE_KEYS:
+        old = previous.get(key)
+        new = merged.get(key)
+        if isinstance(new, list):
+            old_list = list(old) if isinstance(old, list) else []
+            if old_list != new:
+                return False
+        else:
+            old_text = old if isinstance(old, str) else ""
+            if old_text != (new or ""):
+                return False
+    return True
+
+
+def _normalize_objective(text: object) -> str:
+    """任务身份的规范化目标串：折叠空白 + casefold。"""
+    if not isinstance(text, str):
+        return ""
+    return " ".join(text.split()).casefold()
 
 # Server-authoritative L2 keys: a client-submitted value that disagrees with
 # the server's rejects the whole request with ``content_rejected``.
@@ -290,6 +335,497 @@ class ContinuityService:
             return ()
         return self._unfinished_summaries(project, identity.fingerprint)
 
+    # ---- begin: explicit-declaration register + bind + workstream ----
+
+    def begin(self, request: ContinuityBeginRequest) -> ContinuityBeginResult:
+        """Idempotently register/bind the declared project and create its
+        focused workstream, or read back the existing one.
+
+        The explicit caller declaration is the only project signal: nothing
+        is inferred from a generic home/cwd. Content policy is validated
+        before any write, and registration, alias, binding and workstream
+        creation share one atomic transaction — a rejected begin leaves no
+        half-registered state. Task identity is the (normalized) objective,
+        never the focus pointer: a replayed begin reads back the matching
+        workstream without overwriting newer checkpoints, different
+        objectives create distinct workstreams, and a replay over a terminal
+        workstream neither resurrects nor duplicates it. Progress updates
+        after begin go through the explicit checkpoint/CAS protocol.
+        """
+        if not isinstance(request, ContinuityBeginRequest):
+            raise TypeError("request must be a ContinuityBeginRequest")
+        # 内容策略先行：任何登记/绑定之前完整校验
+        _check_client_content(
+            {
+                "objective": request.objective,
+                "accepted_decisions": list(request.accepted_decisions),
+                "completed_steps": list(request.completed_steps),
+                "current_step": request.current_step,
+                "next_action": request.next_action,
+                "blockers": list(request.blockers),
+            }
+        )
+        identity = self._resolve_workspace(request.workspace_path)
+        fingerprint = identity.fingerprint
+        # 登记/别名/绑定/建任务同一原子边界（内层 checkpoint 事务并入外层）
+        with self._store.transaction():
+            project_store = ProjectStore(
+                self._store._connection(),
+                self._store._require_transaction,
+                generic_names=(),
+            )
+            registered = self._ensure_project(project_store, request.project)
+            alias_added = self._ensure_alias(
+                project_store, request.project, request.alias
+            )
+            self._ensure_binding(project_store, fingerprint, request.project)
+
+            focus_row = self._focus_row(request.project, fingerprint)
+            focus_revision = (
+                int(focus_row["revision"]) if focus_row is not None else 0
+            )
+            focused_id = (
+                focus_row["workstream_id"] if focus_row is not None else None
+            )
+            target = terminal = None
+            if request.objective:
+                wanted = _normalize_objective(request.objective)
+                for row in self._unfinished_rows(request.project, fingerprint):
+                    previous = self._load_previous_content(
+                        int(row["current_context_id"])
+                    )
+                    if _normalize_objective(previous.get("objective", "")) == wanted:
+                        target = row
+                        break
+                if target is None:
+                    for row in self._terminal_rows(request.project, fingerprint):
+                        previous = self._load_previous_content(
+                            int(row["current_context_id"])
+                        )
+                        if (
+                            _normalize_objective(previous.get("objective", ""))
+                            == wanted
+                        ):
+                            terminal = row
+                            break
+            elif focused_id:
+                row = self._workstream_row(focused_id)
+                if (
+                    row is not None
+                    and row["project"] == request.project
+                    and row["status"] not in _TERMINAL_STATUSES
+                ):
+                    target = row
+
+            created = False
+            if terminal is not None:
+                # 相同目标的终态任务：读回不复活、不新增、不动 focus
+                result = ContinuityCheckpointResult(
+                    workstream_id=terminal["id"],
+                    checkpoint_revision=int(terminal["checkpoint_revision"]),
+                    state_version=int(terminal["state_version"]),
+                    focus_revision=focus_revision,
+                    status=terminal["status"],
+                    context_id=int(terminal["current_context_id"]),
+                )
+            elif target is None:
+                result = self.checkpoint(
+                    ContinuityCheckpointRequest(
+                        action=ContinuityAction.CREATE.value,
+                        workspace_path=request.workspace_path,
+                        project_hint=request.project,
+                        objective=request.objective,
+                        accepted_decisions=request.accepted_decisions,
+                        completed_steps=request.completed_steps,
+                        current_step=request.current_step,
+                        next_action=request.next_action,
+                        blockers=request.blockers,
+                        make_focus=request.make_focus,
+                        expected_focus_revision=(
+                            focus_revision if request.make_focus else None
+                        ),
+                    )
+                )
+                created = True
+            elif request.make_focus and focused_id != target["id"]:
+                # 只挂焦点（focus-only CAS），绝不改写已有任务内容；
+                # 焦点已在其他未完成任务上时绝不抢焦点，只读回
+                focused_row = (
+                    self._workstream_row(focused_id) if focused_id else None
+                )
+                focus_available = (
+                    focused_row is None
+                    or focused_row["status"] in _TERMINAL_STATUSES
+                )
+                if focus_available:
+                    result = self.checkpoint(
+                        ContinuityCheckpointRequest(
+                            action=ContinuityAction.SWITCH_FOCUS.value,
+                            workspace_path=request.workspace_path,
+                            project_hint=request.project,
+                            workstream_id=target["id"],
+                            expected_focus_revision=focus_revision,
+                        )
+                    )
+                else:
+                    result = ContinuityCheckpointResult(
+                        workstream_id=target["id"],
+                        checkpoint_revision=int(target["checkpoint_revision"]),
+                        state_version=int(target["state_version"]),
+                        focus_revision=focus_revision,
+                        status=target["status"],
+                        context_id=int(target["current_context_id"]),
+                    )
+            else:
+                # 幂等命中：原样读回，不消耗任何 revision
+                result = ContinuityCheckpointResult(
+                    workstream_id=target["id"],
+                    checkpoint_revision=int(target["checkpoint_revision"]),
+                    state_version=int(target["state_version"]),
+                    focus_revision=focus_revision,
+                    status=target["status"],
+                    context_id=int(target["current_context_id"]),
+                )
+        return ContinuityBeginResult(
+            project=request.project,
+            workstream_id=result.workstream_id,
+            checkpoint_revision=result.checkpoint_revision,
+            state_version=result.state_version,
+            focus_revision=result.focus_revision,
+            status=result.status,
+            context_id=result.context_id,
+            created=created,
+            updated=False,
+            registered=registered,
+            alias_added=alias_added,
+            bound=True,
+        )
+
+    def _ensure_project(self, project_store: ProjectStore, project: str) -> bool:
+        """Register the declared project if missing.
+
+        canonical 与 alias 共享一个 casefold 规范化命名空间（与 resolver
+        一致）：大小写变体项目名、撞别人别名的项目名都是硬冲突；
+        archived 项目保持人工处理。"""
+        row = self._store._connection().execute(
+            "SELECT project, status FROM context_project_registry "
+            "WHERE lower(project)=lower(?)",
+            (project,),
+        ).fetchone()
+        if row is not None:
+            if row["project"] != project:
+                raise ContinuityError("alias_conflict")
+            if row["status"] != "active":
+                raise ContinuityError("project_archived")
+            return False
+        conflict = self._store._connection().execute(
+            "SELECT 1 FROM context_project_aliases WHERE lower(alias)=lower(?)",
+            (project,),
+        ).fetchone()
+        if conflict is not None:
+            raise ContinuityError("alias_conflict")
+        project_store.register_project(project)
+        return True
+
+    def _ensure_alias(
+        self, project_store: ProjectStore, project: str, alias: str
+    ) -> bool:
+        """Insert the optional alias; any namespace collision is a hard
+        conflict, never a silent re-point."""
+        if not alias or alias.casefold() == project.casefold():
+            return False
+        rows = self._store._connection().execute(
+            "SELECT alias, project FROM context_project_aliases"
+        ).fetchall()
+        existing = {
+            row["alias"].casefold(): row["project"] for row in rows
+        }.get(alias.casefold())
+        if existing is not None:
+            if existing != project:
+                raise ContinuityError("alias_conflict")
+            return False
+        canonical = self._store._connection().execute(
+            "SELECT 1 FROM context_project_registry WHERE lower(project)=lower(?)",
+            (alias,),
+        ).fetchone()
+        if canonical is not None:
+            raise ContinuityError("alias_conflict")
+        project_store.add_alias(alias, project)
+        return True
+
+    def _ensure_binding(
+        self, project_store: ProjectStore, fingerprint: str, project: str
+    ) -> None:
+        """Bind (idempotently re-activate) the workspace as this project's
+        default; a foreign default keeps its slot instead of erroring."""
+        try:
+            project_store.bind_workspace(
+                fingerprint, project, method="begin", make_default=True
+            )
+        except ProjectStoreError as exc:
+            if exc.code != "default_binding_conflict":
+                raise
+            project_store.bind_workspace(
+                fingerprint, project, method="begin", make_default=False
+            )
+
+    # ---- find: layered cross-project discovery (read-only) ----
+
+    def find(self, request: ContinuityFindRequest) -> ContinuityFindResult:
+        """Discover unfinished workstreams by project name, alias, or task
+        keyword. Never switches any focus; workspace verification is reported
+        honestly when the caller's path can be fingerprinted."""
+        if not isinstance(request, ContinuityFindRequest):
+            raise TypeError("request must be a ContinuityFindRequest")
+        if not self._schema_ready():
+            return ContinuityFindResult(code="project_not_registered")
+        query = request.query.strip().casefold()
+        if not query:
+            return ContinuityFindResult(code="project_not_registered")
+        fingerprint = None
+        if request.workspace_path.strip():
+            try:
+                fingerprint = self._workspace_identity.resolve(
+                    request.workspace_path
+                ).fingerprint
+            except WorkspaceIdentityError:
+                fingerprint = None  # 发现可用，但如实标注未核验工作区
+        conn = self._store._connection()
+        projects = tuple(
+            row["project"]
+            for row in conn.execute(
+                "SELECT project FROM context_project_registry "
+                "WHERE status='active' ORDER BY project"
+            )
+        )
+        active = set(projects)
+        matched: dict[str, set[str]] = {}
+        exact: set[str] = set()
+        task_rows: dict[str, list] = {}
+        for project in projects:
+            if project.casefold() == query:
+                matched.setdefault(project, set()).add("name")
+                exact.add(project)
+        for row in conn.execute(
+            "SELECT alias, project FROM context_project_aliases"
+        ):
+            if row["alias"].casefold() == query and row["project"] in active:
+                matched.setdefault(row["project"], set()).add("alias")
+                exact.add(row["project"])
+        for project in projects:
+            if project not in matched and query in project.casefold():
+                matched.setdefault(project, set()).add("name")
+        for row in self._unfinished_rows_any_workspace():
+            if row["project"] in active and query in (row["l0"] or "").casefold():
+                matched.setdefault(row["project"], set()).add("task")
+                task_rows.setdefault(row["project"], []).append(row)
+        if not matched:
+            return ContinuityFindResult(code="project_not_registered")
+
+        def via_priority(project: str) -> tuple[int, str]:
+            if project in exact:
+                return (0, project)
+            if "name" in matched[project]:
+                return (1, project)
+            return (2, project)
+
+        # 先在全部匹配项目上判定真实歧义，再按 limit 截断输出；
+        # 任务关键词命中只列真正匹配的任务，项目/别名命中列该项目全部任务
+        candidates: list[FindProjectCandidate] = []
+        unique_row = None
+        total = 0
+        for project in sorted(matched, key=via_priority):
+            if matched[project] & {"name", "alias"}:
+                rows = list(self._unfinished_rows_any_workspace(project=project))
+            else:
+                rows = task_rows.get(project, [])
+            summaries = []
+            for row in rows[:_FIND_WORKSTREAMS_PER_PROJECT]:
+                total += 1
+                unique_row = row
+                workspace_match = (
+                    fingerprint is not None
+                    and row["workspace_fingerprint"] == fingerprint
+                )
+                staleness = ""
+                if workspace_match and request.workspace_path.strip():
+                    staleness = self._staleness(
+                        row, request.workspace_path, fingerprint
+                    )
+                summaries.append(
+                    FindWorkstreamSummary(
+                        workstream_id=row["id"],
+                        project=row["project"],
+                        status=row["status"],
+                        checkpoint_revision=int(row["checkpoint_revision"]),
+                        state_version=int(row["state_version"]),
+                        l0=row["l0"] or "",
+                        updated_at=row["updated_at"],
+                        workspace_match=workspace_match,
+                        staleness=staleness,
+                    )
+                )
+            candidates.append(
+                FindProjectCandidate(
+                    project=project,
+                    matched_via=tuple(sorted(matched[project])),
+                    focus_state=self._focus_state(project, fingerprint),
+                    workstreams=tuple(summaries),
+                )
+            )
+        if total == 0:
+            code = "no_open_workstream"
+        elif total == 1:
+            code = "ok"
+        else:
+            code = "ambiguous"
+        candidates = candidates[: request.limit]
+        if code == "no_open_workstream":
+            return ContinuityFindResult(code=code, candidates=tuple(candidates))
+        if code == "ok":
+            return ContinuityFindResult(
+                code=code,
+                candidates=tuple(candidates),
+                checkpoint=self._checkpoint_payload(unique_row),
+            )
+        return ContinuityFindResult(code=code, candidates=tuple(candidates))
+
+    def _focus_state(self, project: str, fingerprint: str | None) -> str:
+        if fingerprint is None:
+            return ""
+        row = self._focus_row(project, fingerprint)
+        if row is None or not row["workstream_id"]:
+            return "none"
+        target = self._workstream_row(row["workstream_id"])
+        if (
+            target is None
+            or target["project"] != project
+            or target["status"] in _TERMINAL_STATUSES
+        ):
+            return "dangling"
+        return "ok"
+
+    def _unfinished_rows_any_workspace(self, *, project: str | None = None):
+        """Unfinished workstreams joined to their L0, across every bound
+        workspace (discovery must work from a generic directory)."""
+        if project is not None:
+            return self._store._connection().execute(
+                "SELECT w.*, l.content AS l0 FROM continuity_workstreams w "
+                "JOIN context_layers l ON l.item_id=w.current_context_id "
+                "AND l.layer='l0' "
+                "WHERE w.project=? AND w.status NOT IN ('completed','cancelled') "
+                "ORDER BY w.updated_at DESC, w.id LIMIT ?",
+                (project, _FIND_SCAN_LIMIT),
+            ).fetchall()
+        return self._store._connection().execute(
+            "SELECT w.*, l.content AS l0 FROM continuity_workstreams w "
+            "JOIN context_layers l ON l.item_id=w.current_context_id "
+            "AND l.layer='l0' "
+            "WHERE w.status NOT IN ('completed','cancelled') "
+            "ORDER BY w.updated_at DESC, w.id LIMIT ?",
+            (_FIND_SCAN_LIMIT,),
+        ).fetchall()
+
+    # ---- import: conservative backfill of interrupted external sessions ----
+
+    def import_interrupted(
+        self, request: ContinuityImportRequest
+    ) -> ContinuityImportResult:
+        """Create or advance the deterministic workstream of one interrupted
+        external session. Terminal workstreams are never resurrected, a
+        checkpoint revision beyond ``applied_revision`` proves a human edit
+        that is never overwritten, and the focus pointer is never touched."""
+        if not isinstance(request, ContinuityImportRequest):
+            raise TypeError("request must be a ContinuityImportRequest")
+        identity = self._resolve_workspace(request.workspace_path)
+        project = self._resolve_project(identity.fingerprint, request.project_hint)
+        if project is None:
+            raise ContinuityError("project_unresolved")
+        with self._store.transaction():
+            row = self._workstream_row(request.workstream_id)
+            if row is not None and (
+                row["project"] != project
+                or row["workspace_fingerprint"] != identity.fingerprint
+            ):
+                raise ContinuityError("workstream_not_found")
+            if row is None:
+                anchor = _collect_repo_anchor(request.workspace_path)
+                created = self._create(
+                    ContinuityCheckpointRequest(
+                        action=ContinuityAction.CREATE.value,
+                        workspace_path=request.workspace_path,
+                        project_hint=request.project_hint,
+                        objective=request.objective,
+                        completed_steps=request.completed_steps,
+                        current_step=request.current_step,
+                        next_action=request.next_action,
+                        blockers=request.blockers,
+                    ),
+                    project,
+                    identity.fingerprint,
+                    anchor,
+                    workstream_id=request.workstream_id,
+                )
+                return ContinuityImportResult(
+                    code="created",
+                    workstream_id=created.workstream_id,
+                    checkpoint_revision=created.checkpoint_revision,
+                    state_version=created.state_version,
+                    status=created.status,
+                    context_id=created.context_id,
+                )
+            base = {
+                "workstream_id": row["id"],
+                "checkpoint_revision": int(row["checkpoint_revision"]),
+                "state_version": int(row["state_version"]),
+                "status": row["status"],
+                "context_id": int(row["current_context_id"]),
+            }
+            if row["status"] in _TERMINAL_STATUSES:
+                return ContinuityImportResult(code="terminal_kept", **base)
+            if int(row["checkpoint_revision"]) > request.applied_revision:
+                return ContinuityImportResult(
+                    code="human_checkpoint_kept", **base
+                )
+            previous = self._load_previous_content(int(row["current_context_id"]))
+            # 替换语义的有效负载：列表字段是全量重算（空即清空），标量字段
+            # 为空时沿用上版，避免wiping 人工可读目标
+            def pick_text(new: str, old: object) -> str:
+                return new if new else (old if isinstance(old, str) else "")
+
+            effective = ContinuityCheckpointRequest(
+                action=ContinuityAction.UPDATE.value,
+                workspace_path=request.workspace_path,
+                project_hint=request.project_hint,
+                workstream_id=request.workstream_id,
+                objective=pick_text(request.objective, previous.get("objective")),
+                completed_steps=request.completed_steps,
+                current_step=pick_text(
+                    request.current_step, previous.get("current_step")
+                ),
+                next_action=pick_text(
+                    request.next_action, previous.get("next_action")
+                ),
+                blockers=request.blockers,
+                expected_checkpoint_revision=int(row["checkpoint_revision"]),
+                expected_state_version=int(row["state_version"]),
+            )
+            merged = self._request_content(effective)
+            if _content_unchanged(previous, merged):
+                return ContinuityImportResult(code="unchanged", **base)
+            anchor = _collect_repo_anchor(request.workspace_path)
+            result = self._mutate_content(
+                effective, project, identity.fingerprint, anchor, merge=False
+            )
+            return ContinuityImportResult(
+                code="updated",
+                workstream_id=result.workstream_id,
+                checkpoint_revision=result.checkpoint_revision,
+                state_version=result.state_version,
+                status=result.status,
+                context_id=result.context_id,
+            )
+
     # ---- workspace / project resolution ----
 
     def _resolve_workspace(self, workspace_path: str):
@@ -366,13 +902,16 @@ class ContinuityService:
         project: str,
         fingerprint: str,
         anchor: dict,
+        *,
+        workstream_id: str | None = None,
     ) -> ContinuityCheckpointResult:
         if request.expected_checkpoint_revision != 0 or request.expected_state_version != 0:
             raise ContinuityError("revision_conflict")
         if request.make_focus and request.expected_focus_revision is None:
             raise ContinuityError("invalid_action")
         with self._store.transaction():
-            workstream_id = "ws_" + secrets.token_hex(8)
+            if workstream_id is None:
+                workstream_id = "ws_" + secrets.token_hex(8)
             parent_id = self._validate_parent(
                 request.parent_workstream_id,
                 workstream_id=workstream_id,
@@ -452,6 +991,8 @@ class ContinuityService:
         project: str,
         fingerprint: str,
         anchor: dict,
+        *,
+        merge: bool = True,
     ) -> ContinuityCheckpointResult:
         if request.make_focus and request.expected_focus_revision is None:
             raise ContinuityError("invalid_action")
@@ -474,7 +1015,11 @@ class ContinuityService:
                 raise ContinuityError("revision_conflict")
 
             previous = self._load_previous_content(int(row["current_context_id"]))
-            content = self._merged_content(request, previous)
+            if merge:
+                content = self._merged_content(request, previous)
+            else:
+                # 补录的替换语义：请求字段是全量重算状态，空列表即已清空
+                content = self._request_content(request)
             source_ids = content["source_context_ids"]
             parent_id = row["parent_id"]
             if request.parent_workstream_id:
@@ -879,16 +1424,28 @@ class ContinuityService:
         row = self._focus_row(project, fingerprint)
         return int(row["revision"]) if row is not None else 0
 
-    def _unfinished_summaries(
-        self, project: str, fingerprint: str
-    ) -> tuple[WorkstreamSummary, ...]:
-        rows = self._store._connection().execute(
+    def _unfinished_rows(self, project: str, fingerprint: str):
+        return self._store._connection().execute(
             "SELECT * FROM continuity_workstreams "
             "WHERE project=? AND workspace_fingerprint=? "
             "AND status NOT IN ('completed', 'cancelled') "
             "ORDER BY updated_at DESC, id LIMIT ?",
             (project, fingerprint, _MAX_CANDIDATES),
         ).fetchall()
+
+    def _terminal_rows(self, project: str, fingerprint: str):
+        return self._store._connection().execute(
+            "SELECT * FROM continuity_workstreams "
+            "WHERE project=? AND workspace_fingerprint=? "
+            "AND status IN ('completed', 'cancelled') "
+            "ORDER BY updated_at DESC, id LIMIT ?",
+            (project, fingerprint, _MAX_CANDIDATES),
+        ).fetchall()
+
+    def _unfinished_summaries(
+        self, project: str, fingerprint: str
+    ) -> tuple[WorkstreamSummary, ...]:
+        rows = self._unfinished_rows(project, fingerprint)
         return tuple(self._summary_of(row) for row in rows)
 
     def _summary_of(self, row) -> WorkstreamSummary:

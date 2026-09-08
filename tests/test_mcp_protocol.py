@@ -60,6 +60,7 @@ _CONTEXT_TOOLS = {
 # 续接工具组：codex/kimi 的 compat/shadow/primary 均列出（不过 Core 门禁）
 _CONTINUITY_TOOLS = {
     "continuity_resume", "continuity_checkpoint", "continuity_list",
+    "continuity_begin", "continuity_find",
 }
 _CONTENT_TYPE_VALUES = [member.value for member in ContextContentType]
 
@@ -84,6 +85,8 @@ _PROBE_ARGS = {
     "continuity_resume": {},
     "continuity_checkpoint": {},
     "continuity_list": {},
+    "continuity_begin": {},
+    "continuity_find": {"query": "探针"},
 }
 
 
@@ -775,7 +778,7 @@ class TestRegistry:
         for name in (
             "context_session_start", "context_search", "context_read",
             "context_status", "memory_search", "memory_status",
-            "continuity_resume", "continuity_list",
+            "continuity_resume", "continuity_list", "continuity_find",
         ):
             assert specs[name].annotations.get("readOnlyHint") is True, name
         # 任何带写分支的工具（含 consolidate 的 dry_run=False）不得标只读
@@ -784,7 +787,7 @@ class TestRegistry:
             "memory_consolidate",
             "context_confirm", "context_record_outcome",
             "context_archive_project", "context_sweep",
-            "continuity_checkpoint",
+            "continuity_checkpoint", "continuity_begin",
         ):
             assert specs[name].annotations.get("readOnlyHint") is not True, name
 

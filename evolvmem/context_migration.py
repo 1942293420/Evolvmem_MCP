@@ -72,6 +72,16 @@ class LegacyMemoryMigrator:
                 if legacy_id in duplicate_ids:
                     status = ContextStatus.CANDIDATE
                     extraction_version = "legacy-v1:duplicate-active"
+                elif row["context_item_id"] is not None:
+                    # 已迁移行：胜出项归档后按当前 active 集合重算会把有据
+                    # 隔离的历史 candidate 拉回 active（被禁止的自动激活）。
+                    # 有 duplicate-active 来源标记的 candidate 原样保留。
+                    preserved = self._quarantined_candidate_status(
+                        row["context_item_id"]
+                    )
+                    if preserved is not None and status is ContextStatus.ACTIVE:
+                        status = preserved
+                        extraction_version = "legacy-v1:duplicate-active"
                 tier = self.tier_for(row.get("tier"))
                 expires_at = self.optional_text(row.get("expires_at"))
                 prepared_rows.append(
@@ -435,3 +445,24 @@ class LegacyMemoryMigrator:
         except ValueError:
             return None
         return self.store.resolve_legacy_mapping(legacy_id)
+
+    def _quarantined_candidate_status(self, item_id: int) -> ContextStatus | None:
+        """CANDIDATE when the mapped item is a documented duplicate-active
+        quarantine (migration source marker), else None.
+
+        This is the only justified legacy-active/Core-candidate divergence;
+        re-running migration must preserve it instead of auto-activating.
+        """
+        try:
+            item = self.store.get_item(item_id, include_layers=False)
+        except Exception:
+            return None
+        if item is None or item.status is not ContextStatus.CANDIDATE:
+            return None
+        row = self.store._connection().execute(
+            "SELECT 1 FROM context_sources WHERE item_id=? "
+            "AND source_kind='migration' "
+            "AND extraction_version='legacy-v1:duplicate-active'",
+            (int(item_id),),
+        ).fetchone()
+        return ContextStatus.CANDIDATE if row is not None else None

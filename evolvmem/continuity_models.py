@@ -27,6 +27,9 @@ _CONTINUITY_ERROR_CODES = frozenset(
         "invalid_parent",
         "content_rejected",
         "project_unresolved",
+        "invalid_project_name",
+        "alias_conflict",
+        "project_archived",
     }
 )
 
@@ -135,6 +138,33 @@ _STALENESS_CODES = frozenset(
         "head_diverged",
         "unknown",
         "wrong_workspace",
+    }
+)
+
+# continuity_find 的发现结果分类：唯一候选 ok；多候选 ambiguous；
+# 项目未登记与已登记但无未完成任务是两类不同的失败。
+_FIND_CODES = frozenset(
+    {
+        "ok",
+        "ambiguous",
+        "project_not_registered",
+        "no_open_workstream",
+    }
+)
+
+_FIND_MATCH_VIAS = frozenset({"name", "alias", "task"})
+
+_FOCUS_STATES = frozenset({"", "none", "ok", "dangling"})
+
+# continuity_import（Codex 中断补录）的结果分类：create/update 之外全部
+# 是保守保留分支，绝不覆盖人工 checkpoint、不复活终态任务。
+_IMPORT_CODES = frozenset(
+    {
+        "created",
+        "updated",
+        "unchanged",
+        "terminal_kept",
+        "human_checkpoint_kept",
     }
 )
 
@@ -335,3 +365,250 @@ class ContinuityResumeResult:
         if any(not isinstance(item, WorkstreamSummary) for item in candidates):
             raise ContinuityValidationError("invalid_candidates")
         object.__setattr__(self, "candidates", candidates)
+
+
+# Project name / alias policy: explicit caller declaration, never a path and
+# never empty; the same rule serves registration, aliases and find queries.
+_PROJECT_NAME_MAX_CHARS = 120
+
+
+def validate_project_name(value: object, field: str = "project") -> str:
+    """Return the stripped project/alias name or raise a stable code error.
+
+    Path-shaped or empty names are rejected so a workspace path can never
+    double as a project declaration and no generic name binds everything.
+    """
+    text = _require_str(value, field).strip()
+    if (
+        not text
+        or len(text) > _PROJECT_NAME_MAX_CHARS
+        or "/" in text
+        or "\\" in text
+        or text.startswith("~")
+        or any(ord(ch) < 32 for ch in text)
+    ):
+        raise ContinuityError("invalid_project_name")
+    return text
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuityBeginRequest:
+    """One ``continuity_begin`` call: explicit project declaration plus the
+    first checkpoint content. Registration, alias, binding and the workstream
+    are all idempotent under this single entry point."""
+
+    workspace_path: str
+    project: str
+    alias: str = ""
+    objective: str = ""
+    accepted_decisions: tuple[str, ...] = ()
+    completed_steps: tuple[str, ...] = ()
+    current_step: str = ""
+    next_action: str = ""
+    blockers: tuple[str, ...] = ()
+    make_focus: bool = True
+
+    def __post_init__(self) -> None:
+        _require_str(self.workspace_path, "workspace_path")
+        object.__setattr__(self, "project", validate_project_name(self.project))
+        if _require_str(self.alias, "alias").strip():
+            object.__setattr__(self, "alias", validate_project_name(self.alias, "alias"))
+        else:
+            object.__setattr__(self, "alias", "")
+        for field in ("objective", "current_step", "next_action"):
+            _require_str(getattr(self, field), field)
+        for field in ("accepted_decisions", "completed_steps", "blockers"):
+            object.__setattr__(
+                self, field, _require_str_tuple(getattr(self, field), field)
+            )
+        if type(self.make_focus) is not bool:
+            raise ContinuityValidationError("invalid_make_focus")
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuityBeginResult:
+    """Begin outcome: pointer state plus idempotency flags, never content."""
+
+    project: str
+    workstream_id: str
+    checkpoint_revision: int
+    state_version: int
+    focus_revision: int
+    status: str
+    context_id: int
+    created: bool
+    updated: bool
+    registered: bool
+    alias_added: bool
+    bound: bool
+
+    def __post_init__(self) -> None:
+        _require_str(self.project, "project")
+        _require_str(self.workstream_id, "workstream_id")
+        for field in ("checkpoint_revision", "state_version", "focus_revision"):
+            _require_revision(getattr(self, field), field)
+        _require_str(self.status, "status")
+        if type(self.context_id) is not int or self.context_id < 0:
+            raise ContinuityValidationError("invalid_context_id")
+        for field in ("created", "updated", "registered", "alias_added", "bound"):
+            if type(getattr(self, field)) is not bool:
+                raise ContinuityValidationError(f"invalid_{field}")
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuityFindRequest:
+    """One ``continuity_find`` call: project name, alias or task keyword."""
+
+    query: str
+    workspace_path: str = ""
+    limit: int = 10
+
+    def __post_init__(self) -> None:
+        _require_str(self.query, "query")
+        _require_str(self.workspace_path, "workspace_path")
+        if type(self.limit) is not int or not 1 <= self.limit <= 50:
+            raise ContinuityValidationError("invalid_limit")
+
+
+@dataclass(frozen=True, slots=True)
+class FindWorkstreamSummary:
+    """Cross-project candidate projection: L0 plus workspace verification."""
+
+    workstream_id: str
+    project: str
+    status: str
+    checkpoint_revision: int
+    state_version: int
+    l0: str
+    updated_at: str
+    workspace_match: bool
+    staleness: str
+
+    def __post_init__(self) -> None:
+        _require_str(self.workstream_id, "workstream_id")
+        _require_str(self.project, "project")
+        if self.status not in {status.value for status in WorkstreamStatus}:
+            raise ContinuityValidationError("invalid_status")
+        _require_revision(self.checkpoint_revision, "checkpoint_revision")
+        _require_revision(self.state_version, "state_version")
+        _require_str(self.l0, "l0")
+        _require_str(self.updated_at, "updated_at")
+        if type(self.workspace_match) is not bool:
+            raise ContinuityValidationError("invalid_workspace_match")
+        if self.staleness not in _STALENESS_CODES and self.staleness != "":
+            raise ContinuityValidationError("invalid_staleness")
+
+
+@dataclass(frozen=True, slots=True)
+class FindProjectCandidate:
+    """One matched project: how it matched plus its unfinished workstreams."""
+
+    project: str
+    matched_via: tuple[str, ...]
+    focus_state: str
+    workstreams: tuple[FindWorkstreamSummary, ...]
+
+    def __post_init__(self) -> None:
+        _require_str(self.project, "project")
+        try:
+            via = tuple(self.matched_via)
+        except TypeError as exc:
+            raise ContinuityValidationError("invalid_matched_via") from exc
+        if not via or any(item not in _FIND_MATCH_VIAS for item in via):
+            raise ContinuityValidationError("invalid_matched_via")
+        object.__setattr__(self, "matched_via", via)
+        if self.focus_state not in _FOCUS_STATES:
+            raise ContinuityValidationError("invalid_focus_state")
+        try:
+            workstreams = tuple(self.workstreams)
+        except TypeError as exc:
+            raise ContinuityValidationError("invalid_workstreams") from exc
+        if any(not isinstance(item, FindWorkstreamSummary) for item in workstreams):
+            raise ContinuityValidationError("invalid_workstreams")
+        object.__setattr__(self, "workstreams", workstreams)
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuityFindResult:
+    """Find outcome. ``checkpoint`` is set only for a unique evidenced
+    candidate and carries the same bounded shape as the resume checkpoint."""
+
+    code: str
+    candidates: tuple[FindProjectCandidate, ...] = ()
+    checkpoint: dict | None = None
+
+    def __post_init__(self) -> None:
+        if self.code not in _FIND_CODES:
+            raise ContinuityValidationError(
+                "code must be one of " + ", ".join(sorted(_FIND_CODES))
+            )
+        try:
+            candidates = tuple(self.candidates)
+        except TypeError as exc:
+            raise ContinuityValidationError("invalid_candidates") from exc
+        if any(not isinstance(item, FindProjectCandidate) for item in candidates):
+            raise ContinuityValidationError("invalid_candidates")
+        object.__setattr__(self, "candidates", candidates)
+        if self.checkpoint is not None and not isinstance(self.checkpoint, dict):
+            raise ContinuityValidationError("invalid_checkpoint")
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuityImportRequest:
+    """One conservative backfill import for an interrupted external session.
+
+    ``workstream_id`` is caller-deterministic (``ws_`` + 16 lowercase hex) so
+    repeated scans never duplicate a task; ``applied_revision`` is the
+    checkpoint revision this source previously wrote, so any newer revision
+    proves a human checkpoint that must be preserved."""
+
+    workspace_path: str
+    project_hint: str
+    workstream_id: str
+    objective: str = ""
+    completed_steps: tuple[str, ...] = ()
+    current_step: str = ""
+    next_action: str = ""
+    blockers: tuple[str, ...] = ()
+    applied_revision: int = 0
+
+    def __post_init__(self) -> None:
+        _require_str(self.workspace_path, "workspace_path")
+        _require_str(self.project_hint, "project_hint")
+        import re
+
+        if not re.fullmatch(r"ws_[0-9a-f]{16}", _require_str(
+            self.workstream_id, "workstream_id"
+        )):
+            raise ContinuityValidationError("invalid_workstream_id")
+        for field in ("objective", "current_step", "next_action"):
+            _require_str(getattr(self, field), field)
+        for field in ("completed_steps", "blockers"):
+            object.__setattr__(
+                self, field, _require_str_tuple(getattr(self, field), field)
+            )
+        _require_revision(self.applied_revision, "applied_revision")
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuityImportResult:
+    """Import outcome: a stable code plus the resulting pointer state."""
+
+    code: str
+    workstream_id: str = ""
+    checkpoint_revision: int = 0
+    state_version: int = 0
+    status: str = ""
+    context_id: int = 0
+
+    def __post_init__(self) -> None:
+        if self.code not in _IMPORT_CODES:
+            raise ContinuityValidationError(
+                "code must be one of " + ", ".join(sorted(_IMPORT_CODES))
+            )
+        _require_str(self.workstream_id, "workstream_id")
+        _require_revision(self.checkpoint_revision, "checkpoint_revision")
+        _require_revision(self.state_version, "state_version")
+        _require_str(self.status, "status")
+        if type(self.context_id) is not int or self.context_id < 0:
+            raise ContinuityValidationError("invalid_context_id")

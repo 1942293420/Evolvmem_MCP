@@ -10,7 +10,7 @@
 ## 经验与任务续接
 
 - 实质新任务、切换话题/项目或出现新失败证据时，主动调用 `experience_recall`，不等待用户说“查历史”。参数用当前问题关键词、实际项目和已知约束；`constraints` 只传已直接观察到、能与案例条件比较的事实值，不把“不要重试”“仅给方案”等操作限制当成病因，未确定的病因留在 `query`，不臆测案例的 canonical key；简单确认与不变任务复用已有查询。
-- 首次任务调用 `context_session_start` 时同时传当前 `workspace_path`；用户说“继续”时先 `continuity_resume` 恢复断点。任务目标明确后用 `make_focus=true` 和 session start/resume 返回的最新 `expected_focus_revision` 创建检查点；里程碑、阻塞、完成时更新，并记录采用的经验 ID、改动与待验证项。
+- 首次任务调用 `context_session_start` 时同时传当前 `workspace_path`；用户说“继续”时先 `continuity_resume` 恢复断点；在通用主目录或项目未解析时用 `continuity_find` 按项目名/中文别名/任务关键词发现候选（只读，绝不切换 focus）。任务目标明确后调 `continuity_begin`（workspace_path + 显式项目名 + 可选中文别名）幂等登记、绑定并创建/读回 focus 任务；重放 begin 保留既有内容且不抢占其他未完成任务的焦点；仅无有效焦点时可挂回，进度更新用 `continuity_checkpoint`（最新 revision CAS），里程碑、阻塞、完成时更新，并记录采用的经验 ID、改动与待验证项。
 - 采用案例前比较问题机制、目标、环境和约束；简短说明案例 ID、原验证范围、可复用步骤和本次改动。没有合适案例就根据当前证据处理。
 - 成功或失败只反馈给实际采用且得到相关验证的方法。用户明确指出已参考案例在当前场景不适用时，即使未执行，也用 `context_record_outcome(outcome=inapplicable)` 保存该案例的场景反馈，并引用这条用户原话；这不增加失败数。不要只更新检查点而遗漏反馈。检索、使用、未知、不适用、真实失败与成功分开；新条件形成派生案例，保留父案例。
 - `experience_record` / `context_record_outcome` 的成功必须引用实际工具结果、用户确认或修复记录验证段：传真实会话/任务 ID、事件 ID、`quote` 及条件；可传来源记录的绝对路径与 JSONL 行号。助手自称完成、用户沉默、无关测试和重复转述不算成功。来源无法绑定时保留候选，不编造引用。

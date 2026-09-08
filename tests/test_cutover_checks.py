@@ -23,7 +23,7 @@ import pytest
 from evolvmem.codex_config import CodexConfigEditor
 from evolvmem.config import Config
 from evolvmem.context_migration import LegacyMemoryMigrator
-from evolvmem.context_models import ContextValidationError
+from evolvmem.context_models import ContextStatus, ContextValidationError
 from evolvmem.context_store import ContextStore
 from evolvmem.cutover_checks import (
     check_projection_lag,
@@ -1608,3 +1608,125 @@ class _CountingVector:
 
     def is_dirty(self):
         return False
+
+
+# ---- duplicate-active 隔离候选：胜出项归档后不是 lag（2026-09-09 真实异常机制）----
+
+
+def test_archived_duplicate_winner_keeps_quarantined_candidate_consistent(
+    test_config,
+):
+    """同 key 旧候选经有据降级后，胜出项归档不产生 status lag。
+
+    主代理用虚构数据稳定复现的真实异常：同 key A(旧)/B(新) 均 active
+    → 迁移后 A 的 Core=candidate（migration 来源标记
+    ``legacy-v1:duplicate-active``）、B 两侧 active、lag=0 → B 两侧正常
+    归档 → A 仍为 candidate 且有据可查；动态按“当前 active 同 key 集合”
+    计算预期状态会要求 A 回升 active，误报 status_mismatch=1。
+    修复：有该来源标记的 candidate 视为一致；不做任何自动激活。
+    """
+    with MemoryStore(test_config) as legacy:
+        loser_legacy_id = legacy.add(
+            key="dup:key", value="first duplicate active row."
+        )
+        winner_legacy_id = legacy.add(
+            key="dup:key", value="second duplicate active row."
+        )
+    store = ContextStore(test_config)
+    store.initialize()
+    try:
+        migration = LegacyMemoryMigrator(store, test_config).migrate()
+        assert migration.duplicate_active_count == 1
+        before = check_projection_lag(test_config, store)
+        assert before.projection_lag == 0  # 虚构基线：迁移后一致
+
+        loser_item_id = store.resolve_legacy_mapping(loser_legacy_id)
+        winner_item_id = store.resolve_legacy_mapping(winner_legacy_id)
+        loser_item = store.get_item(loser_item_id)
+        assert loser_item.status is ContextStatus.CANDIDATE
+        marker = store._connection().execute(
+            "SELECT extraction_version FROM context_sources "
+            "WHERE item_id=? AND source_kind='migration'",
+            (loser_item_id,),
+        ).fetchone()
+        assert marker is not None
+        assert marker[0] == "legacy-v1:duplicate-active"
+
+        # 胜出项在存储事务内两侧同步归档（与真实遗忘/归档路径等效）
+        with store.transaction():
+            conn = store._connection()
+            conn.execute(
+                "UPDATE memories SET status='archived' WHERE id=?",
+                (winner_legacy_id,),
+            )
+            conn.execute(
+                "UPDATE context_items SET status='archived' WHERE id=?",
+                (winner_item_id,),
+            )
+
+        after = check_projection_lag(test_config, store)
+        assert after.status_mismatch == 0
+        assert after.projection_lag == 0
+        # 不自动激活：候选语义原样保留
+        assert store.get_item(loser_item_id).status is ContextStatus.CANDIDATE
+    finally:
+        store.close()
+
+
+def test_unmarked_candidate_status_corruption_is_still_detected(test_config):
+    """没有 duplicate-active 来源标记的 active→candidate 损坏仍计入 lag。"""
+    ids, store = _migrated_library(test_config)
+    try:
+        item_id = store.resolve_legacy_mapping(ids["active"])
+        with store.transaction():
+            store._connection().execute(
+                "UPDATE context_items SET status='candidate' WHERE id=?",
+                (item_id,),
+            )
+        report = check_projection_lag(test_config, store)
+        assert report.status_mismatch == 1
+        assert report.projection_lag == 1
+    finally:
+        store.close()
+
+
+def test_migration_rerun_never_auto_activates_quarantined_candidate(test_config):
+    """migrate() 重跑不得把有 duplicate-active 标记的历史 candidate 激活。
+
+    胜出项归档后，按“当前 active 同 key 集合”重新计算的迁移状态会把旧项
+    当作唯一 active 并 reconcile 成 ACTIVE——这正是被禁止的自动激活路径。
+    有 migration 来源标记的 candidate 必须原样保留。
+    """
+    with MemoryStore(test_config) as legacy:
+        loser_legacy_id = legacy.add(
+            key="dup:key", value="first duplicate active row."
+        )
+        winner_legacy_id = legacy.add(
+            key="dup:key", value="second duplicate active row."
+        )
+    store = ContextStore(test_config)
+    store.initialize()
+    try:
+        LegacyMemoryMigrator(store, test_config).migrate()
+        loser_item_id = store.resolve_legacy_mapping(loser_legacy_id)
+        winner_item_id = store.resolve_legacy_mapping(winner_legacy_id)
+        assert store.get_item(loser_item_id).status is ContextStatus.CANDIDATE
+        with store.transaction():
+            conn = store._connection()
+            conn.execute(
+                "UPDATE memories SET status='archived' WHERE id=?",
+                (winner_legacy_id,),
+            )
+            conn.execute(
+                "UPDATE context_items SET status='archived' WHERE id=?",
+                (winner_item_id,),
+            )
+        rerun = LegacyMemoryMigrator(store, test_config).migrate()
+        assert rerun.created == 0
+        # 不自动激活：candidate 语义与标记原样保留
+        assert store.get_item(loser_item_id).status is ContextStatus.CANDIDATE
+        report = check_projection_lag(test_config, store)
+        assert report.status_mismatch == 0
+        assert report.projection_lag == 0
+    finally:
+        store.close()

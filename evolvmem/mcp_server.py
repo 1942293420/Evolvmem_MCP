@@ -20,6 +20,8 @@ Context tools (Codex/Kimi shadow/primary with a ready ContextService):
   context_sweep         — TTL purge sweep over expired session archives
 
 Continuity tools (Codex/Kimi compat/shadow/primary; call-time readiness):
+  continuity_begin      — idempotent declare→register→bind→workstream entry
+  continuity_find       — cross-project discovery by name/alias/task keyword
   continuity_resume     — exact focus-pointer resume, bounded checkpoint
   continuity_checkpoint — action whitelist + revision CAS mutation
   continuity_list       — unfinished workstream L0 summaries
@@ -52,8 +54,10 @@ from evolvmem.context_models import (
 )
 from evolvmem.context_service import ContextService
 from evolvmem.continuity_models import (
+    ContinuityBeginRequest,
     ContinuityCheckpointRequest,
     ContinuityError,
+    ContinuityFindRequest,
     ContinuityResumeRequest,
     ContinuityValidationError,
 )
@@ -121,6 +125,11 @@ _CONTEXT_ERROR_MESSAGES = {
     "invalid_parent": "the parent workstream is invalid (missing, terminal, cross-project, or cyclic)",
     "content_rejected": "the checkpoint content was rejected by the content policy",
     "project_unresolved": "no active project binding resolves for this workspace and hint",
+    "invalid_project_name": "the project name is missing, too long, or path-shaped; declare an explicit project name",
+    "alias_conflict": "the alias already belongs to a different project",
+    "project_archived": "the project is archived; reactivate it explicitly before beginning work",
+    "project_not_registered": "no registered project, alias, or unfinished task matches the query",
+    "no_open_workstream": "the project is registered but has no unfinished workstream",
     "continuity_not_ready": "continuity storage or workspace identity is not ready",
     "dangling_focus": "the focus pointer targets a missing or terminal workstream",
     "ambiguous": "multiple unfinished workstreams; pick one before resuming",
@@ -287,6 +296,8 @@ class MemoryMCPServer:
             "continuity_resume": self._continuity_resume,
             "continuity_checkpoint": self._continuity_checkpoint,
             "continuity_list": self._continuity_list,
+            "continuity_begin": self._continuity_begin,
+            "continuity_find": self._continuity_find,
         }
 
     def _memory_search(self, args: dict) -> dict:
@@ -1041,6 +1052,123 @@ class MemoryMCPServer:
             )
         except (ContinuityValidationError, TypeError):
             return self._context_error("invalid_arguments")
+
+    # ---- continuity begin/find handlers (MCP dict ↔ typed API boundary) ----
+
+    # ContinuityBeginRequest/ContinuityFindRequest 的字段全集（schema
+    # additionalProperties: False 的服务端镜像）：未知键直接 invalid_arguments
+    _BEGIN_FIELDS = frozenset({
+        "workspace_path", "project", "alias", "objective",
+        "accepted_decisions", "completed_steps", "current_step",
+        "next_action", "blockers", "make_focus",
+    })
+    _FIND_FIELDS = frozenset({"query", "workspace_path", "limit"})
+
+    def _continuity_begin(self, args: dict) -> dict:
+        if not isinstance(args, dict) or set(args) - self._BEGIN_FIELDS:
+            return self._context_error("invalid_arguments")
+        try:
+            request = ContinuityBeginRequest(
+                workspace_path=args.get("workspace_path"),
+                project=args.get("project"),
+                alias=args.get("alias", ""),
+                objective=args.get("objective", ""),
+                accepted_decisions=args.get("accepted_decisions", ()),
+                completed_steps=args.get("completed_steps", ()),
+                current_step=args.get("current_step", ""),
+                next_action=args.get("next_action", ""),
+                blockers=args.get("blockers", ()),
+                make_focus=args.get("make_focus", True),
+            )
+        except ContinuityError as exc:
+            # 项目名/别名策略错误是稳定码（如 invalid_project_name）
+            return self._context_error(exc.code)
+        except (ContinuityValidationError, TypeError):
+            return self._context_error("invalid_arguments")
+        gate_error = self._continuity_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            result = self._continuity().begin(request)
+        except ContinuityError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        # 只有指针/修订状态与幂等标记：无正文、无绝对路径、无指纹材料
+        return {
+            "project": result.project,
+            "workstream_id": result.workstream_id,
+            "checkpoint_revision": result.checkpoint_revision,
+            "state_version": result.state_version,
+            "focus_revision": result.focus_revision,
+            "status": result.status,
+            "context_id": result.context_id,
+            "created": result.created,
+            "updated": result.updated,
+            "registered": result.registered,
+            "alias_added": result.alias_added,
+            "bound": result.bound,
+        }
+
+    def _continuity_find(self, args: dict) -> dict:
+        if not isinstance(args, dict) or set(args) - self._FIND_FIELDS:
+            return self._context_error("invalid_arguments")
+        try:
+            request = ContinuityFindRequest(
+                query=args.get("query"),
+                workspace_path=args.get("workspace_path", "") or "",
+                limit=args.get("limit", 10),
+            )
+        except (ContinuityValidationError, TypeError):
+            return self._context_error("invalid_arguments")
+        # find 从通用目录也应可用：只要求 continuity schema，workspace key
+        # 缺失时降级为“未核验工作区”，绝不因此隐藏 continuity 能力
+        service = self._continuity()
+        if service is None:
+            return self._context_error("continuity_not_ready")
+        try:
+            if not service._schema_ready():
+                return self._context_error("continuity_not_ready")
+        except Exception:
+            return self._context_error("continuity_not_ready")
+        try:
+            result = service.find(request)
+        except ContinuityError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        payload = {
+            "code": result.code,
+            "candidates": [
+                {
+                    "project": candidate.project,
+                    "matched_via": list(candidate.matched_via),
+                    "focus_state": candidate.focus_state,
+                    "workstreams": [
+                        {
+                            "workstream_id": item.workstream_id,
+                            "project": item.project,
+                            "status": item.status,
+                            "checkpoint_revision": item.checkpoint_revision,
+                            "state_version": item.state_version,
+                            "l0": item.l0,
+                            "updated_at": item.updated_at,
+                            "workspace_match": item.workspace_match,
+                            "staleness": item.staleness,
+                        }
+                        for item in candidate.workstreams
+                    ],
+                }
+                for candidate in result.candidates
+            ],
+            # 唯一候选时附可回读 checkpoint（与 resume 同一有界形状）
+            "checkpoint": result.checkpoint,
+        }
+        if result.code != "ok":
+            payload["message"] = _CONTEXT_ERROR_MESSAGES.get(
+                result.code, result.code
+            )
+        return payload
 
     def _continuity_resume(self, args: dict) -> dict:
         request = self._continuity_read_request(args)
