@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "title": "EvolvMem 完整架构图册",
-  "reviewed_at": "2026-09-08",
+  "reviewed_at": "2026-09-09",
   "source_root": "/home/jiangli/hermes-memory-plugin",
   "chapters": [
     {
@@ -9,7 +9,7 @@
       "title": "系统总览",
       "english": "SYSTEM OVERVIEW",
       "subtitle": "10 个专题覆盖接入、模型、召回、写入、存储、经验演化与精确续接。",
-      "takeaway": "EvolvMem 是由客户端调用的本地记忆系统。MCP 与 Web 是不同入口；ContextService 负责协调，SQLite 保存事实，检索索引提供候选。远程模型只出现在明确的内容生成环节。",
+      "takeaway": "EvolvMem 是由客户端调用的本地记忆系统。MCP 与 Web 是不同入口；ContextService 负责记忆协调，ContinuityService 独立管理项目任务与断点。SQLite 保存事实，检索索引提供候选；Codex 断点补录在本地读取会话事件。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -183,7 +183,7 @@
             "id": "continuity",
             "type": "backend",
             "label": "任务续接",
-            "sublabel": "workspace → focus → checkpoint",
+            "sublabel": "begin · find · 本地补录",
             "pos": [
               1115,
               130
@@ -261,15 +261,15 @@
           "title": "一次新任务怎样使用记忆",
           "paragraphs": [
             "宿主助手理解新任务，按客户端约定调用 session_start 或 experience_recall。系统按项目、已观察条件和证据召回；助手核对适用性后执行任务。",
-            "真实工具结果或用户确认通过来源校验后保存为结果证据，影响下一次召回。未完成任务则通过独立的 workstream / focus / checkpoint 路径保存。"
+            "明确项目与工作区后，continuity_begin 原子登记、绑定并创建任务；continuity_find 可按项目、别名或任务关键词发现断点，continuity_resume 精确恢复当前任务。真实结果经过来源校验后才能成为经验证据；任务进度通过 checkpoint 的独立版本协议保存。"
           ]
         },
         {
           "title": "六个职责分区",
           "paragraphs": [],
           "items": [
-            "接入：Codex / Kimi / Claude 的 MCP；Kimi 与 DSH 的专用 hook；Signal Web 工作台。",
-            "协调：ContextService、模式与健康门、项目解析、兼容 facade。",
+            "接入：Codex / Kimi / Claude 的 MCP；Kimi 与 DSH 的专用 hook；Codex 本地会话补录；Signal Web 工作台。",
+            "协调：ContextService 的记忆模式与健康门；ContinuityService 的独立任务入口、项目绑定和版本协议；兼容 facade。",
             "读取：legacy / Context / experience 三条检索路径，以及精确 context_read。",
             "生成与写入：会话提炼、确定性内容门、冲突与语义替代、项目摘要和候选方法。",
             "事实：SQLite 条目、层、来源、证据、项目、滚动摘要与任务状态。",
@@ -278,7 +278,9 @@
         },
         {
           "title": "本次核对的运行边界",
-          "paragraphs": [],
+          "paragraphs": [
+            "部署与共享配置沿用 2026-09-08 的核对快照；本次于 2026-09-09 同步 continuity 源码、图文及生成产物。实时健康由各进程单独报告。"
+          ],
           "table": {
             "headers": [
               "观察项",
@@ -325,11 +327,11 @@
         },
         {
           "label": "MCP 初始化与模型加载",
-          "path": "evolvmem/mcp_server.py:141"
+          "path": "evolvmem/mcp_server.py:147"
         },
         {
           "label": "模式和工具暴露",
-          "path": "evolvmem/mcp_contract.py:630"
+          "path": "evolvmem/mcp_contract.py:732"
         },
         {
           "label": "本地模型契约",
@@ -338,6 +340,14 @@
         {
           "label": "持久化与索引路径",
           "path": "evolvmem/config.py:35"
+        },
+        {
+          "label": "项目任务入口与绑定",
+          "path": "evolvmem/continuity_service.py:340"
+        },
+        {
+          "label": "Codex 本地断点补录",
+          "path": "evolvmem/continuity_backfill.py:547"
         }
       ]
     },
@@ -2021,7 +2031,7 @@
             "rows": [
               [
                 "Codex",
-                "显式 MCP 记忆 / Context / experience / continuity 调用；此仓库没有完整的自动 SessionEnd 提炼 hook。"
+                "显式 MCP 记忆 / Context / experience / continuity 调用；另有 continuity_backfill 从本地 rollout 增量补录任务断点，默认 dry-run，--apply 才保存；没有完整的自动 SessionEnd 提炼 hook。"
               ],
               [
                 "Kimi",
@@ -2042,6 +2052,14 @@
             ]
           },
           "wide": true
+        },
+        {
+          "title": "Codex 断点补录的独立路径",
+          "paragraphs": [
+            "continuity_backfill 在本地解析 Codex 用户消息与原生 function_call / custom_tool_call 及其 output，不调用远程 chat 或 embedding，也不将工具已返回误写为业务验收成功。失败或无结果的调用保留为待核实项。",
+            "--auto 只使用 cwd 指纹能唯一解析的现有 active 项目绑定；home、归属不明或混合工作区只报告候选。显式 --project 与 --workspace-path 可声明归属；子代理会话和 AGENTS / environment_context 注入不成为新用户任务。",
+            "补录结果进入独立 workstream 检查点，不自动生成成功经验或切换 focus。已确认 checkpoint ID、人工进度、终态任务及增量预算的规则在“任务续接与检查点”专题展开。"
+          ]
         },
         {
           "title": "远程提炼的实际边界",
@@ -2133,6 +2151,14 @@
         {
           "label": "加密会话文件",
           "path": "evolvmem/session_archive.py:158"
+        },
+        {
+          "label": "Codex 原生事件与失败结果",
+          "path": "evolvmem/continuity_backfill.py:332"
+        },
+        {
+          "label": "补录项目归属与入口",
+          "path": "evolvmem/continuity_backfill.py:483"
         }
       ]
     },
@@ -2569,14 +2595,14 @@
       "id": "continuity",
       "title": "任务续接与检查点",
       "english": "EXACT CONTINUITY & CHECKPOINTS",
-      "subtitle": "“继续上次任务”沿精确指针恢复；任务版本、当前焦点和普通记忆排序彼此独立。",
-      "takeaway": "continuity_resume 不跑 embedding，也不把最相似或最近的记忆当成当前任务。它先确定工作区绑定，再读取 focus 和 workstream 指针，核对工作区和仓库变化后，决定是否读取当前检查点。",
+      "subtitle": "begin 明确登记，find 跨项目发现，resume 精确恢复；checkpoint 与本地补录各自保留任务和焦点边界。",
+      "takeaway": "任务身份来自明确项目、工作区与目标。begin 登记并绑定，find 只读发现，resume 按 focus / workstream 指针恢复，checkpoint 携版本推进。Codex 本地补录只保存可归属的事件断点，保留人工进度和终态任务；这些路径不依赖经验召回或 ANN 健康。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
         "meta": {
           "title": "EvolvMem · 任务续接与检查点",
-          "subtitle": "精确恢复读取主线 → 客户端工作 → 携版本写入",
+          "subtitle": "begin 登记 / find 发现；resume 精确恢复 → checkpoint 版本事务",
           "quality_profile": "showcase",
           "visual_preset": "blueprint",
           "animation": "none",
@@ -2590,7 +2616,7 @@
             "id": "workspace",
             "type": "external",
             "label": "实际 workspace_path",
-            "sublabel": "由调用方提供",
+            "sublabel": "begin 明确登记 · resume 使用",
             "pos": [
               30,
               80
@@ -2618,7 +2644,7 @@
             "id": "project",
             "type": "database",
             "label": "解析有效绑定项目",
-            "sublabel": "hint 匹配 / 单绑定 / 唯一默认",
+            "sublabel": "begin 绑定 · find 只读发现",
             "pos": [
               660,
               80
@@ -2701,8 +2727,8 @@
           {
             "id": "update",
             "type": "external",
-            "label": "后续提交检查点",
-            "sublabel": "目标 / 进展 / 下一步",
+            "label": "检查点更新 / 本地补录",
+            "sublabel": "checkpoint CAS / backfill",
             "pos": [
               30,
               470
@@ -2744,7 +2770,7 @@
             "id": "result",
             "type": "external",
             "label": "返回最新版本",
-            "sublabel": "下一次调用必须携带",
+            "sublabel": "调用方携版本 · 补录存游标",
             "pos": [
               975,
               470
@@ -2826,6 +2852,42 @@
       },
       "sections": [
         {
+          "title": "首次 begin 与重复声明",
+          "paragraphs": [
+            "continuity_begin 需要明确 project 和 workspace_path，可带 alias 与任务目标；内容先校验，项目登记、别名、工作区绑定和任务创建在同一事务提交。命名冲突拒绝后不留下半登记状态，也不从通用 home 猜项目。",
+            "同项目 / 工作区内按规范化 objective 识别已有任务。重复 begin 读回既有内容和版本，保留后来更新的进度及其他未完成任务的 focus；相同目标已经 completed / cancelled 时不复活、不另建。新目标形成独立任务，后续进展通过 checkpoint CAS 提交。",
+            "已有匹配任务且 make_focus=true 时，仅在焦点缺失、悬空或已指向终态时可以挂回该任务；只变 focus 版本，不改正文版本。新任务是否成为焦点由 make_focus 决定。"
+          ]
+        },
+        {
+          "title": "跨项目 find 不切焦点",
+          "paragraphs": [
+            "continuity_find 按项目名称、精确别名或未完成任务 L0 关键词发现候选。项目 / 别名命中列该项目的未完成任务；仅任务关键词命中时列出实际匹配任务。它不写 focus，也不调用 embedding。",
+            "先判断未完成任务是否唯一，再按调用方的项目 limit 截断输出；limit=1 不会把多匹配变成唯一。实现扫描上限为 200 条任务，每项目最多返回 10 条摘要；唯一任务可返回 checkpoint。",
+            "workspace_path 可省略；无法核验时 workspace_match=false、staleness 留空。只有指纹匹配才计算新鲜度；发现 checkpoint 本身不证明当前目录已适合继续执行。"
+          ],
+          "table": {
+            "headers": [
+              "返回码",
+              "含义"
+            ],
+            "rows": [
+              [
+                "project_not_registered",
+                "未匹配到 active 项目；不猜测归属。"
+              ],
+              [
+                "no_open_workstream",
+                "匹配到项目但没有未完成任务。"
+              ],
+              [
+                "ok / ambiguous",
+                "分别表示找到唯一未完成任务 / 多条候选；均不自动切焦点。"
+              ]
+            ]
+          }
+        },
+        {
           "title": "工作区怎么确定",
           "paragraphs": [
             "Git 工作树使用 Git common dir 构造工作区身份，因此同仓库 worktree 可共享 fingerprint；非 Git 使用解析后的目录。workspace.key 对路径做 HMAC，公开结果不返回原始路径。",
@@ -2903,6 +2965,64 @@
             "普通启动结果未必包含 focus_revision。创建或更新焦点应取得真实最新版本，不能凭空填 0 或沿用其他工作区版本。",
             "continuity 有专用 schema/key readiness；在 compat 或 Core primary degraded 时仍可能可用，不要求 ANN 健康。"
           ]
+        },
+        {
+          "title": "Codex 本地补录怎样进入断点",
+          "paragraphs": [
+            "运行 python -m evolvmem.continuity_backfill --auto 预览；追加 --apply 才写入。也可同时提供 --project 与 --workspace-path，显式声明并登记绑定。--auto 从已有 active binding 唯一解析项目（单绑定或多绑定中的唯一默认），不自动登记新项目。",
+            "按会话 cwd 指纹归属；通用 home、未知 / 不可用 cwd、无唯一绑定或混合工作区仅报告 candidate。子代理会话跳过，AGENTS.md 与 environment_context 注入不作为用户目标。",
+            "读取原生 function_call / custom_tool_call 及对应 output，按 call_id 关联。已返回且未识别出失败的调用记为“已返回结果”；error、非零 exit_code 或无结果进入待核实项，不从助手自述推断完成，不生成成功经验。"
+          ],
+          "formula": "本地 rollout → 增量事件 → 归属与结果核实 → 复用 / 补录 workstream\n--auto：只用现有绑定；默认 dry-run；--apply：保存断点与扫描状态",
+          "wide": true
+        },
+        {
+          "title": "补录怎样复用已有任务",
+          "paragraphs": [
+            "优先读取实际 continuity_checkpoint 工具返回确认的 workstream_id，支持 MCP content[].text 中的嵌套 JSON；核实同项目 / 工作区后复用。没有确认 ID 时再匹配同工作区的规范化目标，避免按会话另造平行任务。",
+            "复用已有任务只保存关联和扫描状态；终态保持终态。新自动补录任务使用会话派生的稳定 ID，增量更新只有在 checkpoint_revision 未超过已应用版本时才可写；人工后续修改始终保留，补录全程不切 focus。",
+            "自动补录断点带来源会话与行号，并标为待人工核实。它记录可观察事件，恢复后仍需核对业务目标、当前代码及待核实项。"
+          ]
+        },
+        {
+          "title": "补录预算与增量状态",
+          "paragraphs": [
+            "状态文件 .continuity_backfill.json 持久化 session_id、cwd、excluded、confirmed_id、workstream_id、applied_revision、offset、lineno、in_oversized，以及有界用户消息 / 工具调用摘要。追加扫描恢复这些字段，避免丢失来源排除标记或已确认任务关联。",
+            "超长行按块丢弃并推进偏移，跨轮保存丢弃状态；普通尾部半行留到下轮。日志缩短时从头重建解析状态，已有人工和终态检查点仍受保留规则约束。"
+          ],
+          "table": {
+            "headers": [
+              "默认量 / 常量",
+              "实际边界"
+            ],
+            "rows": [
+              [
+                "MAX_PER_RUN=5；IDLE_MINUTES=30",
+                "每轮最多处理 5 个计入配额的会话，优先较新文件；mtime 距今不足 30 分钟跳过。被排除 / 拒绝来源不等同于消耗处理配额。"
+              ],
+              [
+                "MAX_BYTES_PER_SCAN=8 MiB",
+                "单文件每轮字节预算；读取前检查预算，最后一次读取最多增加一个有界块。"
+              ],
+              [
+                "MAX_LINE_BYTES=1 MiB",
+                "readline 每块最多 1 MiB + 2 bytes；超长行内容跳过，不整行分配。"
+              ],
+              [
+                "MAX_EVENTS_PER_SCAN=2000",
+                "单文件每轮最多解析 2000 个有效字典事件，剩余内容下轮继续。"
+              ],
+              [
+                "MAX_USERS=50；MAX_CALLS=500",
+                "每会话状态保留首条及最近用户消息；调用超限先淘汰最旧已答项，再淘汰最旧调用。"
+              ],
+              [
+                "MAX_FIELD_CHARS=400；MAX_STEP_CHARS=120；MAX_STEPS=8",
+                "脱敏后的目标等字段与步骤提示限长；completed / pending 各保留最近 8 条。"
+              ]
+            ]
+          },
+          "wide": true
         }
       ],
       "sources": [
@@ -2911,28 +3031,64 @@
           "path": "evolvmem/workspace_identity.py:79"
         },
         {
+          "label": "begin 原子登记与幂等任务",
+          "path": "evolvmem/continuity_service.py:340"
+        },
+        {
+          "label": "跨项目发现与歧义",
+          "path": "evolvmem/continuity_service.py:574"
+        },
+        {
           "label": "恢复与缺失焦点处理",
-          "path": "evolvmem/continuity_service.py:217"
+          "path": "evolvmem/continuity_service.py:262"
         },
         {
           "label": "检查点内容事务与 CAS",
-          "path": "evolvmem/continuity_service.py:449"
+          "path": "evolvmem/continuity_service.py:988"
         },
         {
           "label": "层构造",
-          "path": "evolvmem/continuity_service.py:777"
+          "path": "evolvmem/continuity_service.py:1322"
         },
         {
           "label": "状态与返回结构",
-          "path": "evolvmem/continuity_models.py:75"
+          "path": "evolvmem/continuity_models.py:395"
         },
         {
-          "label": "MCP 续接工具门",
-          "path": "evolvmem/mcp_contract.py:661"
+          "label": "MCP 续接独立工具门",
+          "path": "evolvmem/mcp_contract.py:763"
         },
         {
           "label": "SessionStart 特殊路径",
           "path": "evolvmem/context_service.py:561"
+        },
+        {
+          "label": "补录字节 / 事件 / 状态常量",
+          "path": "evolvmem/continuity_backfill.py:67"
+        },
+        {
+          "label": "原生结果与确认任务 ID",
+          "path": "evolvmem/continuity_backfill.py:290"
+        },
+        {
+          "label": "自动归属与增量补录",
+          "path": "evolvmem/continuity_backfill.py:483"
+        },
+        {
+          "label": "来源与扫描位置持久化",
+          "path": "evolvmem/continuity_backfill.py:832"
+        },
+        {
+          "label": "人工与终态任务保留",
+          "path": "evolvmem/continuity_service.py:731"
+        },
+        {
+          "label": "重复 begin / 发现歧义回归覆盖",
+          "path": "tests/test_continuity_review_regressions.py:185"
+        },
+        {
+          "label": "增量来源与确认 ID 回归覆盖",
+          "path": "tests/test_continuity_incremental_boundaries.py:10"
         }
       ]
     },
@@ -3598,7 +3754,7 @@
         {
           "title": "adapter 与工具门",
           "paragraphs": [
-            "Core cutover adapter 集合为 codex / kimi / dsh；其他 adapter 保留 6 个 legacy 工具。ready Core 可加 10 个 Context / experience 工具；continuity 另有 3 个工具并独立 gate。",
+            "Core cutover adapter 集合为 codex / kimi / dsh；其他 adapter 保留 6 个 legacy 工具。ready Core 可加 10 个 Context / experience 工具；continuity 另有 begin / find / resume / checkpoint / list 共 5 个工具，并独立判断 schema 与 workspace key readiness。",
             "工具列表与工具执行共享注册策略。primary 每次 live_status 重评健康，不能拿旧列表当成当前授权结果。主动 recall 是初始化指令约定的宿主行为，不是服务端扫描所有聊天自动执行。"
           ]
         },
@@ -3607,7 +3763,14 @@
           "paragraphs": [
             "运行配置、SQLite quick_check、schema、active item 三层完整性、mapping 与 projection lag，以及 Context vector 路径、dirty、count 等。",
             "本地模型能加载并不自动代表全部检查通过；常规 runtime gate 也不证明所有向量 ID/正文都正确。切换专用 stage 与 verify 有更完整的 ID 集校验。",
-            "continuity 使用专用 schema/key readiness，和语义召回健康独立。MCP gate 的拒写规则不能推断为所有内部 Service 方法都经过相同入口。"
+            "continuity 使用专用 schema/key readiness，和经验召回、ANN 健康独立；受支持 adapter 的 compat / shadow / primary 都列出其 5 个工具，Core degraded 不会一并隐藏它们。非法 mode 或 legacy 不暴露该工具组；调用时仍须通过专用就绪检查。"
+          ]
+        },
+        {
+          "title": "迁移隔离候选与健康判断",
+          "paragraphs": [
+            "历史重复 active 记录会以 legacy-v1:duplicate-active 迁移来源标记隔离为 Core candidate。原先胜出记录后来归档时，健康检查承认这一有据可查的 legacy-active / Core-candidate 差异，避免误报 projection lag。",
+            "再次迁移也保留带该标记的 candidate，不自动激活；没有该标记的 active → candidate 不一致仍计入真实状态错误。此规则只处理既有隔离状态，不代表全部健康门已经通过。"
           ]
         },
         {
@@ -3691,11 +3854,11 @@
         },
         {
           "label": "每次 primary 健康复查",
-          "path": "evolvmem/mcp_server.py:1170"
+          "path": "evolvmem/mcp_server.py:1319"
         },
         {
           "label": "工具注册契约",
-          "path": "evolvmem/mcp_contract.py:630"
+          "path": "evolvmem/mcp_contract.py:732"
         },
         {
           "label": "Web 初始化",
@@ -3724,6 +3887,18 @@
         {
           "label": "切换向量 stager",
           "path": "evolvmem/cutover_vector.py:142"
+        },
+        {
+          "label": "续接独立就绪检查",
+          "path": "evolvmem/mcp_contract.py:763"
+        },
+        {
+          "label": "隔离来源的 projection 检查",
+          "path": "evolvmem/cutover_checks.py:532"
+        },
+        {
+          "label": "重复迁移保留 candidate",
+          "path": "evolvmem/context_migration.py:70"
         }
       ]
     }

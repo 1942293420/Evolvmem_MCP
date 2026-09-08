@@ -764,7 +764,7 @@ class TestIntegration:
 
     def test_mcp_tool_schemas_match_design(self, test_config):
         """legacy 默认仅注册 6 个旧工具；codex/kimi+shadow 追加八个 context
-        工具与三个续接工具（续接不过 Core serving gate）。"""
+        工具与五个续接工具（续接不过 Core serving gate）。"""
         from evolvmem.mcp_server import MemoryMCPServer
         server = MemoryMCPServer(config=test_config)
         # 伪造 initialize request 后直接查询工具列表
@@ -802,7 +802,7 @@ class TestIntegration:
                     "context_archive_project", "context_sweep",
                     "experience_recall", "experience_record",
                     "continuity_resume", "continuity_checkpoint",
-                    "continuity_list",
+                    "continuity_list", "continuity_begin", "continuity_find",
                 }
             finally:
                 service.close()

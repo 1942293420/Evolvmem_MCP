@@ -504,6 +504,7 @@ def check_projection_lag(
         {int(row["context_item_id"]) for row in rows if row["context_item_id"] is not None}
     )
     items_by_id, layers_by_item = _load_mapped_items(store, mapped_item_ids)
+    quarantined = _duplicate_active_quarantined_items(store, mapped_item_ids)
 
     duplicate_active = duplicate_active_legacy_ids(rows)
     missing_mapping = 0
@@ -531,7 +532,17 @@ def check_projection_lag(
             else LegacyMemoryMigrator.status_for(row.get("status"))
         )
         if item["status"] != expected_status.value:
-            status_mismatch += 1
+            # duplicate-active 隔离候选：胜出项后来归档时，旧项按当前 active
+            # 集合计算的“预期”会回升 active，但它的 candidate 是迁移时有据
+            # 可查的降级（migration 来源标记 legacy-v1:duplicate-active）。
+            # 有标记的 candidate 视为一致且绝不自动激活；没有该标记的
+            # active→candidate 仍然是真实状态损坏，照常计入。
+            if not (
+                item["status"] == ContextStatus.CANDIDATE.value
+                and expected_status is ContextStatus.ACTIVE
+                and item_id in quarantined
+            ):
+                status_mismatch += 1
         content_type = LegacyMemoryMigrator.content_type_for(row)
         original_l2 = LegacyMemoryMigrator.source_text(row.get("value")).replace(
             "\r\n", "\n"
@@ -609,6 +620,25 @@ def _load_mapped_items(
     ):
         layers.setdefault(int(row["item_id"]), set()).add(str(row["layer"]))
     return items, {item_id: frozenset(names) for item_id, names in layers.items()}
+
+
+def _duplicate_active_quarantined_items(
+    store: ContextStore, item_ids: list[int]
+) -> frozenset[int]:
+    """Items whose migration source carries the documented duplicate-active
+    quarantine marker — the only justified legacy-active/Core-candidate
+    divergence."""
+    if not item_ids:
+        return frozenset()
+    placeholders = ",".join("?" for _ in item_ids)
+    rows = store._connection().execute(
+        "SELECT DISTINCT item_id FROM context_sources "
+        "WHERE source_kind='migration' "
+        "AND extraction_version='legacy-v1:duplicate-active' "
+        f"AND item_id IN ({placeholders})",
+        tuple(item_ids),
+    ).fetchall()
+    return frozenset(int(row["item_id"]) for row in rows)
 
 
 def _expected_link(value: object, mapping_by_legacy: dict[int, int]) -> int | None:
