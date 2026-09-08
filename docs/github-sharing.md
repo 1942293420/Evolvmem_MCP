@@ -12,11 +12,13 @@ python3 scripts/export_source.py --output dist/evolvmem-github
 
 ## 导出内容
 
-- 根目录：`README.md`、`README.txt`、`pyproject.toml`、`install.sh`、`.gitignore`、
+- 根目录：`README.md`、`README.txt`、`AGENTS.md`、`pyproject.toml`、`install.sh`、`.gitignore`、
   `LICENSE`（存在时）、`THIRD_PARTY_NOTICES.md`、`migrate_claude_mem.py`。
 - 公开目录：`evolvmem/`、`tests/`、`examples/`、`LICENSES/`、`dsh/`、`scripts/`、`.github/`。
 - 文档：`docs/context-core.md`、`docs/codex-context-core-runbook.md`、
-  `docs/github-sharing.md`、`docs/evolvmem-workflow.json`。
+  `docs/github-sharing.md`、`docs/evolvmem-workflow.json`、
+  `docs/evolvmem-atlas.json`、`docs/evolvmem-atlas-template.html`、
+  `docs/evolvmem-atlas-receipt.json`。
 
 公开目录中的源码、网页和演示图片会保留。脚本排除虚拟环境、缓存、运行数据、模型、
 会话、日志、凭据配置、数据库、备份、旧 `uv.lock` 及符号链接。
@@ -29,6 +31,24 @@ python3 scripts/export_source.py --output dist/evolvmem-github
 
 脚本不会选择或生成项目许可证。如果根目录还没有 `LICENSE`，先确认并补充你选择的许可。
 `LICENSES/` 和 `THIRD_PARTY_NOTICES.md` 中的第三方声明会原样保留。
+
+## 功能更新与架构图同步
+
+每次更新功能，同步维护 `/workflow` 对应专题。图稿和解释位于
+`docs/evolvmem-atlas.json`，页面模板位于 `docs/evolvmem-atlas-template.html`。
+构建需要本机可用的 Archify 技能；读取已发布 HTML 不需要 Node 或 Archify：
+
+```bash
+node scripts/build_architecture_atlas.mjs --out-dir /tmp/evolvmem-atlas
+```
+
+可以通过 `--archify /path/to/archify.mjs` 指定 Archify。生成后检查相关图形、
+内容和浏览器显示，再将 `workflow.html`、`workflow-diagram.html` 放回
+`evolvmem/web_static/`，同步校验记录到 `docs/evolvmem-atlas-receipt.json`。
+校验记录中的视觉检查状态必须反映本次实际检查结果。
+
+完成相关验证后，将功能代码、图稿、模板、生成脚本、页面和校验记录一起提交
+本地 Git，再推送现有 GitHub 仓库。具体项目约定见 `AGENTS.md`。
 
 ## 首次上传
 

@@ -10,7 +10,7 @@ import zipfile
 
 
 ROOT_FILES = (
-    "README.md", "README.txt", "pyproject.toml", "install.sh", ".gitignore",
+    "README.md", "README.txt", "AGENTS.md", "pyproject.toml", "install.sh", ".gitignore",
     "LICENSE", "THIRD_PARTY_NOTICES.md", "migrate_claude_mem.py",
 )
 PUBLIC_DIRECTORIES = (
@@ -19,6 +19,7 @@ PUBLIC_DIRECTORIES = (
 PUBLIC_DOCS = (
     "context-core.md", "codex-context-core-runbook.md", "github-sharing.md",
     "evolvmem-workflow.json",
+    "evolvmem-atlas.json", "evolvmem-atlas-template.html", "evolvmem-atlas-receipt.json",
 )
 EXCLUDED_DIRECTORIES = {
     ".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache",

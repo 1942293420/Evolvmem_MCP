@@ -1,0 +1,254 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-09-08",
+  "source": {
+    "sha256": "d27e08fbafd1e880df872d527b157db13ecead259fd5f716d3ef19824b7f325c",
+    "bytes": 119718
+  },
+  "chapters": [
+    {
+      "chapter": "overview",
+      "type": "architecture",
+      "specification": {
+        "sha256": "6085352de1e96ff2617c560072eae039197225e54f2726e1898abff3c5d86900",
+        "bytes": 4477
+      },
+      "artifact": {
+        "sha256": "855ce4280e498e8ad6eb0b264c3105273635115ce3aa28588d4c3e346af629b0",
+        "bytes": 609209
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "model",
+      "type": "architecture",
+      "specification": {
+        "sha256": "bec017d5474f57fd64f87c8593ebfa7ddca305692752688b1d4cf5725b333268",
+        "bytes": 4074
+      },
+      "artifact": {
+        "sha256": "806338745f84cd486e7d8232d00dbe536c799495f16df85ffb0e8c6978337a10",
+        "bytes": 607080
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "context-recall",
+      "type": "architecture",
+      "specification": {
+        "sha256": "c4edf33b611bb17e7045b05df0d272af08128d431880f2c1d61e983ef5206ef8",
+        "bytes": 4428
+      },
+      "artifact": {
+        "sha256": "07e8ee8949e1bc819161a19a50215f9aa3d75b59fbc38efb4b934bdd0ddd8ba1",
+        "bytes": 609240
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "legacy",
+      "type": "architecture",
+      "specification": {
+        "sha256": "de0525804fcd4d727505c988bd1ba6f921664fd3ffc3b87967da1cc6c5fe4005",
+        "bytes": 4636
+      },
+      "artifact": {
+        "sha256": "418e4bf830744b7a4530907480d1e048a8cb78ab05d3f908839f7f74805e5af1",
+        "bytes": 610336
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "experience",
+      "type": "architecture",
+      "specification": {
+        "sha256": "fd76428d3edec378dd52faf3e30f3c064e5878cc408ab0dcebcf1420988cae37",
+        "bytes": 4687
+      },
+      "artifact": {
+        "sha256": "acecdeb70894e048a15bea19b5ff2efa049a62b95ae34c5f7f465cadeb0f1b6d",
+        "bytes": 610526
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "ingestion",
+      "type": "architecture",
+      "specification": {
+        "sha256": "134916713d29e45cf5bf8d85699f15e463fd8475f929444f247a4eb14f9fa1cd",
+        "bytes": 4637
+      },
+      "artifact": {
+        "sha256": "df51a6daa52f77f941cf11b2d09000a7c905adfc5a7d56edb4adb88c3df972f8",
+        "bytes": 610174
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "storage",
+      "type": "architecture",
+      "specification": {
+        "sha256": "b229d38c1e31b4b293ec210fd7ad74c0ed1262adae0662eefffb049bfbc8e2f0",
+        "bytes": 4645
+      },
+      "artifact": {
+        "sha256": "94a78607a2da6c490a6868bc05b108d7b41df65dd9d7751647e18a498cd2f644",
+        "bytes": 609998
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "continuity",
+      "type": "architecture",
+      "specification": {
+        "sha256": "0ab1fccb9af1eeb7cb28741c3e2c5ef47d3d546738f06c251bd8fc662faf077a",
+        "bytes": 4746
+      },
+      "artifact": {
+        "sha256": "53c93b1a852e4767802c1fe6974096a6d3a9ab2f3190ff520d7039654bf0689a",
+        "bytes": 610908
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "evolution",
+      "type": "architecture",
+      "specification": {
+        "sha256": "e2ce1f5b058ce109e4e569d2348a00048521526a519d741a3e35f17f4b4ef8a3",
+        "bytes": 4697
+      },
+      "artifact": {
+        "sha256": "6fa1151fa73e4421ef6722818789a0379f67dec28cc01d68d61e942de971829f",
+        "bytes": 610668
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "runtime",
+      "type": "architecture",
+      "specification": {
+        "sha256": "148ed81a1e18c173c82c44b96ffaad773a7bf281dfacf9c20870d340ae306575",
+        "bytes": 4405
+      },
+      "artifact": {
+        "sha256": "cc8a82137268b284b0605c63aa132179e46f353c3f5f3b3df017fe3edc9237b9",
+        "bytes": 609961
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    }
+  ],
+  "atlas": {
+    "sha256": "208fdae915912e826a64d8122ac62d3ed71f3e95b5920f15d5c6e80bf81ee564",
+    "bytes": 1525201
+  },
+  "visual_review": {
+    "status": "passed",
+    "correction_rounds": 1,
+    "browser": "Google Chrome / Playwright",
+    "viewports": [
+      "1600x1100 desktop",
+      "1440x1000 offline",
+      "390x844 mobile",
+      "1600x1100 fullscreen"
+    ],
+    "checks": [
+      "Ten chapters load",
+      "All desktop nodes inside viewport",
+      "Cross-chapter search",
+      "In-diagram search",
+      "Node passport open/close",
+      "Zoom",
+      "Light and dark themes",
+      "Fullscreen",
+      "Standalone chapter export",
+      "Complete atlas offline reopen",
+      "No document horizontal overflow",
+      "No page script errors"
+    ]
+  },
+  "output": {
+    "evolvmem/web_static/workflow.html": "/home/jiangli/hermes-memory-plugin/evolvmem/web_static/workflow.html",
+    "evolvmem/web_static/workflow-diagram.html": "/home/jiangli/hermes-memory-plugin/evolvmem/web_static/workflow-diagram.html"
+  },
+  "http_verification": {
+    "command": ".venv/bin/python -m pytest -q --maxfail=1 tests/test_web_designs.py tests/test_web_server.py::test_http_architecture_served",
+    "result": "30 passed in 14.30s",
+    "database": "Temporary pytest data only",
+    "live_route": {
+      "url": "http://192.168.1.135:9377/workflow",
+      "unauthenticated_status": 302,
+      "redirect": "/login"
+    },
+    "authenticated_live_browser": "Not exercised; existing login is required."
+  }
+}

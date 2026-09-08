@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-preset="classic">
+<html lang="en" data-theme="dark" data-preset="blueprint">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="generator" content="archify 2.13.0">
-  <title>EvolvMem 如何工作 Diagram</title>
+  <title>EvolvMem · 系统总览 Diagram</title>
   <script>
     // Resolve the theme before first paint so light-preference users don't
     // see a dark flash. The toolbar script below re-applies with UI state.
@@ -4496,9 +4496,9 @@
     <div class="header">
       <div class="header-row">
         <div class="pulse-dot"></div>
-        <h1>EvolvMem 如何工作</h1>
+        <h1>EvolvMem · 系统总览</h1>
       </div>
-      <p class="subtitle">Agent 主动查经验，执行后凭证据更新；未完成的任务另存断点。点击节点可查看关系。</p>
+      <p class="subtitle">客户端接入、Context 服务、双路检索与本地持久化；细节在各专题展开</p>
     </div>
 
     <script id="archify-guided-views-data" type="application/json">[]</script>
@@ -4544,9 +4544,9 @@
 
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read">
-      <svg viewBox="0 0 720 730" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
-        <title id="archify-diagram-title">EvolvMem 如何工作</title>
-        <desc id="archify-diagram-description">Agent 主动查经验，执行后凭证据更新；未完成的任务另存断点。点击节点可查看关系。</desc>
+      <svg viewBox="0 0 1430 930" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="blueprint" data-quality-profile="showcase">
+        <title id="archify-diagram-title">EvolvMem · 系统总览</title>
+        <desc id="archify-diagram-description">客户端接入、Context 服务、双路检索与本地持久化；细节在各专题展开</desc>
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -4569,161 +4569,173 @@
         <!-- Background Grid -->
         <rect width="100%" height="100%" fill="url(#grid)" />
 
-        <!-- Swimlanes -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / 任务触发</text>
-
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="176" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="198" class="t-dim" font-size="10" font-weight="600">02 / 召回与判断</text>
-
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="300" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="322" class="t-dim" font-size="10" font-weight="600">03 / 执行与验证</text>
-
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="424" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="446" class="t-dim" font-size="10" font-weight="600">04 / 经验反馈与任务断点</text>
-
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-4" x="40" y="548" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="570" class="t-dim" font-size="10" font-weight="600">05 / 下一次任务</text>
-
-        <!-- Phase headers -->
+        <!-- Boundaries (behind everything) -->
 
 
-        <!-- Workflow groups -->
+        <!-- Connection paths (before components for correct z-order) -->
+        <path data-edge-from="agents" data-edge-to="mcp" data-edge-key="0" data-edge-id="agent-mcp" data-composition-points="285,394;395,394" d="M 285 394 L 395 394" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="mcp" data-edge-to="service" data-edge-key="1" data-edge-id="mcp-service" data-composition-points="645,394;669,394;669,417;731,417;731,401;755,401" d="M 645 394 L 661 394 Q 669 394 669 402 L 669 409 Q 669 417 677 417 L 723 417 Q 731 417 731 409 L 731 409 Q 731 401 739 401 L 755 401" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="service" data-edge-to="sqlite" data-edge-key="2" data-edge-id="service-db" data-composition-points="1005,394;1115,394" d="M 1005 394 L 1115 394" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="capture" data-edge-to="extract" data-edge-key="3" data-edge-id="capture-extract" data-composition-points="285,174;395,174" d="M 285 174 L 395 174" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="extract" data-edge-to="service" data-edge-key="4" data-edge-id="extract-service" data-composition-points="645,174;700,174;700,387;755,387" d="M 645 174 L 692 174 Q 700 174 700 182 L 700 379 Q 700 387 708 387 L 755 387" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="web" data-edge-to="service" data-edge-key="5" data-edge-id="web-service" data-composition-points="880,218;880,350" d="M 880 218 L 880 350" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="continuity" data-edge-to="sqlite" data-edge-key="6" data-edge-id="continuity-db" data-composition-points="1240,218;1240,350" d="M 1240 218 L 1240 350" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="service" data-edge-to="retrieval" data-edge-key="7" data-edge-id="service-retrieval" data-composition-points="880,438;880,570" d="M 880 438 L 880 570" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="retrieval" data-edge-to="vectors" data-edge-key="8" data-edge-id="retrieval-vectors" data-composition-points="1005,614;1115,614" d="M 1005 614 L 1115 614" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="embedding" data-edge-to="retrieval" data-edge-key="9" data-edge-id="embedding-retrieval" data-composition-points="880,790;880,658" d="M 880 790 L 880 658" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="remote" data-edge-to="extract" data-edge-key="10" data-edge-id="remote-extract" data-composition-points="520,98;520,130" d="M 520 98 L 520 130" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
-
-        <!-- Edge paths -->
-        <path data-edge-from="matter" data-edge-to="agent-recall" data-edge-key="0" data-edge-id="matter-triggers-agent" data-composition-points="134,119;174,119" d="M 134 119 L 174 119" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="agent-recall" data-edge-to="scoped-recall" data-edge-key="1" data-edge-id="agent-builds-scope" data-composition-points="220,145;220,166;220,166;220,217" d="M 220 145 L 220 166 L 220 166 L 220 217" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="scoped-recall" data-edge-to="fit-and-adapt" data-edge-label="词法与语义检索" data-edge-key="2" data-edge-id="scope-finds-cases" data-composition-points="266,243;384,243" d="M 266 243 L 384 243" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="fit-and-adapt" data-edge-to="do-work" data-edge-key="3" data-edge-id="adoption-to-work" data-composition-points="430,269;430,290;430,290;430,341" d="M 430 269 L 430 290 L 430 290 L 430 341" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="do-work" data-edge-to="observe-result" data-edge-key="4" data-edge-id="work-produces-result" data-composition-points="476,367;579,367" d="M 476 367 L 579 367" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="observe-result" data-edge-to="update-evidence" data-edge-key="5" data-edge-id="result-needs-proof" data-composition-points="625,393;625,414;625,414;625,465" d="M 625 393 L 625 414 L 625 414 L 625 465" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="update-evidence" data-edge-to="next-recall" data-edge-key="6" data-edge-id="evidence-changes-recall" data-composition-points="625,517;625,538;625,538;625,589" d="M 625 517 L 625 538 L 625 538 L 625 589" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="do-work" data-edge-to="save-checkpoint" data-edge-key="7" data-edge-id="work-checkpoint" data-composition-points="430,393;430,414;430,414;430,465" d="M 430 393 L 430 414 L 430 414 L 430 465" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="save-checkpoint" data-edge-to="resume-focus" data-edge-key="8" data-edge-id="checkpoint-resumes" data-composition-points="430,517;430,538;430,538;430,589" d="M 430 517 L 430 538 L 430 538 L 430 589" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-
-        <!-- Nodes -->
-        <g id="node-matter" data-node-id="matter" data-node-label="用户描述事情" tabindex="0" role="button" aria-label="Focus 用户描述事情, 新任务或新失败, 任务触发" aria-pressed="false" data-node-kind="external" data-node-sublabel="新任务或新失败" data-node-context="任务触发">
-          <title>用户描述事情 · 新任务或新失败 · 任务触发</title>
-          <rect x="42" y="93" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="42" y="93" width="92" height="52" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(48 99) scale(0.6875)">
+        <!-- Components -->
+        <g id="node-agents" data-node-id="agents" data-node-label="AI 助手" tabindex="0" role="button" aria-label="Focus AI 助手, Codex · Kimi · Claude · DSH, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="Codex · Kimi · Claude · DSH" data-node-context="Architecture component">
+          <title>AI 助手 · Codex · Kimi · Claude · DSH · Architecture component</title>
+          <rect x="35" y="350" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="35" y="350" width="250" height="88" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(41 356) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-detail-anchor x="88" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">用户描述事情</text>
-          <text data-detail="context" x="88" y="131" class="t-muted" font-size="8" text-anchor="middle">新任务或新失败</text>
+          <text data-detail-anchor x="160" y="392" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AI 助手</text>
+        <text data-detail="context" x="160" y="408" class="t-muted" font-size="9" text-anchor="middle">Codex · Kimi · Claude · DSH</text>
         </g>
 
-        <g id="node-agent-recall" data-node-id="agent-recall" data-node-label="Agent 主动查" tabindex="0" role="button" aria-label="Focus Agent 主动查, 发起经验召回, 任务触发" aria-pressed="false" data-node-kind="backend" data-node-sublabel="发起经验召回" data-node-context="任务触发">
-          <title>Agent 主动查 · 发起经验召回 · 任务触发</title>
-          <rect x="174" y="93" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="174" y="93" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(180 99) scale(0.6875)">
+        <g id="node-mcp" data-node-id="mcp" data-node-label="MCP 工具入口" tabindex="0" role="button" aria-label="Focus MCP 工具入口, 主动查询 · 写入 · 续接, Architecture component" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="主动查询 · 写入 · 续接" data-node-context="Architecture component">
+          <title>MCP 工具入口 · 主动查询 · 写入 · 续接 · Architecture component</title>
+          <rect x="395" y="350" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="395" y="350" width="250" height="88" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(401 356) scale(0.6875)">
+            <rect x="2" y="3" width="12" height="10" rx="2"/>
+            <path d="M2 6.5h12"/>
+            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
+            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
+          </g>
+          <text data-detail-anchor x="520" y="392" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">MCP 工具入口</text>
+        <text data-detail="context" x="520" y="408" class="t-muted" font-size="9" text-anchor="middle">主动查询 · 写入 · 续接</text>
+        </g>
+
+        <g id="node-service" data-node-id="service" data-node-label="ContextService" tabindex="0" role="button" aria-label="Focus ContextService, 模式分流 · 项目范围 · 一致性, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="模式分流 · 项目范围 · 一致性" data-node-context="Architecture component">
+          <title>ContextService · 模式分流 · 项目范围 · 一致性 · Architecture component</title>
+          <rect x="755" y="350" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="755" y="350" width="250" height="88" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(761 356) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="220" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Agent 主动查</text>
-          <text data-detail="context" x="220" y="131" class="t-muted" font-size="8" text-anchor="middle">发起经验召回</text>
+          <text data-detail-anchor x="880" y="392" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ContextService</text>
+        <text data-detail="context" x="880" y="408" class="t-muted" font-size="9" text-anchor="middle">模式分流 · 项目范围 · 一致性</text>
         </g>
 
-        <g id="node-scoped-recall" data-node-id="scoped-recall" data-node-label="按当前范围召回" tabindex="0" role="button" aria-label="Focus 按当前范围召回, 问题·项目·已知条件, 召回与判断" aria-pressed="false" data-node-kind="backend" data-node-sublabel="问题·项目·已知条件" data-node-context="召回与判断">
-          <title>按当前范围召回 · 问题·项目·已知条件 · 召回与判断</title>
-          <rect x="174" y="217" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="174" y="217" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(180 223) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="220" y="238" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">按当前范围召回</text>
-          <text data-detail="context" x="220" y="255" class="t-muted" font-size="7.7" text-anchor="middle">问题·项目·已知条件</text>
-        </g>
-
-        <g id="node-fit-and-adapt" data-node-id="fit-and-adapt" data-node-label="核对并调整" tabindex="0" role="button" aria-label="Focus 核对并调整, 机制·条件·状态·证据, 召回与判断" aria-pressed="false" data-node-kind="backend" data-node-sublabel="机制·条件·状态·证据" data-node-context="召回与判断">
-          <title>核对并调整 · 机制·条件·状态·证据 · 召回与判断</title>
-          <rect x="384" y="217" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="384" y="217" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(390 223) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="430" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">核对并调整</text>
-          <text data-detail="context" x="430" y="255" class="t-muted" font-size="7.3" text-anchor="middle">机制·条件·状态·证据</text>
-        </g>
-
-        <g id="node-do-work" data-node-id="do-work" data-node-label="执行任务" tabindex="0" role="button" aria-label="Focus 执行任务, 记录实际采用, 执行与验证" aria-pressed="false" data-node-kind="backend" data-node-sublabel="记录实际采用" data-node-context="执行与验证">
-          <title>执行任务 · 记录实际采用 · 执行与验证</title>
-          <rect x="384" y="341" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="384" y="341" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(390 347) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="430" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">执行任务</text>
-          <text data-detail="context" x="430" y="379" class="t-muted" font-size="8" text-anchor="middle">记录实际采用</text>
-        </g>
-
-        <g id="node-observe-result" data-node-id="observe-result" data-node-label="观察结果" tabindex="0" role="button" aria-label="Focus 观察结果, 工具验证或明确反馈, 执行与验证" aria-pressed="false" data-node-kind="external" data-node-sublabel="工具验证或明确反馈" data-node-context="执行与验证">
-          <title>观察结果 · 工具验证或明确反馈 · 执行与验证</title>
-          <rect x="579" y="341" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="579" y="341" width="92" height="52" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(585 347) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-detail-anchor x="625" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">观察结果</text>
-          <text data-detail="context" x="625" y="379" class="t-muted" font-size="7.7" text-anchor="middle">工具验证或明确反馈</text>
-        </g>
-
-        <g id="node-update-evidence" data-node-id="update-evidence" data-node-label="保存结果证据" tabindex="0" role="button" aria-label="Focus 保存结果证据, 更新状态与适用范围, 经验反馈与任务断点" aria-pressed="false" data-node-kind="database" data-node-sublabel="更新状态与适用范围" data-node-context="经验反馈与任务断点">
-          <title>保存结果证据 · 更新状态与适用范围 · 经验反馈与任务断点</title>
-          <rect x="579" y="465" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="579" y="465" width="92" height="52" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(585 471) scale(0.6875)">
+        <g id="node-sqlite" data-node-id="sqlite" data-node-label="SQLite / memory.db" tabindex="0" role="button" aria-label="Focus SQLite / memory.db, Context · 证据 · 断点 · 旧投影, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="Context · 证据 · 断点 · 旧投影" data-node-context="Architecture component">
+          <title>SQLite / memory.db · Context · 证据 · 断点 · 旧投影 · Architecture component</title>
+          <rect x="1115" y="350" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="1115" y="350" width="250" height="88" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(1121 356) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-detail-anchor x="625" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">保存结果证据</text>
-          <text data-detail="context" x="625" y="503" class="t-muted" font-size="7.7" text-anchor="middle">更新状态与适用范围</text>
+          <text data-detail-anchor x="1240" y="392" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">SQLite / memory.db</text>
+        <text data-detail="context" x="1240" y="408" class="t-muted" font-size="9" text-anchor="middle">Context · 证据 · 断点 · 旧投影</text>
         </g>
 
-        <g id="node-next-recall" data-node-id="next-recall" data-node-label="影响下次召回" tabindex="0" role="button" aria-label="Focus 影响下次召回, 按新证据重新筛选, 下一次任务" aria-pressed="false" data-node-kind="backend" data-node-sublabel="按新证据重新筛选" data-node-context="下一次任务">
-          <title>影响下次召回 · 按新证据重新筛选 · 下一次任务</title>
-          <rect x="579" y="589" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="579" y="589" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(585 595) scale(0.6875)">
+        <g id="node-capture" data-node-id="capture" data-node-label="Hook 与会话采集" tabindex="0" role="button" aria-label="Focus Hook 与会话采集, Kimi / DSH 自动路径, Architecture component" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="Kimi / DSH 自动路径" data-node-context="Architecture component">
+          <title>Hook 与会话采集 · Kimi / DSH 自动路径 · Architecture component</title>
+          <rect x="35" y="130" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="35" y="130" width="250" height="88" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(41 136) scale(0.6875)">
+            <rect x="2" y="3" width="12" height="10" rx="2"/>
+            <path d="M2 6.5h12"/>
+            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
+            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
+          </g>
+          <text data-detail-anchor x="160" y="172" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Hook 与会话采集</text>
+        <text data-detail="context" x="160" y="188" class="t-muted" font-size="9" text-anchor="middle">Kimi / DSH 自动路径</text>
+        </g>
+
+        <g id="node-extract" data-node-id="extract" data-node-label="提炼与写入校验" tabindex="0" role="button" aria-label="Focus 提炼与写入校验, 脱敏 · 内容门槛 · 冲突检查, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="脱敏 · 内容门槛 · 冲突检查" data-node-context="Architecture component">
+          <title>提炼与写入校验 · 脱敏 · 内容门槛 · 冲突检查 · Architecture component</title>
+          <rect x="395" y="130" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="395" y="130" width="250" height="88" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(401 136) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="625" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">影响下次召回</text>
-          <text data-detail="context" x="625" y="627" class="t-muted" font-size="8" text-anchor="middle">按新证据重新筛选</text>
+          <text data-detail-anchor x="520" y="172" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">提炼与写入校验</text>
+        <text data-detail="context" x="520" y="188" class="t-muted" font-size="9" text-anchor="middle">脱敏 · 内容门槛 · 冲突检查</text>
         </g>
 
-        <g id="node-save-checkpoint" data-node-id="save-checkpoint" data-node-label="保存任务断点" tabindex="0" role="button" aria-label="Focus 保存任务断点, 进度·阻塞·下一步, 经验反馈与任务断点" aria-pressed="false" data-node-kind="database" data-node-sublabel="进度·阻塞·下一步" data-node-context="经验反馈与任务断点">
-          <title>保存任务断点 · 进度·阻塞·下一步 · 经验反馈与任务断点</title>
-          <rect x="384" y="465" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="384" y="465" width="92" height="52" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(390 471) scale(0.6875)">
+        <g id="node-remote" data-node-id="remote" data-node-label="远程生成模型" tabindex="0" role="button" aria-label="Focus 远程生成模型, 按配置调用 DeepSeek / Kimi, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="按配置调用 DeepSeek / Kimi" data-node-context="Architecture component">
+          <title>远程生成模型 · 按配置调用 DeepSeek / Kimi · Architecture component</title>
+          <rect x="395" y="10" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="395" y="10" width="250" height="88" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(401 16) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-detail-anchor x="520" y="52" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">远程生成模型</text>
+        <text data-detail="context" x="520" y="68" class="t-muted" font-size="9" text-anchor="middle">按配置调用 DeepSeek / Kimi</text>
+        </g>
+
+        <g id="node-web" data-node-id="web" data-node-label="Signal 工作台" tabindex="0" role="button" aria-label="Focus Signal 工作台, 查看 · 整理 · 来源与任务, Architecture component" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="查看 · 整理 · 来源与任务" data-node-context="Architecture component">
+          <title>Signal 工作台 · 查看 · 整理 · 来源与任务 · Architecture component</title>
+          <rect x="755" y="130" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="755" y="130" width="250" height="88" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(761 136) scale(0.6875)">
+            <rect x="2" y="3" width="12" height="10" rx="2"/>
+            <path d="M2 6.5h12"/>
+            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
+            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
+          </g>
+          <text data-detail-anchor x="880" y="172" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Signal 工作台</text>
+        <text data-detail="context" x="880" y="188" class="t-muted" font-size="9" text-anchor="middle">查看 · 整理 · 来源与任务</text>
+        </g>
+
+        <g id="node-retrieval" data-node-id="retrieval" data-node-label="分层召回与排序" tabindex="0" role="button" aria-label="Focus 分层召回与排序, FTS5 + HNSW · 预算加载, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="FTS5 + HNSW · 预算加载" data-node-context="Architecture component">
+          <title>分层召回与排序 · FTS5 + HNSW · 预算加载 · Architecture component</title>
+          <rect x="755" y="570" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="755" y="570" width="250" height="88" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(761 576) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-detail-anchor x="880" y="612" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">分层召回与排序</text>
+        <text data-detail="context" x="880" y="628" class="t-muted" font-size="9" text-anchor="middle">FTS5 + HNSW · 预算加载</text>
+        </g>
+
+        <g id="node-vectors" data-node-id="vectors" data-node-label="USearch HNSW" tabindex="0" role="button" aria-label="Focus USearch HNSW, Context / legacy 双索引, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="Context / legacy 双索引" data-node-context="Architecture component">
+          <title>USearch HNSW · Context / legacy 双索引 · Architecture component</title>
+          <rect x="1115" y="570" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="1115" y="570" width="250" height="88" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(1121 576) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-detail-anchor x="430" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">保存任务断点</text>
-          <text data-detail="context" x="430" y="503" class="t-muted" font-size="8" text-anchor="middle">进度·阻塞·下一步</text>
+          <text data-detail-anchor x="1240" y="612" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">USearch HNSW</text>
+        <text data-detail="context" x="1240" y="628" class="t-muted" font-size="9" text-anchor="middle">Context / legacy 双索引</text>
         </g>
 
-        <g id="node-resume-focus" data-node-id="resume-focus" data-node-label="下次说「继续」" tabindex="0" role="button" aria-label="Focus 下次说「继续」, 按当前焦点恢复任务, 下一次任务" aria-pressed="false" data-node-kind="backend" data-node-sublabel="按当前焦点恢复任务" data-node-context="下一次任务">
-          <title>下次说「继续」 · 按当前焦点恢复任务 · 下一次任务</title>
-          <rect x="384" y="589" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="384" y="589" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(390 595) scale(0.6875)">
+        <g id="node-embedding" data-node-id="embedding" data-node-label="本地 Embedding" tabindex="0" role="button" aria-label="Focus 本地 Embedding, nomic v1.5 · GGUF · 768 维, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="nomic v1.5 · GGUF · 768 维" data-node-context="Architecture component">
+          <title>本地 Embedding · nomic v1.5 · GGUF · 768 维 · Architecture component</title>
+          <rect x="755" y="790" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="755" y="790" width="250" height="88" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(761 796) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="430" y="610" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">下次说「继续」</text>
-          <text data-detail="context" x="430" y="627" class="t-muted" font-size="7.7" text-anchor="middle">按当前焦点恢复任务</text>
+          <text data-detail-anchor x="880" y="832" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">本地 Embedding</text>
+        <text data-detail="context" x="880" y="848" class="t-muted" font-size="9" text-anchor="middle">nomic v1.5 · GGUF · 768 维</text>
         </g>
 
-        <!-- Edge labels -->
-
-
-        <g data-detail="context" data-edge-from="scoped-recall" data-edge-to="fit-and-adapt" data-edge-label="词法与语义检索" data-edge-key="2" data-edge-id="scope-finds-cases">
-          <rect x="286.4" y="223" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="325" y="233" class="t-backend" font-size="8" text-anchor="middle">词法与语义检索</text>
+        <g id="node-continuity" data-node-id="continuity" data-node-label="任务续接" tabindex="0" role="button" aria-label="Focus 任务续接, workspace → focus → checkpoint, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="workspace → focus → checkpoint" data-node-context="Architecture component">
+          <title>任务续接 · workspace → focus → checkpoint · Architecture component</title>
+          <rect x="1115" y="130" width="250" height="88" rx="6" class="c-mask"/>
+          <rect x="1115" y="130" width="250" height="88" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1121 136) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-detail-anchor x="1240" y="172" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">任务续接</text>
+        <text data-detail="context" x="1240" y="188" class="t-muted" font-size="9" text-anchor="middle">workspace → focus → checkpoint</text>
         </g>
+
+        <!-- Connection labels -->
+
+
+
+
+
 
 
 
@@ -4732,21 +4744,7 @@
 
 
         <!-- Legend -->
-        <g data-legend data-legend-bridge>
-          <text x="20" y="676" class="t-primary" font-size="10" font-weight="600">Legend</text>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Agent 处理" data-legend-x="20" data-legend-baseline="696" data-legend-width="86">
-            <rect x="20" y="688" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
-            <text x="41" y="696" class="t-muted" font-size="7">Agent 处理</text>
-          </g>
-          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="经验与断点" data-legend-x="113" data-legend-baseline="696" data-legend-width="86">
-            <rect x="113" y="688" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
-            <text x="134" y="696" class="t-muted" font-size="7">经验与断点</text>
-          </g>
-          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="用户与结果" data-legend-x="206" data-legend-baseline="696" data-legend-width="86">
-            <rect x="206" y="688" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
-            <text x="227" y="696" class="t-muted" font-size="7">用户与结果</text>
-          </g>
-        </g>
+
       </svg>
       <p class="intent-trace-status no-print" id="intent-trace-status" role="status" aria-live="polite" aria-atomic="true"></p>
       <div class="share-chapter-cue no-print" id="share-chapter-cue" hidden role="status" aria-live="polite">
@@ -4930,56 +4928,12 @@
 
     <!-- Info Cards -->
     <div class="cards">
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot slate"></div>
-          <h3>由 Agent 发起，按需召回</h3>
-        </div>
-        <ul>
-          <li>&bull; 首次会话先读取当前项目上下文；实质新任务、切换项目或出现新失败时再查经验。</li>
-          <li>&bull; 同一任务可复用已查结果。工具不可用时，仍按当前证据推进任务。</li>
-        </ul>
-      </div>
 
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot cyan"></div>
-          <h3>查到、采用、成功分别记录</h3>
-        </div>
-        <ul>
-          <li>&bull; 候选须有可核验的成功证据且状态可用；跨项目只考虑标记为可迁移的方法。</li>
-          <li>&bull; Agent 仍需核对新场景；无适用案例就正常处理。仅命中或采用，不增加成功数。</li>
-        </ul>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot slate"></div>
-          <h3>结果必须有出处</h3>
-        </div>
-        <ul>
-          <li>&bull; 成功与失败只反馈给实际采用且得到相关验证的方法；无结论保留未知。</li>
-          <li>&bull; 用户明确指出已参考案例不适用时，记录原话和当前条件；不计为执行失败。</li>
-          <li>&bull; 条件或步骤改变时派生新案例并保留父案例；同一验证事件去重，修订保留版本。</li>
-        </ul>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot slate"></div>
-          <h3>续接与运行条件</h3>
-        </div>
-        <ul>
-          <li>&bull; 断点记录任务进度，恢复按工作区与焦点定位，并检查是否过期；断点更新不替代经验反馈。</li>
-          <li>&bull; 结构化召回取决于客户端接入、shadow / primary 模式及服务就绪；主动指令由就绪的 primary 提供。</li>
-          <li>&bull; compat 可保留独立的断点续接能力，但不开放结构化经验召回。会话钩子的注入与提取依客户端配置运行。</li>
-        </ul>
-      </div>
     </div>
 
     <!-- Footer -->
     <p class="footer">
-      Workflow diagram &bull; Built with Archify<span class="no-print"> &bull; <a class="artifact-start-link" href="https://tt-a1i.github.io/archify/start.html?type=workflow&amp;source=artifact" target="_blank" rel="noopener noreferrer">Create yours &nearr;</a> &bull; Hover to trace &bull; <kbd>R</kbd> route &bull; Click to focus &bull; <kbd>+</kbd>/<kbd>&minus;</kbd> zoom &bull; <kbd>M</kbd> radar &bull; <kbd>T</kbd> theme &bull; <kbd>E</kbd> export</span>
+      Architecture diagram &bull; Built with Archify<span class="no-print"> &bull; <a class="artifact-start-link" href="https://tt-a1i.github.io/archify/start.html?type=architecture&amp;source=artifact" target="_blank" rel="noopener noreferrer">Create yours &nearr;</a> &bull; Hover to trace &bull; <kbd>R</kbd> route &bull; Click to focus &bull; <kbd>+</kbd>/<kbd>&minus;</kbd> zoom &bull; <kbd>M</kbd> radar &bull; <kbd>T</kbd> theme &bull; <kbd>E</kbd> export</span>
     </p>
   </div>
 

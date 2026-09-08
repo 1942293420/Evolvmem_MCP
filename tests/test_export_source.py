@@ -13,6 +13,10 @@ def test_export_preserves_public_resources_excludes_runtime_and_never_overwrites
     public = {
         "README.md": b"Public setup instructions\n",
         "README.txt": b"Plain text setup instructions\n",
+        "AGENTS.md": b"Maintain diagrams before committing and publishing feature updates.\n",
+        "docs/evolvmem-atlas.json": b'{"chapters":[]}',
+        "docs/evolvmem-atlas-template.html": b'<script>__ATLAS_PAYLOAD__</script>',
+        "docs/evolvmem-atlas-receipt.json": b'{"chapters":[]}',
         ".gitignore": b"dist/\n.env\n*.db\n",
         "pyproject.toml": b'[project]\nname = "sample"\n',
         "evolvmem/__init__.py": b"# Uncommitted source is included.\n",

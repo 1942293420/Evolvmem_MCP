@@ -1,0 +1,3731 @@
+{
+  "schema_version": 1,
+  "title": "EvolvMem 完整架构图册",
+  "reviewed_at": "2026-09-08",
+  "source_root": "/home/jiangli/hermes-memory-plugin",
+  "chapters": [
+    {
+      "id": "overview",
+      "title": "系统总览",
+      "english": "SYSTEM OVERVIEW",
+      "subtitle": "10 个专题覆盖接入、模型、召回、写入、存储、经验演化与精确续接。",
+      "takeaway": "EvolvMem 是由客户端调用的本地记忆系统。MCP 与 Web 是不同入口；ContextService 负责协调，SQLite 保存事实，检索索引提供候选。远程模型只出现在明确的内容生成环节。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 系统总览",
+          "subtitle": "客户端接入、Context 服务、双路检索与本地持久化；细节在各专题展开",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1430,
+            930
+          ]
+        },
+        "components": [
+          {
+            "id": "agents",
+            "type": "external",
+            "label": "AI 助手",
+            "sublabel": "Codex · Kimi · Claude · DSH",
+            "pos": [
+              35,
+              350
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "mcp",
+            "type": "frontend",
+            "label": "MCP 工具入口",
+            "sublabel": "主动查询 · 写入 · 续接",
+            "pos": [
+              395,
+              350
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "service",
+            "type": "backend",
+            "label": "ContextService",
+            "sublabel": "模式分流 · 项目范围 · 一致性",
+            "pos": [
+              755,
+              350
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "sqlite",
+            "type": "database",
+            "label": "SQLite / memory.db",
+            "sublabel": "Context · 证据 · 断点 · 旧投影",
+            "pos": [
+              1115,
+              350
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "capture",
+            "type": "frontend",
+            "label": "Hook 与会话采集",
+            "sublabel": "Kimi / DSH 自动路径",
+            "pos": [
+              35,
+              130
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "extract",
+            "type": "backend",
+            "label": "提炼与写入校验",
+            "sublabel": "脱敏 · 内容门槛 · 冲突检查",
+            "pos": [
+              395,
+              130
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "remote",
+            "type": "cloud",
+            "label": "远程生成模型",
+            "sublabel": "按配置调用 DeepSeek / Kimi",
+            "pos": [
+              395,
+              10
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "web",
+            "type": "frontend",
+            "label": "Signal 工作台",
+            "sublabel": "查看 · 整理 · 来源与任务",
+            "pos": [
+              755,
+              130
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "retrieval",
+            "type": "backend",
+            "label": "分层召回与排序",
+            "sublabel": "FTS5 + HNSW · 预算加载",
+            "pos": [
+              755,
+              570
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "vectors",
+            "type": "database",
+            "label": "USearch HNSW",
+            "sublabel": "Context / legacy 双索引",
+            "pos": [
+              1115,
+              570
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "embedding",
+            "type": "backend",
+            "label": "本地 Embedding",
+            "sublabel": "nomic v1.5 · GGUF · 768 维",
+            "pos": [
+              755,
+              790
+            ],
+            "size": [
+              250,
+              88
+            ]
+          },
+          {
+            "id": "continuity",
+            "type": "backend",
+            "label": "任务续接",
+            "sublabel": "workspace → focus → checkpoint",
+            "pos": [
+              1115,
+              130
+            ],
+            "size": [
+              250,
+              88
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "agent-mcp",
+            "from": "agents",
+            "to": "mcp",
+            "variant": "emphasis"
+          },
+          {
+            "id": "mcp-service",
+            "from": "mcp",
+            "to": "service",
+            "variant": "emphasis"
+          },
+          {
+            "id": "service-db",
+            "from": "service",
+            "to": "sqlite",
+            "variant": "emphasis"
+          },
+          {
+            "id": "capture-extract",
+            "from": "capture",
+            "to": "extract"
+          },
+          {
+            "id": "extract-service",
+            "from": "extract",
+            "to": "service"
+          },
+          {
+            "id": "web-service",
+            "from": "web",
+            "to": "service"
+          },
+          {
+            "id": "continuity-db",
+            "from": "continuity",
+            "to": "sqlite"
+          },
+          {
+            "id": "service-retrieval",
+            "from": "service",
+            "to": "retrieval"
+          },
+          {
+            "id": "retrieval-vectors",
+            "from": "retrieval",
+            "to": "vectors"
+          },
+          {
+            "id": "embedding-retrieval",
+            "from": "embedding",
+            "to": "retrieval"
+          },
+          {
+            "id": "remote-extract",
+            "from": "remote",
+            "to": "extract",
+            "variant": "dashed"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "一次新任务怎样使用记忆",
+          "paragraphs": [
+            "宿主助手理解新任务，按客户端约定调用 session_start 或 experience_recall。系统按项目、已观察条件和证据召回；助手核对适用性后执行任务。",
+            "真实工具结果或用户确认通过来源校验后保存为结果证据，影响下一次召回。未完成任务则通过独立的 workstream / focus / checkpoint 路径保存。"
+          ]
+        },
+        {
+          "title": "六个职责分区",
+          "paragraphs": [],
+          "items": [
+            "接入：Codex / Kimi / Claude 的 MCP；Kimi 与 DSH 的专用 hook；Signal Web 工作台。",
+            "协调：ContextService、模式与健康门、项目解析、兼容 facade。",
+            "读取：legacy / Context / experience 三条检索路径，以及精确 context_read。",
+            "生成与写入：会话提炼、确定性内容门、冲突与语义替代、项目摘要和候选方法。",
+            "事实：SQLite 条目、层、来源、证据、项目、滚动摘要与任务状态。",
+            "派生与维护：FTS5、双 USearch 索引、dirty 标记、归档保留、检查与切换。"
+          ]
+        },
+        {
+          "title": "本次核对的运行边界",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "观察项",
+              "核对结论"
+            ],
+            "rows": [
+              [
+                "实际网页服务",
+                "本机 systemd 启动 Python web_server，监听 9377；从运行目录读取静态页面。"
+              ],
+              [
+                "共享 JSON 配置",
+                "context_mode=compat；本地向量维度 768；查询/文档前缀已配置。"
+              ],
+              [
+                "客户端可以覆盖",
+                "EVOLVMEM_CONTEXT_MODE / EVOLVMEM_ADAPTER 在各进程加载配置时覆盖 JSON。本次 Codex MCP 独立报告 primary，不能代替 Web 状态。"
+              ],
+              [
+                "本地模型",
+                "nomic-embed-text-v1.5.f16.gguf 已存在，文件约 274.3 MB；文件存在不证明某个进程已经加载或索引健康。"
+              ],
+              [
+                "Web 与模型",
+                "Web run() 没有创建 EmbeddingEngine；MCP 与部分提炼/维护路径才加载它。"
+              ],
+              [
+                "图的边界",
+                "本图说明当前源码实现及配置快照，不实时刷新健康，也不自动执行图中的写入、维护或模型调用。"
+              ]
+            ]
+          },
+          "wide": true
+        }
+      ],
+      "sources": [
+        {
+          "label": "运行协调器",
+          "path": "evolvmem/context_service.py:221"
+        },
+        {
+          "label": "Web 启动及静态路由",
+          "path": "evolvmem/web_server.py:1298"
+        },
+        {
+          "label": "MCP 初始化与模型加载",
+          "path": "evolvmem/mcp_server.py:141"
+        },
+        {
+          "label": "模式和工具暴露",
+          "path": "evolvmem/mcp_contract.py:630"
+        },
+        {
+          "label": "本地模型契约",
+          "path": "evolvmem/runtime_contract.py:17"
+        },
+        {
+          "label": "持久化与索引路径",
+          "path": "evolvmem/config.py:35"
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "title": "本地模型与向量索引",
+      "english": "LOCAL MODEL & INDEX",
+      "subtitle": "同一 GGUF 模型用于文档编码和查询编码；向量是搜索表示，不是聊天答案。",
+      "takeaway": "768 维意味着每段被编码的文本对应 768 个数。文档向量提前建索引，查询到来时只编码问题，再用 HNSW 找邻居。图中两处编码节点表示同一类本地模型的两种用途。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 本地模型与向量索引",
+          "subtitle": "文档建立索引 / 查询查近邻",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "documents",
+            "type": "backend",
+            "label": "待入索引的文本",
+            "sublabel": "legacy value / Context L0",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "document-prefix",
+            "type": "backend",
+            "label": "文档任务前缀",
+            "sublabel": "search_document: ",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "document-encode",
+            "type": "backend",
+            "label": "本地文档编码",
+            "sublabel": "EmbeddingEngine.encode_document",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "index-write",
+            "type": "backend",
+            "label": "向量写入与保存",
+            "sublabel": "add / remove / save",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "model-file",
+            "type": "database",
+            "label": "Nomic GGUF 文件",
+            "sublabel": "v1.5 F16 · 768 维",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "index-files",
+            "type": "database",
+            "label": "两套 USearch 索引",
+            "sublabel": "Cos distance · F32 · HNSW",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "query",
+            "type": "external",
+            "label": "用户检索问题",
+            "sublabel": "不调用 chat 扩写",
+            "pos": [
+              30,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "query-prefix",
+            "type": "backend",
+            "label": "查询任务前缀",
+            "sublabel": "search_query: ",
+            "pos": [
+              345,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "query-encode",
+            "type": "backend",
+            "label": "本地查询编码",
+            "sublabel": "EmbeddingEngine.encode_query",
+            "pos": [
+              660,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "nearest",
+            "type": "backend",
+            "label": "近邻候选与距离",
+            "sublabel": "按 ID 回 SQLite 取事实",
+            "pos": [
+              975,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "model-edge-1",
+            "from": "documents",
+            "to": "document-prefix",
+            "variant": "emphasis"
+          },
+          {
+            "id": "model-edge-2",
+            "from": "document-prefix",
+            "to": "document-encode",
+            "variant": "emphasis"
+          },
+          {
+            "id": "model-edge-3",
+            "from": "model-file",
+            "to": "document-encode",
+            "variant": "emphasis"
+          },
+          {
+            "id": "model-edge-4",
+            "from": "document-encode",
+            "to": "index-write",
+            "variant": "emphasis"
+          },
+          {
+            "id": "model-edge-5",
+            "from": "index-write",
+            "to": "index-files",
+            "variant": "emphasis"
+          },
+          {
+            "id": "model-edge-6",
+            "from": "query",
+            "to": "query-prefix",
+            "variant": "emphasis"
+          },
+          {
+            "id": "model-edge-7",
+            "from": "query-prefix",
+            "to": "query-encode",
+            "variant": "emphasis"
+          },
+          {
+            "id": "model-edge-8",
+            "from": "model-file",
+            "to": "query-encode",
+            "variant": "emphasis"
+          },
+          {
+            "id": "model-edge-9",
+            "from": "query-encode",
+            "to": "nearest",
+            "variant": "emphasis"
+          },
+          {
+            "id": "model-edge-10",
+            "from": "index-files",
+            "to": "nearest",
+            "variant": "emphasis"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "模型究竟是什么",
+          "paragraphs": [
+            "规范文件：nomic-embed-text-v1.5.f16.gguf，默认输出 768 维。通过可选依赖 llama-cpp-python 在调用进程内加载，没有单独的 HTTP Embedding 服务。",
+            "Llama 参数：embedding=True、n_ctx=512、n_batch=32。加载后用一个文档前缀探针核对实际维度；不匹配则关闭模型并报告错误。没有在这里配置 GPU 层数，不能由源码推断现场使用了哪块 GPU。"
+          ],
+          "formula": "文档：search_document: + 文本 → 768 维\n查询：search_query: + 问题 → 768 维"
+        },
+        {
+          "title": "两个索引存的内容不同",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "索引",
+              "键 / 内容 / 来源"
+            ],
+            "rows": [
+              [
+                "vectors.usearch",
+                "legacy memory ID → value 的文档向量。重建可能含非 deleted 的非 active 项；最终召回再过滤状态与过期。"
+              ],
+              [
+                "context_vectors.usearch",
+                "Context ID → L0 的文档向量。重建只取 active、未过期、非 workstream_checkpoint。"
+              ],
+              [
+                "USearch 设置",
+                "HNSW；Cos metric；F32。没有显式自定义 M / ef 等参数。恢复文件使用 view=False，不能标成当前启用只读 mmap。"
+              ]
+            ]
+          }
+        },
+        {
+          "title": "从距离到相似度",
+          "paragraphs": [
+            "代码使用归一化相似度 s = (1 + cos) / 2。它与原始余弦相似度是两种数值口径；所有阈值必须使用对应尺度。",
+            "_normalize_embedding() 只是兼容模型返回的一层/两层列表形状，没有在此函数执行 L2 单位化。"
+          ],
+          "formula": "distance = 1 − cos\ns = clamp(1 − distance / 2, 0, 1)\ns ≥ 0.80 约等于 cos ≥ 0.60\ns ≥ 0.94 约等于 cos ≥ 0.88"
+        },
+        {
+          "title": "加载与故障边界",
+          "paragraphs": [
+            "MCP 构造并尝试加载本地模型；初始化握手最多等轻量健康检查，不必须等待模型。模型缺失或加载失败可保留词法检索能力。",
+            "Web 展示进程自身不构造 EmbeddingEngine。模型文件存在、Engine 已加载、索引可查、primary ready 是四个不同条件。",
+            "普通 Context 向量检索还检查路径、dirty、count；提交后的索引同步失败保留 dirty，不回滚已保存的 SQLite 正文。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "本地模型默认契约",
+          "path": "evolvmem/runtime_contract.py:17"
+        },
+        {
+          "label": "加载参数和维度探针",
+          "path": "evolvmem/embedding.py:25"
+        },
+        {
+          "label": "两种任务前缀",
+          "path": "evolvmem/embedding.py:99"
+        },
+        {
+          "label": "HNSW 索引设置与查找",
+          "path": "evolvmem/vector_index.py:44"
+        },
+        {
+          "label": "Context 索引文档范围",
+          "path": "evolvmem/context_store.py:1328"
+        },
+        {
+          "label": "写后单项同步",
+          "path": "evolvmem/context_vector_sync.py:72"
+        }
+      ]
+    },
+    {
+      "id": "context-recall",
+      "title": "Context 混合检索",
+      "english": "CONTEXT HYBRID RETRIEVAL",
+      "subtitle": "词法查 L0/L1，向量查 L0；最终返回摘要和分数组成，正文按需要再取。",
+      "takeaway": "这里的排序有两层：先把文字分和向量分组成 relevance，再把 relevance 与项目、类型、可信度和证据等一起评分。它不是 RRF，也没有独立 Cross-Encoder / Reranker 模型。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · Context 混合检索",
+          "subtitle": "两路候选 → 范围过滤 → 八因子排序 → L0 → 按需正文",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "query",
+            "type": "external",
+            "label": "输入问题与范围",
+            "sublabel": "query / project / types",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "scope",
+            "type": "security",
+            "label": "资格与候选预算",
+            "sublabel": "active · 未过期 · 置信度",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "fts",
+            "type": "database",
+            "label": "L0 + L1 词法检索",
+            "sublabel": "FTS5 / CJK trigram / LIKE",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "lexical",
+            "type": "backend",
+            "label": "按 item 合并层命中",
+            "sublabel": "最大词法分 · 命中层集合",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "embed",
+            "type": "backend",
+            "label": "本地查询向量",
+            "sublabel": "Nomic · query prefix",
+            "pos": [
+              345,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "ann",
+            "type": "database",
+            "label": "L0 HNSW 候选",
+            "sublabel": "不足时按资格扩候选池",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "merge",
+            "type": "backend",
+            "label": "合并并再次过滤",
+            "sublabel": "ID 去重 · 纯向量门槛",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "rank",
+            "type": "backend",
+            "label": "八因子加权排序",
+            "sublabel": "确定性规则 · 稳定排序",
+            "pos": [
+              975,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "l0",
+            "type": "backend",
+            "label": "返回 L0 与得分解释",
+            "sublabel": "metadata / available_layers",
+            "pos": [
+              660,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "read",
+            "type": "database",
+            "label": "按需精读 L1 / L2",
+            "sublabel": "context_read 精确 ID",
+            "pos": [
+              345,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "consume",
+            "type": "external",
+            "label": "客户端使用上下文",
+            "sublabel": "SessionStart 另有预算渲染",
+            "pos": [
+              30,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "context-recall-edge-1",
+            "from": "query",
+            "to": "scope",
+            "variant": "emphasis"
+          },
+          {
+            "id": "context-recall-edge-2",
+            "from": "scope",
+            "to": "fts",
+            "variant": "emphasis"
+          },
+          {
+            "id": "context-recall-edge-3",
+            "from": "fts",
+            "to": "lexical",
+            "variant": "emphasis"
+          },
+          {
+            "id": "context-recall-edge-4",
+            "from": "scope",
+            "to": "embed",
+            "variant": "emphasis"
+          },
+          {
+            "id": "context-recall-edge-5",
+            "from": "embed",
+            "to": "ann",
+            "variant": "emphasis"
+          },
+          {
+            "id": "context-recall-edge-6",
+            "from": "lexical",
+            "to": "merge",
+            "variant": "emphasis"
+          },
+          {
+            "id": "context-recall-edge-7",
+            "from": "ann",
+            "to": "merge",
+            "variant": "emphasis"
+          },
+          {
+            "id": "context-recall-edge-8",
+            "from": "merge",
+            "to": "rank",
+            "variant": "emphasis"
+          },
+          {
+            "id": "context-recall-edge-9",
+            "from": "rank",
+            "to": "l0",
+            "variant": "emphasis"
+          },
+          {
+            "id": "context-recall-edge-10",
+            "from": "l0",
+            "to": "read",
+            "variant": "dashed"
+          },
+          {
+            "id": "context-recall-edge-11",
+            "from": "read",
+            "to": "consume",
+            "variant": "emphasis"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "召回前与回表后的过滤",
+          "paragraphs": [
+            "初始两路候选预算都是 final_top_k × 5；final_top_k 默认 10，范围 1～20。词法在 SQL 限额前过滤；向量候选按 ID 回表再检查资格，必要时翻倍扩大候选池。",
+            "过滤：active、未过期、confidence ≥ 0.55、项目/适用 global 类型、请求类型和 eligible_ids。reference 与 checkpoint 默认排除，需要明确类型选择。",
+            "GLOBAL 默认只允许 workflow_policy、constraint、preference、user_profile、playbook 跨项目参与；显式 cross_project=True 才放宽项目边界。"
+          ]
+        },
+        {
+          "title": "词法和向量如何合并",
+          "paragraphs": [
+            "FTS5 将查询作为 phrase MATCH；中文可用 trigram，并始终补充整段 LIKE。多个层命中按 item ID 合并，取最大词法分。",
+            "向量仅使用 L0：引擎加载、Context 专用索引路径正确、非 dirty 且非空才执行。仅 vector-only 候选受 s ≥ 0.80 限制；已有词法命中的项仍可以附上较弱的向量分。"
+          ],
+          "formula": "lexical = raw_score / max_raw_score\n纯 LIKE 且全池 raw_score=0：已有词法命中取 1\nvector = clamp(1 − distance/2, 0, 1)\nrelevance = 0.60×lexical + 0.40×vector"
+        },
+        {
+          "title": "最终八因子评分",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "因子",
+              "权重",
+              "计算口径"
+            ],
+            "rows": [
+              [
+                "相关性 relevance",
+                "0.35",
+                "内部再按词法 0.60 + 向量 0.40 融合"
+              ],
+              [
+                "项目 project",
+                "0.15",
+                "同项目 1；GLOBAL 0.5；显式跨项目其他项 0"
+              ],
+              [
+                "类型 type",
+                "0.10",
+                "政策/约束优先；pinned 类型加成 0.2，封顶 1"
+              ],
+              [
+                "置信度 confidence",
+                "0.10",
+                "条目当前 confidence"
+              ],
+              [
+                "重要性 importance",
+                "0.10",
+                "importance / 10"
+              ],
+              [
+                "证据 evidence",
+                "0.05",
+                "(success + 1) / (success + failure + 2)"
+              ],
+              [
+                "新鲜度 recency",
+                "0.10",
+                "exp(−距 updated_at 天数 / 30)"
+              ],
+              [
+                "频次 frequency",
+                "0.05",
+                "min(log1p(access_count) / log1p(20), 1)"
+              ]
+            ]
+          },
+          "wide": true
+        },
+        {
+          "title": "返回和计数",
+          "paragraphs": [
+            "总分钳制 0～1，按分数降序、ID 升序稳定排序。返回 L0、元数据、八个分量、命中类型/层和可用层列表；不携带 L1/L2 正文。",
+            "ContextService.search 只给最终 served IDs 增加访问计数；直接调用 Retriever 的影子比较和经验召回不增加该计数。按精确 ID 读取正文不会重新搜索一个相似替代项。"
+          ]
+        },
+        {
+          "title": "降级必须分两层",
+          "paragraphs": [
+            "Retriever 内：模型、路径、dirty、编码或索引异常 → 向量候选为空，词法仍可运行。",
+            "Primary 入口：更上层可能因 SQLite、mapping、projection lag 或 Context vector 健康不满足而先阻断 Core serving。不能把“检索器能退词法”写成“primary 永远可用”。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "主检索与初始候选池",
+          "path": "evolvmem/context_retriever.py:106"
+        },
+        {
+          "label": "FTS L0/L1 与 CJK 补充",
+          "path": "evolvmem/context_store.py:1503"
+        },
+        {
+          "label": "向量候选扩容与门槛",
+          "path": "evolvmem/context_retriever.py:163"
+        },
+        {
+          "label": "八因子评分",
+          "path": "evolvmem/context_retriever.py:275"
+        },
+        {
+          "label": "默认参数与预算",
+          "path": "evolvmem/config.py:88"
+        },
+        {
+          "label": "最终访问计数",
+          "path": "evolvmem/context_service.py:542"
+        }
+      ]
+    },
+    {
+      "id": "legacy",
+      "title": "旧记忆检索与注入",
+      "english": "LEGACY RETRIEVAL & INJECTION",
+      "subtitle": "旧数据接口仍存在；它与 Core 的候选池、打分和 SessionStart 注入规则都不同。",
+      "takeaway": "旧 memory_search 的最终得分就是文字 0.6 + 向量 0.4。旧 SessionStart 主要按重要性、新鲜度、频次和项目匹配排序，不能把这两种分数混为一个检索算法。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 旧记忆检索与注入",
+          "subtitle": "旧词法 / 旧向量融合后回表，保持兼容形状",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "query",
+            "type": "external",
+            "label": "memory_search",
+            "sublabel": "默认 final top_k=10",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "fts",
+            "type": "database",
+            "label": "旧 FTS5 召回",
+            "sublabel": "value / tags · top20",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "like",
+            "type": "database",
+            "label": "中文 LIKE 补召回",
+            "sublabel": "整段包含 · 按 ID 排重",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "norm",
+            "type": "backend",
+            "label": "词法 rank 归一化",
+            "sublabel": "负 BM25 / 正 LIKE 分",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "embed",
+            "type": "backend",
+            "label": "本地查询编码",
+            "sublabel": "加载成功才启用",
+            "pos": [
+              30,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "ann",
+            "type": "database",
+            "label": "旧 HNSW 召回",
+            "sublabel": "vectors.usearch · top20",
+            "pos": [
+              345,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "vector-score",
+            "type": "backend",
+            "label": "距离转相似度",
+            "sublabel": "max(0,1-distance/2)",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "fusion",
+            "type": "backend",
+            "label": "0.6 / 0.4 加权",
+            "sublabel": "缺失通道贡献 0",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "filter",
+            "type": "security",
+            "label": "SQLite 回表过滤",
+            "sublabel": "状态与有效期",
+            "pos": [
+              975,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "topk",
+            "type": "backend",
+            "label": "按总分取 TopK",
+            "sublabel": "可能少于请求条数",
+            "pos": [
+              660,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "access",
+            "type": "database",
+            "label": "返回项访问次数 +1",
+            "sublabel": "映射计数按模式维护",
+            "pos": [
+              345,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "agent",
+            "type": "external",
+            "label": "返回旧 memory 形状",
+            "sublabel": "字段与兼容接口保持一致",
+            "pos": [
+              30,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "legacy-edge-1",
+            "from": "query",
+            "to": "fts",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-2",
+            "from": "fts",
+            "to": "like",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-3",
+            "from": "like",
+            "to": "norm",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-4",
+            "from": "query",
+            "to": "embed",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-5",
+            "from": "embed",
+            "to": "ann",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-6",
+            "from": "ann",
+            "to": "vector-score",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-7",
+            "from": "norm",
+            "to": "fusion",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-8",
+            "from": "vector-score",
+            "to": "fusion",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-9",
+            "from": "fusion",
+            "to": "filter",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-10",
+            "from": "filter",
+            "to": "topk",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-11",
+            "from": "topk",
+            "to": "access",
+            "variant": "emphasis"
+          },
+          {
+            "id": "legacy-edge-12",
+            "from": "access",
+            "to": "agent",
+            "variant": "emphasis"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "旧词法路径",
+          "paragraphs": [
+            "memories_fts 索引 value / tags，key 不是该全文索引的列。默认 unicode61；中文且 trigram 可用时选择 trigram。",
+            "FTS 使用 SQLite 内建 rank（负 BM25），取 20 条；中文另外做 value / tags 的整段 LIKE 补召回并按 ID 去重，所以词法候选合计可能超过 20。",
+            "FTS 查询异常返回空；未加载本地模型时仍可只跑词法。"
+          ]
+        },
+        {
+          "title": "旧向量与融合",
+          "paragraphs": [
+            "旧索引使用 legacy ID，默认取 20 个近邻；没有 Core 的 vector-only 0.80 门槛，也没有候选资格不足后的扩池逻辑。",
+            "合并 ID 后回 SQLite 过滤状态与有效期，再按分数取最终 top_k。只给实际返回的项增加 access_count。"
+          ],
+          "formula": "score = 0.6×normalized_fts + 0.4×max(0,1-distance/2)\n任一路缺失：该路贡献 0，不重新调整权重\n相同 ID 合并；不是文本语义去重、RRF 或模型精排"
+        },
+        {
+          "title": "旧 SessionStart 的分层注入",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "层或预算",
+              "源码默认 / 含义"
+            ],
+            "rows": [
+              [
+                "正文预算",
+                "pinned + normal 默认最多 50 条、字符目标 8000；索引层、项目动态和框架文本另计。首条可超字符目标，并非整块硬上限。"
+              ],
+              [
+                "pinned",
+                "最多 10 条、字符目标 2000；计入正文预算，首条可超字符目标。"
+              ],
+              [
+                "normal",
+                "按 compute_score 排序；同 key 前两段最多 3 条"
+              ],
+              [
+                "索引层",
+                "1000 字符，用于省略项 / reference 索引提示"
+              ],
+              [
+                "项目动态",
+                "最近 30 天，每项目最多 2 条日志，预算 800 字符"
+              ],
+              [
+                "维护触发",
+                "SessionStart 最多每 24 小时遗忘一次，每 168 小时近重复合并一次；best-effort"
+              ]
+            ]
+          },
+          "wide": true
+        },
+        {
+          "title": "旧注入分数",
+          "paragraphs": [
+            "这是没有 query embedding 的内容选择公式。project_match 检查当前项目（含 alias）是否命中 memory key。",
+            "四项默认权重之和是 1.3，不应套用 Core 总分归一化口径。importance≈importance/10；recency 基于 last_accessed，缺时退 updated_at；频次为 log1p 归一化。"
+          ],
+          "formula": "inject_score = 0.5×importance + 0.3×exp(−age/14)\n             + 0.2×frequency + 0.3×project_match"
+        },
+        {
+          "title": "primary 下的旧工具",
+          "paragraphs": [
+            "ready primary 的受支持 adapter 可让 memory_search 改由 Core 排序，然后用精确 legacy mapping 返回旧字段。没有映射的 Core-native 命中被略过，不找相似旧记忆替代。",
+            "shadow 向客户端返回旧结果，仅旁路比较 Core。primary degraded 可退旧检索，但 MCP 的旧写入会被 gate 拒绝。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "旧混合检索器",
+          "path": "evolvmem/retriever.py:27"
+        },
+        {
+          "label": "旧 FTS 与 LIKE",
+          "path": "evolvmem/legacy_projection.py:363"
+        },
+        {
+          "label": "旧注入打分",
+          "path": "evolvmem/scoring.py:26"
+        },
+        {
+          "label": "SessionStart 分层与维护",
+          "path": "evolvmem/hooks.py:304"
+        },
+        {
+          "label": "旧工具 primary / shadow 分流",
+          "path": "evolvmem/mcp_server.py:292"
+        },
+        {
+          "label": "旧预算默认",
+          "path": "evolvmem/config.py:118"
+        }
+      ]
+    },
+    {
+      "id": "experience",
+      "title": "经验召回与证据",
+      "english": "EXPERIENCE & EVIDENCE",
+      "subtitle": "先判断哪些案例在当前条件下有资格，再搜索；使用后通过真实来源形成新结果。",
+      "takeaway": "经验召回不是普通相似文本搜索。一个案例即便措辞接近，也可能因为环境冲突、没有兼容成功证据、被判不适用或验证已被推翻而被排除。命中不会自动记为成功。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 经验召回与证据",
+          "subtitle": "资格 → 候选 → 条件与证据 → 返回 → 实际使用 → 结果来源",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "request",
+            "type": "external",
+            "label": "问题 + 已观察条件",
+            "sublabel": "project / query / constraints",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "eligible",
+            "type": "security",
+            "label": "先筛可用案例 ID",
+            "sublabel": "active · 本项目或可迁移",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "core",
+            "type": "backend",
+            "label": "复用 Context 召回",
+            "sublabel": "限定 ID · top20",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "lexical",
+            "type": "backend",
+            "label": "额外词项补召回",
+            "sublabel": "最多 40 词 · 中文双字",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "pool",
+            "type": "backend",
+            "label": "候选按 ID 合并",
+            "sublabel": "上限 80 项",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "evidence",
+            "type": "security",
+            "label": "成功证据与场景门",
+            "sublabel": "排除矛盾 / 不适用条件",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "support",
+            "type": "security",
+            "label": "相关性支持门",
+            "sublabel": "词法支持或强纯向量",
+            "pos": [
+              345,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "score",
+            "type": "backend",
+            "label": "经验专用评分",
+            "sublabel": "相关性 / 条件 / 证据 / 项目",
+            "pos": [
+              30,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "return",
+            "type": "external",
+            "label": "最多 3 条预览",
+            "sublabel": "共享 1500 字符预算",
+            "pos": [
+              30,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "use",
+            "type": "external",
+            "label": "助手核对并执行",
+            "sublabel": "采用 ≠ 验证成功",
+            "pos": [
+              345,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "resolve",
+            "type": "security",
+            "label": "原生来源校验",
+            "sublabel": "task · event · quote · hash",
+            "pos": [
+              660,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "outcome",
+            "type": "database",
+            "label": "保存版本化结果证据",
+            "sublabel": "独立任务计数 · 状态更新",
+            "pos": [
+              975,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "experience-edge-1",
+            "from": "request",
+            "to": "eligible",
+            "variant": "emphasis"
+          },
+          {
+            "id": "experience-edge-2",
+            "from": "eligible",
+            "to": "core",
+            "variant": "emphasis"
+          },
+          {
+            "id": "experience-edge-3",
+            "from": "core",
+            "to": "lexical",
+            "variant": "emphasis"
+          },
+          {
+            "id": "experience-edge-4",
+            "from": "lexical",
+            "to": "pool",
+            "variant": "emphasis"
+          },
+          {
+            "id": "experience-edge-5",
+            "from": "pool",
+            "to": "evidence",
+            "variant": "emphasis"
+          },
+          {
+            "id": "experience-edge-6",
+            "from": "evidence",
+            "to": "support",
+            "variant": "emphasis"
+          },
+          {
+            "id": "experience-edge-7",
+            "from": "support",
+            "to": "score",
+            "variant": "emphasis"
+          },
+          {
+            "id": "experience-edge-8",
+            "from": "score",
+            "to": "return",
+            "variant": "emphasis"
+          },
+          {
+            "id": "experience-edge-9",
+            "from": "return",
+            "to": "use",
+            "variant": "emphasis"
+          },
+          {
+            "id": "experience-edge-10",
+            "from": "use",
+            "to": "resolve",
+            "variant": "emphasis"
+          },
+          {
+            "id": "experience-edge-11",
+            "from": "resolve",
+            "to": "outcome",
+            "variant": "emphasis"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "候选怎样产生",
+          "paragraphs": [
+            "在候选预算之前，SQL 先选有 structured payload、active、未过期、本项目或 transferable 的条目；constraints 中共有字段值冲突即排除。",
+            "复用 ContextRetriever（types=experience/playbook，top_k=20，eligible_ids 限定），再用英文词项和中文双字补召回。至多选 40 个词，补召回与合并后的候选上限都是 80。",
+            "经验召回不调用生成式 LLM，不自动记 used，也不增加普通 served-access。"
+          ]
+        },
+        {
+          "title": "第二轮必须满足的门槛",
+          "paragraphs": [],
+          "items": [
+            "拒绝未验证或 contradicted 的案例；仅在跨项目时拒绝 transferable=false 的案例。",
+            "至少存在一份与已观察条件不冲突的成功验证。缺少条件时标记需要进一步适配。",
+            "当前条件完整包含已记录的不适用场景时，排除该案例。",
+            "词法支持：overlap≥0.05，并有足够具体词项或问题命中。",
+            "无词法支持时只放行纯 VECTOR（不能同时是 LEXICAL）的强语义命中，默认 s≥0.94。"
+          ]
+        },
+        {
+          "title": "经验专用分数和输出",
+          "paragraphs": [
+            "relevance 取词项相关性与 Core relevance 分量的较大值，不使用 Core 八因子总分。词项相关性=min(1, overlap+问题命中的 0.15 加分)。condition_match=当前 constraints 中与案例条件相等的字段数/max(1,constraints 字段数)。最终分数保留 4 位小数，按分数降序、成功数降序、ID 升序排列。",
+            "最多 3 条，合计默认 1500 个 JSON 字符；大条目可跳过。只返回问题、条件、有限步骤和压缩验证；完整案例另行读取。跨项目或条件不完整时标 adaptation_required。"
+          ],
+          "formula": "relevance = max(词项相关性, Core relevance)\nscore = 0.55×relevance + 0.20×condition_match\n      + 0.15×(success+1)/(success+failure+2)\n      + 0.10×same_project",
+          "wide": true
+        },
+        {
+          "title": "真实证据从哪里来",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "来源",
+              "绑定规则"
+            ],
+            "rows": [
+              [
+                "Codex / Kimi / DSH 原生记录",
+                "task ID 绑定宿主会话；quote 必须出现在原生 user/tool 节点；可给精确 JSONL 行号。"
+              ],
+              [
+                "助手自己的复述",
+                "assistant 节点不作为成功来源，不能把复述包装成工具结果。"
+              ],
+              [
+                "修复记录",
+                "须显式提供 task_id；绝对路径须位于 ~/fix-records/records/，quote 必须命中“验证”段。这里不执行原生会话文件与 task_id 的对应校验。"
+              ],
+              [
+                "保存的证明",
+                "来源引用、原始 JSONL 行或整份修复记录的 SHA-256、摘录、event_key、revision、conditions。"
+              ],
+              [
+                "读取边界",
+                "原始来源解析发生在 record/outcome，recall 读取已存的案例和证据，不每次扫描全部会话。"
+              ]
+            ]
+          }
+        },
+        {
+          "title": "反馈不等于一个成功计数器",
+          "paragraphs": [
+            "success、confirmed、failure、contradicted 的 conditions 必须与案例 conditions 完全相同；场景条件变化须建立派生案例。user_confirmation 的正面证据必须使用 user_confirmed 层级，tool_result 不能声称该层级。"
+          ],
+          "table": {
+            "headers": [
+              "outcome",
+              "实际含义"
+            ],
+            "rows": [
+              [
+                "used / unknown",
+                "实际采用或结果未知；不增加成功/失败。"
+              ],
+              [
+                "inapplicable",
+                "真实场景不适用，须非空条件与可追溯来源；影响相同条件下的召回，不增加失败。"
+              ],
+              [
+                "success / confirmed",
+                "有来源绑定及 technical / business / user_confirmed 验证层级，按独立任务计成功。"
+              ],
+              [
+                "failure / contradicted",
+                "失败计独立失败；contradicted 阻止 active，但不直接增加 failure_count。"
+              ],
+              [
+                "revision 与状态",
+                "事件同版本幂等，修订必须 +1。每任务取最新有效结论；success≥1、success>failure 且无 contradicted 才 active，否则 candidate。"
+              ]
+            ]
+          }
+        },
+        {
+          "title": "候选方法的后续生成",
+          "paragraphs": [
+            "条件、步骤变化时建立派生案例，保留 parent_experience_id；不覆盖原案例来伪造同一条件成功。",
+            "结构化写入或结果更新成为 active，且本地模型和经验簇资格满足时，MCP 可以在提交后 best-effort 调远程 chat 生成候选方法。新方法仍要独立验证，不能继承所有来源案例的成功结论。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "资格、候选与检索",
+          "path": "evolvmem/experience_service.py:431"
+        },
+        {
+          "label": "条件与相关性支持门",
+          "path": "evolvmem/experience_service.py:475"
+        },
+        {
+          "label": "专用评分与返回预算",
+          "path": "evolvmem/experience_service.py:511"
+        },
+        {
+          "label": "结果版本与独立任务计数",
+          "path": "evolvmem/experience_service.py:222"
+        },
+        {
+          "label": "原生证据解析",
+          "path": "evolvmem/experience_sources.py:314"
+        },
+        {
+          "label": "MCP 写后候选方法生成",
+          "path": "evolvmem/mcp_server.py:852"
+        }
+      ]
+    },
+    {
+      "id": "ingestion",
+      "title": "采集、提炼与写入",
+      "english": "CAPTURE, EXTRACTION & WRITE",
+      "subtitle": "自动提炼、显式记忆和结构化案例从不同入口进入；统一边界是先校验、再提交事实。",
+      "takeaway": "本地 embedding 负责向量计算，远程 chat 负责生成摘要和候选知识。自动提炼出来的经验并不因此获得成功证据；显式保存带验证的结构化案例走另外的来源校验路径。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 采集、提炼与写入",
+          "subtitle": "会话提炼主线；归档和写后动作按 adapter 与资格执行",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "trigger",
+            "type": "external",
+            "label": "会话结束 / DSH 空闲",
+            "sublabel": "Kimi hook / dispose / sweep",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "collect",
+            "type": "backend",
+            "label": "读取会话片段",
+            "sublabel": "adapter 决定文本范围",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "redact",
+            "type": "security",
+            "label": "生成输入副本脱敏",
+            "sublabel": "原会话不就地改写",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "chat",
+            "type": "cloud",
+            "label": "远程 Chat 提炼",
+            "sublabel": "摘要 + 候选原子记忆",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "parse",
+            "type": "backend",
+            "label": "JSON 解析与提取",
+            "sublabel": "溢出分块 · 有限重试",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "policy",
+            "type": "security",
+            "label": "确定性输出门",
+            "sublabel": "语言 / 敏感值 / 低信息",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "draft",
+            "type": "backend",
+            "label": "类型、层与项目解析",
+            "sublabel": "L0 / L1 / L2 · resolution",
+            "pos": [
+              345,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "decision",
+            "type": "security",
+            "label": "候选隔离 / 冲突处理",
+            "sublabel": "经验资格 · 旧形状替换",
+            "pos": [
+              345,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "commit",
+            "type": "database",
+            "label": "SQLite 事务提交",
+            "sublabel": "item + layers；双写项含映射",
+            "pos": [
+              660,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "indexes",
+            "type": "database",
+            "label": "有变更时同步索引",
+            "sublabel": "active 入 ANN；candidate 不入",
+            "pos": [
+              975,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "archive",
+            "type": "database",
+            "label": "Kimi 原始消息归档",
+            "sublabel": "提炼通过后尝试 · 可选来源",
+            "pos": [
+              30,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "ingestion-edge-1",
+            "from": "trigger",
+            "to": "collect",
+            "variant": "emphasis"
+          },
+          {
+            "id": "ingestion-edge-2",
+            "from": "collect",
+            "to": "redact",
+            "variant": "emphasis"
+          },
+          {
+            "id": "ingestion-edge-3",
+            "from": "redact",
+            "to": "chat",
+            "variant": "emphasis"
+          },
+          {
+            "id": "ingestion-edge-4",
+            "from": "chat",
+            "to": "parse",
+            "variant": "emphasis"
+          },
+          {
+            "id": "ingestion-edge-5",
+            "from": "parse",
+            "to": "policy",
+            "variant": "emphasis"
+          },
+          {
+            "id": "ingestion-edge-6",
+            "from": "policy",
+            "to": "draft",
+            "variant": "emphasis"
+          },
+          {
+            "id": "ingestion-edge-7",
+            "from": "draft",
+            "to": "decision",
+            "variant": "emphasis"
+          },
+          {
+            "id": "ingestion-edge-8",
+            "from": "decision",
+            "to": "commit",
+            "variant": "emphasis"
+          },
+          {
+            "id": "ingestion-edge-9",
+            "from": "commit",
+            "to": "indexes",
+            "variant": "dashed"
+          },
+          {
+            "id": "ingestion-edge-10",
+            "from": "collect",
+            "to": "archive",
+            "variant": "dashed"
+          },
+          {
+            "id": "ingestion-edge-11",
+            "from": "archive",
+            "to": "commit",
+            "variant": "dashed",
+            "fromSide": "bottom",
+            "toSide": "bottom",
+            "via": [
+              [
+                152.5,
+                595
+              ],
+              [
+                782.5,
+                595
+              ]
+            ]
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "哪些客户端自动采集",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "入口",
+              "已实现行为"
+            ],
+            "rows": [
+              [
+                "Codex",
+                "显式 MCP 记忆 / Context / experience / continuity 调用；此仓库没有完整的自动 SessionEnd 提炼 hook。"
+              ],
+              [
+                "Kimi",
+                "SessionStart 注入；SessionEnd 提炼；Heartbeat。读 wire 中 user/assistant 文本，不把所有 tool 输出拼入提炼输入。"
+              ],
+              [
+                "DSH / Cordis",
+                "pre-step 注入及经验召回；dispose 提炼；sweep 默认每轮最多派发 3 个非 live 会话，有可用 mtime 时检查至少空闲 30 分钟。"
+              ],
+              [
+                "Claude",
+                "可使用旧 MCP / SessionStart helper；没有完整 stop extractor，也不属于当前 Core cutover adapter 集合。"
+              ],
+              [
+                "Hermes 名称",
+                "仓库保留历史名称；本次源码没有与 Kimi/DSH 对等的专用 Hermes adapter。"
+              ]
+            ]
+          },
+          "wide": true
+        },
+        {
+          "title": "远程提炼的实际边界",
+          "paragraphs": [
+            "Kimi 的 user/assistant 总文本不足 200 字符时跳过。给模型的是脱敏副本；默认 chat 配置使用 DeepSeek/Kimi，可配置 endpoint/model。它不是 Nomic 模型，也不参与普通搜索。",
+            "kimi_hooks 编排完整会话提炼、超限分块和有限重试，AutoExtractor 负责提示词构建及响应解析；单次提炼有约 240 秒总预算。认证或额度错误会停止尝试。失败不会被描述成成功写入。",
+            "确定性策略检查中文输出、字段/长度、confidence、敏感值和低信息片段；每会话最多实际写入 8 条原子记忆，另可写会话摘要。"
+          ]
+        },
+        {
+          "title": "归档和候选隔离",
+          "paragraphs": [
+            "Kimi 在提炼成功后尝试将读取到的原始 user/assistant 消息加密写入 session_archives/，SQLite 只保存索引、hash、状态和 TTL。归档失败仍可继续处理无归档结果。",
+            "DSH 没有这条 AES 归档与 source hold 链。不能将所有 adapter 画成已经保存了可追溯原文。",
+            "非 legacy 双写下，有 archive 或该批包含 structured case 时，experience/playbook 先隔离成 Core candidate，不建旧 memories 行、mapping 或 ANN；其他通过门槛的类型可以 active。"
+          ]
+        },
+        {
+          "title": "三种写入判断不能混用",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "动作",
+              "实际实现"
+            ],
+            "rows": [
+              [
+                "显式旧 memory_add",
+                "确定性同 identity 冲突判断：相同跳过，更具体可替换，无法确定则返回冲突；提炼入口的处理策略可选择替换。"
+              ],
+              [
+                "普通语义替代",
+                "本地 embedding 查同 identity / 非 reference 的候选，top5、默认 s≥0.95；选择新条目 supersede 旧项，不让 chat 决定冲突。"
+              ],
+              [
+                "结构化 experience_record",
+                "校验问题、条件、步骤等 immutable case；新建 candidate；有效原生来源证据才可能将其变成 active。"
+              ],
+              [
+                "用户或 Web 编辑",
+                "通过兼容 facade / Service 写入；同样遵守当前路径的事务和投影规则。"
+              ]
+            ]
+          }
+        },
+        {
+          "title": "事务与索引不是同一提交",
+          "paragraphs": [
+            "在 compat / shadow / primary，旧形状写入将 Context item、三层、旧 memories projection 和 exact mapping 放进同一个 SQLite 事务。native case / checkpoint / project_summary 可不带旧映射。",
+            "提交后才同步旧 value 向量和 Core L0 向量。同步失败标记 dirty 并报告；数据库正文已经保存，不伪装为全链路回滚。",
+            "rollup、consolidation、经验晋升或候选方法生成按各入口条件执行，彼此并非一个全局学习循环。Kimi 与 DSH 的后处理覆盖也不完全相同。"
+          ],
+          "wide": true
+        }
+      ],
+      "sources": [
+        {
+          "label": "Kimi 会话输入与结束提炼",
+          "path": "evolvmem/kimi_hooks.py:619"
+        },
+        {
+          "label": "脱敏与远程模型调用",
+          "path": "evolvmem/kimi_hooks.py:173"
+        },
+        {
+          "label": "提炼 prompt 与 JSON 解析",
+          "path": "evolvmem/auto_extractor.py:23"
+        },
+        {
+          "label": "完整提炼与分块重试",
+          "path": "evolvmem/kimi_hooks.py:486"
+        },
+        {
+          "label": "确定性输出策略",
+          "path": "evolvmem/extraction_policy.py:262"
+        },
+        {
+          "label": "DSH 接入和空闲扫描",
+          "path": "dsh/src/sweep.js:1"
+        },
+        {
+          "label": "事务与候选隔离",
+          "path": "evolvmem/context_service.py:1746"
+        },
+        {
+          "label": "语义替代与索引同步",
+          "path": "evolvmem/context_service.py:2375"
+        },
+        {
+          "label": "加密会话文件",
+          "path": "evolvmem/session_archive.py:158"
+        }
+      ]
+    },
+    {
+      "id": "storage",
+      "title": "存储、三层上下文与注入",
+      "english": "STORAGE, LAYERS & CONTEXT",
+      "subtitle": "SQLite 保存条目、正文、出处和任务状态；FTS 与向量服务检索，原始聊天另行加密归档。",
+      "takeaway": "L0 是搜索预览，L1 是常用上下文，L2 是这条知识的完整表示。SessionStart 先选择候选，再在总预算内装入整条 L1；L2 需要时按精确 ID 获取。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 三层上下文怎样进入会话",
+          "subtitle": "普通会话启动主线；后续按需 L2 读取由客户端发起",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "start",
+            "type": "external",
+            "label": "context_session_start",
+            "sublabel": "项目 / 问题 / 字符上限",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "resolve",
+            "type": "backend",
+            "label": "解析当前项目",
+            "sublabel": "路径名与配置 alias",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "retrieve",
+            "type": "backend",
+            "label": "检索普通候选",
+            "sublabel": "L0/L1 FTS + L0 ANN",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "pinned",
+            "type": "backend",
+            "label": "补充适用 pinned",
+            "sublabel": "政策 / 约束 / 偏好",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "merge",
+            "type": "backend",
+            "label": "合并并筛选候选",
+            "sublabel": "状态 / scope / tier / confidence",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "read",
+            "type": "database",
+            "label": "按 ID 加载 L1",
+            "sublabel": "Context layers 精确读取",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "pools",
+            "type": "backend",
+            "label": "三个预算池",
+            "sublabel": "pinned → project → related",
+            "pos": [
+              345,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "render",
+            "type": "backend",
+            "label": "纯文本 Renderer",
+            "sublabel": "整条 L1 · wrapper 计入预算",
+            "pos": [
+              30,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "access",
+            "type": "database",
+            "label": "已选条目访问 +1",
+            "sublabel": "有映射时镜像 legacy 计数",
+            "pos": [
+              30,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "history",
+            "type": "external",
+            "label": "返回历史上下文块",
+            "sublabel": "selected IDs / 排除原因",
+            "pos": [
+              345,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "later",
+            "type": "external",
+            "label": "任务中需要更多细节",
+            "sublabel": "客户端决定是否精读",
+            "pos": [
+              660,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "full",
+            "type": "database",
+            "label": "context_read 指定 L2",
+            "sublabel": "完整条目层 · 不重跑召回",
+            "pos": [
+              975,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "storage-edge-1",
+            "from": "start",
+            "to": "resolve",
+            "variant": "emphasis"
+          },
+          {
+            "id": "storage-edge-2",
+            "from": "resolve",
+            "to": "retrieve",
+            "variant": "emphasis"
+          },
+          {
+            "id": "storage-edge-3",
+            "from": "retrieve",
+            "to": "pinned",
+            "variant": "emphasis"
+          },
+          {
+            "id": "storage-edge-4",
+            "from": "pinned",
+            "to": "merge",
+            "variant": "emphasis"
+          },
+          {
+            "id": "storage-edge-5",
+            "from": "merge",
+            "to": "read",
+            "variant": "emphasis"
+          },
+          {
+            "id": "storage-edge-6",
+            "from": "read",
+            "to": "pools",
+            "variant": "emphasis"
+          },
+          {
+            "id": "storage-edge-7",
+            "from": "pools",
+            "to": "render",
+            "variant": "emphasis"
+          },
+          {
+            "id": "storage-edge-8",
+            "from": "render",
+            "to": "access",
+            "variant": "emphasis"
+          },
+          {
+            "id": "storage-edge-9",
+            "from": "access",
+            "to": "history",
+            "variant": "emphasis"
+          },
+          {
+            "id": "storage-edge-10",
+            "from": "history",
+            "to": "later",
+            "variant": "emphasis"
+          },
+          {
+            "id": "storage-edge-11",
+            "from": "later",
+            "to": "full",
+            "variant": "emphasis"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "层、类型、状态是三个维度",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "维度",
+              "枚举或默认预算"
+            ],
+            "rows": [
+              [
+                "正文层",
+                "L0 240 字符；L1 1200；L2 6000。是字符数，不是 token 数。"
+              ],
+              [
+                "知识类型",
+                "decision / fact / experience / playbook / workflow_policy / constraint / preference / user_profile / reference / session_summary / project_summary / workstream_checkpoint"
+              ],
+              [
+                "条目状态",
+                "candidate / active / superseded / archived / deleted"
+              ],
+              [
+                "注入 tier",
+                "pinned / normal / reference"
+              ],
+              [
+                "范围 scope",
+                "global / project；与 tier 和状态独立。"
+              ]
+            ]
+          },
+          "wide": true
+        },
+        {
+          "title": "三层怎样产生",
+          "paragraphs": [
+            "旧文本经规范化：首个有意义句加类型提示生成 L0，截取正文生成 L1，L2 保留规范化原文。迁移来源的 L2 可有特定超预算豁免。",
+            "结构化案例：problem + conditions 生成 L0；问题、条件、步骤、依据、结果生成 L1；canonical case JSON 作为 L2。",
+            "项目摘要、方法候选由远程 chat 生成三层，再过输出门；检查点由服务端组合权威字段生成，L1 超预算直接拒绝。L2 不等于完整原始聊天记录。"
+          ]
+        },
+        {
+          "title": "注入预算与边界",
+          "paragraphs": [
+            "默认总上限 6000 字符、最多 12 条；pinned / project / related 分别 1500 / 3000 / 1500。前一池剩余预算向后结转，调用方可以降低总上限。",
+            "只有 pinned 的 workflow_policy / constraint / preference 有无 query 命中的特别补充；不是所有 pinned 必定进入会话。保留完整 L1，超预算的整条跳过。",
+            "边界包装文本也占预算，并声明历史只是参考，不能覆盖当前指令和代码。只给最终 selected IDs 加访问计数；没有合格内容时返回空块。"
+          ]
+        },
+        {
+          "title": "SQLite 的 15 张 Context 实体表",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "表",
+              "保存的事实"
+            ],
+            "rows": [
+              [
+                "context_items",
+                "身份、类型、项目、状态、分级、置信度、计数、替代链、structured experience payload。"
+              ],
+              [
+                "context_layers",
+                "每条 L0/L1/L2 的内容、hash、generator 与时间。"
+              ],
+              [
+                "context_sources",
+                "来源边：归档、其他 context、证据引用、提取版本。"
+              ],
+              [
+                "context_evidence",
+                "结果、任务、事件、验证层级、条件、revision；不只是成败计数。"
+              ],
+              [
+                "session_archives",
+                "加密文件相对路径、hash、会话/项目、available/purged 与 TTL。"
+              ],
+              [
+                "legacy_memory_migrations",
+                "legacy ID 到 Context ID 的精确映射。"
+              ],
+              [
+                "context_project_registry",
+                "canonical project、名称、active/archived 与 revision。"
+              ],
+              [
+                "context_project_aliases",
+                "alias 到 canonical project 的唯一关系与 revision。"
+              ],
+              [
+                "context_project_workspace_bindings",
+                "工作区指纹与项目绑定、候选/有效/撤销、默认项与 revision。"
+              ],
+              [
+                "context_project_resolutions",
+                "每条知识的归属、冲突、信号、人工接受/拒绝和解析版本。"
+              ],
+              [
+                "context_project_rollups",
+                "当前项目摘要指针、覆盖水位、source hash、状态、revision。"
+              ],
+              [
+                "session_archive_holds",
+                "仍被未覆盖摘要需要的归档保留关系。"
+              ],
+              [
+                "continuity_workstreams",
+                "当前 checkpoint 指针、内容/状态版本、任务状态、repo anchor。"
+              ],
+              [
+                "continuity_focus",
+                "项目 + 工作区到当前任务的指针及独立 revision。"
+              ],
+              [
+                "continuity_events",
+                "续接动作、前后版本及失败代码；成功事件与动作同事务。"
+              ]
+            ]
+          },
+          "wide": true
+        },
+        {
+          "title": "同一个 DB，还有两类派生检索",
+          "paragraphs": [
+            "memories 与旧 FTS 也位于 memory.db；在 legacy 模式它们仍是直接读写对象，在其他模式承担兼容投影。Context 和 legacy 不是两个独立数据库。",
+            "context_layers_fts / 可选 trigram 由 trigger 索引 L0/L1，不索引 L2。checkpoint 也会物理进入 FTS，只在默认检索条件排除；Core ANN 重建则直接排除 checkpoint。",
+            "两套 .usearch 文件可由 SQLite 重建。归档密文、archive.key 和 workspace.key 是不同用途的文件；workspace.key 用于 HMAC 身份，不用于解密原始会话。"
+          ]
+        },
+        {
+          "title": "项目解析也是持久化事实",
+          "paragraphs": [
+            "registry、aliases、workspace binding 和每条 resolution 构成独立的项目归属层；保留 resolved / unresolved / conflict / global / ignored 以及自动和人工判断。",
+            "维护中的自动回填尊重已接受或已拒绝的人为决策。普通 session_start 的项目名处理与 continuity 的 active workspace binding 门是不同路径，不能把目录同名视为已经绑定。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "实体表与 FTS 触发器",
+          "path": "evolvmem/context_store.py:42"
+        },
+        {
+          "label": "类型枚举",
+          "path": "evolvmem/context_models.py:40"
+        },
+        {
+          "label": "层生成与预算",
+          "path": "evolvmem/context_layers.py:36"
+        },
+        {
+          "label": "普通启动候选与访问计数",
+          "path": "evolvmem/context_service.py:810"
+        },
+        {
+          "label": "纯 Renderer 与池预算",
+          "path": "evolvmem/context_renderer.py:161"
+        },
+        {
+          "label": "项目解析与人工决策",
+          "path": "evolvmem/project_store.py:319"
+        },
+        {
+          "label": "精确读取契约",
+          "path": "evolvmem/mcp_contract.py:324"
+        }
+      ]
+    },
+    {
+      "id": "continuity",
+      "title": "任务续接与检查点",
+      "english": "EXACT CONTINUITY & CHECKPOINTS",
+      "subtitle": "“继续上次任务”沿精确指针恢复；任务版本、当前焦点和普通记忆排序彼此独立。",
+      "takeaway": "continuity_resume 不跑 embedding，也不把最相似或最近的记忆当成当前任务。它先确定工作区绑定，再读取 focus 和 workstream 指针，核对工作区和仓库变化后，决定是否读取当前检查点。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 任务续接与检查点",
+          "subtitle": "精确恢复读取主线 → 客户端工作 → 携版本写入",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "workspace",
+            "type": "external",
+            "label": "实际 workspace_path",
+            "sublabel": "由调用方提供",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "fingerprint",
+            "type": "security",
+            "label": "本地 HMAC 指纹",
+            "sublabel": "Git common dir / 真实目录",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "project",
+            "type": "database",
+            "label": "解析有效绑定项目",
+            "sublabel": "hint 匹配 / 单绑定 / 唯一默认",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "focus",
+            "type": "database",
+            "label": "读取当前 focus",
+            "sublabel": "project + fingerprint 精确键",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "workstream",
+            "type": "database",
+            "label": "定位 workstream",
+            "sublabel": "current_context_id 指针",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "staleness",
+            "type": "backend",
+            "label": "检查工作区与仓库锚点",
+            "sublabel": "wrong_workspace 不读正文",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "checkpoint",
+            "type": "database",
+            "label": "同工作区才读取层",
+            "sublabel": "L0/L1 + 服务端权威字段",
+            "pos": [
+              345,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "resume",
+            "type": "external",
+            "label": "返回恢复结果",
+            "sublabel": "版本 / 状态 / staleness",
+            "pos": [
+              30,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "update",
+            "type": "external",
+            "label": "后续提交检查点",
+            "sublabel": "目标 / 进展 / 下一步",
+            "pos": [
+              30,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "cas",
+            "type": "security",
+            "label": "核对 expected 版本",
+            "sublabel": "checkpoint / state / focus",
+            "pos": [
+              345,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "transaction",
+            "type": "database",
+            "label": "新内容与指针同事务",
+            "sublabel": "supersede + CAS + event",
+            "pos": [
+              660,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "result",
+            "type": "external",
+            "label": "返回最新版本",
+            "sublabel": "下一次调用必须携带",
+            "pos": [
+              975,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "continuity-edge-1",
+            "from": "workspace",
+            "to": "fingerprint",
+            "variant": "emphasis"
+          },
+          {
+            "id": "continuity-edge-2",
+            "from": "fingerprint",
+            "to": "project",
+            "variant": "emphasis"
+          },
+          {
+            "id": "continuity-edge-3",
+            "from": "project",
+            "to": "focus",
+            "variant": "emphasis"
+          },
+          {
+            "id": "continuity-edge-4",
+            "from": "focus",
+            "to": "workstream",
+            "variant": "emphasis"
+          },
+          {
+            "id": "continuity-edge-5",
+            "from": "workstream",
+            "to": "staleness",
+            "variant": "emphasis"
+          },
+          {
+            "id": "continuity-edge-6",
+            "from": "staleness",
+            "to": "checkpoint",
+            "variant": "emphasis"
+          },
+          {
+            "id": "continuity-edge-7",
+            "from": "checkpoint",
+            "to": "resume",
+            "variant": "emphasis"
+          },
+          {
+            "id": "continuity-edge-8",
+            "from": "resume",
+            "to": "update",
+            "variant": "emphasis"
+          },
+          {
+            "id": "continuity-edge-9",
+            "from": "update",
+            "to": "cas",
+            "variant": "emphasis"
+          },
+          {
+            "id": "continuity-edge-10",
+            "from": "cas",
+            "to": "transaction",
+            "variant": "emphasis"
+          },
+          {
+            "id": "continuity-edge-11",
+            "from": "transaction",
+            "to": "result",
+            "variant": "emphasis"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "工作区怎么确定",
+          "paragraphs": [
+            "Git 工作树使用 Git common dir 构造工作区身份，因此同仓库 worktree 可共享 fingerprint；非 Git 使用解析后的目录。workspace.key 对路径做 HMAC，公开结果不返回原始路径。",
+            "必须有 active 项目和同 fingerprint 的有效绑定。显式 hint 匹配的绑定、唯一 active binding，或多绑定中的唯一默认项均可解析项目。恢复按 project + fingerprint 的 focus，再按 current_context_id 精确取 checkpoint；不增加普通搜索访问计数。"
+          ]
+        },
+        {
+          "title": "没找到焦点时会怎样",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "情况",
+              "返回行为"
+            ],
+            "rows": [
+              [
+                "有效 focus + 可恢复任务",
+                "先核对 staleness，再按指针读取检查点。wrong_workspace 返回 checkpoint=null，不读层。"
+              ],
+              [
+                "项目未解析，或无 focus 且无未完成任务",
+                "no_continuation。"
+              ],
+              [
+                "schema 或 workspace key 不就绪",
+                "continuity_not_ready。"
+              ],
+              [
+                "没有 focus，恰一条未完成任务",
+                "返回需要确认的候选；不会偷偷自动设焦点。"
+              ],
+              [
+                "没有 focus，有多条未完成任务",
+                "报告歧义，等待明确选择。"
+              ],
+              [
+                "focus 指向终态或不存在任务",
+                "报告 dangling focus；不会回退到最近的其他任务。"
+              ],
+              [
+                "completed / cancelled",
+                "终态任务不可继续编辑；完成动作不会自动清空 focus。"
+              ]
+            ]
+          }
+        },
+        {
+          "title": "三组版本怎样防止旧内容覆盖新内容",
+          "paragraphs": [
+            "新任务 expected_checkpoint_revision=0、expected_state_version=0，创建后为 1/1。内容动作会生成新 Context checkpoint，旧 item 变 superseded，并同时增加 checkpoint_revision 与 state_version。",
+            "make_focus 还须携带从 session/resume 得到的 expected_focus_revision；focus 使用独立 CAS。只切换焦点不会生成新 checkpoint 或更改正文版本。",
+            "item/layers、旧项替代、workstream 指针与版本、可选 focus CAS、成功 event 在同一个事务中提交。捕获到的续接错误可在回滚后 best-effort 另记失败事件。"
+          ],
+          "formula": "内容更新：checkpoint_revision += 1；state_version += 1\n焦点变更：focus_revision += 1（独立版本）\n旧 expected 值：返回冲突，不覆盖新版本",
+          "wide": true
+        },
+        {
+          "title": "任务状态不等于 Context 状态",
+          "paragraphs": [
+            "workstream 状态：open / paused / blocked / completed / cancelled。任务完成时 checkpoint Context 仍可为 active，因为它是当前任务记录，不是应被自动遗忘的普通经验。",
+            "L2 保存服务端权威 ID、project、fingerprint、版本、状态与 repo anchor，加上客户端目标、决策、步骤、下一步和阻塞。服务端不能让客户端自报字段覆盖这些指针事实。"
+          ]
+        },
+        {
+          "title": "仓库新鲜度能证明什么",
+          "paragraphs": [
+            "检查 fingerprint、Git HEAD、branch 和 ancestry；结果为 fresh / unknown / head_advanced / branch_changed / head_diverged / wrong_workspace。它不检查未提交文件变化，也不证明业务验收完成。",
+            "session_start 只有在 resume=ok 且 staleness 为 fresh / unknown 时直接返回续接块；其他已确认偏离转为 stale，并返回普通检索上下文。complete 前要求 fresh 是客户端约定，checkpoint 服务端没有强制执行此检查。"
+          ]
+        },
+        {
+          "title": "和普通 SessionStart 的关系",
+          "paragraphs": [
+            "context_session_start 只对一组固定续接短语走特殊分支，并需要 workspace_path；独立一句“继续”并不在该检测集合内。客户端应按契约直接调用 continuity_resume。",
+            "普通启动结果未必包含 focus_revision。创建或更新焦点应取得真实最新版本，不能凭空填 0 或沿用其他工作区版本。",
+            "continuity 有专用 schema/key readiness；在 compat 或 Core primary degraded 时仍可能可用，不要求 ANN 健康。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "工作区身份",
+          "path": "evolvmem/workspace_identity.py:79"
+        },
+        {
+          "label": "恢复与缺失焦点处理",
+          "path": "evolvmem/continuity_service.py:217"
+        },
+        {
+          "label": "检查点内容事务与 CAS",
+          "path": "evolvmem/continuity_service.py:449"
+        },
+        {
+          "label": "层构造",
+          "path": "evolvmem/continuity_service.py:777"
+        },
+        {
+          "label": "状态与返回结构",
+          "path": "evolvmem/continuity_models.py:75"
+        },
+        {
+          "label": "MCP 续接工具门",
+          "path": "evolvmem/mcp_contract.py:661"
+        },
+        {
+          "label": "SessionStart 特殊路径",
+          "path": "evolvmem/context_service.py:561"
+        }
+      ]
+    },
+    {
+      "id": "evolution",
+      "title": "记忆演化、摘要与遗忘",
+      "english": "EVOLUTION, ROLLUP & RETENTION",
+      "subtitle": "摘要覆盖后才释放原文保留关系；案例晋升、方法提炼、普通遗忘使用各自的条件。",
+      "takeaway": "EvolvMem 没有一个统一的“越用越聪明”后台循环。经验靠验证证据晋升，项目摘要靠受控生成滚动更新，近重复和过期信息靠独立维护规则处理。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 项目摘要与归档保留",
+          "subtitle": "滚动摘要主线；虚线连接独立 retention / 后续 purge",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "sources",
+            "type": "database",
+            "label": "项目知识来源",
+            "sublabel": "会话摘要 + 新原子知识",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "watermark",
+            "type": "backend",
+            "label": "覆盖水位与来源 hash",
+            "sublabel": "无变化可跳过",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "redact",
+            "type": "security",
+            "label": "摘要输入副本脱敏",
+            "sublabel": "源 L1 + 当前项目摘要 L1",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "generate",
+            "type": "cloud",
+            "label": "生成三层项目摘要",
+            "sublabel": "配置的远程 Chat",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "validate",
+            "type": "security",
+            "label": "JSON 与内容门",
+            "sublabel": "失败保留旧摘要",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "commit",
+            "type": "database",
+            "label": "新摘要与来源同事务",
+            "sublabel": "active + rollup 指针",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "vector",
+            "type": "database",
+            "label": "提交后更新 Core 向量",
+            "sublabel": "失败记录 vector_dirty",
+            "pos": [
+              345,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "coverage",
+            "type": "database",
+            "label": "读取 ready 覆盖集合",
+            "sublabel": "当前摘要的直接来源",
+            "pos": [
+              30,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "retention",
+            "type": "backend",
+            "label": "筛出超保留数摘要",
+            "sublabel": "默认 keep=10 且已覆盖",
+            "pos": [
+              30,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "holds",
+            "type": "database",
+            "label": "逻辑归档并释放 hold",
+            "sublabel": "未覆盖过期项保留并报告",
+            "pos": [
+              345,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "purge",
+            "type": "backend",
+            "label": "独立归档清理时机",
+            "sublabel": "TTL 到期且没有 hold",
+            "pos": [
+              660,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "cipher",
+            "type": "database",
+            "label": "删除归档密文文件",
+            "sublabel": "元数据标 purged",
+            "pos": [
+              975,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "evolution-edge-1",
+            "from": "sources",
+            "to": "watermark",
+            "variant": "emphasis"
+          },
+          {
+            "id": "evolution-edge-2",
+            "from": "watermark",
+            "to": "redact",
+            "variant": "emphasis"
+          },
+          {
+            "id": "evolution-edge-3",
+            "from": "redact",
+            "to": "generate",
+            "variant": "emphasis"
+          },
+          {
+            "id": "evolution-edge-4",
+            "from": "generate",
+            "to": "validate",
+            "variant": "emphasis"
+          },
+          {
+            "id": "evolution-edge-5",
+            "from": "validate",
+            "to": "commit",
+            "variant": "emphasis"
+          },
+          {
+            "id": "evolution-edge-6",
+            "from": "commit",
+            "to": "vector",
+            "variant": "emphasis"
+          },
+          {
+            "id": "evolution-edge-7",
+            "from": "vector",
+            "to": "coverage",
+            "variant": "dashed"
+          },
+          {
+            "id": "evolution-edge-8",
+            "from": "coverage",
+            "to": "retention",
+            "variant": "emphasis"
+          },
+          {
+            "id": "evolution-edge-9",
+            "from": "retention",
+            "to": "holds",
+            "variant": "emphasis"
+          },
+          {
+            "id": "evolution-edge-10",
+            "from": "holds",
+            "to": "purge",
+            "variant": "dashed"
+          },
+          {
+            "id": "evolution-edge-11",
+            "from": "purge",
+            "to": "cipher",
+            "variant": "emphasis"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "项目摘要如何滚动生成",
+          "paragraphs": [
+            "收集该项目所有 active session_summary、上次覆盖水位以来的新原子知识，以及当前 project_summary 的 L1。当前 rollup 为 ready 且来源集合 hash 未变时跳过生成；failed / vector_dirty 状态仍可重试。",
+            "脱敏后的 L1 进入远程 chat，生成 L0/L1/L2，经输出门后将新 active 项目摘要、来源边和 rollup 指针同事务保存。旧摘要被替代；失败保留原有效摘要。",
+            "后续向量同步失败记录 vector_dirty。rollup 是实际保存的项目知识与覆盖水位，不是临时缓存，也不等于删除已被概括的全部原始内容。"
+          ]
+        },
+        {
+          "title": "摘要保留与原文删除是两步",
+          "paragraphs": [
+            "同项目摘要按新到旧排序，超过 keep=10 且被当前 ready rollup 直接来源集合覆盖，才转 archived 并释放 archive hold。不要求它们先达到 TTL。",
+            "已过 TTL 但尚未覆盖的会话摘要保持 active，并在报告中列入 pending_projects；仅缺少 rollup 记录时新建 pending 标记，已有 ready / failed / vector_dirty 不被降级。没有项目的摘要不进入项目 retention sweep。",
+            "原始归档默认 30 天 TTL，且没有 hold 才能删密文并标 purged。常规 sweep 先 purge 再 retention，因此本轮刚释放的 hold 可能下轮才触发删除。",
+            "retention 不在自身函数里同步所有 legacy 行和向量；maintenance apply 会在后续重建 Core 索引。"
+          ],
+          "wide": true
+        },
+        {
+          "title": "经验与方法的不同晋升规则",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "机制",
+              "资格与结果"
+            ],
+            "rows": [
+              [
+                "结构化案例",
+                "基于版本化原生证据；至少 1 个独立成功、成功多于失败、无 contradicted 才 active。"
+              ],
+              [
+                "旧 archive-backed 经验",
+                "独立的 ContextLifecycle：候选需要至少 2 个不同归档来源成功且无失败；active 失败数≥成功数可归档。"
+              ],
+              [
+                "生成 playbook 的源簇",
+                "默认至少 3 条 active experience，同项目 / 同 global scope，L0 两两归一化相似度≥0.95。"
+              ],
+              [
+                "结构化源簇额外资格",
+                "条件相容、步骤/依据有词项支持，至少两个来源任务；不可与旧 opaque 经验混簇。"
+              ],
+              [
+                "候选方法生成",
+                "远程 chat 读成员 L0/L1，经门槛创建 candidate playbook、连接来源；不继承旧成功结论。"
+              ],
+              [
+                "已存在的方法",
+                "已有非 deleted 方法覆盖源集合则跳过；仅可自动替代来源重叠的旧 candidate，不自动替代 active 方法。"
+              ]
+            ]
+          },
+          "wide": true
+        },
+        {
+          "title": "近重复合并与写入替代",
+          "paragraphs": [
+            "周期 consolidation 使用本地向量，在同 identity 范围内默认 s≥0.97，保留评分较高项并 archive 较低项。它不会让 chat 把两段文字融合。",
+            "写入时的语义 supersede 默认阈值是 0.95，目标是新旧内容替代；与周期 0.97 近重复归档不是同一动作。"
+          ]
+        },
+        {
+          "title": "遗忘与衰减的实际行为",
+          "paragraphs": [
+            "recency 是每次评分时计算的时间衰减，不会每天改写原文或扣 confidence。",
+            "普通 TTL 到期项逻辑 archive；低使用项需未访问或 90 天未访问、access_count≤2，且 updated_at 至少 7 天前。访问衰减排除 pinned，TTL 路径没有这个豁免；两条都排除 session_summary。",
+            "旧 SessionStart 的维护最多每 24 小时遗忘、每 168 小时 consolidation 一次，best-effort；不是常驻模型训练任务。普通遗忘不 hard-delete 数据库。"
+          ]
+        },
+        {
+          "title": "原文状态怎样反映到知识",
+          "paragraphs": [
+            "来源边可仍在，而对应原文密文已 purged；source_state 可以重算为 available / partial_purged / purged。知识 L0/L1/L2 并不会因此一并删除。",
+            "archive.key 与密文共同决定原文可读性；工作区身份使用另一把 workspace.key。两者都不属于可由向量索引重建的数据。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "滚动摘要构建与提交",
+          "path": "evolvmem/project_rollup.py:189"
+        },
+        {
+          "label": "覆盖集合",
+          "path": "evolvmem/project_rollup.py:286"
+        },
+        {
+          "label": "摘要保留条件",
+          "path": "evolvmem/summary_retention.py:98"
+        },
+        {
+          "label": "密文 purge",
+          "path": "evolvmem/session_archive.py:248"
+        },
+        {
+          "label": "经验簇资格",
+          "path": "evolvmem/context_lifecycle.py:472"
+        },
+        {
+          "label": "候选方法生成",
+          "path": "evolvmem/context_playbook.py:183"
+        },
+        {
+          "label": "普通遗忘",
+          "path": "evolvmem/forgetting.py:28"
+        },
+        {
+          "label": "维护触发频率",
+          "path": "evolvmem/hooks.py:24"
+        },
+        {
+          "label": "维护默认间隔",
+          "path": "evolvmem/config.py:144"
+        }
+      ]
+    },
+    {
+      "id": "runtime",
+      "title": "运行模式、Web 与维护",
+      "english": "MODES, WEB & OPERATIONS",
+      "subtitle": "进程 mode、adapter 和 readiness 决定工具行为；维护只在明确入口触发。",
+      "takeaway": "共享配置并不能代表每个客户端的实际模式。MCP 每次按最新健康决定可用工具；Web 是自己的进程。维护和切换是独立运维操作，不是用户每次检索都会执行的步骤。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 运行入口与维护边界",
+          "subtitle": "MCP 工具入口主线；Web 独立进程；下部为 CLI 维护",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "client",
+            "type": "external",
+            "label": "宿主启动 MCP 服务",
+            "sublabel": "Codex / Kimi / DSH",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "config",
+            "type": "backend",
+            "label": "加载进程配置",
+            "sublabel": "默认 → JSON → env",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "init",
+            "type": "backend",
+            "label": "ContextService 初始化",
+            "sublabel": "mode / adapter 明确",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "health",
+            "type": "security",
+            "label": "评估 live readiness",
+            "sublabel": "SQLite / schema / projection",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "registry",
+            "type": "backend",
+            "label": "统一工具注册与分发",
+            "sublabel": "list 与 call 使用相同门",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "read",
+            "type": "backend",
+            "label": "按模式选择读路径",
+            "sublabel": "legacy / shadow / primary",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "write",
+            "type": "database",
+            "label": "受支持的写入路径",
+            "sublabel": "兼容投影事务 / native Core",
+            "pos": [
+              975,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "web",
+            "type": "external",
+            "label": "Web 浏览与受控编辑",
+            "sublabel": "独立进程 · 自己的 Service",
+            "pos": [
+              345,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "plan",
+            "type": "external",
+            "label": "操作者运行维护 CLI",
+            "sublabel": "maintenance_cli plan",
+            "pos": [
+              30,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "lock",
+            "type": "security",
+            "label": "维护锁与验证备份",
+            "sublabel": "参与路径的本机 flock",
+            "pos": [
+              30,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "apply",
+            "type": "database",
+            "label": "分阶段 apply 与重建",
+            "sublabel": "迁移 / 项目 / 摘要 / 索引",
+            "pos": [
+              345,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "verify",
+            "type": "backend",
+            "label": "维护 verify",
+            "sublabel": "映射 / 三层 / 项目 / 向量",
+            "pos": [
+              660,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "runtime-edge-1",
+            "from": "client",
+            "to": "config",
+            "variant": "emphasis"
+          },
+          {
+            "id": "runtime-edge-2",
+            "from": "config",
+            "to": "init",
+            "variant": "emphasis"
+          },
+          {
+            "id": "runtime-edge-3",
+            "from": "init",
+            "to": "health",
+            "variant": "emphasis"
+          },
+          {
+            "id": "runtime-edge-4",
+            "from": "health",
+            "to": "registry",
+            "variant": "emphasis"
+          },
+          {
+            "id": "runtime-edge-5",
+            "from": "registry",
+            "to": "read",
+            "variant": "emphasis"
+          },
+          {
+            "id": "runtime-edge-6",
+            "from": "registry",
+            "to": "write",
+            "variant": "emphasis"
+          },
+          {
+            "id": "runtime-edge-7",
+            "from": "plan",
+            "to": "lock",
+            "variant": "emphasis"
+          },
+          {
+            "id": "runtime-edge-8",
+            "from": "lock",
+            "to": "apply",
+            "variant": "emphasis"
+          },
+          {
+            "id": "runtime-edge-9",
+            "from": "apply",
+            "to": "verify",
+            "variant": "emphasis"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "四种模式对照",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "mode",
+              "旧接口与写入",
+              "Core 读取 / 续接"
+            ],
+            "rows": [
+              [
+                "legacy",
+                "直接旧 store / 旧向量",
+                "Core serving 关闭；不暴露 continuity。"
+              ],
+              [
+                "compat",
+                "旧响应；projection + Core + mapping 同事务写入",
+                "Core ready=false/context_not_enabled；受支持 adapter 可用独立 continuity。"
+              ],
+              [
+                "shadow",
+                "返回旧检索，旁路 Core 比较；失败不影响旧响应",
+                "显式 Core 可读；vector 可选；不发 primary 主动召回指令。"
+              ],
+              [
+                "primary",
+                "ready adapter 的旧检索走 Core 排序再 exact mapping；degraded 时旧检索可退回、MCP 旧写入拒绝",
+                "通过 gate 才服务 Core；degraded 收缩到 context_status，continuity 单独判断。"
+              ]
+            ]
+          },
+          "wide": true
+        },
+        {
+          "title": "adapter 与工具门",
+          "paragraphs": [
+            "Core cutover adapter 集合为 codex / kimi / dsh；其他 adapter 保留 6 个 legacy 工具。ready Core 可加 10 个 Context / experience 工具；continuity 另有 3 个工具并独立 gate。",
+            "工具列表与工具执行共享注册策略。primary 每次 live_status 重评健康，不能拿旧列表当成当前授权结果。主动 recall 是初始化指令约定的宿主行为，不是服务端扫描所有聊天自动执行。"
+          ]
+        },
+        {
+          "title": "primary ready 检查什么",
+          "paragraphs": [
+            "运行配置、SQLite quick_check、schema、active item 三层完整性、mapping 与 projection lag，以及 Context vector 路径、dirty、count 等。",
+            "本地模型能加载并不自动代表全部检查通过；常规 runtime gate 也不证明所有向量 ID/正文都正确。切换专用 stage 与 verify 有更完整的 ID 集校验。",
+            "continuity 使用专用 schema/key readiness，和语义召回健康独立。MCP gate 的拒写规则不能推断为所有内部 Service 方法都经过相同入口。"
+          ]
+        },
+        {
+          "title": "Web 的角色",
+          "paragraphs": [
+            "Signal Web 提供记忆浏览、Context insights、项目/候选查看、编辑和维护可视化。保留已有飞书 OAuth 登录与 owner/viewer 写入门；本次架构页不改变其访问策略。",
+            "Web run() 不创建 EmbeddingEngine；insights 的只读展示不执行向量检索、不增加 served-access。编辑经 facade / Service，部分 AI 建议需远程 chat 并进入待审核状态。",
+            "当前 /workflow 是此静态架构图册；图中默认值和核对快照不应被误读为实时运行监控。"
+          ]
+        },
+        {
+          "title": "维护 plan / apply / verify",
+          "paragraphs": [
+            "plan 计算 mapping lag、归属预览、摘要保留预览与 digest。它不更新业务内容，但打开 Store 仍可能幂等初始化 schema。",
+            "apply：exclusive cutover lock → 重算并核对 plan digest → 验证备份 → 一个事务做迁移/项目回填 → 各项目 rollup → retention → Core 索引重建。",
+            "这些阶段独立提交，后一步失败不会自动回滚前面所有步骤。verify 检查映射、层、项目归属、review 数、摘要 singleton、向量数量/dirty 和 digest。"
+          ],
+          "wide": true
+        },
+        {
+          "title": "Codex 切换与回滚实际范围",
+          "paragraphs": [],
+          "table": {
+            "headers": [
+              "阶段",
+              "事实边界"
+            ],
+            "rows": [
+              [
+                "preflight / apply 前",
+                "检查指定路径、配置、schema、向量、目标 Codex stanza、空间及保存的 digest。writers_restarted 是调用者声明，代码不替用户重启所有写者。"
+              ],
+              [
+                "锁与备份",
+                "本机 POSIX flock，只协调参与 shared / exclusive 路径；不是分布式锁，也不冻结所有 archive / rollup 操作。"
+              ],
+              [
+                "备份内容",
+                "SQLite Backup API 的 memory.db、已有 config.json、旧 vectors.usearch、单个 Codex stanza snapshot。manifest + hash + 数据库校验。"
+              ],
+              [
+                "不在该备份中",
+                "原始 session_archives 密文、archive.key、llm credentials、context_vectors.usearch；不能将这份备份标成全数据灾备。"
+              ],
+              [
+                "切换动作",
+                "迁移及幂等核验 → 临时 Core 索引构建 / 校验 / atomic replace → 真实 canary 的 shadow 比较 → primary gate。"
+              ],
+              [
+                "配置落点",
+                "持久化 JSON 保持 compat，只 CAS 目标 Codex stanza 的 env=primary/adapter=codex；保留其他 TOML 内容。"
+              ],
+              [
+                "停止状态",
+                "awaiting_post_cutover_canary；后续宿主行为验收是独立步骤。"
+              ],
+              [
+                "rollback",
+                "只将目标 Codex stanza 切回 legacy；保留迁移后的 DB 与 compat 配置，不自动恢复数据库或已删原文。"
+              ]
+            ]
+          },
+          "wide": true
+        },
+        {
+          "title": "两种索引修复边界",
+          "paragraphs": [
+            "legacy MCP 启动可在模型加载后按 dirty/count 判断重建，使用独立 .rebuild.lock 并保存；这把锁与 cutover.lock 不同。ContextService 初始化不自动全量重建 Core 向量。",
+            "普通单项同步不能清除先前已存在的 dirty。切换专用 Core stager 才使用临时文件、完整 ID/维度核验、fsync 和 atomic replace；显式允许 FTS-only 时如实记录降级。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "配置覆盖顺序",
+          "path": "evolvmem/config.py:238"
+        },
+        {
+          "label": "live 状态与模式分流",
+          "path": "evolvmem/context_service.py:369"
+        },
+        {
+          "label": "每次 primary 健康复查",
+          "path": "evolvmem/mcp_server.py:1170"
+        },
+        {
+          "label": "工具注册契约",
+          "path": "evolvmem/mcp_contract.py:630"
+        },
+        {
+          "label": "Web 初始化",
+          "path": "evolvmem/web_server.py:1298"
+        },
+        {
+          "label": "维护 plan / verify",
+          "path": "evolvmem/maintenance.py:417"
+        },
+        {
+          "label": "维护 apply",
+          "path": "evolvmem/maintenance_cli.py:191"
+        },
+        {
+          "label": "切换与状态机",
+          "path": "evolvmem/cutover.py:1346"
+        },
+        {
+          "label": "备份范围",
+          "path": "evolvmem/cutover_backup.py:470"
+        },
+        {
+          "label": "Codex 单 stanza 编辑",
+          "path": "evolvmem/codex_config.py:219"
+        },
+        {
+          "label": "切换向量 stager",
+          "path": "evolvmem/cutover_vector.py:142"
+        }
+      ]
+    }
+  ]
+}
