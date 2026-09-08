@@ -1,5 +1,14 @@
 # EvolvMem 任务执行约定
 
+## 功能更新、流程图与发布
+
+- 用户于 2026-09-09 明确要求：以后每次更新 EvolvMem 功能，都必须同步维护对应流程图和架构说明；先完成实现、图文和必要验证，再提交本地 Git、推送 GitHub。
+- `/workflow` 的维护源是 `docs/evolvmem-atlas.json` 和 `docs/evolvmem-atlas-template.html`。用 `scripts/build_architecture_atlas.mjs` 重新生成图册及 `workflow-diagram.html`，检查对应专题、公式/阈值/代码依据、浏览器显示，并同步校验记录。未影响架构时也要核对图文是否仍准确。
+- GitHub 发布使用现有 `origin` 与源码发布目录；本次功能、对应图稿、模板、生成脚本、页面和校验记录应一并提交。只提交已完成且验证通过的相关改动，遵循项目的公开文件导出范围。
+- 这条约定属于持久项目记忆；即使 EvolvMem MCP 记忆服务暂时不可用，仍须遵守。不要将写入文件描述成记忆服务写入成功。
+
+## 经验与任务续接
+
 - 实质新任务、切换话题/项目或出现新失败证据时，主动调用 `experience_recall`，不等待用户说“查历史”。参数用当前问题关键词、实际项目和已知约束；`constraints` 只传已直接观察到、能与案例条件比较的事实值，不把“不要重试”“仅给方案”等操作限制当成病因，未确定的病因留在 `query`，不臆测案例的 canonical key；简单确认与不变任务复用已有查询。
 - 首次任务调用 `context_session_start` 时同时传当前 `workspace_path`；用户说“继续”时先 `continuity_resume` 恢复断点。任务目标明确后用 `make_focus=true` 和 session start/resume 返回的最新 `expected_focus_revision` 创建检查点；里程碑、阻塞、完成时更新，并记录采用的经验 ID、改动与待验证项。
 - 采用案例前比较问题机制、目标、环境和约束；简短说明案例 ID、原验证范围、可复用步骤和本次改动。没有合适案例就根据当前证据处理。
