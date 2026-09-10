@@ -32,10 +32,14 @@ class _BoardHandler(BaseHTTPRequestHandler):
                     "syncedAt": "2026-09-10T12:00:00Z"}
     api_key = ""
     get_paths = []
+    authorization_headers = []
 
     def do_GET(self):  # noqa: N802 - stdlib callback name
         type(self).get_paths.append(self.path)
-        if self.headers.get("X-Api-Key") != type(self).api_key:
+        auth = self.headers.get("Authorization")
+        legacy = self.headers.get("X-Api-Key")
+        type(self).authorization_headers.append((auth, legacy))
+        if auth != f"Bearer {type(self).api_key}" or legacy is not None:
             self.send_response(401)
             self.end_headers()
             return
@@ -51,7 +55,10 @@ class _BoardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):  # noqa: N802 - stdlib callback name
-        if self.headers.get("X-Api-Key") != type(self).api_key:
+        auth = self.headers.get("Authorization")
+        legacy = self.headers.get("X-Api-Key")
+        type(self).authorization_headers.append((auth, legacy))
+        if auth != f"Bearer {type(self).api_key}" or legacy is not None:
             self.send_response(401)
             self.end_headers()
             return
@@ -86,6 +93,7 @@ def _board_server(*, source_project="proj", get_status=200, post_status=200):
     }]
     handler.posts = []
     handler.get_paths = []
+    handler.authorization_headers = []
     handler.post_status = post_status
     handler.get_status = get_status
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -199,6 +207,27 @@ def test_manual_sync_posts_authoritative_checkpoint_contract(test_config, worksp
         )
         assert http.get_paths == [
             "/openapi/rd-progress/bindings?sourceProject=proj"
+        ]
+        store.close()
+
+
+def test_gateway_authentication_uses_only_authorization_bearer(
+    test_config, workspace
+):
+    """Both gateway calls must use the published Bearer authentication."""
+    with _board_server() as (http, base_url):
+        _configure(test_config, base_url)
+        store, continuity, sync = _services(test_config, workspace)
+        created = _create(continuity, workspace)
+
+        result = sync.sync(
+            str(workspace), workstream_id=created.workstream_id
+        )
+
+        assert result["status"] == "synced"
+        assert http.authorization_headers == [
+            ("Bearer temporary-secret-key", None),
+            ("Bearer temporary-secret-key", None),
         ]
         store.close()
 

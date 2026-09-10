@@ -502,7 +502,10 @@ class ProjectBoardSync:
         parsed = urlsplit(board.base_url)
         path = parsed.path.rstrip("/") + route
         body = None
-        headers = {"Accept": "application/json", "X-Api-Key": board.api_key}
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {board.api_key}",
+        }
         if payload is not None:
             body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
             headers["Content-Type"] = "application/json"
