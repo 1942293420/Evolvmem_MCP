@@ -26,6 +26,10 @@ Continuity tools (Codex/Kimi compat/shadow/primary; call-time readiness):
   continuity_checkpoint — action whitelist + revision CAS mutation
   continuity_list       — unfinished workstream L0 summaries
 
+Project-board tools (same adapters/modes; optional private configuration):
+  project_board_sync    — manually deliver committed checkpoint progress
+  project_board_status  — read local delivery state without network activity
+
 The exposed tool set comes from one registry (evolvmem.mcp_contract):
 tools/list and tools/call share it, so a hidden tool cannot still be
 called. MCP dictionaries are parsed only at this boundary; the Context
@@ -54,6 +58,7 @@ from evolvmem.context_models import (
 )
 from evolvmem.context_service import ContextService
 from evolvmem.continuity_models import (
+    ContinuityAction,
     ContinuityBeginRequest,
     ContinuityCheckpointRequest,
     ContinuityError,
@@ -62,6 +67,7 @@ from evolvmem.continuity_models import (
     ContinuityValidationError,
 )
 from evolvmem.continuity_service import ContinuityService
+from evolvmem.project_board_sync import ProjectBoardSync
 from evolvmem.cutover_checks import compare_shadow
 from evolvmem.legacy_models import (
     LegacyAddRequest,
@@ -169,6 +175,7 @@ class MemoryMCPServer:
         # 借用 context_service 的 store，与其同生命周期（shutdown 统一关闭）
         self._continuity_service = None
         self._workspace_identity_provider = None
+        self._project_board_adapter = None
         self.retriever = None
         self.conflict_detector = None
         self.forgetting = None
@@ -298,6 +305,8 @@ class MemoryMCPServer:
             "continuity_list": self._continuity_list,
             "continuity_begin": self._continuity_begin,
             "continuity_find": self._continuity_find,
+            "project_board_sync": self._project_board_sync,
+            "project_board_status": self._project_board_status,
         }
 
     def _memory_search(self, args: dict) -> dict:
@@ -1225,6 +1234,80 @@ class MemoryMCPServer:
         rows = [self._workstream_summary(item) for item in summaries]
         return {"workstreams": rows, "count": len(rows)}
 
+    # ---- optional existing-project progress synchronization ----
+
+    _PROJECT_BOARD_FIELDS = frozenset({
+        "workspace_path", "project_hint", "workstream_id",
+    })
+
+    def _project_board(self):
+        adapter = self._project_board_adapter
+        if adapter is None:
+            context = getattr(self, "context_service", None)
+            store = getattr(context, "store", None)
+            if store is None:
+                return None
+            adapter = ProjectBoardSync(
+                self.config, store, self._workspace_identity()
+            )
+            self._project_board_adapter = adapter
+        return adapter
+
+    def _project_board_args(self, args: dict) -> dict | None:
+        if not isinstance(args, dict) or set(args) - self._PROJECT_BOARD_FIELDS:
+            return None
+        workspace_path = args.get("workspace_path")
+        project_hint = args.get("project_hint", "")
+        workstream_id = args.get("workstream_id", "")
+        if (
+            not isinstance(workspace_path, str)
+            or not workspace_path.strip()
+            or not isinstance(project_hint, str)
+            or not isinstance(workstream_id, str)
+        ):
+            return None
+        return {
+            "workspace_path": workspace_path,
+            "project_hint": project_hint,
+            "workstream_id": workstream_id,
+        }
+
+    def _project_board_sync(self, args: dict) -> dict:
+        request = self._project_board_args(args)
+        if request is None:
+            return self._context_error("invalid_arguments")
+        adapter = self._project_board()
+        if adapter is None:
+            return {
+                "status": "disabled",
+                "message": "project board sync is disabled",
+            }
+        try:
+            return adapter.sync(**request)
+        except Exception:
+            return {
+                "status": "pending",
+                "message": "project board sync remains pending",
+            }
+
+    def _project_board_status(self, args: dict) -> dict:
+        request = self._project_board_args(args)
+        if request is None:
+            return self._context_error("invalid_arguments")
+        adapter = self._project_board()
+        if adapter is None:
+            return {
+                "status": "disabled",
+                "message": "project board sync is disabled",
+            }
+        try:
+            return adapter.status(**request)
+        except Exception:
+            return {
+                "status": "pending",
+                "message": "project board sync status is unavailable",
+            }
+
     @staticmethod
     def _workstream_summary(summary) -> dict:
         """Bounded candidate projection: metadata plus L0, never L1/L2."""
@@ -1283,8 +1366,36 @@ class MemoryMCPServer:
             return self._context_error(exc.code)
         except Exception:
             return self._context_error("context_unavailable")
+        sync_receipt = None
+        if request.action in {
+            ContinuityAction.UPDATE.value,
+            ContinuityAction.PAUSE.value,
+            ContinuityAction.RESUME.value,
+            ContinuityAction.BLOCK.value,
+            ContinuityAction.UNBLOCK.value,
+            ContinuityAction.COMPLETE.value,
+            ContinuityAction.CANCEL.value,
+        }:
+            # Persistence has committed before this best-effort transport.
+            # Any config/state/network failure remains delivery state and must
+            # never turn a saved checkpoint into an apparent failed write.
+            try:
+                adapter = self._project_board()
+                if adapter is not None:
+                    candidate = adapter.sync(
+                        request.workspace_path,
+                        project_hint=request.project_hint,
+                        workstream_id=result.workstream_id,
+                    )
+                    if candidate.get("status") != "disabled":
+                        sync_receipt = candidate
+            except Exception:
+                sync_receipt = {
+                    "status": "pending",
+                    "message": "project board sync remains pending",
+                }
         # 只有指针/修订状态：无正文、无绝对路径、无指纹材料
-        return {
+        payload = {
             "workstream_id": result.workstream_id,
             "checkpoint_revision": result.checkpoint_revision,
             "state_version": result.state_version,
@@ -1292,6 +1403,9 @@ class MemoryMCPServer:
             "status": result.status,
             "context_id": result.context_id,
         }
+        if sync_receipt is not None:
+            payload["project_board_sync"] = sync_receipt
+        return payload
 
     # ---- mode/health views and mutation boundary helpers ----
 
@@ -1637,7 +1751,7 @@ class MemoryMCPServer:
                 # 与 tools/list 同一注册表：隐藏工具不能被调用；
                 # 未知工具也无需等待初始化门闩
                 result = {"error": f"Unknown tool: {tool_name}"}
-            elif tool_name.startswith(("context_", "continuity_")):
+            elif tool_name.startswith(("context_", "continuity_", "project_board_")):
                 # context_*/continuity_* 不等重初始化门闩：服务未就绪即返回
                 # 各自的稳定错误（continuity_not_ready / context_* gate）
                 result = self.handle_tool_call(tool_name, tool_args)

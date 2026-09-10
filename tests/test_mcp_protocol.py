@@ -61,6 +61,7 @@ _CONTEXT_TOOLS = {
 _CONTINUITY_TOOLS = {
     "continuity_resume", "continuity_checkpoint", "continuity_list",
     "continuity_begin", "continuity_find",
+    "project_board_sync", "project_board_status",
 }
 _CONTENT_TYPE_VALUES = [member.value for member in ContextContentType]
 
@@ -78,6 +79,8 @@ _PROBE_ARGS = {
     "context_status": {},
     "context_confirm": {},
     "context_record_outcome": {},
+    "project_board_sync": {},
+    "project_board_status": {},
     "context_archive_project": {},
     "context_sweep": {},
     "experience_recall": {},

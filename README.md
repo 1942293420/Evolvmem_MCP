@@ -273,6 +273,29 @@ python -m evolvmem.project_cli bindings bind FINGERPRINT_FROM_PREVIOUS_COMMAND d
 在支持的模式中，让 Agent 先 `context_session_start` 或 `continuity_resume` 获取当前状态，再按最新 revision 创建/更新 checkpoint。
 “继续”读取精确的工作流指针；没有绑定、没有焦点或工作区变化时，先处理返回状态，不把相似记忆冒充原任务。
 
+已有项目需要同步开发进展时，在 EvolvMem 数据目录创建仅属主可读的
+`project_board.json`（文件模式 `0600`）：
+
+```json
+{"base_url":"https://your-app.example","api_key":"replace-locally","enabled":true}
+```
+
+也可用 `EVOLVMEM_PROJECT_BOARD_CONFIG` 指向另一份私有配置。成功的
+`continuity_checkpoint` 更新、暂停、恢复、阻塞、解除阻塞、完成或取消后，
+会在断点提交后尝试同步；创建任务、读取和切换焦点不会触发。同步只更新目标端
+已经绑定的项目，不会自动立项或绑定。网络或目标服务失败时，最新快照保留为
+`pending`，可在当前 MCP 进程尚未重载时用本地命令补同步或查看状态：
+
+```bash
+python -m evolvmem.project_board_sync status /absolute/path/to/workspace
+python -m evolvmem.project_board_sync sync /absolute/path/to/workspace
+```
+
+两条命令都支持 `--project-hint NAME` 和 `--workstream-id ws_...`；全局
+`--data-dir DIR` 放在 `status` / `sync` 前。回执状态为 `synced`、
+`unchanged`、`not_bound`、`pending` 或 `disabled`，不会回显 API key、原始
+HTTP 错误、断点正文或本地路径。
+
 ### 工具速查
 
 | 工具 | 用途 |
@@ -285,6 +308,7 @@ python -m evolvmem.project_cli bindings bind FINGERPRINT_FROM_PREVIOUS_COMMAND d
 | `experience_recall` / `experience_record` | 按条件找经验，保存有来源的方法 |
 | `context_confirm` / `context_record_outcome` | 候选确认及使用、成功、失败、不适用等反馈 |
 | `continuity_resume` / `continuity_checkpoint` / `continuity_list` | 恢复、保存、列出工作断点 |
+| `project_board_sync` / `project_board_status` | 手动补同步已提交进展、查看本地待同步状态 |
 | `context_archive_project` / `context_sweep` | 项目原始归档清理和 TTL 扫描 |
 
 工具是否列出由当前 mode、adapter 和健康状态决定，以客户端实际 `tools/list` 为准。

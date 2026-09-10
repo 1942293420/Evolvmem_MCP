@@ -720,12 +720,50 @@ _CONTINUITY_FIND_SPEC = McpToolSpec(
     annotations=_READ_ONLY,
 )
 
+_PROJECT_BOARD_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "workspace_path": {
+            "type": "string",
+            "description": "Transient workspace path used to resolve the exact registered project binding",
+        },
+        "project_hint": {
+            "type": "string",
+            "default": "",
+            "description": "Optional registered project name or alias bound to this workspace",
+        },
+        "workstream_id": {
+            "type": "string",
+            "default": "",
+            "description": "Optional exact workstream; omitted syncs or reports all latest checkpoints in this project/workspace",
+        },
+    },
+    "required": ["workspace_path"],
+    "additionalProperties": False,
+}
+
+_PROJECT_BOARD_SYNC_SPEC = McpToolSpec(
+    name="project_board_sync",
+    description="Manually synchronize committed checkpoint progress for one exact registered project/workspace to its existing bound project-board record. Never creates or binds a remote project.",
+    input_schema=_PROJECT_BOARD_INPUT_SCHEMA,
+    annotations=_WRITE_TOOL_ANNOTATIONS,
+)
+
+_PROJECT_BOARD_STATUS_SPEC = McpToolSpec(
+    name="project_board_status",
+    description="Read the local delivery state for committed checkpoint progress in one exact registered project/workspace without contacting the project board.",
+    input_schema=_PROJECT_BOARD_INPUT_SCHEMA,
+    annotations=_READ_ONLY,
+)
+
 _CONTINUITY_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     _CONTINUITY_BEGIN_SPEC,
     _CONTINUITY_FIND_SPEC,
     _CONTINUITY_RESUME_SPEC,
     _CONTINUITY_CHECKPOINT_SPEC,
     _CONTINUITY_LIST_SPEC,
+    _PROJECT_BOARD_SYNC_SPEC,
+    _PROJECT_BOARD_STATUS_SPEC,
 )
 
 
