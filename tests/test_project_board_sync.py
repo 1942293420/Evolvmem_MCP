@@ -203,6 +203,52 @@ def test_manual_sync_posts_authoritative_checkpoint_contract(test_config, worksp
         store.close()
 
 
+def test_plain_http_config_is_limited_to_loopback(test_config, workspace):
+    """Credential-bearing HTTP must never be enabled for a remote host."""
+    store, _continuity, sync = _services(test_config, workspace)
+
+    for base_url in (
+        "http://127.0.0.1:5189",
+        "http://[::1]:5189",
+        "http://localhost:5189",
+        "https://example.com/project-board",
+    ):
+        _configure(test_config, base_url)
+        assert sync._load_config() is not None
+
+    _configure(test_config, "http://example.com/project-board")
+    assert sync._load_config() is None
+    assert sync.sync(str(workspace)) == {
+        "status": "disabled", "message": "project board sync is disabled",
+    }
+    store.close()
+
+
+def test_sync_uses_continuity_unicode_casefold_alias_resolution(
+    test_config, workspace
+):
+    """Board scope must resolve aliases exactly as continuity does."""
+    with _board_server() as (http, base_url):
+        _configure(test_config, base_url)
+        store, continuity, sync = _services(test_config, workspace)
+        with store.transaction():
+            ProjectStore(
+                store._connection(), store._require_transaction, generic_names=()
+            ).add_alias("Straße", "proj")
+        created = _create(continuity, workspace)
+        fingerprint = sync.workspace_identity.resolve(str(workspace)).fingerprint
+        assert continuity._resolve_project(fingerprint, "STRASSE") == "proj"
+
+        result = sync.sync(
+            str(workspace), project_hint="STRASSE",
+            workstream_id=created.workstream_id,
+        )
+
+        assert result["status"] == "synced"
+        assert len(http.posts) == 1
+        store.close()
+
+
 def test_manual_sync_covers_all_latest_workstreams_including_completed(
     test_config, workspace
 ):
@@ -619,6 +665,30 @@ def test_project_board_cli_status_uses_explicit_data_dir(
     assert output["workstreamCount"] == 1
     assert "temporary-secret-key" not in json.dumps(output)
     store.close()
+
+
+@pytest.mark.parametrize("action, expected_code", (("sync", 1), ("status", 0)))
+def test_project_board_cli_local_state_error_is_pending(
+    test_config, workspace, capsys, action, expected_code
+):
+    """An operational local-state failure must keep delivery retryable."""
+    store, continuity, sync = _services(test_config, workspace)
+    _create(continuity, workspace)
+    _configure(test_config, "http://127.0.0.1:9")
+    store.close()
+    sync.state_path.mkdir()
+
+    code = main([
+        "--data-dir", str(test_config.data_dir), action, str(workspace),
+    ])
+
+    output = json.loads(capsys.readouterr().out)
+    assert code == expected_code
+    assert output == {
+        "status": "pending",
+        "message": "project board sync remains pending",
+    }
+    assert "temporary-secret-key" not in json.dumps(output)
 
 
 def test_status_without_prior_delivery_is_read_only(test_config, workspace):

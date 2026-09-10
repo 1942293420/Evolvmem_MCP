@@ -79,6 +79,56 @@ logger = logging.getLogger(__name__)
 MAX_CHECKPOINT_STRING_CHARS = 2000
 MAX_CHECKPOINT_ARRAY_ITEMS = 50
 
+
+def _resolve_bound_project(
+    store: ContextStore, fingerprint: str, hint: str
+) -> str | None:
+    """Resolve one active project using continuity's authoritative rules."""
+    conn = store._connection()
+    if hint.strip():
+        normalized = hint.strip().casefold()
+        aliases = conn.execute(
+            "SELECT alias, project FROM context_project_aliases"
+        ).fetchall()
+        alias_map = {
+            row["alias"].casefold(): row["project"] for row in aliases
+        }
+        candidate = alias_map.get(normalized, normalized)
+        row = conn.execute(
+            "SELECT project FROM context_project_registry "
+            "WHERE lower(project)=lower(?) AND status='active'",
+            (candidate,),
+        ).fetchone()
+        if row is None:
+            return None
+        project = row["project"]
+        bound = conn.execute(
+            "SELECT 1 FROM context_project_workspace_bindings "
+            "WHERE workspace_fingerprint=? AND project=? AND state='active'",
+            (fingerprint, project),
+        ).fetchone()
+        return project if bound is not None else None
+    rows = conn.execute(
+        "SELECT project, is_default FROM context_project_workspace_bindings "
+        "WHERE workspace_fingerprint=? AND state='active'",
+        (fingerprint,),
+    ).fetchall()
+    if not rows:
+        return None
+    if len(rows) > 1:
+        defaults = [row for row in rows if row["is_default"]]
+        if len(defaults) != 1:
+            return None
+        rows = defaults
+    project = rows[0]["project"]
+    active = conn.execute(
+        "SELECT 1 FROM context_project_registry "
+        "WHERE project=? AND status='active'",
+        (project,),
+    ).fetchone()
+    return project if active is not None else None
+
+
 _MAX_CANDIDATES = 50
 _FIND_SCAN_LIMIT = 200
 _FIND_WORKSTREAMS_PER_PROJECT = 10
@@ -843,49 +893,7 @@ class ContinuityService:
         one active binding (or a single active default among several) decides;
         anything else is unresolved — never a guess.
         """
-        conn = self._store._connection()
-        if hint.strip():
-            normalized = hint.strip().casefold()
-            aliases = conn.execute(
-                "SELECT alias, project FROM context_project_aliases"
-            ).fetchall()
-            alias_map = {
-                row["alias"].casefold(): row["project"] for row in aliases
-            }
-            candidate = alias_map.get(normalized, normalized)
-            row = conn.execute(
-                "SELECT project FROM context_project_registry "
-                "WHERE lower(project)=lower(?) AND status='active'",
-                (candidate,),
-            ).fetchone()
-            if row is None:
-                return None
-            project = row["project"]
-            bound = conn.execute(
-                "SELECT 1 FROM context_project_workspace_bindings "
-                "WHERE workspace_fingerprint=? AND project=? AND state='active'",
-                (fingerprint, project),
-            ).fetchone()
-            return project if bound is not None else None
-        rows = conn.execute(
-            "SELECT project, is_default FROM context_project_workspace_bindings "
-            "WHERE workspace_fingerprint=? AND state='active'",
-            (fingerprint,),
-        ).fetchall()
-        if not rows:
-            return None
-        if len(rows) > 1:
-            defaults = [row for row in rows if row["is_default"]]
-            if len(defaults) != 1:
-                return None
-            rows = defaults
-        project = rows[0]["project"]
-        active = conn.execute(
-            "SELECT 1 FROM context_project_registry "
-            "WHERE project=? AND status='active'",
-            (project,),
-        ).fetchone()
-        return project if active is not None else None
+        return _resolve_bound_project(self._store, fingerprint, hint)
 
     def _schema_ready(self) -> bool:
         row = self._store._connection().execute(

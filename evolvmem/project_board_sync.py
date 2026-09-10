@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import http.client
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ from urllib.parse import quote, urlsplit
 from evolvmem.config import Config
 from evolvmem.context_models import ContextLayer
 from evolvmem.context_store import ContextStore
+from evolvmem.continuity_service import _resolve_bound_project
 from evolvmem.cutover_cli import _scrubbed_environment
 from evolvmem.workspace_identity import (
     WorkspaceIdentityError,
@@ -40,6 +42,15 @@ _REMOTE_RESULTS = frozenset({
 })
 _SUCCESS_RESULTS = frozenset({"synced", "unchanged", "stale"})
 _LOOKUP_FAILED = object()
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    if hostname.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +261,10 @@ class ProjectBoardSync:
         if (
             parsed.scheme not in {"http", "https"}
             or not parsed.hostname
+            or (
+                parsed.scheme == "http"
+                and not _is_loopback_host(parsed.hostname)
+            )
             or parsed.username is not None
             or parsed.password is not None
             or parsed.query
@@ -263,39 +278,12 @@ class ProjectBoardSync:
             identity = self.workspace_identity.resolve(workspace_path)
         except (WorkspaceIdentityError, TypeError):
             return None
-        conn = self.store._connection()
-        if project_hint.strip():
-            normalized = project_hint.strip().casefold()
-            alias = conn.execute(
-                "SELECT project FROM context_project_aliases WHERE lower(alias)=?",
-                (normalized,),
-            ).fetchone()
-            candidate = alias["project"] if alias is not None else project_hint.strip()
-            row = conn.execute(
-                "SELECT r.project FROM context_project_registry r "
-                "JOIN context_project_workspace_bindings b ON b.project=r.project "
-                "WHERE lower(r.project)=lower(?) AND r.status='active' "
-                "AND b.workspace_fingerprint=? AND b.state='active'",
-                (candidate, identity.fingerprint),
-            ).fetchone()
-            if row is None:
-                return None
-            return _Scope(row["project"], identity.fingerprint)
-        rows = conn.execute(
-            "SELECT b.project, b.is_default FROM context_project_workspace_bindings b "
-            "JOIN context_project_registry r ON r.project=b.project "
-            "WHERE b.workspace_fingerprint=? AND b.state='active' "
-            "AND r.status='active' ORDER BY b.project",
-            (identity.fingerprint,),
-        ).fetchall()
-        if not rows:
+        project = _resolve_bound_project(
+            self.store, identity.fingerprint, project_hint
+        )
+        if project is None:
             return None
-        if len(rows) > 1:
-            defaults = [row for row in rows if row["is_default"]]
-            if len(defaults) != 1:
-                return None
-            rows = defaults
-        return _Scope(rows[0]["project"], identity.fingerprint)
+        return _Scope(project, identity.fingerprint)
 
     def _snapshots(
         self,
@@ -649,8 +637,8 @@ def main(argv=None) -> int:
                 )
         except Exception:
             result = {
-                "status": "not_bound",
-                "message": "project scope is unavailable",
+                "status": "pending",
+                "message": "project board sync remains pending",
             }
     print(json.dumps(result, ensure_ascii=False))
     return 1 if args.action == "sync" and result.get("status") == "pending" else 0
