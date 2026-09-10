@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-09-09",
+  "reviewed_at": "2026-09-10",
   "source": {
-    "sha256": "951f4c6bf96d9c2b6bd6cf947ff8ca0ad2375d71bc8e1e2d63ba667c88e81af9",
-    "bytes": 130730
+    "sha256": "9650dc3525f9be12bf13712a3c867b429001c4ecb09c5adc126fef2566014ee9",
+    "bytes": 134021
   },
   "chapters": [
     {
@@ -150,12 +150,12 @@
       "chapter": "continuity",
       "type": "architecture",
       "specification": {
-        "sha256": "93b7ac415698666187e36ed68960b45d19053967d67ae4438854b06b98c9ae64",
-        "bytes": 4787
+        "sha256": "526cb8fae3cddd8cc1cf7c34222dfb2696cd53cdfe7a3f3b8da4cc4c7d3255d4",
+        "bytes": 5637
       },
       "artifact": {
-        "sha256": "13ba55eec17b8ddcb4ac039ec374de527844899f9edddf4e36f9075c8a27d899",
-        "bytes": 611048
+        "sha256": "5becf9661fda427106c38f270c33ed6c9eb154faaca48b2b4b791f6e6883e55c",
+        "bytes": 615280
       },
       "validation": {
         "checksPassed": 9,
@@ -208,142 +208,55 @@
     }
   ],
   "atlas": {
-    "sha256": "94d84953154e6e0f95aaa8992c0ee2b5d91647a4094b41617907464675754ea6",
-    "bytes": 1531865
+    "sha256": "0124499e9f1a5c6650ed0075673eb6900fda72342b0db1cf6c653d244d81f035",
+    "bytes": 1533805
   },
   "visual_review": {
     "status": "passed",
-    "correction_rounds": 1,
-    "browser": "Cached Chrome 1228 / Playwright",
-    "viewports": [
-      "1600x1100 desktop",
-      "390x844 mobile",
-      "1600x1100 fullscreen"
-    ],
     "checks": [
-      "Displayed verification dates are 2026-09-09",
-      "All 10 chapters load with all desktop nodes inside the iframe",
-      "No document horizontal overflow across 10 desktop chapters",
-      "Cross-chapter search finds new confirmed_id continuity evidence",
-      "In-diagram search finds backfill node; node passport opens and closes",
-      "Diagram zoom and reset",
-      "Updated diagrams and details render in light and dark themes",
-      "Fullscreen enters and exits",
-      "Standalone chapter export matches delivered SHA-256; complete atlas export reopens offline with all 10 chapters",
-      "Four updated chapters render at 390x844 without document horizontal overflow",
-      "No page script errors",
-      "Rendered screenshots inspected: updated node labels, routes, begin/find evidence, local backfill boundaries, quarantine notes and both themes"
+      "New progress sync and pending nodes visible",
+      "All 14 continuity nodes inside desktop frame",
+      "New sections visible",
+      "390px page has no horizontal overflow",
+      "No script errors"
     ],
-    "notes": [
-      "Existing 10 chapters, node coordinates, sizes and connection topology are preserved.",
-      "One focused semantic correction kept local Codex backfill on the continuity-to-SQLite branch, separate from remote extraction.",
-      "Mobile retains the existing pannable/zoomable diagram canvas and horizontally scrollable tables; complete node fit was verified on desktop."
+    "screenshots": [
+      "/tmp/evolvmem-project-board-atlas-20260910/continuity-desktop.png",
+      "/tmp/evolvmem-project-board-atlas-20260910/continuity-mobile.png"
     ],
+    "scope": "Changed continuity chapter only; all 10 chapter compositions verified by builder.",
+    "rendered_screenshots_inspected": true,
     "evidence": {
       "browser_report": {
-        "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/browser-report.json",
-        "sha256": "83ef7b2731c77c8c9767f28278410f0a115904b54268249596f7070c00a1d008",
-        "bytes": 3063
+        "path": "/tmp/evolvmem-project-board-atlas-20260910/browser-verification.json",
+        "sha256": "dc19b5f05235de2130a6b35805f1b1564bacaae298f60a1e7fc92266c63da3bc",
+        "bytes": 410
       },
       "screenshots": [
         {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/overview-light.png",
-          "sha256": "71a130b130c983b9c7bc697bcbd00f03d584da64d1390f2f50286c153a0fbf24",
-          "bytes": 131801
+          "path": "/tmp/evolvmem-project-board-atlas-20260910/continuity-desktop.png",
+          "sha256": "66c170886cb13395b65952b12da2254ad1c212ac549465251884a2b336bbeca2",
+          "bytes": 143192
         },
         {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/ingestion-light.png",
-          "sha256": "3edbf168943755a0eab124b7f480ca253a488b2b531096e015606599595b7502",
-          "bytes": 157503
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/ingestion-backfill-light.png",
-          "sha256": "312c56e0a945e4b0b178a7baa18cf34cd3c9eb768af60c1a5c74fe224bb9e7a4",
-          "bytes": 61220
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/continuity-light.png",
-          "sha256": "15da54922e914200896384582387673676e74d14549593d564fc26592e7d0d0f",
-          "bytes": 153727
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/runtime-light.png",
-          "sha256": "c0064e4ced708a7f33616a18c3d1caec6a27fb521db16097e37dfdc6f1bdc9b1",
-          "bytes": 150654
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/runtime-quarantine-light.png",
-          "sha256": "d505164d9892239119b9c6f85876e06d33a53c6c6028ac9ae22dca9ba47590e8",
-          "bytes": 42785
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/begin-evidence-light.png",
-          "sha256": "4a402f6ac9cc4888d7dbbcfd56093de8342c29bd2e8fa90950ea72a96c72cf05",
-          "bytes": 64080
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/find-evidence-light.png",
-          "sha256": "afbec9147b4458aad28252fbd81848604c042e852b695f8e146ab59862a80559",
-          "bytes": 73919
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/backfill-bounds-light.png",
-          "sha256": "4c00118a52b27e27aa6ab562cfd0a54ce81be8bc7f0b555309407fe046f3c1fd",
-          "bytes": 109437
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/continuity-passport.png",
-          "sha256": "d32c323a83bafb64dde0c10629cc127f7ba8b6d95c215ba11abad10a47850133",
-          "bytes": 176948
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/continuity-dark.png",
-          "sha256": "ba7f8ec3990349bef47f383ccadff84ad79aa317d14e636670d2633397063605",
-          "bytes": 150248
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/backfill-bounds-dark.png",
-          "sha256": "44f1bde4825a82368ad6361d2db8ddab53d3c54e7da322264da084949095ba3a",
-          "bytes": 109555
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/overview-dark.png",
-          "sha256": "06afbcfa24844f5d356e25d06eff2d144b44a061a1b3bc65f47b600cfe5ab5a5",
-          "bytes": 141317
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/continuity-fullscreen.png",
-          "sha256": "2b0527f8ba76e2dbf77e0c254e88a688e08f332b6f88bbcf5ecb432068cee514",
-          "bytes": 223540
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/continuity-mobile-dark.png",
-          "sha256": "e7c1248d1afc4a35bf4451c6da714c3be255eeece3d4a7c8ca7d9512f9d76eea",
-          "bytes": 61324
-        },
-        {
-          "path": "/tmp/evolvmem-continuity-atlas-20260909/browser/backfill-bounds-mobile-dark.png",
-          "sha256": "83fe71df2851357ce3c06d4d326a0439402acaa8e0374d73e0c1ce906ea9f227",
-          "bytes": 89168
+          "path": "/tmp/evolvmem-project-board-atlas-20260910/continuity-mobile.png",
+          "sha256": "e1c7f7a457991254d30b2dba8e6379d52c11b2e1d58fa6765d5a4ee29b1daaa8",
+          "bytes": 101883
         }
       ]
     }
   },
   "template": {
-    "sha256": "306ee8fbb61db1bb3713075d3754f854363cb615edb1852d6c082bc976eceb33",
+    "sha256": "490c10b46c114b10039c14be2a2831c1ffee7752a2684eb2acc0082d0f24ef74",
     "bytes": 23270
   },
   "build": {
-    "command": "node scripts/build_architecture_atlas.mjs --out-dir /tmp/evolvmem-continuity-atlas-20260909",
+    "command": "node scripts/build_architecture_atlas.mjs --out-dir /tmp/evolvmem-project-board-atlas-20260910",
     "exit_code": 0,
     "result": "10 chapters; each 9/9 showcase, 0 errors, 0 warnings"
   },
-  "output": {
-    "evolvmem/web_static/workflow.html": "/home/jiangli/hermes-memory-plugin/evolvmem/web_static/workflow.html",
-    "evolvmem/web_static/workflow-diagram.html": "/home/jiangli/hermes-memory-plugin/evolvmem/web_static/workflow-diagram.html"
-  },
   "http_verification": {
     "status": "not_exercised",
-    "scope": "This receipt verifies generated standalone artifacts offline. Authenticated live /workflow was not exercised in this run."
+    "scope": "Generated standalone artifacts viewed offline."
   }
 }

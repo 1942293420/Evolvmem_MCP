@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "title": "EvolvMem 完整架构图册",
-  "reviewed_at": "2026-09-09",
+  "reviewed_at": "2026-09-10",
   "source_root": "/home/jiangli/hermes-memory-plugin",
   "chapters": [
     {
@@ -2595,20 +2595,20 @@
       "id": "continuity",
       "title": "任务续接与检查点",
       "english": "EXACT CONTINUITY & CHECKPOINTS",
-      "subtitle": "begin 明确登记，find 跨项目发现，resume 精确恢复；checkpoint 与本地补录各自保留任务和焦点边界。",
-      "takeaway": "任务身份来自明确项目、工作区与目标。begin 登记并绑定，find 只读发现，resume 按 focus / workstream 指针恢复，checkpoint 携版本推进。Codex 本地补录只保存可归属的事件断点，保留人工进度和终态任务；这些路径不依赖经验召回或 ANN 健康。",
+      "subtitle": "begin 登记、find 发现、resume 恢复；已提交的 MCP 进展可同步到妙搭中已绑定的立项。",
+      "takeaway": "任务身份来自明确项目、工作区与目标。begin 登记并绑定，find 只读发现，resume 按 focus / workstream 指针恢复，checkpoint 携版本推进。Codex 本地补录只保存可归属的事件断点，保留人工进度和终态任务；这些路径不依赖经验召回或 ANN 健康。 可选的项目看板同步在断点提交后执行，按项目绑定与工作流版本更新进展；没有立项不创建，失败保留待同步，任务完成不会改变项目验收结论。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
         "meta": {
           "title": "EvolvMem · 任务续接与检查点",
-          "subtitle": "begin 登记 / find 发现；resume 精确恢复 → checkpoint 版本事务",
+          "subtitle": "精确续接与版本事务；提交后可选同步到已绑定立项",
           "quality_profile": "showcase",
           "visual_preset": "blueprint",
           "animation": "none",
           "viewBox": [
             1270,
-            650
+            835
           ]
         },
         "components": [
@@ -2779,6 +2779,34 @@
               245,
               84
             ]
+          },
+          {
+            "id": "board-sync",
+            "type": "cloud",
+            "label": "妙搭已绑定立项",
+            "sublabel": "核对记录与绑定 · 分任务版本",
+            "pos": [
+              975,
+              665
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "board-pending",
+            "type": "database",
+            "label": "本地待同步状态",
+            "sublabel": "保留断点 · 下次或手动补同步",
+            "pos": [
+              660,
+              665
+            ],
+            "size": [
+              245,
+              84
+            ]
           }
         ],
         "connections": [
@@ -2847,6 +2875,21 @@
             "from": "transaction",
             "to": "result",
             "variant": "emphasis"
+          },
+          {
+            "id": "continuity-to-board",
+            "from": "result",
+            "to": "board-sync",
+            "variant": "dashed",
+            "label": "MCP 进展",
+            "labelDy": 24
+          },
+          {
+            "id": "board-sync-pending",
+            "from": "board-sync",
+            "to": "board-pending",
+            "variant": "dashed",
+            "label": "失败"
           }
         ]
       },
@@ -3023,6 +3066,24 @@
             ]
           },
           "wide": true
+        },
+        {
+          "title": "已有立项才接收开发进展",
+          "paragraphs": [
+            "项目负责人在妙搭项目详情绑定 EvolvMem 的规范项目名。同步器查询精确绑定，接收端每次重新核对项目记录 ID、绑定 ID 与项目有效状态；未立项、未绑定或旧绑定的请求不会创建或修改项目。",
+            "只同步目标、已完成事项、当前步骤、下一步、阻塞、任务状态和来源更新时间。按 workstreamId 分别维护快照，同版本重复请求和旧版本不覆盖已有新进展；不传源码、完整对话或本地路径。",
+            "同步区负责开发事项展示；项目总百分比、负责人、计划日期与验收结论仍由看板维护。workstream completed 只代表该开发任务完成，不代表整个项目已验收。"
+          ]
+        },
+        {
+          "title": "自动触发与手动补同步",
+          "paragraphs": [
+            "MCP 的内容更新动作成功提交后才尝试同步；创建、begin、读取及焦点操作不触发。业务内容未变化时跳过；网络或平台异常不能回滚已经提交的 EvolvMem 检查点。",
+            "私有 project_board.json 配置可选启用连接；关闭时保留原续接行为。待同步状态保存在本机数据目录，下次有效更新或 project_board_sync 手动调用时再尝试；project_board_status 只读查看状态。",
+            "同步通过妙搭平台 OpenAPI 网关验证 API Key；接口只暴露绑定查询和进度接收，没有立项或绑定写入口。配置与密钥不进入公开源码和页面。"
+          ],
+          "formula": "已提交断点 → 精确绑定 → 版本校验 → 更新该任务进展\n未立项 / 未绑定：跳过；网络失败：待补同步；项目验收：由看板维护",
+          "wide": true
         }
       ],
       "sources": [
@@ -3089,6 +3150,10 @@
         {
           "label": "增量来源与确认 ID 回归覆盖",
           "path": "tests/test_continuity_incremental_boundaries.py:10"
+        },
+        {
+          "label": "项目看板同步适配器",
+          "path": "evolvmem/project_board_sync.py"
         }
       ]
     },
