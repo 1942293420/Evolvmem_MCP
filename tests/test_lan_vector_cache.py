@@ -53,3 +53,18 @@ def test_lan_rebuild_keeps_ids_added_after_its_loaded_snapshot(tmp_path):
     first.rebuild([1], [np.array([1., 0., 0.])])
     assert first.ids() == [1, 2]
     assert second.ids() == [1, 2]
+
+
+def test_lan_rebuild_includes_new_disk_id_without_duplicate_insert(tmp_path):
+    first, second = pair(tmp_path)
+    second.add(2, np.array([0., 1., 0.]))
+    second.save()
+    first.rebuild([1, 2], [np.array([1., 0., 0.]), np.array([0., 0., 1.])])
+    assert first.ids() == [1, 2]
+    assert second.ids() == [1, 2]
+    hit = second.search(np.array([0., 0., 1.]), k=1)[0]
+    assert hit['id'] == 2
+    assert abs(hit['distance']) < 1e-6
+    second.close()
+    second.initialize(3)
+    assert second.ids() == [1, 2]

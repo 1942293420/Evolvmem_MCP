@@ -29,7 +29,10 @@ INSTRUCTIONS = (
     'or a persistent manually chosen ASCII label). Report repo_snapshot from local Git: kind, branch, '
     'root_commit and head_commit. Missing Git observations remain unknown. Save continuity_checkpoint '
     'after milestones using returned revisions. New devices are isolated; continuity_bind explicitly '
-    'hands off a caller-owned Git workstream after project/root validation. No Windows helper or '
+    'binds the caller-owned Git workspace after project/root validation, preserving its current '
+    'focus. If target_focused is false, explicitly call continuity_checkpoint with action=switch_focus '
+    'and the returned focus_switch arguments, the same workspace/device and a new request_id. '
+    'continuity_resume takes only workspace/project, not a workstream ID. No Windows helper or '
     'automatic Windows log capture exists. On MCP outage continue development normally but never '
     'claim a save succeeded. Remote evidence-backed '
     'experience/outcome writes, project_board tools and server archive/consolidation maintenance are unavailable '
@@ -116,7 +119,7 @@ class LanTools:
             required = [k for k in props if k != 'project']
             result[name] = {'name': name, 'description': 'Explicit curated public sharing; author or jiangli maintainer may update/withdraw.',
                             'inputSchema': {'type': 'object', 'properties': props, 'required': required, 'additionalProperties': False}, 'annotations': {}}
-        result['continuity_bind'] = {'name': 'continuity_bind', 'description': 'Explicit device handoff to your existing Git workstream.', 'annotations': {}, 'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {k: {'type': 'string'} for k in ('workspace_path', 'device_id', 'project', 'workstream_id', 'request_id')} | {'repo_snapshot': {'type': 'object'}}, 'required': ['workspace_path', 'device_id', 'project', 'workstream_id', 'request_id', 'repo_snapshot']}}
+        result['continuity_bind'] = {'name': 'continuity_bind', 'description': 'Bind this device to the selected task workspace, preserving its existing focus. Inspect target_focused and focused_workstream_id; when needed use the returned continuity_checkpoint switch_focus CAS step before resuming the selected task.', 'annotations': {}, 'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {k: {'type': 'string'} for k in ('workspace_path', 'device_id', 'project', 'workstream_id', 'request_id')} | {'repo_snapshot': {'type': 'object'}}, 'required': ['workspace_path', 'device_id', 'project', 'workstream_id', 'request_id', 'repo_snapshot']}}
         if owner:
             result.pop('continuity_bind', None)
             for spec in result.values():

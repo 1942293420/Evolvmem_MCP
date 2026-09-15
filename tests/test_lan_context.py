@@ -55,7 +55,9 @@ def test_snapshot_validation_unknown_ancestry_and_handoff(lan):
     for bad in ({'kind': 'git'}, {**SNAP, 'head_commit': 'invalid'}, {**SNAP, 'extra': '/etc'}):
         assert begin(adapter, device='bad', rid=str(len(json.dumps(bad))), repo_snapshot=bad)['error'] == 'invalid_repo_snapshot'
     bind = dict(workspace_path=PATH, device_id='pc2', project='demo', workstream_id=k['workstream_id'], repo_snapshot=SNAP, request_id='bind')
-    assert adapter.call_tool('kane', 'continuity_bind', bind)['bound'] is True
+    bound = adapter.call_tool('kane', 'continuity_bind', bind)
+    assert bound['bound'] is True
+    assert bound['target_focused'] is True and bound['focus_switch'] is None
     assert resume(adapter, device='pc2', repo_snapshot=SNAP)['workstream_id'] == k['workstream_id']
     assert adapter.call_tool('kane', 'continuity_bind', bind)['bound'] is True
     for user, changes in [('jiangli', {}), ('kane', {'project': 'other'}), ('kane', {'repo_snapshot': {**SNAP, 'root_commit': 'c'*40}}), ('kane', {'repo_snapshot': None})]:
@@ -121,3 +123,33 @@ def test_remote_device_scope_preserves_opaque_whitespace_paths(lan):
 
 # Existing Git fixture performs only temporary-directory git operations.
 from tests.test_continuity_mcp import git_workspace
+
+
+def test_handoff_nonfocused_linux_task_reports_focus_then_allows_explicit_cas(lan, git_workspace):
+    runtime, adapter = lan
+    server = runtime.server_for('jiangli')
+    local_path = str(git_workspace)
+    target = server.handle_tool_call('continuity_begin', dict(workspace_path=local_path, project='demo', objective='Selected handoff task'))
+    current = server.handle_tool_call('continuity_checkpoint', dict(action='create', workspace_path=local_path, project_hint='demo', objective='Current Linux focused task', make_focus=True, expected_focus_revision=target['focus_revision']))
+    assert 'error' not in current, current
+    assert target['workstream_id'] != current['workstream_id']
+    from evolvmem.continuity_service import _collect_repo_anchor
+    snapshot = _collect_repo_anchor(local_path)
+    result = adapter.call_tool('jiangli', 'continuity_bind', dict(workspace_path=PATH, device_id='handoff', project='demo', workstream_id=target['workstream_id'], repo_snapshot=snapshot, request_id='bind-nonfocused'))
+    assert result['bound'] is True
+    assert result['target_workstream_id'] == target['workstream_id']
+    assert result['target_focused'] is False
+    assert result['focused_workstream_id'] == current['workstream_id']
+    assert result['focus_changed'] is False
+    assert result['focus_revision'] == current['focus_revision']
+    assert resume(adapter, 'jiangli', 'handoff', repo_snapshot=snapshot)['workstream_id'] == current['workstream_id']
+    assert server.handle_tool_call('continuity_resume', dict(workspace_path=local_path))['workstream_id'] == current['workstream_id']
+    suggestion = result['focus_switch']
+    assert suggestion['tool'] == 'continuity_checkpoint'
+    assert suggestion['arguments']['action'] == 'switch_focus'
+    switched = adapter.call_tool('jiangli', suggestion['tool'], dict(**suggestion['arguments'], workspace_path=PATH, device_id='handoff', request_id='switch-explicit'))
+    assert 'error' not in switched, switched
+    assert resume(adapter, 'jiangli', 'handoff', repo_snapshot=snapshot)['workstream_id'] == target['workstream_id']
+    assert server.handle_tool_call('continuity_resume', dict(workspace_path=local_path))['workstream_id'] == target['workstream_id']
+    stale = adapter.call_tool('jiangli', suggestion['tool'], dict(**suggestion['arguments'], workspace_path=PATH, device_id='handoff', request_id='switch-stale'))
+    assert stale['error'] == 'focus_conflict'

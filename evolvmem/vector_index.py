@@ -82,6 +82,10 @@ class VectorIndex:
         self._ensure_initialized()
         if self._shared_cache is not None:
             self._shared_cache.refresh()
+        self._add_without_refresh(mem_id, embedding)
+
+    def _add_without_refresh(self, mem_id: int, embedding: np.ndarray) -> None:
+        """Stage a vector without replacing the image being built."""
         vec = embedding.astype(np.float32)
         if vec.ndim != 1 or len(vec) != self._dim:
             raise ValueError(
@@ -139,7 +143,11 @@ class VectorIndex:
             metric=MetricKind.Cos,
             dtype=ScalarKind.F32,
         )
-        self.add_batch(ids, embeddings)
+        # Build the replacement image before merging with the latest disk
+        # cache. add_batch would refresh between inserts and reintroduce IDs
+        # that may also be in this rebuild input.
+        for mem_id, embedding in zip(ids, embeddings):
+            self._add_without_refresh(mem_id, embedding)
         self.save()
         self.clear_dirty()
 

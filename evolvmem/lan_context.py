@@ -94,6 +94,30 @@ def bind_workspace(server, provider, args):
         if (row['repo_kind'] != 'git' or anchor['kind'] != 'git' or not row['repo_root_commit']
                 or row['repo_root_commit'] != anchor['root_commit']):
             raise LanError('handoff_repository_mismatch')
+        focus = conn.execute('SELECT workstream_id,revision FROM continuity_focus WHERE project=? AND workspace_fingerprint=?',
+                             (row['project'], row['workspace_fingerprint'])).fetchone()
         conn.execute('INSERT INTO lan_workspace_bindings VALUES(?,?,?) ON CONFLICT(remote_key) DO UPDATE SET fingerprint=excluded.fingerprint,workstream_id=excluded.workstream_id',
                      (remote_key, row['workspace_fingerprint'], row['id']))
-    return dict(bound=True, workstream_id=row['id'], project=row['project'], repo_source='client_reported')
+    focused_id = focus['workstream_id'] if focus is not None else None
+    focus_revision = int(focus['revision']) if focus is not None else 0
+    target_focused = focused_id == row['id']
+    return dict(
+        bound=True, workstream_id=row['id'], target_workstream_id=row['id'],
+        project=row['project'], repo_source='client_reported',
+        focus_changed=False, target_focused=target_focused,
+        focused_workstream_id=focused_id, focus_revision=focus_revision,
+        focus_switch=None if target_focused else {
+            'tool': 'continuity_checkpoint',
+            'arguments': {
+                'action': 'switch_focus', 'project_hint': row['project'],
+                'workstream_id': row['id'],
+                'expected_checkpoint_revision': int(row['checkpoint_revision']),
+                'expected_state_version': int(row['state_version']),
+                'expected_focus_revision': focus_revision,
+            },
+            'instructions': 'Binding preserved the existing workspace focus. To select this task, '
+                            'call this tool with these arguments plus the same workspace_path/device_id '
+                            'and a new request_id. On focus_conflict, resume to obtain the current '
+                            'focus_revision before explicitly switching again.',
+        },
+    )
