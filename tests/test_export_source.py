@@ -40,6 +40,7 @@ def test_export_preserves_public_resources_excludes_runtime_and_never_overwrites
         "evolvmem/config.json": b'{"api_key":"fake-local-secret"}',
         "evolvmem/lan-server.json": b'{"token_hashes":{"jiangli":"fake"}}',
         "evolvmem/lan-owner-client.json": b'{"token_file":"private"}',
+        "evolvmem/jiangli-client.json": b'{"token_file":"private"}',
         "evolvmem/jiangli-token": b"fake-local-owner-token\n",
         "evolvmem/kane-token": b"fake-local-kane-token\n",
         "evolvmem/jiangli-client-instructions.txt": b"private owner instructions",

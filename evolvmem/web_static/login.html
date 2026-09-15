@@ -1,4 +1,26 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>登录 · EvolvMem</title>
-<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f3f4f6;color:#1a1a2e;font:16px/1.7 system-ui,sans-serif}main{width:100%;max-width:440px;background:#fff;padding:42px 36px;border:1px solid #e5e7eb;border-radius:20px;box-shadow:0 12px 40px #1a1a2e08}.brand{font-size:15px;font-weight:650;color:#8b5cf6;letter-spacing:.04em}h1{font-size:28px;line-height:1.3;margin:22px 0 12px}p{color:#656879;margin:0 0 24px}.login{display:block;text-align:center;padding:12px 20px;border-radius:10px;background:#8b5cf6;color:#fff;text-decoration:none;font-weight:600}.error{font-size:14px;color:#a33636;background:#fff1f1;border-radius:8px;margin-bottom:20px;padding:12px}.error:empty{display:none}</style>
-</head><body><main><div class="brand">EvolvMem · 记忆工作台</div><h1>用飞书账号登录</h1><p>查看记忆、经验与项目进展。</p><div class="error" role="alert">{{message}}</div><a class="login" href="/auth/login">飞书登录</a><p>工作台所有者可编辑内容。</p></main></body></html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>登录 · EvolvMem</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f3f4f6;color:#1a1a2e;font:16px/1.7 system-ui,sans-serif}
+    main{width:100%;max-width:440px;background:#fff;padding:42px 36px;border:1px solid #e5e7eb;border-radius:20px;box-shadow:0 12px 40px #1a1a2e08}
+    .brand{font-size:15px;font-weight:650;color:#8b5cf6;letter-spacing:.04em}h1{font-size:28px;line-height:1.3;margin:22px 0 12px}p{color:#656879;margin:0 0 24px}
+    .login{display:block;text-align:center;padding:12px 20px;border-radius:10px;background:#8b5cf6;color:#fff;text-decoration:none;font-weight:600}.login:hover{background:#7c3aed}.login:focus-visible{outline:3px solid #c4b5fd;outline-offset:4px}
+    .note{font-size:13px;margin:20px 0 0;color:#737687}.error{font-size:14px;color:#a33636;background:#fff1f1;border-radius:8px;margin-bottom:20px;padding:12px}.error:empty{display:none}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand">EvolvMem · 记忆工作台</div>
+    <h1>用飞书账号登录</h1>
+    <p>查看记忆、经验与项目进展。</p>
+    <div class="error" role="alert">{{message}}</div>
+    <a class="login" href="/auth/login">飞书登录</a>
+    <p class="note">工作台所有者可编辑内容，其他登录用户仅可查看。</p>
+  </main>
+</body>
+</html>

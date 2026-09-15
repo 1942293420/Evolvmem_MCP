@@ -1245,6 +1245,12 @@ def make_handler(service: ContextService):
             self._send_json({"ok": False,
                              "error": "unknown endpoint"}, 404)
 
+        def _unsupported_write(self):
+            if auth.require_write(self):
+                self._send_json({"ok": False, "error": "method_not_allowed"}, 405)
+
+        do_PUT = do_PATCH = do_DELETE = _unsupported_write
+
         def _handle_memory_action(self, mem_id: int, action: str):
             body = {}
             if action == "update":

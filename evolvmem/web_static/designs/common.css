@@ -210,7 +210,7 @@ body .org-dialog .ui-button.primary { background:var(--accent); border-color:var
   .org-registry-row .org-field { grid-template-columns:minmax(0,1fr); }
   .org-table .data-col-extra { display:table-cell; }
 }
-/* Current authenticated Web identity. */
+/* Current Feishu identity; the owner and viewers share the same data. */
 .auth-status{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font:12px/1.5 system-ui,sans-serif;color:#646876}
 .auth-status[hidden]{display:none}.auth-status button{font:inherit;white-space:nowrap;padding:5px 9px;border:1px solid #d8d9df;border-radius:6px;background:transparent;color:inherit;cursor:pointer}
 .auth-status button:hover{background:#eeeaf5}.auth-status button:focus-visible{outline:2px solid #8b5cf6;outline-offset:3px}.auth-status button:disabled{opacity:.5;cursor:wait}

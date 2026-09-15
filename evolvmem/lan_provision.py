@@ -47,24 +47,34 @@ def provision(config_path: Path, credentials_dir: Path, data_dir: Path,
         "host": host, "port": port, "embedding_enabled": True,
     }
     try:
-        _write_private(config_path, json.dumps(payload, indent=2) + "\n")
         for name, token in tokens.items():
-            _write_private(credentials_dir / f"{name}-token", token + "\n")
+            path = credentials_dir / f"{name}-token"
+            _write_private(path, token + "\n")
         owner_client = {"url": f"http://127.0.0.1:{port}/owner/mcp", "token_file": str(credentials_dir / "jiangli-token")}
-        _write_private(credentials_dir / "jiangli-client.json", json.dumps(owner_client, indent=2) + "\n")
-        _write_private(credentials_dir / "jiangli-client-instructions.txt", (
+        path = credentials_dir / "jiangli-client.json"
+        _write_private(path, json.dumps(owner_client, indent=2) + "\n")
+        path = credentials_dir / "jiangli-client-instructions.txt"
+        _write_private(path, (
             "Set config.json lan_mcp_client_config to this file:\n"
             f"{credentials_dir / 'jiangli-client.json'}\n"
             "Set lan_shared_vector_cache=true. Restart native MCP/hook processes after changing config.\n"
         ))
-        _write_private(credentials_dir / "kane-client-instructions.txt", (
+        path = credentials_dir / "kane-client-instructions.txt"
+        _write_private(path, (
             "On Windows PowerShell, persist this user variable (keep this file private):\n"
             f"[Environment]::SetEnvironmentVariable('EVOLVMEM_KANE_TOKEN', '{tokens['kane']}', 'User')\n"
             f"codex mcp add evolvmem --url http://{client_host}:{port}/mcp --bearer-token-env-var EVOLVMEM_KANE_TOKEN\n"
-            "Restart Codex after registering the server, then check memory_status before writing.\n"
+            "Close and reopen PowerShell, then restart Codex before testing: a User environment write does not update this shell.\n"
+            "Check memory_status before writing.\n"
         ))
+        _write_private(config_path, json.dumps(payload, indent=2) + "\n")
     except BaseException:
-        # Nothing existing is changed; callers may remove the new private directory after inspection.
+        for path in (config_path, credentials_dir / "kane-client-instructions.txt",
+                     credentials_dir / "jiangli-client-instructions.txt",
+                     credentials_dir / "jiangli-client.json", credentials_dir / "kane-token",
+                     credentials_dir / "jiangli-token"):
+            path.unlink(missing_ok=True)
+        credentials_dir.rmdir()
         raise
     return ProvisionResult(True, config_path, credentials_dir)
 

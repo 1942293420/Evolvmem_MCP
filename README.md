@@ -216,16 +216,16 @@ EVOLVMEM_CONTEXT_MODE = "legacy"
 
 `--client-host` 是 Kane 实际访问的 LAN 主机名或地址，不能填 `0.0.0.0`；监听地址和客户端 URL 是两回事。配置只存两枚 token 的 SHA-256 值。`clients/` 是 `0700`，每个 token、说明和 owner client JSON 是 `0600`；交付 Kane 的内容在 `kane-client-instructions.txt`，不要放进源码、聊天记录或公开导出。参考结构见 [lan-server.example.json](examples/lan-server.example.json) 和 [evolvmem-lan-mcp.service.example](examples/evolvmem-lan-mcp.service.example)，其中都是占位路径和值。
 
-在 Kane 的 Windows PowerShell 中，从私有说明文件取实际值并持久化到当前用户环境，再登记服务器，最后重启 Codex 让它加载该变量：
+在 Kane 的 Windows PowerShell 中，从私有说明文件取实际值并持久化到当前用户环境，再登记服务器：
 
 ```powershell
 [Environment]::SetEnvironmentVariable('EVOLVMEM_KANE_TOKEN', 'REPLACE_WITH_PRIVATE_TOKEN', 'User')
 codex mcp add evolvmem --url http://memory.lan:9378/mcp --bearer-token-env-var EVOLVMEM_KANE_TOKEN
 ```
 
-先用 `codex mcp get evolvmem` 确认条目。新会话依次调用 `memory_status`、`memory_add`、`memory_search`、`continuity_begin`，并只通过 `memory_publish` 明确公开经整理的摘要；Kane 看不到 owner 的 personal namespace。远端 workspace 传非空 `workspace_path` 时必须带稳定 `device_id`；Git snapshot 是客户端报告值。`continuity_bind` 不会擅自切换已有 focus，客户端要用返回的当前 revision 显式 `continuity_checkpoint(action="switch_focus")` 后再恢复其他目标。
+`SetEnvironmentVariable(..., 'User')` 不会改变已经打开的 PowerShell。执行后关闭并重新打开 PowerShell，再重启 Codex，才可测试连接；也可以在当前窗口额外设置 `$env:EVOLVMEM_KANE_TOKEN`。先用 `codex mcp get evolvmem` 确认条目。新会话依次调用 `memory_status`、`memory_add`、`memory_search`、`continuity_begin`，并只通过 `memory_publish` 明确公开经整理的摘要；Kane 看不到 owner 的 personal namespace。远端 workspace 传非空 `workspace_path` 时必须带稳定 `device_id`；Git snapshot 是客户端报告值。`continuity_bind` 不会擅自切换已有 focus，客户端要用返回的当前 revision 显式 `continuity_checkpoint(action="switch_focus")` 后再恢复其他目标。
 
-没有服务或网络不可用时，owner 的本机 stdio 转发返回凭据安全的 `LAN MCP unavailable`；不要把它当作写入失败后可自动重试的信号。Kane 端需要检查服务、地址、环境变量和 token；写请求结果不明时先查记录，确实要手动重试则沿用原 `request_id`，不要生成新 ID。原 Linux 入口可选将 `lan_mcp_client_config` 指向私有 `jiangli-client.json`，设置 `embedding_http_url` 为数值 loopback URL、`embedding_http_token_file` 为 owner token，及 `lan_shared_vector_cache=true`；改完后重启原生 MCP 和 hooks。LAN runtime 本身不回转发且独占一个可选模型。原本严格的 standalone 向量健康门仍有效，LAN namespace 在共享模型不可用时保留 SQLite/FTS 路径。
+没有服务或网络不可用时，owner 的本机 stdio 转发返回凭据安全的 `LAN MCP unavailable`；不要把它当作写入失败后可自动重试的信号。Kane 端需要检查服务、地址、环境变量和 token；写请求结果不明时先查记录，确实要手动重试则沿用原 `request_id`，不要生成新 ID。原 Linux 入口可选将 `lan_mcp_client_config` 指向私有 `jiangli-client.json`，设置 `embedding_http_url` 为数值 loopback 基址 `http://127.0.0.1:9378`、`embedding_http_token_file` 为 owner token，及 `lan_shared_vector_cache=true`；完整的四项占位片段见 [lan-owner-config.example.json](examples/lan-owner-config.example.json)，不要把它覆盖进通用 `config.example.json`。改完后重启原生 MCP 和 hooks。LAN runtime 本身不回转发且独占一个可选模型。原本严格的 standalone 向量健康门仍有效，LAN namespace 在共享模型不可用时保留 SQLite/FTS 路径。
 
 现有 Web 控制台如果启用私有 `web_auth.json` 的 `owner_only: true`，则只有配置的 owner 能通过飞书登录和读取个人库；这避免 LAN 使用者绕过 MCP 边界。默认未配置登录的 standalone Web 行为保持不变。这里没有 Windows 实机验收；已验证的是隔离 Linux HTTP/Codex 协议连接。Codex MCP 配置的官方说明见 <https://learn.chatgpt.com/docs/extend/mcp?surface=cli>。
 

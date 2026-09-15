@@ -28,7 +28,7 @@
           {
             "id": "agents",
             "type": "external",
-            "label": "AI 助手",
+            "label": "Owner 原生入口",
             "sublabel": "Codex · Kimi · Claude · DSH",
             "pos": [
               35,
@@ -42,8 +42,8 @@
           {
             "id": "mcp",
             "type": "frontend",
-            "label": "MCP 工具入口",
-            "sublabel": "主动查询 · 写入 · 续接",
+            "label": "MCP 入口与 owner 转发",
+            "sublabel": "stdio → loopback /owner/mcp",
             "pos": [
               395,
               350
@@ -56,8 +56,8 @@
           {
             "id": "service",
             "type": "backend",
-            "label": "ContextService",
-            "sublabel": "模式分流 · 项目范围 · 一致性",
+            "label": "LAN Runtime / ContextService",
+            "sublabel": "固定身份 · namespace · 一致性",
             "pos": [
               755,
               350
@@ -70,8 +70,8 @@
           {
             "id": "sqlite",
             "type": "database",
-            "label": "SQLite / memory.db",
-            "sublabel": "Context · 证据 · 断点 · 旧投影",
+            "label": "三份 SQLite namespace",
+            "sublabel": "jiangli · kane · explicit public",
             "pos": [
               1115,
               350
@@ -112,10 +112,10 @@
           {
             "id": "remote",
             "type": "cloud",
-            "label": "远程生成模型",
-            "sublabel": "按配置调用 DeepSeek / Kimi",
+            "label": "Kane 的远端 Codex",
+            "sublabel": "bearer token → /mcp",
             "pos": [
-              395,
+              35,
               10
             ],
             "size": [
@@ -126,8 +126,8 @@
           {
             "id": "web",
             "type": "frontend",
-            "label": "Signal 工作台",
-            "sublabel": "查看 · 整理 · 来源与任务",
+            "label": "Owner-only Signal Web",
+            "sublabel": "owner read/write · viewer 禁止 personal 读取",
             "pos": [
               755,
               130
@@ -168,8 +168,8 @@
           {
             "id": "embedding",
             "type": "backend",
-            "label": "本地 Embedding",
-            "sublabel": "nomic v1.5 · GGUF · 768 维",
+            "label": "一个共享可选 Embedding",
+            "sublabel": "LAN runtime 独占 · loopback HTTP",
             "pos": [
               755,
               790
@@ -251,8 +251,11 @@
           {
             "id": "remote-extract",
             "from": "remote",
-            "to": "extract",
-            "variant": "dashed"
+            "to": "mcp",
+            "variant": "dashed",
+            "fromSide": "left",
+            "toSide": "top",
+            "via": [[10, 54], [10, 310], [520, 310]]
           }
         ]
       },

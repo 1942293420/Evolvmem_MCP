@@ -2,20 +2,20 @@
   "schema_version": 1,
   "reviewed_at": "2026-09-15",
   "source": {
-    "sha256": "c40743efdfc6f5b460b44560c2fa70701d8a0887ce398963ac3e7a211d48bcbb",
-    "bytes": 135418
+    "sha256": "1cc21ee122336f1bfa134cf18a6b8c7805448ad5e8d5cd7827d5d886d110ffcf",
+    "bytes": 135583
   },
   "chapters": [
     {
       "chapter": "overview",
       "type": "architecture",
       "specification": {
-        "sha256": "b6e57993ddf21980ce52ce0544d586c8bf6a0bc1ce06293afc8a4d95b7f7c5e4",
-        "bytes": 4472
+        "sha256": "bcb927085e0048f6d419e2cddca5f9b7daaf2f59a8c380c1d9b4ebc4f5d40a60",
+        "bytes": 4741
       },
       "artifact": {
-        "sha256": "face28a165950e227a9ac8e91369fed3fb90f2ed1b35b3c65dee4f78f0d614ec",
-        "bytes": 609189
+        "sha256": "59bd69be8c3fce0e361ad2c89e6c52f8d6dc327ca5daf9c72e20624d7066cf3a",
+        "bytes": 609496
       },
       "validation": {
         "checksPassed": 9,
@@ -208,8 +208,8 @@
     }
   ],
   "atlas": {
-    "sha256": "2937739197c1ca1e53aa632fd502d97057c11f57c808191b7caee4b6481f71c8",
-    "bytes": 1534997
+    "sha256": "dfe2a9aea946366e7881e56f6afa2e935a6415a13e3706ee7e32d19408ebc0da",
+    "bytes": 1535189
   },
-  "visual_review": "2026-09-15: Chrome headless inspected the populated atlas overview and runtime chapter during release validation; LAN overview text, diagram nodes, labels and runtime workflow rendered without visible overlap or clipping. Private screenshot paths are recorded in the delivery report."
+  "visual_review": "2026-09-15: Chrome headless inspected the overview at /tmp/evolvmem-task4-r1-atlas-final/workflow.png; Kane bearer /mcp, owner loopback entry, three namespaces, owner-only Web, and shared embedding are visible without overlap or clipping."
 }
