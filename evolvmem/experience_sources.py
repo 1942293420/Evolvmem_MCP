@@ -1,7 +1,7 @@
 """Resolve experience evidence to a concrete local transcript event."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
@@ -39,6 +39,7 @@ class ResolvedExperienceSource:
     digest: str
     snapshot: str
     task_id: str | None = None
+    archive_id: int | None = None
 
 
 class ExperienceSourceResolver:
@@ -47,6 +48,7 @@ class ExperienceSourceResolver:
     def __init__(
         self, *, codex_roots=None, kimi_roots=None, dsh_roots=None,
         fix_root=None, max_recent_transcripts=12, recent_window_seconds=86400,
+        archiver=None,
     ):
         home = Path.home()
         self.codex_roots = self._roots(
@@ -64,6 +66,7 @@ class ExperienceSourceResolver:
             raise ValueError("invalid recent transcript window")
         self.max_recent_transcripts = max_recent_transcripts
         self.recent_window_seconds = recent_window_seconds
+        self.archiver = archiver
 
     @staticmethod
     def _roots(given, defaults):
@@ -76,6 +79,8 @@ class ExperienceSourceResolver:
         if not isinstance(quote, str) or not quote.strip() or len(quote) > 1000:
             raise ValueError("evidence quote required")
         quote = quote.strip()
+        if isinstance(source_ref, str) and source_ref.startswith('archive:'):
+            return self._resolve_archive(source_kind, source_ref, task_id, quote)
         if source_kind == "historical_record":
             if task_id in (None, "", "current"):
                 raise ValueError("historical_record requires explicit task_id")
@@ -98,8 +103,18 @@ class ExperienceSourceResolver:
             raise ValueError("source line does not exist or is too large")
         return self._locate_event(source_kind, task_id, quote)
 
-    def validate_stored(self, *, source_kind, source_ref, task_id):
+    def validate_stored(self, *, source_kind, source_ref, task_id, extraction_version=None):
         """Validate the task binding of a previously resolved source row."""
+        if isinstance(source_ref, str) and source_ref.startswith('archive:'):
+            try:
+                _, line, payload = self._archive_payload(source_ref, task_id)
+                for number, raw, aliases in self._canonical_event_lines(
+                        self._archive_lines(payload), 'codex', source_kind):
+                    if line in aliases:
+                        return extraction_version == 'experience-v1:' + hashlib.sha256(raw.encode('utf-8')).hexdigest()
+                return False
+            except (ValueError, TypeError):
+                return False
         if source_kind == "historical_record":
             path = Path(source_ref).resolve()
             return self._inside(path, self.fix_root) and path.suffix.casefold() == ".md"
@@ -109,6 +124,55 @@ class ExperienceSourceResolver:
         except ValueError:
             return False
         return self.task_matches(adapter, path, task_id)
+
+    def _archive_payload(self, source_ref, task_id):
+        match = re.fullmatch(r'archive:([1-9][0-9]*)(?:#([1-9][0-9]*))?', source_ref)
+        if not match or self.archiver is None:
+            raise ValueError('archive source unavailable')
+        archive_id, line = int(match[1]), int(match[2]) if match[2] else None
+        raw = self.archiver.read_payload(archive_id)
+        if raw is None:
+            raise ValueError('archive source unavailable')
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            raise ValueError('invalid archive source') from None
+        if (not isinstance(payload, dict) or payload.get('source') != 'client_reported'
+                or any(not isinstance(payload.get(k), str) or not payload[k] for k in ('session_id', 'device_id', 'transcript'))):
+            raise ValueError('invalid archive source')
+        if task_id not in (None, '', 'current', payload['session_id']):
+            raise ValueError('task_id does not match archive')
+        from evolvmem.codex_transcript import parse_transcript
+        try:
+            parse_transcript(payload['transcript'].encode('utf-8'), payload['session_id'])
+        except Exception:
+            raise ValueError('invalid archive transcript') from None
+        return archive_id, line, payload
+
+    @staticmethod
+    def _archive_lines(payload):
+        return ((number, raw) for number, raw in enumerate(payload['transcript'].splitlines(keepends=True), 1)
+                if len(raw.encode('utf-8')) <= _MAX_LINE_BYTES)
+
+    def _resolve_archive(self, source_kind, source_ref, task_id, quote):
+        if source_kind not in ('tool_result', 'user_confirmation'):
+            raise ValueError('archive requires native tool or user evidence')
+        archive_id, line, payload = self._archive_payload(source_ref, task_id)
+        matches = []
+        for number, raw, aliases in self._canonical_event_lines(self._archive_lines(payload), 'codex', source_kind):
+            if line is not None and line not in aliases:
+                continue
+            try:
+                result = self._resolve_event(None, number, raw, 'codex', source_kind, quote,
+                    payload['session_id'], source_prefix=f'archive:{archive_id}')
+            except ValueError:
+                if line is not None:
+                    raise
+                continue
+            matches.append(replace(result, archive_id=archive_id))
+        if len(matches) != 1:
+            raise ValueError('archive evidence must identify exactly one event')
+        return matches[0]
 
     @staticmethod
     def task_matches(adapter, path, task_id):
@@ -274,8 +338,11 @@ class ExperienceSourceResolver:
         Pair only equal complete messages of opposite native types. Repeated
         user messages, even identical ones, remain separate source events.
         """
+        yield from self._canonical_event_lines(self._iter_lines(path), adapter, source_kind)
+
+    def _canonical_event_lines(self, lines, adapter, source_kind):
         pending = None
-        for number, raw in self._iter_lines(path):
+        for number, raw in lines:
             descriptor = self._codex_user_descriptor(raw) if (
                 adapter == "codex" and source_kind == "user_confirmation") else None
             if pending is not None:
@@ -311,7 +378,7 @@ class ExperienceSourceResolver:
             return kind, payload["message"]
         return None
 
-    def _resolve_event(self, path, line_number, raw, adapter, source_kind, quote, task_id=None):
+    def _resolve_event(self, path, line_number, raw, adapter, source_kind, quote, task_id=None, *, source_prefix=None):
         try:
             event = json.loads(raw)
         except (TypeError, json.JSONDecodeError) as error:
@@ -324,7 +391,7 @@ class ExperienceSourceResolver:
         content = min(texts, key=len)
         if contains_sensitive_text(content):
             raise ValueError("source event contains sensitive content")
-        canonical_ref = f"{path.resolve()}#{line_number}"
+        canonical_ref = f"{source_prefix if source_prefix is not None else path.resolve()}#{line_number}"
         digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         return ResolvedExperienceSource(
             source_kind=source_kind, source_ref=canonical_ref,

@@ -825,6 +825,13 @@ class ContextService:
         )
         for record in seeds:
             by_id.setdefault(record.item.id, self._pinned_seed_result(record))
+        from dataclasses import replace
+        for record in self.store.list_project_context_records(
+            project=project, min_confidence=self.config.context_min_confidence
+        ):
+            seed = replace(self._pinned_seed_result(record),
+                           match_types=(ContextMatchType.PROJECT_CONTEXT,))
+            by_id.setdefault(record.item.id, seed)
         return tuple(by_id.values())
 
     @staticmethod

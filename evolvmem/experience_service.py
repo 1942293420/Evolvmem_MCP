@@ -83,7 +83,8 @@ class ExperienceService:
         self.core = core
         self.store = core.store
         self.config = core.config
-        self.source_resolver = source_resolver or ExperienceSourceResolver()
+        from evolvmem.session_archive import SessionArchiver
+        self.source_resolver = source_resolver or ExperienceSourceResolver(archiver=SessionArchiver(core.config, core.store))
         self._cache = {}
 
     def _conn(self):
@@ -291,7 +292,8 @@ class ExperienceService:
                              source['extraction_version']) and
                 self.source_resolver.validate_stored(
                     source_kind=source['source_kind'],
-                    source_ref=source['source_ref'], task_id=evidence['task_id'])
+                    source_ref=source['source_ref'], task_id=evidence['task_id'],
+                    **({'extraction_version': source['extraction_version']} if source['archive_id'] else {}))
             ):
                 raise ValueError('stored source lacks canonical provenance')
             previous = self._conn().execute(
@@ -311,8 +313,8 @@ class ExperienceService:
             evidence['task_id'] = resolved.task_id
         extraction = f'experience-v1:{resolved.digest}'
         self._conn().execute(
-            'INSERT OR IGNORE INTO context_sources(item_id,source_kind,source_ref,extraction_version,created_at) VALUES(?,?,?,?,?)',
-            (item_id,resolved.source_kind,resolved.source_ref,extraction,now))
+            'INSERT OR IGNORE INTO context_sources(item_id,archive_id,source_kind,source_ref,extraction_version,created_at) VALUES(?,?,?,?,?,?)',
+            (item_id,resolved.archive_id,resolved.source_kind,resolved.source_ref,extraction,now))
         source = self._conn().execute(
             'SELECT id,extraction_version FROM context_sources WHERE item_id=? AND source_kind=? AND source_ref=?',
             (item_id,resolved.source_kind,resolved.source_ref)).fetchone()

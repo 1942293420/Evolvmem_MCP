@@ -18,6 +18,7 @@ PUBLIC_DIRECTORIES = (
 )
 PUBLIC_DOCS = (
     "context-core.md", "codex-context-core-runbook.md", "github-sharing.md",
+    "windows-codex.md",
     "evolvmem-workflow.json",
     "evolvmem-atlas.json", "evolvmem-atlas-template.html", "evolvmem-atlas-receipt.json",
 )

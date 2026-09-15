@@ -86,6 +86,7 @@ class ProjectBoardSync:
         workspace_identity: WorkspaceIdentityProvider,
         *,
         timeout_seconds: float = 3.0,
+        config_path: Path | None = None,
     ) -> None:
         if not isinstance(config, Config):
             raise TypeError("config must be a Config instance")
@@ -99,9 +100,12 @@ class ProjectBoardSync:
         self.store = store
         self.workspace_identity = workspace_identity
         self.timeout_seconds = float(timeout_seconds)
+        self._config_path_override = config_path
 
     @property
     def config_path(self) -> Path:
+        if self._config_path_override is not None:
+            return self._config_path_override
         override = os.environ.get(_CONFIG_ENV)
         if override and override.strip():
             return Path(override).expanduser()

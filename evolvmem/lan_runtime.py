@@ -92,6 +92,8 @@ class LanRuntime:
         self._servers: dict[tuple[str, str], MemoryMCPServer] = {}
         self._initialized = False
         self._closed = False
+        self._capture_worker = None
+        self._capture_stop = threading.Event()
 
     def initialize(self) -> None:
         if self._closed:
@@ -139,11 +141,38 @@ class LanRuntime:
         if self._closed:
             return
         self._closed = True
+        self._capture_stop.set()
+        if self._capture_worker is not None:
+            self._capture_worker.join(timeout=5)
+            if self._capture_worker.is_alive():
+                # The worker owns final cleanup after its bounded provider call.
+                return
+        self._close_resources()
+
+    def _close_resources(self):
         for server in set(self._servers.values()):
             server.shutdown()
         self._servers.clear()
         if self._shared_engine is not None:
             self._shared_engine.close()
+
+    def start_capture_worker(self, adapter):
+        if self._capture_worker is not None:
+            return
+        def run():
+            try:
+                while not self._capture_stop.wait(5):
+                    try:
+                        adapter.process_backfills()
+                        adapter.process_pending()
+                    except Exception:
+                        # Jobs remain queryable; never log transcript/provider details.
+                        continue
+            finally:
+                if self._closed:
+                    self._close_resources()
+        self._capture_worker = threading.Thread(target=run, name='evolvmem-session-extraction', daemon=True)
+        self._capture_worker.start()
 
     def _server_for(self, user: str, space: str) -> MemoryMCPServer:
         key = ("public", "public") if space == "public" else (user, "personal")

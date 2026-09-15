@@ -254,6 +254,9 @@ class ContextRenderer:
         if not (
             ContextMatchType.LEXICAL in result.match_types
             or ContextMatchType.VECTOR in result.match_types
+            or (ContextMatchType.PROJECT_CONTEXT in result.match_types
+                and result.scope is ContextScope.PROJECT and bool(project)
+                and result.content_type in (ContextContentType.PROJECT_SUMMARY, ContextContentType.SESSION_SUMMARY))
             or (
                 result.tier is ContextTier.PINNED
                 and result.content_type in _PINNED_NO_MATCH_TYPES
@@ -321,6 +324,8 @@ def _selection_reason(result: ContextSearchResult) -> ContextSelectionReason:
         return ContextSelectionReason.PINNED_POLICY
     if ContextMatchType.LEXICAL in result.match_types:
         return ContextSelectionReason.LEXICAL
+    if ContextMatchType.PROJECT_CONTEXT in result.match_types:
+        return ContextSelectionReason.PROJECT_CONTEXT
     return ContextSelectionReason.VECTOR
 
 

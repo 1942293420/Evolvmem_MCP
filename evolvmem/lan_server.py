@@ -24,6 +24,7 @@ def owner_peer_allowed(peer, user):
 
 def make_http_server(runtime, host=None, port=None):
     adapter = LanTools(runtime)
+    runtime.start_capture_worker(adapter)
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.1'
@@ -54,6 +55,10 @@ def make_http_server(runtime, host=None, port=None):
             user = runtime.settings.authenticate(value[7:]) if value.startswith('Bearer ') else None
             if user is None:
                 self._reply(401, {'error': 'unauthorized'}, {'WWW-Authenticate': 'Bearer'})
+                return None
+            expected_users = self.headers.get_all('X-EvolvMem-Expected-User', [])
+            if expected_users and (len(expected_users) != 1 or expected_users[0] != user):
+                self._reply(403, {'error': 'expected_user_mismatch'})
                 return None
             if 'Origin' in self.headers:
                 self._reply(403, {'error': 'origin_forbidden'})

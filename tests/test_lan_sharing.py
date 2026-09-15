@@ -128,13 +128,11 @@ def test_request_id_required_and_bounded(lan, rid):
     assert adapter.call_tool('kane', 'memory_add', {'key': 'a', 'value': 'valid long content', 'request_id': rid})['error'] == 'invalid_request_id'
 
 
-def test_remote_paths_maintenance_evidence_and_public_writes_blocked(lan):
+def test_remote_paths_evidence_and_public_writes_require_valid_scope(lan):
     _, adapter = lan
     for name in ('continuity_begin', 'continuity_resume', 'context_session_start', 'continuity_find'):
         assert adapter.call_tool('kane', name, {'workspace_path': '/etc', 'request_id': 'blocked'})['error'] == 'invalid_device_id'
-    for name in ('project_board_sync', 'project_board_status', 'memory_consolidate'):
-        assert adapter.call_tool('kane', name, {'request_id': 'disabled'})['error'] == 'remote_tool_unavailable'
-    for name, args in [('experience_record', {'case': {}, 'evidence': {'task_id': 'x'}}), ('context_record_outcome', {'id': 1, 'outcome': 'success', 'task_id': 'x'})]:
+    for name, args in [('experience_record', {'case': {'project': 'lan', 'problem': '需核验实际来源', 'steps': ['核对会话事件']}, 'evidence': {'task_id': 'x'}}), ('context_record_outcome', {'id': 1, 'outcome': 'success', 'task_id': 'x'})]:
         assert adapter.call_tool('kane', name, {**args, 'request_id': 'evidence'})['error'] == 'remote_evidence_unavailable'
     assert adapter.call_tool('kane', 'memory_add', {'space': 'public', 'request_id': 'public'})['error'] == 'public_write_forbidden'
     assert adapter.call_tool('kane', 'memory_add', {'key': 'a', 'value': 'long enough content'})['error'] == 'invalid_request_id'
@@ -208,7 +206,7 @@ def test_failed_public_change_preserves_previous_visibility(lan, tool):
     assert adapter.call_tool('kane', 'memory_search', {'query': 'orchard'})['count'] == 1
 
 
-def test_candidate_record_qualified_refs_and_no_server_archive_maintenance(lan):
+def test_candidate_record_qualified_refs_and_personal_archive_maintenance(lan):
     _, adapter = lan
     candidate = adapter.call_tool('kane', 'experience_record', {'case': {'project': 'lan', 'problem': 'real bounded candidate mechanism', 'steps': ['Inspect the current SQLite namespace']}, 'request_id': 'candidate'})
     assert candidate['status'] == 'candidate'
@@ -216,8 +214,8 @@ def test_candidate_record_qualified_refs_and_no_server_archive_maintenance(lan):
     assert candidate['ref'] == f"personal:context:{candidate['id']}"
     derived = adapter.call_tool('kane', 'experience_record', {'case': {'project': 'lan', 'problem': 'derived candidate mechanism', 'steps': ['Inspect the alternate condition'], 'parent_experience_id': candidate['id']}, 'request_id': 'derived'})
     assert derived['parent_experience_ref'] == candidate['ref']
-    for tool in ('context_sweep', 'context_archive_project'):
-        assert adapter.call_tool('kane', tool, {'request_id': 'archive', 'project': 'lan'})['error'] == 'remote_tool_unavailable'
+    assert 'error' not in adapter.call_tool('kane', 'context_archive_project', {'request_id': 'archive', 'project': 'lan'})
+    assert 'error' not in adapter.call_tool('kane', 'context_sweep', {'request_id': 'sweep'})
 
 
 def test_session_shared_excerpt_does_not_return_full_summary_outside_budget(lan):

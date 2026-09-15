@@ -1,21 +1,21 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-09-15",
+  "reviewed_at": "2026-09-16",
   "source": {
-    "sha256": "1cc21ee122336f1bfa134cf18a6b8c7805448ad5e8d5cd7827d5d886d110ffcf",
-    "bytes": 135583
+    "sha256": "5ce43cf1d0e28a6501332b25a6e6932abe51a48733baa8fda2c544b46ced26cf",
+    "bytes": 148861
   },
   "chapters": [
     {
       "chapter": "overview",
       "type": "architecture",
       "specification": {
-        "sha256": "bcb927085e0048f6d419e2cddca5f9b7daaf2f59a8c380c1d9b4ebc4f5d40a60",
-        "bytes": 4741
+        "sha256": "06380fa3079a3a2d3d4ef0381a240c50042e5c3da74fa4f4474214b32973fb3d",
+        "bytes": 4751
       },
       "artifact": {
-        "sha256": "59bd69be8c3fce0e361ad2c89e6c52f8d6dc327ca5daf9c72e20624d7066cf3a",
-        "bytes": 609496
+        "sha256": "e7d802c9ad317e778489a35762c54820e723475f409e892f0ef36ca84dd295c8",
+        "bytes": 609536
       },
       "validation": {
         "checksPassed": 9,
@@ -90,12 +90,12 @@
       "chapter": "experience",
       "type": "architecture",
       "specification": {
-        "sha256": "fd76428d3edec378dd52faf3e30f3c064e5878cc408ab0dcebcf1420988cae37",
-        "bytes": 4687
+        "sha256": "9d2cfb5dabf1397c5883130f514113f0aeb7cf444dc4b451d0bfb67a3fcbf19d",
+        "bytes": 4696
       },
       "artifact": {
-        "sha256": "acecdeb70894e048a15bea19b5ff2efa049a62b95ae34c5f7f465cadeb0f1b6d",
-        "bytes": 610526
+        "sha256": "7b100f4f1bfb549a8afeb2b16130f391255e9a6ebcf0bb9681212037f588a56c",
+        "bytes": 610562
       },
       "validation": {
         "checksPassed": 9,
@@ -130,12 +130,12 @@
       "chapter": "storage",
       "type": "architecture",
       "specification": {
-        "sha256": "b229d38c1e31b4b293ec210fd7ad74c0ed1262adae0662eefffb049bfbc8e2f0",
-        "bytes": 4645
+        "sha256": "8ba5fe24e5140272fb1e291300cecb77692a4184075b8cdf309dbb61d35a7cc2",
+        "bytes": 4655
       },
       "artifact": {
-        "sha256": "94a78607a2da6c490a6868bc05b108d7b41df65dd9d7751647e18a498cd2f644",
-        "bytes": 609998
+        "sha256": "14268e4b9293b4d7d4fa3fea65b725ce1edebb8f2992784ffc5458d7131ffc99",
+        "bytes": 610038
       },
       "validation": {
         "checksPassed": 9,
@@ -205,11 +205,32 @@
         "errors": 0,
         "warnings": 0
       }
+    },
+    {
+      "chapter": "windows-codex",
+      "type": "architecture",
+      "specification": {
+        "sha256": "463e2dbfabe2e2477b2ef224018c9ca8960357e1946897eb094bc6c6804c0ca0",
+        "bytes": 4806
+      },
+      "artifact": {
+        "sha256": "694454614505ad390c3b42845ee6951cbd3b40c44f234d055d91d99b516a52d9",
+        "bytes": 611649
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
     }
   ],
   "atlas": {
-    "sha256": "dfe2a9aea946366e7881e56f6afa2e935a6415a13e3706ee7e32d19408ebc0da",
-    "bytes": 1535189
+    "sha256": "fb40c93e00f8ba1140ee8477585a06037b1ffff0289702ab15e9d281723490be",
+    "bytes": 1686677
   },
-  "visual_review": "2026-09-15: Chrome headless inspected the overview at /tmp/evolvmem-task4-r1-atlas-final/workflow.png; Kane bearer /mcp, owner loopback entry, three namespaces, owner-only Web, and shared embedding are visible without overlap or clipping."
+  "visual_review": "2026-09-16: passed. Local Chrome inspected overview and Windows chapter in light/dark themes at /tmp/evolvmem-windows-atlas-final; 11 chapter navigation and iframe readiness verified; no node overlap or clipping observed. One focused correction aligned the MCP route and review date.",
+  "correction_rounds": 1
 }

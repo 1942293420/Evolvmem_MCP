@@ -1,7 +1,10 @@
 """Actual loopback Streamable HTTP acceptance, without a model or live data."""
 import http.client
+import base64
+import hashlib
 import json
 import threading
+import time
 
 import pytest
 
@@ -55,7 +58,10 @@ def test_http_auth_protocol_negotiation_registry_and_invalid_requests(http_lan):
         assert status == 401
         assert str(runtime.settings.data_dir) not in json.dumps(body)
     for version in ('2025-11-25', '2025-03-26'):
-        assert rpc(server, 'initialize', {'protocolVersion': version})['result']['protocolVersion'] == version
+        initialized = rpc(server, 'initialize', {'protocolVersion': version})['result']
+        assert initialized['protocolVersion'] == version
+        assert 'hook-provided device_id' in initialized['instructions']
+        assert 'hostname' in initialized['instructions']
     assert rpc(server, 'initialize', {'protocolVersion': '2099-01-01'})['result']['protocolVersion'] in ('2025-11-25', '2025-03-26')
     specs = rpc(server, 'tools/list')['result']['tools']
     assert 'request_id' in next(s['inputSchema']['required'] for s in specs if s['name'] == 'memory_add')
@@ -72,6 +78,38 @@ def test_http_auth_protocol_negotiation_registry_and_invalid_requests(http_lan):
     # Advertise an oversized body without racing an early-close response
     # against http.client's large sendall (which may raise BrokenPipe).
     assert request(server, raw='', headers={'Content-Length': str(1024 * 1024 + 1)})[0] == 413
+
+
+def test_expected_user_header_rejects_wrong_authenticated_store_before_dispatch(http_lan):
+    server, runtime = http_lan
+    raw = b'{"type":"session_meta","payload":{"id":"wrong-user","cwd":"C:\\\\work"}}\n'
+    digest = hashlib.sha256(raw).hexdigest()
+    payload = {
+        'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+        'params': {'name': 'session_archive_upload', 'arguments': {
+            'device_id': 'windows-main', 'session_id': 'wrong-user', 'project': 'demo',
+            'sha256': digest, 'total_bytes': len(raw), 'offset': 0,
+            'content_b64': base64.b64encode(raw).decode(), 'extract': False,
+            'request_id': 'wrong-user-upload',
+        }},
+    }
+
+    status, body = request(
+        server, payload, token='kane-token',
+        headers={'X-EvolvMem-Expected-User': 'jiangli'},
+    )
+
+    assert status == 403
+    assert body == {'error': 'expected_user_mismatch'}
+    for user in ('jiangli', 'kane'):
+        conn = runtime.server_for(user).context_service.store._connection()
+        assert conn.execute('SELECT COUNT(*) FROM session_archives').fetchone()[0] == 0
+        assert conn.execute('SELECT COUNT(*) FROM lan_session_uploads').fetchone()[0] == 0
+
+
+def test_expected_user_header_is_optional_for_legacy_callers(http_lan):
+    server, _ = http_lan
+    assert rpc(server, 'ping')['result'] == {}
 
 
 def test_http_two_clients_public_lifecycle_and_notifications_never_write(http_lan):
@@ -105,3 +143,72 @@ def test_http_parallel_retries_write_once(http_lan):
     assert all(not error for _, error in responses)
     assert all(result == responses[0][0] for result, _ in responses)
     assert call(server, 'memory_search', {'query': 'parallel'}, 'kane-token')[0]['count'] == 1
+
+
+def test_background_worker_extracts_encrypted_upload_without_blocking_reads(
+    http_lan, monkeypatch
+):
+    from evolvmem import kimi_hooks
+    from tests.test_lan_capture import transcript
+
+    server, runtime = http_lan
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fake_model(prompt, _config, **_kwargs):
+        entered.set()
+        assert release.wait(5), 'test did not release the fake model call'
+        if 'SESSION_SUMMARY' in prompt:
+            return json.dumps({'memories': [
+                {'key': 'SESSION_SUMMARY', 'value': '橙园后台归档已经完成提炼。'},
+                {'key': 'project:demo:decision:http-worker',
+                 'value': '橙园使用后台归档工作线程，MCP 读取不会被模型调用阻塞。',
+                 'attribute': 'decision', 'confidence': 0.95},
+            ]}, ensure_ascii=False)
+        return json.dumps({
+            'l0': '橙园后台归档提炼完成。',
+            'l1': '橙园使用后台归档工作线程。',
+            'l2': '橙园的加密会话由后台工作线程提炼，期间 MCP 读取保持可用。',
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(kimi_hooks, '_call_llm_with_retry', fake_model)
+    credentials = runtime.settings.owner_data_dir / 'llm_credentials.json'
+    credentials.write_text(json.dumps({'provider': 'deepseek', 'api_key': 'fixture-only'}))
+    raw = transcript(
+        session_id='worker-session',
+        text='橙园后台归档提炼应当允许其他 MCP 请求继续读取。',
+    )
+    digest = hashlib.sha256(raw).hexdigest()
+    args = {
+        'device_id': 'windows-main', 'session_id': 'worker-session', 'project': 'demo',
+        'sha256': digest, 'total_bytes': len(raw), 'offset': 0,
+        'content_b64': base64.b64encode(raw).decode(), 'extract': True,
+        'request_id': 'worker-upload',
+    }
+
+    try:
+        saved, error = call(server, 'session_archive_upload', args)
+        assert not error and saved['status'] == 'archived'
+        assert entered.wait(8), 'background extraction worker did not claim the archive'
+        started = time.monotonic()
+        status, error = call(server, 'memory_status', {})
+        assert not error and status['authenticated_user'] == 'jiangli'
+        assert time.monotonic() - started < 1.0
+    finally:
+        release.set()
+
+    deadline = time.monotonic() + 8
+    archive = {}
+    while time.monotonic() < deadline:
+        archive, error = call(server, 'session_archive_status', {
+            'device_id': 'windows-main', 'session_id': 'worker-session'
+        })
+        if not error and archive.get('extraction_status') == 'extracted':
+            break
+        time.sleep(0.05)
+    assert archive.get('extraction_status') == 'extracted', archive
+    loaded, error = call(server, 'context_session_start', {
+        'project': 'demo', 'query': '橙园后台归档'
+    })
+    assert not error
+    assert '橙园' in loaded['block']

@@ -58,6 +58,27 @@ def prepare_bindings(server):
             remote_key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, workstream_id TEXT NOT NULL)''')
 
 
+def prepare_memory_revision(server):
+    """A durable change counter also observes writes made by native clients."""
+    with server.context_service.store.transaction():
+        conn = server.context_service.store._connection()
+        conn.execute('CREATE TABLE IF NOT EXISTS lan_memory_revision(id INTEGER PRIMARY KEY, revision INTEGER NOT NULL)')
+        conn.execute('INSERT OR IGNORE INTO lan_memory_revision VALUES(1,0)')
+        tracked = {
+            'context_items': 'status,tier,project,importance,confidence,source_state,success_count,failure_count,expires_at',
+            'context_layers': 'content_hash',
+            'context_project_registry': 'revision',
+            'continuity_workstreams': 'checkpoint_revision,state_version',
+            'continuity_focus': 'revision',
+        }
+        for table, columns in tracked.items():
+            for action in ('INSERT', 'DELETE', 'UPDATE OF ' + columns):
+                suffix = action.split()[0].lower()
+                condition = (' WHEN ' + ' OR '.join(f'NEW.{c} IS NOT OLD.{c}' for c in columns.split(','))) if suffix == 'update' else ''
+                conn.execute(f'CREATE TRIGGER IF NOT EXISTS lan_revision_{table}_{suffix} AFTER {action} ON {table}{condition} '
+                             'BEGIN UPDATE lan_memory_revision SET revision=revision+1 WHERE id=1; END')
+
+
 @contextmanager
 def remote_context(server, device_id, snapshot):
     """Caller holds runtime dispatch lock. Always restore both lazy services."""
@@ -67,6 +88,10 @@ def remote_context(server, device_id, snapshot):
     services = (server._continuity(), context._continuity())
     saved = [(s, s._workspace_identity, s._repo_anchor, s._ancestor) for s in services]
     context_identity = context._identity_provider
+    from evolvmem.project_board_sync import ProjectBoardSync
+    prior_board = server._project_board_adapter
+    server._project_board_adapter = ProjectBoardSync(server.config, context.store, provider,
+        config_path=server.config.data_dir / 'project_board.json')
     server._workspace_identity_provider = provider
     context._identity_provider = provider
     for service in services:
@@ -76,6 +101,7 @@ def remote_context(server, device_id, snapshot):
     try:
         yield provider
     finally:
+        server._project_board_adapter = prior_board
         server._workspace_identity_provider = local
         context._identity_provider = context_identity
         for service, identity, anchor, ancestor in saved:

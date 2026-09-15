@@ -170,9 +170,10 @@ def session_start(payload: dict | None = None) -> None:
 
 # ---- session-end ----
 
-def _load_llm_config(*, log_errors: bool = True) -> LLMConfig | None:
+def _load_llm_config(*, log_errors: bool = True, config_path=None) -> LLMConfig | None:
+    credential_path = config_path if config_path is not None else _LLM_CONFIG_PATH
     try:
-        data = json.loads(_LLM_CONFIG_PATH.read_text(encoding="utf-8"))
+        data = json.loads(credential_path.read_text(encoding="utf-8"))
         provider = str(data.get("provider", "deepseek")).strip().casefold()
         if provider not in _PROVIDER_DEFAULTS:
             if log_errors:
@@ -181,7 +182,7 @@ def _load_llm_config(*, log_errors: bool = True) -> LLMConfig | None:
         api_key = str(data.get("api_key", "")).strip()
         if not api_key:
             if log_errors:
-                _log(f"{_LLM_CONFIG_PATH} has no api_key, skip extraction")
+                _log("extraction credentials have no api_key, skip extraction")
             return None
         default_url, default_model = _PROVIDER_DEFAULTS[provider]
         return LLMConfig(

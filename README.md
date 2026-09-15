@@ -15,6 +15,7 @@ EvolvMem 保存长期偏好、项目决策、故障经验和任务断点，供�
 - 保存项目摘要和工作断点，让“继续上次任务”有明确的恢复位置。
 - 在 Web 中浏览、筛选、整理项目归属，查看经验来源和未完成工作。
 - 可选接入 Kimi / DSH 会话提取，把有长期价值的信息整理成候选记忆。
+- Windows 原生 Codex 可安装会话 hooks 和后台采集脚本，经一个 LAN MCP 共用 Linux 的记忆、项目与任务断点。
 
 这些能力分阶段启用：默认 `legacy` 先提供基础记忆；结构化经验与续接依赖对应的 Context Core 模式、适配器和项目初始化。
 自动调用依赖客户端遵循 MCP `instructions` 或运行 hooks，不保证每个 Agent 都主动查历史。
@@ -28,7 +29,7 @@ EvolvMem 保存长期偏好、项目决策、故障经验和任务断点，供�
 
 - Linux、macOS 或 Windows 的 WSL2；Python 3.10 及以上。
 - Python 所链接的 SQLite 必须支持 FTS5、JSON 函数和聚合 FILTER，建议 SQLite 3.38 及以上。
-- 原生 Windows 暂未支持：当前文件锁使用 POSIX `fcntl`，请在 WSL2 内安装和运行。
+- Python 核心使用 POSIX `fcntl`，运行在 Linux、macOS 或 WSL2；Windows 原生 Codex 使用下方的 PowerShell 接入包访问 Linux 核心。
 - 基础安装需要 pip 下载依赖；本地检索不需要提取模型的 API key。
 - 默认面向个人和少量可信用户的本机使用；Web 默认监听 `127.0.0.1`，没有登录或 RBAC。
 
@@ -202,7 +203,7 @@ EVOLVMEM_CONTEXT_MODE = "legacy"
 
 ### 可信内网的固定双用户 MCP
 
-这是一个小型、单机、可信内网入口，只固定 `jiangli`、`kane` 与显式发布的 public 空间；它不是多用户同步服务。Kane 直接使用 Codex 的 HTTP MCP，不需要 Windows helper、模型安装器或本地日志收集器。先在 Linux 主机上显式创建新的私有配置和凭据目录；命令只打印路径，绝不把 token 打到终端，也不会覆盖已有凭据：
+这是一个小型、单机、可信内网入口，固定支持 `jiangli`、`kane` 与显式发布的 public 空间。同一凭据在 Windows 与 Linux 访问同一个个人库；不同用户保持分开。HTTP MCP 提供工具，Windows 接入包另外负责宿主事件注入和本地转写采集。先在 Linux 主机上显式创建新的私有配置和凭据目录；命令只打印路径，绝不把 token 打到终端，也不会覆盖已有凭据：
 
 ```bash
 .venv/bin/python -m evolvmem.lan_provision \
@@ -227,7 +228,63 @@ codex mcp add evolvmem --url http://memory.lan:9378/mcp --bearer-token-env-var E
 
 没有服务或网络不可用时，owner 的本机 stdio 转发返回凭据安全的 `LAN MCP unavailable`；不要把它当作写入失败后可自动重试的信号。Kane 端需要检查服务、地址、环境变量和 token；写请求结果不明时先查记录，确实要手动重试则沿用原 `request_id`，不要生成新 ID。原 Linux 入口可选将 `lan_mcp_client_config` 指向私有 `jiangli-client.json`，设置 `embedding_http_url` 为数值 loopback 基址 `http://127.0.0.1:9378`、`embedding_http_token_file` 为 owner token，及 `lan_shared_vector_cache=true`；完整的四项占位片段见 [lan-owner-config.example.json](examples/lan-owner-config.example.json)，不要把它覆盖进通用 `config.example.json`。改完后重启原生 MCP 和 hooks。LAN runtime 本身不回转发且独占一个可选模型。原本严格的 standalone 向量健康门仍有效，LAN namespace 在共享模型不可用时保留 SQLite/FTS 路径。
 
-现有 Web 控制台如果启用私有 `web_auth.json` 的 `owner_only: true`，则只有配置的 owner 能通过飞书登录和读取个人库；这避免 LAN 使用者绕过 MCP 边界。默认未配置登录的 standalone Web 行为保持不变。这里没有 Windows 实机验收；已验证的是隔离 Linux HTTP/Codex 协议连接。Codex MCP 配置的官方说明见 <https://learn.chatgpt.com/docs/extend/mcp?surface=cli>。
+现有 Web 控制台如果启用私有 `web_auth.json` 的 `owner_only: true`，则只有配置的 owner 能通过飞书登录和读取个人库；这避免 LAN 使用者绕过 MCP 边界。默认未配置登录的 standalone Web 行为保持不变。Codex MCP 配置见 [官方说明](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
+
+### Windows 原生 Codex 桌面版
+
+接入包包含一个 MCP 配置、全局 hooks 和用户级计划任务。Linux 继续保存加密原文、SQLite 索引、会话总结、项目滚动摘要、经验及任务断点；Windows 不需要安装 Python 或向量模型。**当前为待 Windows 实机验收的接入版本**：Linux 与 portable PowerShell 测试不能替代目标桌面版、PowerShell 5.1、DPAPI 和计划任务测试。
+
+1. 下载本仓库并解压，在仓库目录打开 Windows PowerShell。准备个人 MCP URL 与私有 token；要与 Linux 的 `jiangli` 共用记忆，就使用 `jiangli` 凭据。身份依据是 EvolvMem 凭据映射，`device_id` 仅区分设备，Codex 登录账号不会自动成为 EvolvMem 身份。
+2. 输入令牌并写入当前 Windows 用户环境，不把令牌写进命令历史：
+
+```powershell
+$Secret = Read-Host 'EvolvMem token' -AsSecureString
+$Pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
+try {
+  [Environment]::SetEnvironmentVariable('EVOLVMEM_TOKEN',
+    [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Pointer), 'User')
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Pointer)
+}
+```
+
+3. 将下面 URL、用户和项目目录改成实际值后安装。路径和项目标识须明确对应；中文别名可在 Codex 内用 `continuity_begin` 登记。
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\windows\install-evolvmem.ps1 `
+  -Url 'http://memory.lan:9378/mcp' -ExpectedUser 'jiangli' `
+  -ProjectMapping 'C:\work\my-project=my-project' -RunSelfTest
+```
+
+安装器备份并合并 `%USERPROFILE%\.codex\config.toml` 和 `hooks.json`；设置了 `CODEX_HOME` 时使用该目录。重复安装保留设备 ID 并更新自身条目，身份不一致时停止。未映射目录只加载通用记忆，归档保持待归属。关闭并重新启动 Codex，使 MCP 读取新的用户环境；按客户端提示审阅并信任 EvolvMem 的用户 hooks。官方记录的信任管理入口是 Codex CLI 的 `/hooks`，桌面版本的对应入口与共享信任状态须实机核对。宿主事件和输出格式见 [Codex Hooks 官方文档](https://learn.chatgpt.com/docs/hooks)。
+
+4. 执行自检和队列状态检查：
+
+```powershell
+$Client = Join-Path $env:LOCALAPPDATA 'EvolvMem\Codex\evolvmem-codex.ps1'
+Get-AppxPackage | Where-Object Name -Match 'Codex|ChatGPT' | Select-Object Name, Version
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Client -Action self-test
+schtasks.exe /Run /TN 'EvolvMem Codex Sync'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Client -Action status
+Get-ChildItem "$env:LOCALAPPDATA\EvolvMem\Codex\receipts\*.json" |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Get-Content
+```
+
+自检分别报告连接、`authenticated_user`、工具清单与 MCP/hook 配置；最后一条命令读取最近的本地加载回执，`retrieved_for_hook` 表示脚本已取到并输出上下文。**实际注入须在桌面会话核对**，不能把联网成功算作已注入。`status.archive_sessions` 查询服务端归档和提炼状态；离线队列还没得到完整确认时保留加密正文。
+
+| 实机操作 | 应核对的结果 |
+| --- | --- |
+| 映射目录中开新会话、恢复、清空、手动与自动压缩 | 无需手动要求查历史，已存摘要或断点随 hook 加载；回执属于本次加载 |
+| 保存一条真实项目决定，正常完成一轮后运行计划任务 | `archived` 与 `extracted` 分别出现；新会话和 Linux 能读到该决定及项目总结 |
+| 中文及空格路径、两个项目、多会话 | 项目不混入；同一凭据读同一用户库，错误身份不上传正文 |
+| 断网后继续对话、关闭 Codex，再联网运行计划任务 | 持久化队列补传，半行等待补全，旧版本及重复请求不覆盖新状态 |
+| 两端续接同一任务 | 显式 `continuity_bind` 核对 Git 后绑定；焦点不被抢占，旧 revision 不覆盖新进度 |
+| 用真实工具结果反馈经验 | `archive:<id>#<行号>` 可验证；助手自述不能证明成功，重复事件只计一次 |
+
+后台每 5 分钟补扫已登记会话并上传；服务端复用现有提炼凭据，摘要生成可能产生与 Linux 相同的模型费用。归档与提炼失败分开报告：`session_archive_retry` 显式重试，`session_archive_assign` 把待归属会话分配给已登记项目。收到最新归档后至少闲置 30 分钟才尝试保守断点补录；只处理已有唯一目录绑定的单一来源，不把沉默或助手自述当成任务完成。
+
+旧历史批量导入不在默认安装范围；只保证采集已落盘且仍可读取的登记会话。完整实现边界见 [Windows 对齐说明](docs/windows-codex.md) 和架构图册的 Windows 专题。卸载时运行安装器加 `-Uninstall`，保留已有加密队列，移除自身 hooks、MCP 配置与计划任务。
 
 ### Claude Code
 

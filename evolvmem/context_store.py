@@ -1416,6 +1416,20 @@ class ContextStore:
         ).fetchall()
         return {row["status"]: row["count"] for row in rows}
 
+    def list_project_context_records(self, *, project, min_confidence):
+        """One current rollup plus three latest session summaries, exact scope."""
+        if not project:
+            return ()
+        ids = []
+        for kind, limit in (('project_summary', 1), ('session_summary', 3)):
+            rows = self._connection().execute('''SELECT id FROM context_items
+                WHERE project=? AND scope='project' AND status='active' AND tier!='reference'
+                AND content_type=? AND confidence>=? AND (expires_at IS NULL OR expires_at>?)
+                ORDER BY updated_at DESC,id DESC LIMIT ?''',
+                (project, kind, min_confidence, _now_iso(), limit)).fetchall()
+            ids.extend(row['id'] for row in rows)
+        return self.get_retrieval_records(ids)
+
     def _load_layers(self, item_id: int) -> ContextLayers:
         rows = self._connection().execute(
             "SELECT layer, content, generator FROM context_layers "
