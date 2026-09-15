@@ -20,6 +20,9 @@ class Config:
 
     # Data directory
     data_dir: Path = Path.home() / ".claude" / "evolvmem"
+    # LAN runtime passes explicit namespace settings and must not inherit a
+    # process-wide client override intended for standalone usage.
+    apply_environment: bool = field(default=True, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Honour EVOLVMEM_DATA_DIR for all construction paths.
@@ -27,10 +30,11 @@ class Config:
         DSH 薄壳通过该环境变量显式指向共享库；未设置时保持 Claude 侧默认
         路径不变，两侧零影响。
         """
-        env_dir = os.environ.get("EVOLVMEM_DATA_DIR")
-        if env_dir:
-            self.data_dir = Path(env_dir).expanduser()
-        self._apply_context_environment()
+        if self.apply_environment:
+            env_dir = os.environ.get("EVOLVMEM_DATA_DIR")
+            if env_dir:
+                self.data_dir = Path(env_dir).expanduser()
+            self._apply_context_environment()
 
     # SQLite 数据库路径
     @property
@@ -92,6 +96,10 @@ class Config:
     context_inject_related_max_chars: int = 1500  # related 池字符预算
     context_min_confidence: float = 0.55         # 注入/检索最低置信度
     context_vector_min_similarity: float = 0.80  # 纯向量候选最低归一化相似度
+    # Existing local configurations keep strict primary vector gates. LAN
+    # namespaces explicitly opt out because their SQLite/FTS path remains
+    # usable while the shared optional model is unavailable.
+    context_vectors_required: bool = True
     context_fts_weight: float = 0.60    # 词法通道融合权重
     context_vector_weight: float = 0.40  # 向量通道融合权重
     context_score_relevance_weight: float = 0.35
@@ -251,6 +259,8 @@ class Config:
     def _validate_context_config(self) -> list[str]:
         """Validate the independent Context Core retrieval/injection settings."""
         diagnostics: list[str] = []
+        if type(self.context_vectors_required) is not bool:
+            diagnostics.append("context_vectors_required must be a boolean")
         if self.context_mode not in self._CONTEXT_MODE_VALUES:
             diagnostics.append(
                 "context_mode must be one of 'legacy', 'compat', 'shadow', 'primary'"
@@ -316,9 +326,18 @@ class Config:
         return diagnostics
 
     @classmethod
-    def from_file(cls, path: Path | None = None) -> "Config":
+    def from_file(
+        cls,
+        path: Path | None = None,
+        *,
+        data_dir: Path | None = None,
+        apply_environment: bool = True,
+    ) -> "Config":
         """Load config from config.json; missing fields use defaults."""
-        config = cls()
+        if data_dir is None:
+            config = cls(apply_environment=apply_environment)
+        else:
+            config = cls(data_dir=data_dir, apply_environment=apply_environment)
         config.ensure_dirs()
         load_path = path or config.config_path
         if load_path.exists():
@@ -364,6 +383,7 @@ class Config:
             "context_inject_related_max_chars": self.context_inject_related_max_chars,
             "context_min_confidence": self.context_min_confidence,
             "context_vector_min_similarity": self.context_vector_min_similarity,
+            "context_vectors_required": self.context_vectors_required,
             "context_fts_weight": self.context_fts_weight,
             "context_vector_weight": self.context_vector_weight,
             "context_score_relevance_weight": self.context_score_relevance_weight,

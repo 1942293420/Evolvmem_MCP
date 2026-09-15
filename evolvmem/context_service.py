@@ -288,16 +288,18 @@ class ContextService:
         self._refresh_health()
         return self.status()
 
-    def close(self) -> None:
+    def close(self, *, close_embedding_engine: bool = True) -> None:
         """Close every dependency the lifecycle coordinates; safe to repeat."""
         try:
-            for resource in (
+            resources = (
                 self.store,
                 self.vector_index,
                 self._legacy_vector,
                 self._legacy_store,
-                self.embedding_engine,
-            ):
+            )
+            if close_embedding_engine:
+                resources += (self.embedding_engine,)
+            for resource in resources:
                 close = getattr(resource, "close", None)
                 if callable(close):
                     close()
@@ -407,7 +409,9 @@ class ContextService:
             diagnostics.append("layer_invariant_failed")
             documents = None
         diagnostics.extend(self._projection_invariant_diagnostics())
-        diagnostics.extend(self._vector_diagnostics(documents))
+        vector_diagnostics = self._vector_diagnostics(documents)
+        if self.config.context_vectors_required:
+            diagnostics.extend(vector_diagnostics)
         deduped = list(dict.fromkeys(diagnostics))
         return tuple(
             message[:_MAX_DIAGNOSTIC_CHARS]

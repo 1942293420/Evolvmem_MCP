@@ -150,13 +150,33 @@ def _is_low_info(value: str) -> bool:
     return any(v.startswith(p.casefold()) for p in _LOW_INFO_PATTERNS)
 
 
+_DEFAULT_EMBEDDING_ENGINE = object()
+
+
+class _UnavailableEmbeddingEngine:
+    """Explicit injected no-model boundary for FTS-only server instances."""
+
+    is_loaded = False
+
+    def initialize(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
 class MemoryMCPServer:
     """stdio MCP Server — JSON-RPC protocol."""
 
     # 握手等待轻量 Context 健康评估的上限；绝不等待 embedding 模型加载
     _HEALTH_WAIT_TIMEOUT_S = 5
 
-    def __init__(self, config: Config | None = None, context_service=None):
+    def __init__(
+        self,
+        config: Config | None = None,
+        context_service=None,
+        embedding_engine=_DEFAULT_EMBEDDING_ENGINE,
+    ):
         self.config = config if config is not None else Config.from_file()
         self.adapter = self.config.adapter or "mcp"
         try:
@@ -167,7 +187,16 @@ class MemoryMCPServer:
             # 未知 mode：Context 功能 fail-closed（只留 context_status 诊断）
             self.context_mode = None
         self.vidx = VectorIndex(self.config)
-        self.engine = EmbeddingEngine(self.config)
+        self._owns_embedding_engine = embedding_engine is _DEFAULT_EMBEDDING_ENGINE
+        self.engine = (
+            EmbeddingEngine(self.config)
+            if self._owns_embedding_engine
+            else (
+                embedding_engine
+                if embedding_engine is not None
+                else _UnavailableEmbeddingEngine()
+            )
+        )
         # 所有 legacy 读写都经 ContextService 兼容门面（access 计数也不例外）；
         # 本模块不再持有裸 MemoryStore
         self.context_service = context_service
@@ -225,7 +254,8 @@ class MemoryMCPServer:
 
         # Try loading the embedding model (FTS5 search works without it)
         try:
-            self.engine.initialize()
+            if self._owns_embedding_engine:
+                self.engine.initialize()
         except Exception:
             # 宽捕获：模型加载的任何瞬时失败（缺文件/缺依赖/内存不足）都降级为
             # 仅 FTS 搜索，而不是让整个会话的 tools/call 被 _init_error 堵死
@@ -254,7 +284,7 @@ class MemoryMCPServer:
         try:
             service = getattr(self, "context_service", None)
             if service:
-                service.close()
+                service.close(close_embedding_engine=self._owns_embedding_engine)
         except Exception:
             pass
         try:
@@ -264,7 +294,7 @@ class MemoryMCPServer:
         except Exception:
             pass
         try:
-            if self.engine:
+            if self._owns_embedding_engine and self.engine:
                 self.engine.close()
         except Exception:
             pass
@@ -468,6 +498,7 @@ class MemoryMCPServer:
 
     def _memory_status(self, args: dict) -> dict:
         status = self._live_status()
+        embedding_diagnostics = self._embedding_diagnostics()
         if status is None:
             # 无可用服务（非法配置/未初始化）：只给安全诊断，不伪造计数
             return {
@@ -477,9 +508,7 @@ class MemoryMCPServer:
                     else "not_initialized"
                 ),
                 "embedding_loaded": self.engine.is_loaded,
-                "diagnostics": list(
-                    self.config.validate_runtime(require_model=True)
-                )[:8],
+                "diagnostics": embedding_diagnostics,
             }
         facade = self.context_service.legacy_facade()
         return {
@@ -488,9 +517,7 @@ class MemoryMCPServer:
             "vector_count": self.vidx.count(),
             "embedding_loaded": self.engine.is_loaded,
             "embedding_dim": self.config.embedding_dim,
-            "embedding_diagnostics": list(
-                self.config.validate_runtime(require_model=True)
-            )[:8],
+            "embedding_diagnostics": embedding_diagnostics,
             # 安全的可用性/dirty 诊断；绝不输出绝对数据目录
             "legacy_vector_dirty": status.legacy_vector_dirty,
             "context_mode": status.mode.value,
@@ -498,6 +525,19 @@ class MemoryMCPServer:
             "context_ready": status.ready,
             "context_vector_dirty": status.context_vector_dirty,
         }
+
+    def _embedding_diagnostics(self) -> list[str]:
+        """Report the actual model boundary, not a borrowed namespace path."""
+        diagnostics = list(
+            self.config.validate_runtime(require_model=self._owns_embedding_engine)
+        )
+        if (
+            not self._owns_embedding_engine
+            and not getattr(self.engine, "is_loaded", False)
+        ):
+            diagnostics.append("shared embedding engine unavailable")
+        return diagnostics[:8]
+
 
     def _memory_add(self, args: dict) -> dict:
         key = args.get("key", "")
