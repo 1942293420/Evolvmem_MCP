@@ -4,13 +4,22 @@ from __future__ import annotations
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import ipaddress
 from pathlib import Path
 
+from evolvmem.embedding_client import valid_vector
 from evolvmem.lan_config import LanSettings
 from evolvmem.lan_runtime import LanRuntime
 from evolvmem.lan_tools import LanTools, PROTOCOLS
 
 MAX_BODY_BYTES = 1024 * 1024
+
+
+def owner_peer_allowed(peer, user):
+    try:
+        return user == "jiangli" and ipaddress.ip_address(peer).is_loopback
+    except ValueError:
+        return False
 
 
 def make_http_server(runtime, host=None, port=None):
@@ -49,7 +58,10 @@ def make_http_server(runtime, host=None, port=None):
             if 'Origin' in self.headers:
                 self._reply(403, {'error': 'origin_forbidden'})
                 return None
-            if self.path != '/mcp':
+            if self.path == '/owner/mcp' and not owner_peer_allowed(self.client_address[0], user):
+                self._reply(403, {'error': 'owner_forbidden'})
+                return None
+            if self.path not in ('/mcp', '/owner/mcp', '/embedding', '/embedding/status'):
                 self._reply(404, {'error': 'not_found'})
                 return None
             version = self.headers.get('MCP-Protocol-Version')
@@ -95,7 +107,32 @@ def make_http_server(runtime, host=None, port=None):
                 self._reply(400, {'error': 'incomplete_body'})
                 return
             try:
-                result = adapter.handle_request(user, request)
+                if self.path.startswith('/embedding'):
+                    # Model serialization is separate from SQLite dispatch: native
+                    # extraction can hold a SQLite transaction while calling here.
+                    engine = runtime._shared_engine
+                    config = runtime.server_for(user).config
+                    available = bool(engine.is_loaded)
+                    if self.path == '/embedding/status':
+                        result = dict(available=available, dimension=config.embedding_dim,
+                                      query_prefix=config.embedding_query_prefix, document_prefix=config.embedding_doc_prefix)
+                    elif not available:
+                        self._reply(503, {'error': 'embedding_unavailable'})
+                        return
+                    elif (not isinstance(request, dict) or set(request) != {'kind', 'text'}
+                          or request.get('kind') not in ('query', 'document', 'raw')
+                          or not isinstance(request.get('text'), str) or len(request['text']) > 32768):
+                        self._reply(400, {'error': 'invalid_embedding_input'})
+                        return
+                    else:
+                        encode = {'query': engine.encode_query, 'document': engine.encode_document, 'raw': engine.encode}[request['kind']]
+                        vector = encode(request['text'])
+                        if not valid_vector(vector, config.embedding_dim):
+                            self._reply(502, {'error': 'invalid_embedding_response'})
+                            return
+                        result = {'vector': vector}
+                else:
+                    result = adapter.handle_request(user, request, owner=self.path == '/owner/mcp')
             except Exception:
                 self._reply(500, adapter._rpc_error(None, -32603, 'Internal error'))
                 return

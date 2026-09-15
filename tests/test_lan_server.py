@@ -69,7 +69,9 @@ def test_http_auth_protocol_negotiation_registry_and_invalid_requests(http_lan):
     assert request(server, {}, headers={'Origin': 'http://localhost'})[0] == 403
     assert request(server, {}, headers={'Content-Type': 'text/plain'})[0] == 415
     assert request(server, {}, headers={'MCP-Protocol-Version': '2099-01-01'})[0] == 400
-    assert request(server, raw='x' * (1024 * 1024 + 1))[0] == 413
+    # Advertise an oversized body without racing an early-close response
+    # against http.client's large sendall (which may raise BrokenPipe).
+    assert request(server, raw='', headers={'Content-Length': str(1024 * 1024 + 1)})[0] == 413
 
 
 def test_http_two_clients_public_lifecycle_and_notifications_never_write(http_lan):

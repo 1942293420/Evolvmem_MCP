@@ -1829,7 +1829,13 @@ class MemoryMCPServer:
 
 
 def main():
-    server = MemoryMCPServer()
+    config = Config.from_file(ensure_dirs=False)
+    if config.lan_mcp_client_config:
+        from evolvmem.lan_stdio import run
+        run(config.lan_mcp_client_config)
+        return
+    config.ensure_dirs()
+    server = MemoryMCPServer(config=config)
     server.run()
 
 

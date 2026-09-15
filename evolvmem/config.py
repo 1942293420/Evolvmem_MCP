@@ -74,7 +74,13 @@ class Config:
     forget_access_count_threshold: int = 2   # 最大访问次数（低于此值可降级）
     forget_rate_limit_days: int = 7          # 同一记忆两次降级的最小间隔
 
+    # Opt-in existing Linux MCP entry forwarding. Secrets live in token files.
+    lan_mcp_client_config: str = ""
+    lan_shared_vector_cache: bool = False
+
     # --- embedding 参数 ---
+    embedding_http_url: str = ""
+    embedding_http_token_file: str = ""
     embedding_model_filename: str = DEFAULT_EMBEDDING_CONTRACT.filename
     embedding_dim: int = DEFAULT_EMBEDDING_CONTRACT.dimension
     # nomic-embed-text-v1.5 任务前缀；置空字符串可关闭
@@ -210,7 +216,7 @@ class Config:
                 "context_l1_max_chars <= context_l2_max_chars"
             )
 
-        if require_model and filename_is_safe and not self.model_path.is_file():
+        if require_model and not self.embedding_http_url and filename_is_safe and not self.model_path.is_file():
             diagnostics.append(
                 f"Model file not found: embedding_model_filename '{filename}' "
                 "is missing from the configured models directory"
@@ -332,13 +338,15 @@ class Config:
         *,
         data_dir: Path | None = None,
         apply_environment: bool = True,
+        ensure_dirs: bool = True,
     ) -> "Config":
         """Load config from config.json; missing fields use defaults."""
         if data_dir is None:
             config = cls(apply_environment=apply_environment)
         else:
             config = cls(data_dir=data_dir, apply_environment=apply_environment)
-        config.ensure_dirs()
+        if ensure_dirs:
+            config.ensure_dirs()
         load_path = path or config.config_path
         if load_path.exists():
             with open(load_path, encoding="utf-8") as f:
@@ -372,6 +380,10 @@ class Config:
             "forget_days_threshold": self.forget_days_threshold,
             "forget_access_count_threshold": self.forget_access_count_threshold,
             "forget_rate_limit_days": self.forget_rate_limit_days,
+            "lan_shared_vector_cache": self.lan_shared_vector_cache,
+            "lan_mcp_client_config": self.lan_mcp_client_config,
+            "embedding_http_url": self.embedding_http_url,
+            "embedding_http_token_file": self.embedding_http_token_file,
             "embedding_model_filename": self.embedding_model_filename,
             "embedding_dim": self.embedding_dim,
             "embedding_query_prefix": self.embedding_query_prefix,

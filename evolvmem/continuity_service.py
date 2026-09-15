@@ -270,7 +270,8 @@ class ContinuityService:
 
     VERSION = "continuity.v1"
 
-    def __init__(self, config: Config, store: ContextStore, workspace_identity) -> None:
+    def __init__(self, config: Config, store: ContextStore, workspace_identity, *,
+                 repo_anchor=None, ancestor=None) -> None:
         if not isinstance(config, Config):
             raise ContextValidationError("config must be a Config instance")
         if not isinstance(store, ContextStore):
@@ -282,6 +283,8 @@ class ContinuityService:
         self._config = config
         self._store = store
         self._workspace_identity = workspace_identity
+        self._repo_anchor = repo_anchor or _collect_repo_anchor
+        self._ancestor = ancestor or _is_ancestor
 
     # ---- public API ----
 
@@ -299,11 +302,11 @@ class ContinuityService:
             raise ContinuityError("project_unresolved")
         try:
             if request.action == ContinuityAction.CREATE.value:
-                anchor = _collect_repo_anchor(request.workspace_path)
+                anchor = self._repo_anchor(request.workspace_path)
                 return self._create(request, project, identity.fingerprint, anchor)
             if request.action in _FOCUS_ACTIONS:
                 return self._mutate_focus(request, project, identity.fingerprint)
-            anchor = _collect_repo_anchor(request.workspace_path)
+            anchor = self._repo_anchor(request.workspace_path)
             return self._mutate_content(request, project, identity.fingerprint, anchor)
         except ContinuityError as exc:
             self._record_failure_event(request, exc.code)
@@ -799,7 +802,7 @@ class ContinuityService:
             ):
                 raise ContinuityError("workstream_not_found")
             if row is None:
-                anchor = _collect_repo_anchor(request.workspace_path)
+                anchor = self._repo_anchor(request.workspace_path)
                 created = self._create(
                     ContinuityCheckpointRequest(
                         action=ContinuityAction.CREATE.value,
@@ -863,7 +866,7 @@ class ContinuityService:
             merged = self._request_content(effective)
             if _content_unchanged(previous, merged):
                 return ContinuityImportResult(code="unchanged", **base)
-            anchor = _collect_repo_anchor(request.workspace_path)
+            anchor = self._repo_anchor(request.workspace_path)
             result = self._mutate_content(
                 effective, project, identity.fingerprint, anchor, merge=False
             )
@@ -1495,19 +1498,21 @@ class ContinuityService:
             return "wrong_workspace"
         if row["repo_kind"] != "git" or not row["repo_head_commit"]:
             return "unknown"
-        anchor = _collect_repo_anchor(workspace_path)
+        anchor = self._repo_anchor(workspace_path)
         if anchor["kind"] != "git" or not anchor["head_commit"]:
             return "unknown"
         checkpoint_head = row["repo_head_commit"]
         current_head = anchor["head_commit"]
         if current_head == checkpoint_head and anchor["branch"] == row["repo_branch"]:
             return "fresh"
-        checkpoint_is_ancestor = _is_ancestor(
+        checkpoint_is_ancestor = self._ancestor(
             workspace_path, checkpoint_head, current_head
         )
-        current_is_ancestor = _is_ancestor(
+        current_is_ancestor = self._ancestor(
             workspace_path, current_head, checkpoint_head
         )
+        if checkpoint_is_ancestor is None or current_is_ancestor is None:
+            return "unknown"
         if not checkpoint_is_ancestor and not current_is_ancestor:
             return "head_diverged"
         if anchor["branch"] != row["repo_branch"]:

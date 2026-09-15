@@ -42,6 +42,18 @@ class _SerializedEmbeddingEngine:
     def is_loaded(self):
         return bool(getattr(self._engine, "is_loaded", False))
 
+    @property
+    def dim(self):
+        return self._engine.dim
+
+    @property
+    def config(self):
+        return self._engine.config
+
+    def encode(self, text):
+        with self._lock:
+            return self._engine.encode(text)
+
     def initialize(self) -> None:
         with self._lock:
             if self._initialized:
@@ -174,6 +186,11 @@ class LanRuntime:
         config.context_mode = "primary"
         config.adapter = "codex"
         config.context_vectors_required = False
+        config.lan_shared_vector_cache = True
+        # Server owns the local model; never recursively contact an HTTP provider.
+        config.embedding_http_url = ""
+        config.embedding_http_token_file = ""
+        config.lan_mcp_client_config = ""
         return config
 
     def _validate_namespace_databases(self) -> None:

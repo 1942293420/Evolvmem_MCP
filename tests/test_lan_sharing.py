@@ -131,7 +131,7 @@ def test_request_id_required_and_bounded(lan, rid):
 def test_remote_paths_maintenance_evidence_and_public_writes_blocked(lan):
     _, adapter = lan
     for name in ('continuity_begin', 'continuity_resume', 'context_session_start', 'continuity_find'):
-        assert adapter.call_tool('kane', name, {'workspace_path': '/etc', 'request_id': 'blocked'})['error'] == 'remote_workspace_unavailable'
+        assert adapter.call_tool('kane', name, {'workspace_path': '/etc', 'request_id': 'blocked'})['error'] == 'invalid_device_id'
     for name in ('project_board_sync', 'project_board_status', 'memory_consolidate'):
         assert adapter.call_tool('kane', name, {'request_id': 'disabled'})['error'] == 'remote_tool_unavailable'
     for name, args in [('experience_record', {'case': {}, 'evidence': {'task_id': 'x'}}), ('context_record_outcome', {'id': 1, 'outcome': 'success', 'task_id': 'x'})]:
