@@ -178,6 +178,31 @@ EVOLVMEM_CONTEXT_MODE = "legacy"
 配置格式以 Codex 官方 MCP 文档 (https://developers.openai.com/codex/mcp/) 为准。
 升级到 Core 后，可按项目需要合并 AGENTS.memory.md (examples/AGENTS.memory.md)，帮助 Agent 规范查询、保存断点与记录证据。
 
+可信内网的固定双用户 MCP
+
+这是一个小型、单机、可信内网入口，只固定 jiangli、kane 与显式发布的 public 空间；它不是多用户同步服务。Kane 直接使用 Codex 的 HTTP MCP，不需要 Windows helper、模型安装器或本地日志收集器。先在 Linux 主机上显式创建新的私有配置和凭据目录；命令只打印路径，绝不把 token 打到终端，也不会覆盖已有凭据：
+
+.venv/bin/python -m evolvmem.lan_provision \
+  --config /absolute/private/evolvmem-lan/lan-server.json \
+  --credentials-dir /absolute/private/evolvmem-lan/clients \
+  --data-dir /absolute/private/evolvmem-lan/data \
+  --owner-data-dir /absolute/private/evolvmem-owner-data \
+  --host 0.0.0.0 --port 9378 --client-host memory.lan
+.venv/bin/python -m evolvmem.lan_server --config /absolute/private/evolvmem-lan/lan-server.json
+
+--client-host 是 Kane 实际访问的 LAN 主机名或地址，不能填 0.0.0.0；监听地址和客户端 URL 是两回事。配置只存两枚 token 的 SHA-256 值。clients/ 是 0700，每个 token、说明和 owner client JSON 是 0600；交付 Kane 的内容在 kane-client-instructions.txt，不要放进源码、聊天记录或公开导出。参考结构见 lan-server.example.json (examples/lan-server.example.json) 和 evolvmem-lan-mcp.service.example (examples/evolvmem-lan-mcp.service.example)，其中都是占位路径和值。
+
+在 Kane 的 Windows PowerShell 中，从私有说明文件取实际值并持久化到当前用户环境，再登记服务器，最后重启 Codex 让它加载该变量：
+
+[Environment]::SetEnvironmentVariable('EVOLVMEM_KANE_TOKEN', 'REPLACE_WITH_PRIVATE_TOKEN', 'User')
+codex mcp add evolvmem --url http://memory.lan:9378/mcp --bearer-token-env-var EVOLVMEM_KANE_TOKEN
+
+先用 codex mcp get evolvmem 确认条目。新会话依次调用 memory_status、memory_add、memory_search、continuity_begin，并只通过 memory_publish 明确公开经整理的摘要；Kane 看不到 owner 的 personal namespace。远端 workspace 传非空 workspace_path 时必须带稳定 device_id；Git snapshot 是客户端报告值。continuity_bind 不会擅自切换已有 focus，客户端要用返回的当前 revision 显式 continuity_checkpoint(action="switch_focus") 后再恢复其他目标。
+
+没有服务或网络不可用时，owner 的本机 stdio 转发返回凭据安全的 LAN MCP unavailable；不要把它当作写入失败后可自动重试的信号。Kane 端需要检查服务、地址、环境变量和 token；写请求结果不明时先查记录，确实要手动重试则沿用原 request_id，不要生成新 ID。原 Linux 入口可选将 lan_mcp_client_config 指向私有 jiangli-client.json，设置 embedding_http_url 为数值 loopback URL、embedding_http_token_file 为 owner token，及 lan_shared_vector_cache=true；改完后重启原生 MCP 和 hooks。LAN runtime 本身不回转发且独占一个可选模型。原本严格的 standalone 向量健康门仍有效，LAN namespace 在共享模型不可用时保留 SQLite/FTS 路径。
+
+现有 Web 控制台如果启用私有 web_auth.json 的 owner_only: true，则只有配置的 owner 能通过飞书登录和读取个人库；这避免 LAN 使用者绕过 MCP 边界。默认未配置登录的 standalone Web 行为保持不变。这里没有 Windows 实机验收；已验证的是隔离 Linux HTTP/Codex 协议连接。Codex MCP 配置的官方说明见 <https://learn.chatgpt.com/docs/extend/mcp?surface=cli>。
+
 Claude Code
 
 将 claude.mcp.example.json (examples/claude.mcp.example.json) 合并为工作区根目录的 .mcp.json，或用 claude mcp add 注册。
@@ -246,6 +271,25 @@ python -m evolvmem.project_cli bindings bind FINGERPRINT_FROM_PREVIOUS_COMMAND d
 在支持的模式中，让 Agent 先 context_session_start 或 continuity_resume 获取当前状态，再按最新 revision 创建/更新 checkpoint。
 “继续”读取精确的工作流指针；没有绑定、没有焦点或工作区变化时，先处理返回状态，不把相似记忆冒充原任务。
 
+已有项目需要同步开发进展时，在 EvolvMem 数据目录创建仅属主可读的
+project_board.json（文件模式 0600）：
+
+{"base_url":"https://your-app.example","api_key":"replace-locally","enabled":true}
+
+也可用 EVOLVMEM_PROJECT_BOARD_CONFIG 指向另一份私有配置。成功的
+continuity_checkpoint 更新、暂停、恢复、阻塞、解除阻塞、完成或取消后，
+会在断点提交后尝试同步；创建任务、读取和切换焦点不会触发。同步只更新目标端
+已经绑定的项目，不会自动立项或绑定。网络或目标服务失败时，最新快照保留为
+pending，可在当前 MCP 进程尚未重载时用本地命令补同步或查看状态：
+
+python -m evolvmem.project_board_sync status /absolute/path/to/workspace
+python -m evolvmem.project_board_sync sync /absolute/path/to/workspace
+
+两条命令都支持 --project-hint NAME 和 --workstream-id ws_...；全局
+--data-dir DIR 放在 status / sync 前。回执状态为 synced、
+unchanged、not_bound、pending 或 disabled，不会回显 API key、原始
+HTTP 错误、断点正文或本地路径。
+
 工具速查
 
 工具 | 用途
@@ -257,6 +301,7 @@ context_status | Core 就绪状态、投影和向量诊断
 experience_recall / experience_record | 按条件找经验，保存有来源的方法
 context_confirm / context_record_outcome | 候选确认及使用、成功、失败、不适用等反馈
 continuity_resume / continuity_checkpoint / continuity_list | 恢复、保存、列出工作断点
+project_board_sync / project_board_status | 手动补同步已提交进展、查看本地待同步状态
 context_archive_project / context_sweep | 项目原始归档清理和 TTL 扫描
 
 工具是否列出由当前 mode、adapter 和健康状态决定，以客户端实际 tools/list 为准。
@@ -269,7 +314,7 @@ Web 工作台与运行维护
 默认首页 Signal 包含总览、记忆库、经验案例和项目进展，可查看项目星图、筛选记录、核对来源和复制续接提示。
 记忆整理支持编辑元信息、归档/恢复/删除、项目归属建议与人工确认；经验/进展页需要实际 Core 数据，空列表不代表安装失败。
 /workflow 展示记忆如何写入、检索、验证和续接；它是说明页面，不会因为打开页面就自动执行图中的步骤。
-自定义监听端口可用 python -m evolvmem.web_server --port 9378；需要可信内网访问时可显式加 --host 0.0.0.0。
+自定义监听端口可用 python -m evolvmem.web_server --port 9379；需要可信内网访问时可显式加 --host 0.0.0.0。启用登录并暴露 LAN 前，私有 web_auth.json 必须设置 owner_only: true，让个人 Web 库只保留给 owner。
 
 Kimi 异常退出未触发 SessionEnd 时，可以另行运行 python scripts/extract_stale_sessions.py 补扫。
 它使用相同凭据和提取规则，默认检查闲置至少 30 分钟的会话，每轮最多处理 3 个；不属于纯离线、无模型费用的整理。

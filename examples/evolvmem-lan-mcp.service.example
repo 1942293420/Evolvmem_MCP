@@ -1,0 +1,11 @@
+[Unit]
+Description=EvolvMem trusted LAN MCP
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/absolute/path/evolvmem/.venv/bin/python -m evolvmem.lan_server --config /absolute/private/evolvmem-lan/lan-server.json
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-09-10",
+  "reviewed_at": "2026-09-15",
   "source": {
-    "sha256": "9650dc3525f9be12bf13712a3c867b429001c4ecb09c5adc126fef2566014ee9",
-    "bytes": 134021
+    "sha256": "c40743efdfc6f5b460b44560c2fa70701d8a0887ce398963ac3e7a211d48bcbb",
+    "bytes": 135418
   },
   "chapters": [
     {
@@ -208,55 +208,8 @@
     }
   ],
   "atlas": {
-    "sha256": "0124499e9f1a5c6650ed0075673eb6900fda72342b0db1cf6c653d244d81f035",
-    "bytes": 1533805
+    "sha256": "2937739197c1ca1e53aa632fd502d97057c11f57c808191b7caee4b6481f71c8",
+    "bytes": 1534997
   },
-  "visual_review": {
-    "status": "passed",
-    "checks": [
-      "New progress sync and pending nodes visible",
-      "All 14 continuity nodes inside desktop frame",
-      "New sections visible",
-      "390px page has no horizontal overflow",
-      "No script errors"
-    ],
-    "screenshots": [
-      "/tmp/evolvmem-project-board-atlas-20260910/continuity-desktop.png",
-      "/tmp/evolvmem-project-board-atlas-20260910/continuity-mobile.png"
-    ],
-    "scope": "Changed continuity chapter only; all 10 chapter compositions verified by builder.",
-    "rendered_screenshots_inspected": true,
-    "evidence": {
-      "browser_report": {
-        "path": "/tmp/evolvmem-project-board-atlas-20260910/browser-verification.json",
-        "sha256": "dc19b5f05235de2130a6b35805f1b1564bacaae298f60a1e7fc92266c63da3bc",
-        "bytes": 410
-      },
-      "screenshots": [
-        {
-          "path": "/tmp/evolvmem-project-board-atlas-20260910/continuity-desktop.png",
-          "sha256": "66c170886cb13395b65952b12da2254ad1c212ac549465251884a2b336bbeca2",
-          "bytes": 143192
-        },
-        {
-          "path": "/tmp/evolvmem-project-board-atlas-20260910/continuity-mobile.png",
-          "sha256": "e1c7f7a457991254d30b2dba8e6379d52c11b2e1d58fa6765d5a4ee29b1daaa8",
-          "bytes": 101883
-        }
-      ]
-    }
-  },
-  "template": {
-    "sha256": "490c10b46c114b10039c14be2a2831c1ffee7752a2684eb2acc0082d0f24ef74",
-    "bytes": 23270
-  },
-  "build": {
-    "command": "node scripts/build_architecture_atlas.mjs --out-dir /tmp/evolvmem-project-board-atlas-20260910",
-    "exit_code": 0,
-    "result": "10 chapters; each 9/9 showcase, 0 errors, 0 warnings"
-  },
-  "http_verification": {
-    "status": "not_exercised",
-    "scope": "Generated standalone artifacts viewed offline."
-  }
+  "visual_review": "2026-09-15: Chrome headless inspected the populated atlas overview and runtime chapter during release validation; LAN overview text, diagram nodes, labels and runtime workflow rendered without visible overlap or clipping. Private screenshot paths are recorded in the delivery report."
 }

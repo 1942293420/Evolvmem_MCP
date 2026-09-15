@@ -33,11 +33,13 @@ from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
 from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.project_store import ProjectStore, ProjectStoreError
+from evolvmem.web_auth import AuthSettings, WebAuth
 
 _STATIC_INDEX = Path(__file__).parent / "web_static" / "index.html"
 _STATIC_SIGNAL = _STATIC_INDEX.parent / "designs" / "signal.html"
 _STATIC_ARCH = Path(__file__).parent / "web_static" / "architecture.html"
-_INSIGHT_ASSETS = {'/insights.js': 'text/javascript', '/insights.css': 'text/css'}
+_INSIGHT_ASSETS = {'/insights.js': 'text/javascript', '/insights.css': 'text/css',
+                   '/auth.js': 'text/javascript'}
 _DESIGN_NAMES = ('orbit', 'atlas', 'halo', 'signal', 'nocturne')
 _DESIGN_ASSETS = {
     'index.html': 'text/html', 'common.css': 'text/css',
@@ -1031,25 +1033,34 @@ def make_handler(service: ContextService):
     """Build the handler owning a ContextService compatibility facade."""
     facade = service.legacy_facade()
     store = service.store
+    auth = WebAuth(AuthSettings.load(service.config.data_dir))
 
     class MemoryWebHandler(BaseHTTPRequestHandler):
         server_version = "EvolvMemWeb/1.0"
 
-        def _send_json(self, payload, status=200):
+        def end_headers(self):
+            self.send_header("Referrer-Policy", "no-referrer")
+            super().end_headers()
+
+        def _send_json(self, payload, status=200, headers=()):
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            for name, value in headers:
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(data)
 
-        def _send_html(self, html: str, status=200):
+        def _send_html(self, html: str, status=200, headers=()):
             data = html.encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            for name, value in headers:
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(data)
 
@@ -1077,6 +1088,8 @@ def make_handler(service: ContextService):
         def do_GET(self):
             parsed = urlparse(self.path)
             path = parsed.path
+            if auth.handle_get(self, parsed):
+                return
             if path in ('/designs', '/designs/') or path.startswith('/designs/'):
                 name = 'index.html' if path in ('/designs', '/designs/') else path[len('/designs/'):]
                 asset = _STATIC_INDEX.parent / 'designs' / name
@@ -1187,6 +1200,11 @@ def make_handler(service: ContextService):
 
         def do_POST(self):
             path = urlparse(self.path).path
+            if path == "/auth/logout":
+                auth.logout(self)
+                return
+            if not auth.require_write(self):
+                return
             m = _MEM_ACTION_RE.match(path)
             if m:
                 self._handle_memory_action(int(m.group(1)), m.group(2))

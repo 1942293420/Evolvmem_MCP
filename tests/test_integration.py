@@ -803,6 +803,7 @@ class TestIntegration:
                     "experience_recall", "experience_record",
                     "continuity_resume", "continuity_checkpoint",
                     "continuity_list", "continuity_begin", "continuity_find",
+                    "project_board_sync", "project_board_status",
                 }
             finally:
                 service.close()

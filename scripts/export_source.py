@@ -32,6 +32,8 @@ EXCLUDED_FILES = {
     "credentials.json", "credentials.yaml", "credentials.yml",
     "llm_credentials.json", "llm_config.json", "secrets.json", "secrets.yaml",
     "secrets.yml", "id_rsa", "id_ed25519", ".ds_store",
+    "lan-server.json", "lan-owner-client.json", "jiangli-token", "kane-token",
+    "jiangli-client-instructions.txt", "kane-client-instructions.txt", "web_auth.json",
 }
 EXCLUDED_PATTERNS = (
     "*.pyc", "*.pyo", "*.db", "*.db-*", "*.sqlite", "*.sqlite-*",

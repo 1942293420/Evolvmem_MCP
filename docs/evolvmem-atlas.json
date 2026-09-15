@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "title": "EvolvMem 完整架构图册",
-  "reviewed_at": "2026-09-10",
-  "source_root": "/home/jiangli/hermes-memory-plugin",
+  "reviewed_at": "2026-09-15",
+  "source_root": ".",
   "chapters": [
     {
       "id": "overview",
       "title": "系统总览",
       "english": "SYSTEM OVERVIEW",
-      "subtitle": "10 个专题覆盖接入、模型、召回、写入、存储、经验演化与精确续接。",
-      "takeaway": "EvolvMem 是由客户端调用的本地记忆系统。MCP 与 Web 是不同入口；ContextService 负责记忆协调，ContinuityService 独立管理项目任务与断点。SQLite 保存事实，检索索引提供候选；Codex 断点补录在本地读取会话事件。",
+      "subtitle": "10 个专题覆盖本机与固定双用户 LAN 接入、模型、召回、写入、存储、经验演化与精确续接。",
+      "takeaway": "EvolvMem 是由客户端调用的本地记忆系统。MCP 与 Web 是不同入口；固定 LAN HTTP MCP 把 jiangli、kane 和显式 public 分成独立 namespace。ContextService 负责记忆协调，ContinuityService 独立管理项目任务与断点。SQLite 保存事实，检索索引提供候选；Codex 断点补录在本地读取会话事件。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -268,18 +268,18 @@
           "title": "六个职责分区",
           "paragraphs": [],
           "items": [
-            "接入：Codex / Kimi / Claude 的 MCP；Kimi 与 DSH 的专用 hook；Codex 本地会话补录；Signal Web 工作台。",
+            "接入：Codex / Kimi / Claude 的 MCP；Kimi 与 DSH 的专用 hook；Codex 本地会话补录；Signal Web 工作台；固定 jiangli/kane 的 bearer-token LAN HTTP MCP。",
             "协调：ContextService 的记忆模式与健康门；ContinuityService 的独立任务入口、项目绑定和版本协议；兼容 facade。",
             "读取：legacy / Context / experience 三条检索路径，以及精确 context_read。",
             "生成与写入：会话提炼、确定性内容门、冲突与语义替代、项目摘要和候选方法。",
-            "事实：SQLite 条目、层、来源、证据、项目、滚动摘要与任务状态。",
+            "事实：SQLite 条目、层、来源、证据、项目、滚动摘要与任务状态；LAN 只共享经 memory_publish 明确写入 public 的整理内容。",
             "派生与维护：FTS5、双 USearch 索引、dirty 标记、归档保留、检查与切换。"
           ]
         },
         {
           "title": "本次核对的运行边界",
           "paragraphs": [
-            "部署与共享配置沿用 2026-09-08 的核对快照；本次于 2026-09-09 同步 continuity 源码、图文及生成产物。实时健康由各进程单独报告。"
+            "部署与共享配置沿用 2026-09-08 的核对快照；本次于 2026-09-15 增加固定双用户 LAN MCP 的交付说明。实时健康由各进程单独报告；候选远端证据不等于本机已验证的事实。"
           ],
           "table": {
             "headers": [
@@ -306,6 +306,10 @@
               [
                 "Web 与模型",
                 "Web run() 没有创建 EmbeddingEngine；MCP 与部分提炼/维护路径才加载它。"
+              ],
+              [
+                "LAN 边界",
+                "lan_server 的 /mcp 认证后按固定用户选择 namespace；/owner/mcp 仅 jiangli 的 loopback 连接可用。public 只能显式发布，Web owner_only 可阻止同租户 viewer 读取 owner 库。"
               ],
               [
                 "图的边界",
@@ -348,6 +352,14 @@
         {
           "label": "Codex 本地断点补录",
           "path": "evolvmem/continuity_backfill.py:547"
+        },
+        {
+          "label": "固定 LAN HTTP 入口与 owner loopback 限制",
+          "path": "evolvmem/lan_server.py:16"
+        },
+        {
+          "label": "LAN namespace 和 public 共享工具",
+          "path": "evolvmem/lan_runtime.py:1"
         }
       ]
     },
@@ -356,7 +368,7 @@
       "title": "本地模型与向量索引",
       "english": "LOCAL MODEL & INDEX",
       "subtitle": "同一 GGUF 模型用于文档编码和查询编码；向量是搜索表示，不是聊天答案。",
-      "takeaway": "768 维意味着每段被编码的文本对应 768 个数。文档向量提前建索引，查询到来时只编码问题，再用 HNSW 找邻居。图中两处编码节点表示同一类本地模型的两种用途。",
+      "takeaway": "768 维意味着每段被编码的文本对应 768 个数。文档向量提前建索引，查询到来时只编码问题，再用 HNSW 找邻居。LAN 运行时只有一个可选 shared embedding model；owner 原生进程经 loopback HTTP 请求它，LAN 自身不再向自己转发。图中两处编码节点表示同一类本地模型的两种用途。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -2167,7 +2179,7 @@
       "title": "存储、三层上下文与注入",
       "english": "STORAGE, LAYERS & CONTEXT",
       "subtitle": "SQLite 保存条目、正文、出处和任务状态；FTS 与向量服务检索，原始聊天另行加密归档。",
-      "takeaway": "L0 是搜索预览，L1 是常用上下文，L2 是这条知识的完整表示。SessionStart 先选择候选，再在总预算内装入整条 L1；L2 需要时按精确 ID 获取。",
+      "takeaway": "L0 是搜索预览，L1 是常用上下文，L2 是这条知识的完整表示。SessionStart 先选择候选，再在总预算内装入整条 L1；L2 需要时按精确 ID 获取。LAN 为 jiangli、kane 和 public 分别保存 SQLite namespace，public 内容来自显式发布，不能从 personal DB 推断。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -2596,7 +2608,7 @@
       "title": "任务续接与检查点",
       "english": "EXACT CONTINUITY & CHECKPOINTS",
       "subtitle": "begin 登记、find 发现、resume 恢复；已提交的 MCP 进展可同步到妙搭中已绑定的立项。",
-      "takeaway": "任务身份来自明确项目、工作区与目标。begin 登记并绑定，find 只读发现，resume 按 focus / workstream 指针恢复，checkpoint 携版本推进。Codex 本地补录只保存可归属的事件断点，保留人工进度和终态任务；这些路径不依赖经验召回或 ANN 健康。 可选的项目看板同步在断点提交后执行，按项目绑定与工作流版本更新进展；没有立项不创建，失败保留待同步，任务完成不会改变项目验收结论。",
+      "takeaway": "任务身份来自明确项目、工作区与目标。begin 登记并绑定，find 只读发现，resume 按 focus / workstream 指针恢复，checkpoint 携版本推进。远端非空 workspace_path 需要稳定 device_id，Git snapshot 是客户端报告值；bind 不抢占 focus，切换要显式 checkpoint。Codex 本地补录只保存可归属的事件断点，保留人工进度和终态任务；这些路径不依赖经验召回或 ANN 健康。 可选的项目看板同步在断点提交后执行，按项目绑定与工作流版本更新进展；没有立项不创建，失败保留待同步，任务完成不会改变项目验收结论。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -3539,7 +3551,7 @@
       "title": "运行模式、Web 与维护",
       "english": "MODES, WEB & OPERATIONS",
       "subtitle": "进程 mode、adapter 和 readiness 决定工具行为；维护只在明确入口触发。",
-      "takeaway": "共享配置并不能代表每个客户端的实际模式。MCP 每次按最新健康决定可用工具；Web 是自己的进程。维护和切换是独立运维操作，不是用户每次检索都会执行的步骤。",
+      "takeaway": "共享配置并不能代表每个客户端的实际模式。MCP 每次按最新健康决定可用工具；Web 是自己的进程。LAN server 是第三个独立进程，owner 的 native MCP/hooks 需要在 opt-in 配置更新后重启；它的 local index merge/refresh 只协调同机缓存，不是多主机同步。维护和切换是独立运维操作，不是用户每次检索都会执行的步骤。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
