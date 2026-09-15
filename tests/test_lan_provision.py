@@ -56,15 +56,91 @@ def test_provision_failure_removes_only_its_staged_credentials(tmp_path, monkeyp
     credentials = tmp_path / "private" / "clients"
     write_private = provisioner._write_private
 
-    def fail_on_kane_token(path, contents):
+    def fail_on_kane_token(path, contents, created=None):
         if Path(path).name == "kane-token":
             raise OSError("synthetic write failure")
-        write_private(path, contents)
+        write_private(path, contents, created)
 
     monkeypatch.setattr(provisioner, "_write_private", fail_on_kane_token)
     with pytest.raises(OSError, match="synthetic write failure"):
         provisioner.provision(config, credentials, tmp_path / "lan", tmp_path / "owner",
                               client_host="memory.lan")
+    assert not config.exists()
+    assert not credentials.exists()
+
+
+def test_provision_rejects_existing_config_with_incomplete_credentials(tmp_path):
+    from evolvmem.lan_provision import provision
+
+    config = tmp_path / "private" / "lan-server.json"
+    credentials = tmp_path / "private" / "clients"
+    provision(config, credentials, tmp_path / "lan", tmp_path / "owner", client_host="memory.lan")
+    (credentials / "kane-token").unlink()
+    before = {path.name: path.read_bytes() for path in credentials.iterdir()}
+    config_before = config.read_bytes()
+
+    with pytest.raises(FileExistsError, match="incomplete"):
+        provision(config, credentials, tmp_path / "other-lan", tmp_path / "other-owner",
+                  client_host="other.lan")
+
+    assert config.read_bytes() == config_before
+    assert {path.name: path.read_bytes() for path in credentials.iterdir()} == before
+
+
+def test_provision_rejects_invalid_existing_config_with_complete_credentials(tmp_path):
+    from evolvmem.lan_provision import provision
+
+    config = tmp_path / "private" / "lan-server.json"
+    credentials = tmp_path / "private" / "clients"
+    provision(config, credentials, tmp_path / "lan", tmp_path / "owner", client_host="memory.lan")
+    config.write_text("{")
+    before = {path.name: path.read_bytes() for path in credentials.iterdir()}
+
+    with pytest.raises(FileExistsError, match="incomplete"):
+        provision(config, credentials, tmp_path / "other-lan", tmp_path / "other-owner",
+                  client_host="other.lan")
+
+    assert config.read_text() == "{"
+    assert {path.name: path.read_bytes() for path in credentials.iterdir()} == before
+
+
+def test_provision_preserves_unowned_config_created_during_exclusive_publish(tmp_path, monkeypatch):
+    import evolvmem.lan_provision as provisioner
+
+    config = tmp_path / "private" / "lan-server.json"
+    credentials = tmp_path / "private" / "clients"
+    write_private = provisioner._write_private
+
+    def conflict_on_config(path, contents, created=None):
+        if Path(path) == config:
+            config.symlink_to("unowned-config-target")
+        write_private(path, contents, created)
+
+    monkeypatch.setattr(provisioner, "_write_private", conflict_on_config)
+    with pytest.raises(FileExistsError):
+        provisioner.provision(config, credentials, tmp_path / "lan", tmp_path / "owner",
+                              client_host="memory.lan")
+
+    assert config.is_symlink()
+    assert config.readlink() == Path("unowned-config-target")
+    assert not credentials.exists()
+
+
+def test_provision_removes_its_partial_file_when_private_write_fails(tmp_path, monkeypatch):
+    import evolvmem.lan_provision as provisioner
+
+    config = tmp_path / "private" / "lan-server.json"
+    credentials = tmp_path / "private" / "clients"
+
+    def fail_after_exclusive_create(descriptor, *args, **kwargs):
+        provisioner.os.close(descriptor)
+        raise OSError("synthetic partial private write")
+
+    monkeypatch.setattr(provisioner.os, "fdopen", fail_after_exclusive_create)
+    with pytest.raises(OSError, match="synthetic partial private write"):
+        provisioner.provision(config, credentials, tmp_path / "lan", tmp_path / "owner",
+                              client_host="memory.lan")
+
     assert not config.exists()
     assert not credentials.exists()
 
