@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 
+import numpy as np
 import pytest
 
 from evolvmem.config import Config
@@ -68,6 +69,82 @@ def test_lan_settings_file_validates_exact_identity_digest_contract(tmp_path):
 
     with pytest.raises(ValueError):
         LanSettings.from_file(path)
+
+
+def test_explicit_config_load_does_not_apply_environment_overrides(
+        tmp_path, monkeypatch):
+    """A false environment flag must leave an explicit namespace config untouched."""
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"context_mode": "shadow", "adapter": "owner"}),
+                    encoding="utf-8")
+    explicit_dir = tmp_path / "explicit"
+    monkeypatch.setenv("EVOLVMEM_DATA_DIR", str(tmp_path / "hostile-data"))
+    monkeypatch.setenv("EVOLVMEM_CONTEXT_MODE", "legacy")
+    monkeypatch.setenv("EVOLVMEM_ADAPTER", "hostile")
+
+    config = Config.from_file(
+        path, data_dir=explicit_dir, apply_environment=False
+    )
+
+    assert config.data_dir == explicit_dir
+    assert config.context_mode == "shadow"
+    assert config.adapter == "owner"
+
+
+def test_runtime_rejects_colliding_namespace_database_directories(tmp_path):
+    """Allowing a logical owner and public space to share memory.db leaks data."""
+    root = tmp_path / "lan-data"
+    settings = LanSettings(
+        data_dir=root,
+        owner_data_dir=root / "public",
+        token_hashes={
+            "jiangli": _digest("jiangli-token"),
+            "kane": _digest("kane-token"),
+        },
+        embedding_enabled=False,
+    )
+
+    with pytest.raises(ValueError, match="database directories"):
+        LanRuntime(settings).initialize()
+
+
+def test_runtime_clones_owner_config_and_rejects_namespace_config_path_override(
+        tmp_path, monkeypatch):
+    """A namespace-local data_dir or defaults must not replace the owner's runtime contract."""
+    settings = _settings(tmp_path)
+    settings.owner_data_dir.mkdir(parents=True)
+    (settings.owner_data_dir / "config.json").write_text(json.dumps({
+        "data_dir": str(tmp_path / "hostile-owner-data"),
+        "embedding_model_filename": "owner-contract.gguf",
+        "embedding_dim": 384,
+        "fts_top_k": 7,
+    }), encoding="utf-8")
+    kane_dir = settings.data_dir / "users" / "kane"
+    kane_dir.mkdir(parents=True)
+    (kane_dir / "config.json").write_text(json.dumps({
+        "data_dir": str(settings.owner_data_dir),
+        "embedding_dim": 999,
+        "fts_top_k": 99,
+    }), encoding="utf-8")
+    monkeypatch.setenv("EVOLVMEM_DATA_DIR", str(tmp_path / "hostile-env-data"))
+
+    runtime = LanRuntime(settings)
+    runtime.initialize()
+    try:
+        expected_dirs = (
+            settings.owner_data_dir,
+            settings.data_dir / "users" / "kane",
+            settings.data_dir / "public",
+        )
+        for server, expected_dir in zip(
+                (runtime.server_for("jiangli"), runtime.server_for("kane"),
+                 runtime.server_for("jiangli", "public")), expected_dirs):
+            assert server.config.data_dir == expected_dir
+            assert server.config.embedding_model_filename == "owner-contract.gguf"
+            assert server.config.embedding_dim == 384
+            assert server.config.fts_top_k == 7
+    finally:
+        runtime.close()
 
 
 def test_runtime_keeps_personal_and_public_mcp_data_isolated_despite_environment(
@@ -147,6 +224,36 @@ def test_runtime_initializes_and_closes_an_injected_shared_engine_once(tmp_path)
     runtime.server_for("kane", "public")
     runtime.close()
     runtime.close()
+
+    assert engine.initialize_count == 1
+    assert engine.close_count == 1
+
+
+def test_failing_shared_model_keeps_real_mcp_writes_and_fts_available(tmp_path):
+    """A model startup error must not turn a namespace's SQLite write path into a stub."""
+    class FailingEngine:
+        is_loaded = False
+
+        def __init__(self):
+            self.initialize_count = 0
+            self.close_count = 0
+
+        def initialize(self):
+            self.initialize_count += 1
+            raise RuntimeError("synthetic unavailable shared model")
+
+        def close(self):
+            self.close_count += 1
+
+    engine = FailingEngine()
+    runtime = LanRuntime(_settings(tmp_path, embedding_enabled=True), engine)
+    runtime.initialize()
+    try:
+        server = runtime.server_for("kane")
+        _add(server, "project:lan:fact:model", "writes survive failed shared model startup")
+        assert "writes survive failed shared model startup" in _values(server, "startup")
+    finally:
+        runtime.close()
 
     assert engine.initialize_count == 1
     assert engine.close_count == 1
@@ -242,6 +349,61 @@ def test_optional_lan_vectors_do_not_hide_database_invariant_failures(tmp_path):
         assert status.mode is ContextMode.PRIMARY
         assert status.ready is False
         assert status.reason_codes == ("degraded_legacy",)
+    finally:
+        runtime.close()
+
+
+@pytest.mark.parametrize("condition", ("absent", "dirty", "count_mismatch"))
+def test_optional_lan_vector_problems_disable_vector_queries_but_keep_fts(
+        tmp_path, condition):
+    """A bad optional vector cache must fall back to real FTS rather than serving stale ANN hits."""
+    class Engine:
+        is_loaded = False
+
+        def __init__(self):
+            self.query_count = 0
+
+        def initialize(self):
+            self.is_loaded = True
+
+        def encode_document(self, _text):
+            return [1.0] + [0.0] * 767
+
+        def encode_query(self, _text):
+            self.query_count += 1
+            return self.encode_document("")
+
+        def close(self):
+            return None
+
+    engine = Engine()
+    runtime = LanRuntime(_settings(tmp_path, embedding_enabled=True), engine)
+    runtime.initialize()
+    try:
+        server = runtime.server_for("jiangli")
+        _add(server, "project:lan:fact:vectors", "vector cache fallback uses real FTS marker")
+        service = server.context_service
+        context_id = service.legacy_facade().get_by_key(
+            "project:lan:fact:vectors"
+        )[0]["id"]
+        item_id = service.store.resolve_legacy_mapping(context_id)
+        assert item_id is not None
+        index = service.vector_index
+        vector = np.asarray(engine.encode_document(""), dtype=np.float32)
+        if condition == "absent":
+            assert index.remove(item_id) is True
+            index.save()
+            index.clear_dirty()
+        elif condition == "dirty":
+            index.mark_dirty()
+        else:
+            index.add(999_999, vector)
+            index.save()
+            index.clear_dirty()
+
+        engine.query_count = 0
+        assert "vector cache fallback uses real FTS marker" in _values(server, "fallback")
+        assert engine.query_count == 0
     finally:
         runtime.close()
 

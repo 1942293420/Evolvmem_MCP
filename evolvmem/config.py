@@ -344,9 +344,14 @@ class Config:
             with open(load_path, encoding="utf-8") as f:
                 data = json.load(f)
             for key, value in data.items():
+                if key == "data_dir" and data_dir is not None:
+                    # Callers that provide a directory own that namespace;
+                    # persisted JSON must not redirect it.
+                    continue
                 if hasattr(config, key):
                     setattr(config, key, value)
-        config._apply_context_environment()
+        if apply_environment:
+            config._apply_context_environment()
         return config
 
     def save(self) -> None:

@@ -197,7 +197,12 @@ class ContextRetriever:
         try:
             if self.vector_index.is_dirty():
                 return False
-            return self.vector_index.count() > 0
+            count = self.vector_index.count()
+            if count <= 0:
+                return False
+            if not self.config.context_vectors_required:
+                return count == len(self.store.list_vector_documents())
+            return True
         except Exception:
             return False  # uninitialized or unreadable index degrades to FTS-only
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+from pathlib import Path
 import threading
 
 from evolvmem.config import Config
@@ -74,6 +76,7 @@ class LanRuntime:
         self.settings = settings
         self._provided_engine = embedding_engine
         self._shared_engine = None
+        self._base_config: Config | None = None
         self._servers: dict[tuple[str, str], MemoryMCPServer] = {}
         self._initialized = False
         self._closed = False
@@ -83,6 +86,12 @@ class LanRuntime:
             raise RuntimeError("LAN runtime is closed")
         if self._initialized:
             return
+        self._validate_namespace_databases()
+        self._base_config = Config.from_file(
+            self.settings.owner_data_dir / "config.json",
+            data_dir=self.settings.owner_data_dir,
+            apply_environment=False,
+        )
         if self.settings.embedding_enabled:
             engine = self._provided_engine
             if engine is None:
@@ -104,6 +113,8 @@ class LanRuntime:
         self._initialized = True
 
     def server_for(self, user: str, space: str = "personal") -> MemoryMCPServer:
+        if self._closed:
+            raise RuntimeError("LAN runtime is closed")
         if user not in _USERS:
             raise ValueError("unknown LAN user")
         if space not in _SPACES:
@@ -154,15 +165,25 @@ class LanRuntime:
         if status.state != "ready":
             raise RuntimeError("workspace identity is unavailable")
 
-    @staticmethod
-    def _namespace_config(data_dir) -> Config:
-        path = data_dir / "config.json"
-        config = Config.from_file(
-            path,
-            data_dir=data_dir,
-            apply_environment=False,
-        )
+    def _namespace_config(self, data_dir) -> Config:
+        if self._base_config is None:
+            raise RuntimeError("LAN runtime configuration is not initialized")
+        config = deepcopy(self._base_config)
+        config.data_dir = Path(data_dir).expanduser()
+        config.apply_environment = False
         config.context_mode = "primary"
         config.adapter = "codex"
         config.context_vectors_required = False
         return config
+
+    def _validate_namespace_databases(self) -> None:
+        paths = {
+            (Path(self._namespace_for(user, space)) / "memory.db").resolve()
+            for user, space in (
+                ("jiangli", "personal"),
+                ("kane", "personal"),
+                ("jiangli", "public"),
+            )
+        }
+        if len(paths) != 3:
+            raise ValueError("LAN database directories must be distinct")
