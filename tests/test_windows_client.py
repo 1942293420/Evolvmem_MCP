@@ -74,11 +74,12 @@ class FakeMcp:
                     body = b'{"error":"synthetic"}'
                 else:
                     tool_result = item.get("_rpc_result") if "_rpc_result" in item else {
-                            "content": [{"type": "text", "text": json.dumps(item)}],
+                            "content": [{"type": "text", "text": json.dumps(item, ensure_ascii=False)}],
                             "isError": False,
                         }
                     body = json.dumps(
-                        {"jsonrpc": "2.0", "id": request["id"], "result": tool_result}
+                        {"jsonrpc": "2.0", "id": request["id"], "result": tool_result},
+                        ensure_ascii=False,
                     ).encode()
                     self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -296,6 +297,42 @@ def test_portable_pwsh_sends_unicode_json_as_explicit_utf8_bytes(client_home):
         assert fake.requests[1]["content_type"].lower() == "application/json; charset=utf-8"
         assert "橙园".encode("utf-8") in fake.requests[1]["raw"]
         assert call_args(fake, 1)["project"] == "橙园"
+    finally:
+        fake.close()
+
+
+def test_rpc_preserves_utf8_when_powershell_default_response_decoding_is_latin1(client_home):
+    block = "项目摘要：继续实施上下文注入；下一步验证任务续接。"
+    fake = FakeMcp([
+        {"authenticated_user": "alice", "block": block, "selected_ids": [7], "memory_revision": 1}
+    ])
+    try:
+        write_config(client_home, fake.url, projects={"/work": "demo"})
+        # Reproduce PS 5.1's decoding of application/json without charset while
+        # keeping the actual HTTP body. The returned hook must preserve Chinese.
+        command = r"""
+function Invoke-WebRequest {
+    param([switch]$UseBasicParsing, $Uri, $Method, $ContentType, $Headers, $Body, $TimeoutSec)
+    $response = Microsoft.PowerShell.Utility\Invoke-WebRequest @PSBoundParameters
+    [pscustomobject]@{
+        Content = [Text.Encoding]::GetEncoding(28591).GetString($response.RawContentStream.ToArray())
+        RawContentStream = $response.RawContentStream
+    }
+}
+& $env:EVOLVMEM_TEST_CLIENT -Action session-start
+"""
+        env = os.environ.copy()
+        env.update(EVOLVMEM_CLIENT_HOME=str(client_home), EVOLVMEM_TEST_TOKEN="top-secret-token",
+                   EVOLVMEM_TEST_CLIENT=str(CLIENT))
+        result = subprocess.run(
+            [str(PWSH), "-NoLogo", "-NoProfile", "-Command", command],
+            input=json.dumps({"session_id": "utf8-response", "cwd": "/work", "source": "startup"}),
+            text=True, capture_output=True, env=env, timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert context.endswith(block)
+        assert "top-secret-token" not in result.stdout + result.stderr
     finally:
         fake.close()
 
@@ -1184,6 +1221,38 @@ def test_self_test_distinguishes_invalid_local_config_from_remote_failure(
         assert "could not reach" not in status["note"]
     finally:
         fake.close()
+
+
+@pytest.mark.parametrize("existing", ["", "localhost,.corp.test", "localhost,MEMORY.TEST"])
+def test_installer_adds_endpoint_proxy_bypass_and_preserves_existing_entries(tmp_path, existing):
+    env = os.environ.copy()
+    env.update(
+        LOCALAPPDATA=str(tmp_path / "local"),
+        USERPROFILE=str(tmp_path / "profile"),
+        CODEX_HOME=str(tmp_path / "codex"),
+        EVOLVMEM_TEST_INSTALLER=str(INSTALLER),
+        NO_PROXY=existing,
+        no_proxy="legacy.test",
+    )
+    if sys.platform == "win32":
+        env.pop("no_proxy")
+        env["NO_PROXY"] = ",".join(filter(None, [existing, "legacy.test"]))
+    command = (
+        "1..2 | ForEach-Object { & $env:EVOLVMEM_TEST_INSTALLER "
+        "-Url 'http://memory.test:9378/mcp' -ExpectedUser alice | Out-Null }; "
+        "@{ upper = $env:NO_PROXY; lower = $env:no_proxy } | ConvertTo-Json -Compress"
+    )
+    result = subprocess.run(
+        [str(PWSH), "-NoLogo", "-NoProfile", "-Command", command],
+        env=env, text=True, capture_output=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    values = json.loads(result.stdout)
+    for value in values.values():
+        entries = [entry.strip().lower() for entry in value.split(",")]
+        assert entries.count("memory.test") == 1
+        assert "legacy.test" in entries
+        assert set(filter(None, existing.lower().split(","))).issubset(entries)
 
 
 def test_installer_merges_hooks_and_toml_without_duplicate_or_identity_overwrite(tmp_path):

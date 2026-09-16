@@ -76,6 +76,34 @@ function Escape-Toml([string]$Value) {
     return $Value.Replace('\', '\\').Replace('"', '\"')
 }
 
+function Merge-ProxyBypass([string[]]$Values, [string]$McpHost) {
+    $entries = New-Object Collections.Generic.List[string]
+    foreach ($value in (@($Values) + @($McpHost))) {
+        foreach ($entry in ([string]$value).Split(',')) {
+            $entry = $entry.Trim()
+            if ($entry -and $entries -notcontains $entry) { $entries.Add($entry) }
+        }
+    }
+    return ($entries -join ',')
+}
+
+function Ensure-McpProxyBypass {
+    # Native Codex and PowerShell can interpret Windows proxy bypasses
+    # differently. An explicit endpoint host works for both HTTP clients.
+    $mcpHost = ([Uri]$Url).DnsSafeHost
+    $machineBypass = [Environment]::GetEnvironmentVariable('NO_PROXY', 'Machine')
+    $userBypass = [Environment]::GetEnvironmentVariable('NO_PROXY', 'User')
+    $persistent = Merge-ProxyBypass @($machineBypass, $userBypass) $mcpHost
+    $processBypass = Merge-ProxyBypass @($persistent, $env:NO_PROXY, $env:no_proxy) $mcpHost
+    if ($script:RunningOnWindows -and $persistent -cne $userBypass) {
+        [Environment]::SetEnvironmentVariable('NO_PROXY', $persistent, 'User')
+    }
+    [Environment]::SetEnvironmentVariable('NO_PROXY', $processBypass, 'Process')
+    if (-not $script:RunningOnWindows) {
+        [Environment]::SetEnvironmentVariable('no_proxy', $processBypass, 'Process')
+    }
+}
+
 function Get-UnmanagedMcpHeaderLayout([string]$Text) {
     $root = [regex]::Match(
         $Text,
@@ -405,8 +433,10 @@ $hooks = Read-JsonFile $hooksPath
 if ([IO.File]::Exists($hooksPath)) { Backup-File $hooksPath }
 Write-JsonAtomic $hooksPath (Merge-Hooks $hooks)
 Register-WorkerTask
+Ensure-McpProxyBypass
 
 Write-Output ('EvolvMem Windows client installed for expected user ' + $ExpectedUser + ' with device ' + $deviceId + '.')
+Write-Output ('NO_PROXY includes the EvolvMem endpoint host ' + ([Uri]$Url).DnsSafeHost + '; existing bypass entries are preserved. Restart Codex from a process that has the updated user environment.')
 Write-Output 'Open Codex CLI in your project and use /hooks to review/trust the six EvolvMem hooks. Windows desktop may not show a review prompt. Then restart desktop Codex and verify a new session; self-test does not check hook trust or event delivery.'
 Write-Output ('Status: powershell.exe -NoProfile -File "' + $installedClient + '" -Action status')
 Write-Output ('Self-test: powershell.exe -NoProfile -File "' + $installedClient + '" -Action self-test')

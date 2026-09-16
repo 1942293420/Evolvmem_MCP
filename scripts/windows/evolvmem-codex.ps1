@@ -151,7 +151,10 @@ function Invoke-Rpc($Config, [string]$Method, $Parameters, [string]$RpcId) {
     $response = Invoke-WebRequest -UseBasicParsing -Uri ([string]$Config.url) -Method Post `
         -ContentType 'application/json; charset=utf-8' -Headers $headers -Body $bodyBytes `
         -TimeoutSec $script:RpcTimeoutSeconds
-    $rpc = $response.Content | ConvertFrom-Json
+    # PS 5.1 decodes application/json without charset as Latin-1. MCP JSON
+    # is UTF-8; read the response bytes so injected Chinese stays intact.
+    $responseText = [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray())
+    $rpc = $responseText | ConvertFrom-Json
     if ($null -ne (Get-Value $rpc 'error')) { throw 'remote MCP request failed' }
     return Get-Value $rpc 'result'
 }

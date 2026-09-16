@@ -2,8 +2,8 @@
   "schema_version": 1,
   "reviewed_at": "2026-09-16",
   "source": {
-    "sha256": "0fd7c3d2992deced480ae9cfa2153a3e521806fce6837ac79eccf608d831d9ad",
-    "bytes": 149664
+    "sha256": "83638f3fb725e937b2fbbbb289e8175e61acbb9eb30c16d27dfc5f9d5571d7d3",
+    "bytes": 150012
   },
   "chapters": [
     {
@@ -210,12 +210,12 @@
       "chapter": "windows-codex",
       "type": "architecture",
       "specification": {
-        "sha256": "a874589934a5d74b81ed794d1e9453c4fe7e53804ad0e83f0e4574b20429f108",
-        "bytes": 4823
+        "sha256": "3e9fa5e2d9e56cc825b9c0c85e9c6f63ac1834b0cf4187033d151106947b1ea9",
+        "bytes": 4833
       },
       "artifact": {
-        "sha256": "7f0c74c2cfdefcfe175d2485fef572158fd8abbdc204147c588b8d6af9566f5c",
-        "bytes": 611717
+        "sha256": "e818bd314ee90c9617bfbaf6b029b97d85c3798778a0e1de1489a1ec31feaade",
+        "bytes": 611757
       },
       "validation": {
         "checksPassed": 9,
@@ -228,9 +228,9 @@
     }
   ],
   "atlas": {
-    "sha256": "d2a721c0fcde86216f9999f3c884b6046266768378220696f373d1e3c3173e60",
-    "bytes": 1687193
+    "sha256": "497d98567d6e27f266cfbb8bec60f6a0401f6384e84c6a820c8ebf6806058158",
+    "bytes": 1687521
   },
-  "visual_review": "2026-09-16: passed. Local Chrome inspected the overview and Windows chapter; Windows light/dark themes, 11 navigation entries and iframe readiness verified. Updated labels fit without node overlap or clipping.",
+  "visual_review": "2026-09-16: passed. Local Chrome verified 11 navigation entries and iframe readiness. Windows light/dark screenshots were inspected; NO_PROXY label fits and no node overlap or clipping was observed.",
   "correction_rounds": 0
 }
