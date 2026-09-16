@@ -232,7 +232,7 @@ codex mcp add evolvmem --url http://memory.lan:9378/mcp --bearer-token-env-var E
 
 ### Windows 原生 Codex 桌面版
 
-接入包包含一个 MCP 配置、全局 hooks 和用户级计划任务。Linux 继续保存加密原文、SQLite 索引、会话总结、项目滚动摘要、经验及任务断点；Windows 不需要安装 Python 或向量模型。**当前为待 Windows 实机验收的接入版本**：Linux 与 portable PowerShell 测试不能替代目标桌面版、PowerShell 5.1、DPAPI 和计划任务测试。
+接入包包含一个 MCP 配置、全局 hooks 和用户级计划任务。Linux 继续保存加密原文、SQLite 索引、会话总结、项目滚动摘要、经验及任务断点；Windows 不需要安装 Python 或向量模型。**已验证 Windows 原生核心的上下文交付、PowerShell 5.1 加密与计划任务补传；完整桌面验收仍未完成**。实测桌面包为 `26.908.9136.0`，内置核心为 `0.154.0-alpha.6.2`；新版本须重新核验宿主事件和转写。
 
 1. 下载本仓库并解压，在仓库目录打开 Windows PowerShell。准备个人 MCP URL 与私有 token；要与 Linux 的 `jiangli` 共用记忆，就使用 `jiangli` 凭据。身份依据是 EvolvMem 凭据映射，`device_id` 仅区分设备，Codex 登录账号不会自动成为 EvolvMem 身份。
 2. 输入令牌并写入当前 Windows 用户环境，不把令牌写进命令历史：
@@ -257,7 +257,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -ProjectMapping 'C:\work\my-project=my-project' -RunSelfTest
 ```
 
-安装器备份并合并 `%USERPROFILE%\.codex\config.toml` 和 `hooks.json`；设置了 `CODEX_HOME` 时使用该目录。重复安装保留设备 ID 并更新自身条目，身份不一致时停止。未映射目录只加载通用记忆，归档保持待归属。关闭并重新启动 Codex，使 MCP 读取新的用户环境；按客户端提示审阅并信任 EvolvMem 的用户 hooks。官方记录的信任管理入口是 Codex CLI 的 `/hooks`，桌面版本的对应入口与共享信任状态须实机核对。宿主事件和输出格式见 [Codex Hooks 官方文档](https://learn.chatgpt.com/docs/hooks)。
+安装器备份并合并 `%USERPROFILE%\.codex\config.toml` 和 `hooks.json`；设置了 `CODEX_HOME` 时使用该目录。重复安装保留设备 ID 并更新自身条目，身份不一致时停止。未映射目录只加载通用记忆，归档保持待归属。关闭并重新启动 Codex，使 MCP 读取新的用户环境。**桌面版可能不弹出信任提示：实测六个 hooks 配置正确但全部未受信任，因此没有执行。** 使用同一 Windows 用户、同一 `CODEX_HOME` 打开 Codex CLI，在 `/hooks` 中审阅并信任这六项，再新建桌面会话核验。上述桌面包可使用内置 CLI：
+
+```powershell
+$CodexCli = Join-Path (Get-AppxPackage OpenAI.Codex).InstallLocation 'app\resources\codex.exe'
+& $CodexCli -C 'C:\work\my-project'
+# 在 CLI 内输入 /hooks，审阅并信任 EvolvMem 的六个用户 hooks。
+```
+
+不要以“没有提示”推断已经信任；也不要绕过宿主的信任审阅。宿主事件和输出格式见 [Codex Hooks 官方文档](https://learn.chatgpt.com/docs/hooks)。
 
 4. 执行自检和队列状态检查：
 
@@ -271,7 +279,9 @@ Get-ChildItem "$env:LOCALAPPDATA\EvolvMem\Codex\receipts\*.json" |
   Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Get-Content
 ```
 
-自检分别报告连接、`authenticated_user`、工具清单与 MCP/hook 配置；最后一条命令读取最近的本地加载回执，`retrieved_for_hook` 表示脚本已取到并输出上下文。**实际注入须在桌面会话核对**，不能把联网成功算作已注入。`status.archive_sessions` 查询服务端归档和提炼状态；离线队列还没得到完整确认时保留加密正文。
+自检只核对连接、`authenticated_user`、工具清单与 MCP/hook 配置，明确返回 `hook_trust_checked=false`；`healthy=true` 不能证明 hooks 已信任或执行。最后一条命令读取最近的本地加载回执，`retrieved_for_hook` 表示脚本已取到并输出上下文。**实际注入须核对宿主转写和桌面会话读回**。`status.archive_sessions` 查询服务端实时归档和提炼状态；顶层提取计数来自上传时的本地回执，可能滞后。离线队列还没得到完整确认时保留加密正文。
+
+PowerShell 5.1 接入脚本在加解密前加载 `System.Security`；可运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\windows\test-client-dpapi.ps1 -ClientPath $Client` 验证中文完整行、残缺末行和两个加密版本。服务端按 LF 分隔 JSONL 记录，保留字符串内 Unicode 分隔符及原始证据行号。
 
 | 实机操作 | 应核对的结果 |
 | --- | --- |

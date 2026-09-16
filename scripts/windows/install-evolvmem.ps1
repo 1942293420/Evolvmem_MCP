@@ -407,7 +407,7 @@ Write-JsonAtomic $hooksPath (Merge-Hooks $hooks)
 Register-WorkerTask
 
 Write-Output ('EvolvMem Windows client installed for expected user ' + $ExpectedUser + ' with device ' + $deviceId + '.')
-Write-Output 'Restart Codex and review/trust the EvolvMem user hooks when prompted. The documented /hooks manager is in Codex CLI; verify desktop hook delivery during native acceptance.'
+Write-Output 'Open Codex CLI in your project and use /hooks to review/trust the six EvolvMem hooks. Windows desktop may not show a review prompt. Then restart desktop Codex and verify a new session; self-test does not check hook trust or event delivery.'
 Write-Output ('Status: powershell.exe -NoProfile -File "' + $installedClient + '" -Action status')
 Write-Output ('Self-test: powershell.exe -NoProfile -File "' + $installedClient + '" -Action self-test')
 if ($RunSelfTest) {

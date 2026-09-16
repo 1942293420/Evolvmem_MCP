@@ -2,8 +2,8 @@
   "schema_version": 1,
   "reviewed_at": "2026-09-16",
   "source": {
-    "sha256": "5ce43cf1d0e28a6501332b25a6e6932abe51a48733baa8fda2c544b46ced26cf",
-    "bytes": 148861
+    "sha256": "0fd7c3d2992deced480ae9cfa2153a3e521806fce6837ac79eccf608d831d9ad",
+    "bytes": 149664
   },
   "chapters": [
     {
@@ -210,12 +210,12 @@
       "chapter": "windows-codex",
       "type": "architecture",
       "specification": {
-        "sha256": "463e2dbfabe2e2477b2ef224018c9ca8960357e1946897eb094bc6c6804c0ca0",
-        "bytes": 4806
+        "sha256": "a874589934a5d74b81ed794d1e9453c4fe7e53804ad0e83f0e4574b20429f108",
+        "bytes": 4823
       },
       "artifact": {
-        "sha256": "694454614505ad390c3b42845ee6951cbd3b40c44f234d055d91d99b516a52d9",
-        "bytes": 611649
+        "sha256": "7f0c74c2cfdefcfe175d2485fef572158fd8abbdc204147c588b8d6af9566f5c",
+        "bytes": 611717
       },
       "validation": {
         "checksPassed": 9,
@@ -228,9 +228,9 @@
     }
   ],
   "atlas": {
-    "sha256": "fb40c93e00f8ba1140ee8477585a06037b1ffff0289702ab15e9d281723490be",
-    "bytes": 1686677
+    "sha256": "d2a721c0fcde86216f9999f3c884b6046266768378220696f373d1e3c3173e60",
+    "bytes": 1687193
   },
-  "visual_review": "2026-09-16: passed. Local Chrome inspected overview and Windows chapter in light/dark themes at /tmp/evolvmem-windows-atlas-final; 11 chapter navigation and iframe readiness verified; no node overlap or clipping observed. One focused correction aligned the MCP route and review date.",
-  "correction_rounds": 1
+  "visual_review": "2026-09-16: passed. Local Chrome inspected the overview and Windows chapter; Windows light/dark themes, 11 navigation entries and iframe readiness verified. Updated labels fit without node overlap or clipping.",
+  "correction_rounds": 0
 }

@@ -47,7 +47,9 @@ def parse_transcript(raw: bytes, session_id: str) -> tuple[list[dict], list[dict
     if not raw or not raw.endswith(b'\n'):
         raise LanError('invalid_transcript')
     try:
-        rows = [json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
+        # JSONL records end at LF. Unicode separators inside JSON strings are
+        # valid content; str.splitlines() would split and corrupt those records.
+        rows = [json.loads(line) for line in raw.decode('utf-8').split('\n') if line.strip()]
     except (UnicodeError, ValueError):
         raise LanError('invalid_transcript') from None
     if not rows or any(not isinstance(row, dict) for row in rows):

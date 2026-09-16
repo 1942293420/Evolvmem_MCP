@@ -772,6 +772,7 @@ def test_upload_resumes_at_acknowledged_offset_with_stable_request_ids(client_ho
 
 def unprotect_dpapi(path: Path) -> bytes:
     command = (
+        "Add-Type -AssemblyName System.Security;"
         "$b=[IO.File]::ReadAllBytes($args[0]);"
         "$e=[Text.Encoding]::UTF8.GetBytes('evolvmem-codex-archive-v1');"
         "$p=[Security.Cryptography.ProtectedData]::Unprotect($b,$e,[Security.Cryptography.DataProtectionScope]::CurrentUser);"
@@ -784,6 +785,22 @@ def unprotect_dpapi(path: Path) -> bytes:
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
     return result.stdout
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell 5.1 DPAPI regression")
+def test_windows_powershell51_snapshot_loads_dpapi_before_encrypting():
+    result = subprocess.run(
+        [
+            "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+            "-ExecutionPolicy", "Bypass", "-File",
+            str(ROOT / "tests/windows/test-client-dpapi.ps1"), "-ClientPath", str(CLIENT),
+        ],
+        text=True, capture_output=True, timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(result.stdout.strip().splitlines()[-1])
+    assert report["passed"] is True
+    assert report["encrypted_versions"] == 2
 
 
 def test_status_treats_authenticated_empty_memory_as_success(client_home):

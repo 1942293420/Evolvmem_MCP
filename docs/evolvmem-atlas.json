@@ -4070,7 +4070,7 @@
       "id": "windows-codex",
       "title": "Windows Codex 接入",
       "english": "WINDOWS CODEX MEMORY",
-      "subtitle": "hooks 注入与后台归档组成可核验闭环；Windows 实机验收单独记录。",
+      "subtitle": "原生核心注入、加密与补传已实测；桌面模型读回和完整生命周期待验收。",
       "takeaway": "身份由 EvolvMem 凭据映射决定，与 Codex 登录账号分开。Windows 和 Linux 访问同一个个人库，无需复制 SQLite；源代码仍需各端自行同步。",
       "diagram": {
         "schema_version": 1,
@@ -4104,8 +4104,8 @@
           {
             "id": "hook",
             "type": "frontend",
-            "label": "命令 hook 拉取摘要",
-            "sublabel": "核对 expected_user · 实际 Git",
+            "label": "已信任的 hook 拉取摘要",
+            "sublabel": "CLI /hooks 审阅 · 身份核对",
             "pos": [
               345,
               80
@@ -4147,7 +4147,7 @@
             "id": "rollout",
             "type": "external",
             "label": "已登记的持久转写",
-            "sublabel": "完整 JSONL · 原始事件",
+            "sublabel": "LF 分记录 · 保留 Unicode 文本",
             "pos": [
               30,
               275
@@ -4161,7 +4161,7 @@
             "id": "queue",
             "type": "database",
             "label": "Windows 加密待传队列",
-            "sublabel": "DPAPI · 原子写 · 会话锁",
+            "sublabel": "DPAPI · 先加载 System.Security",
             "pos": [
               345,
               275
@@ -4335,6 +4335,7 @@
         {
           "title": "安装后每次会话怎样读取",
           "paragraphs": [
+            "实测桌面包 26.908.9136.0 没有弹出信任提示，但原生核心报告六个 hooks 均 untrusted；经同一用户的 CLI /hooks 审阅后执行。安装自检不验证信任或实际交付。",
             "SessionStart 拉取有界上下文；UserPromptSubmit 检查本次加载回执与 memory_revision，缺失或变化时刷新，再补充当前问题的相关经验。恢复和压缩都是新的加载机会。",
             "项目使用显式目录映射。未绑定时仅加载通用记忆；故障提示后继续，默认不阻断正常开发。回执 retrieved_for_hook 不能替代宿主实际注入证据。"
           ]
@@ -4343,14 +4344,15 @@
           "title": "归档和总结怎样推进",
           "paragraphs": [
             "短结束事件只负责本地完整行采集，后台计划任务负责网络。服务端拒绝错误偏移、哈希、会话 ID 与非追加分叉，重复版本不会重复提炼。",
-            "状态区分待上传、已归档、待提炼、已提炼、失败与待归属。session_archive_retry 重试提炼；session_archive_assign 按用户确认分类。闲置日志补录只保留有实际依据的未完成进展。"
+            "状态区分待上传、已归档、待提炼、已提炼、失败与待归属。session_archive_retry 重试提炼；session_archive_assign 按用户确认分类。闲置日志补录只保留有实际依据的未完成进展。",
+            "Windows PowerShell 5.1 加解密前加载 System.Security。JSONL 仅按 LF 分记录，字符串内 Unicode 分隔符不拆行，归档原文与经验引用行号保持一致。"
           ]
         },
         {
           "title": "验收范围",
           "paragraphs": [
-            "Linux 核心与 portable PowerShell 的隔离测试验证协议和业务规则；真实 Windows 的 DPAPI、任务计划、PowerShell 5.1、桌面版本及 hooks/转写形状仍须用户运行安装和验收命令核对。",
-            "还需核验中文与空格路径、多会话、断网补传、异常退出、手动与自动压缩，以及 Windows 新事实在 Linux 和下一会话可读。"
+            "已在 Windows PowerShell 5.1 实测 DPAPI 中文完整行、残缺末行和两个加密版本；原生核心新会话日志已持久化注入上下文。真实计划任务补传两条会话，服务端已归档、提取并生成摘要。",
+            "桌面模型读回因额度耗尽尚未验证，空的非 Git 验收目录尚未绑定跨端任务。仍需完整桌面生命周期、多项目、断网和异常退出验收；实时提取以 archive_sessions 为准，本地上传回执计数可能滞后。"
           ]
         }
       ],
@@ -4374,6 +4376,14 @@
         {
           "label": "中断补录",
           "path": "evolvmem/lan_backfill.py"
+        },
+        {
+          "label": "JSONL 记录与证据行号",
+          "path": "evolvmem/codex_transcript.py"
+        },
+        {
+          "label": "原生 PowerShell 加密回归",
+          "path": "tests/windows/test-client-dpapi.ps1"
         }
       ]
     }

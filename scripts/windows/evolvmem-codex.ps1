@@ -461,15 +461,24 @@ function Invoke-PromptSubmit($Config, $Event) {
     Write-OutputJson $output
 }
 
-function Protect-Bytes([byte[]]$Bytes) {
+function Initialize-DataProtection {
     if (-not $script:RunningOnWindows) { throw 'DPAPI CurrentUser is only available on Windows' }
+    # Windows PowerShell 5.1 does not load System.Security in a fresh hook or
+    # scheduled-task process. PowerShell 7 can already resolve this type.
+    if ($null -eq ('Security.Cryptography.ProtectedData' -as [type])) {
+        Add-Type -AssemblyName System.Security
+    }
+}
+
+function Protect-Bytes([byte[]]$Bytes) {
+    Initialize-DataProtection
     $entropy = [Text.Encoding]::UTF8.GetBytes('evolvmem-codex-archive-v1')
     return [Security.Cryptography.ProtectedData]::Protect(
         $Bytes, $entropy, [Security.Cryptography.DataProtectionScope]::CurrentUser)
 }
 
 function Unprotect-Bytes([byte[]]$Bytes) {
-    if (-not $script:RunningOnWindows) { throw 'DPAPI CurrentUser is only available on Windows' }
+    Initialize-DataProtection
     $entropy = [Text.Encoding]::UTF8.GetBytes('evolvmem-codex-archive-v1')
     return [Security.Cryptography.ProtectedData]::Unprotect(
         $Bytes, $entropy, [Security.Cryptography.DataProtectionScope]::CurrentUser)
@@ -926,7 +935,7 @@ function Invoke-SelfTest($Config) {
         $hooksConfigured -and $hooksFeatureEnabled
     if ($script:RunningOnWindows) { $healthy = $healthy -and [bool]$workerTaskConfigured }
     $note = if ($remoteConnected) {
-        'Actual Codex hook delivery and Windows DPAPI/task execution require the native acceptance run.'
+        'Self-test checks configuration and remote MCP only. Review/trust hooks in Codex CLI /hooks; Windows desktop may not show a review prompt. Native hook delivery and DPAPI/task execution require acceptance testing.'
     } else {
         'EvolvMem self-test could not reach the authenticated MCP.'
     }
@@ -936,6 +945,7 @@ function Invoke-SelfTest($Config) {
         mcp_configured = $mcpConfigured; hooks_configured = $hooksConfigured
         hooks_feature_enabled = $hooksFeatureEnabled
         invalid_hooks = $invalidHooks.ToArray(); worker_task_configured = $workerTaskConfigured
+        self_test_scope = 'configuration_and_remote_mcp'; hook_trust_checked = $false
         native_event_test_required = $true; note = $note
     })
 }

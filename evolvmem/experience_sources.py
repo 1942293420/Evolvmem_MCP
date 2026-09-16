@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -151,7 +152,8 @@ class ExperienceSourceResolver:
 
     @staticmethod
     def _archive_lines(payload):
-        return ((number, raw) for number, raw in enumerate(payload['transcript'].splitlines(keepends=True), 1)
+        # Preserve JSONL's LF record boundaries and exact evidence line bytes.
+        return ((number, raw) for number, raw in enumerate(io.StringIO(payload['transcript']), 1)
                 if len(raw.encode('utf-8')) <= _MAX_LINE_BYTES)
 
     def _resolve_archive(self, source_kind, source_ref, task_id, quote):

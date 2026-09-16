@@ -113,6 +113,32 @@ def test_incomplete_jsonl_never_becomes_successful_archive(lan):
     assert upload(adapter, raw)['error'] == 'invalid_transcript'
 
 
+@pytest.mark.parametrize('separator', ['\u0085', '\u2028', '\u2029'])
+def test_json_string_line_separators_survive_archive_and_extraction(lan, separator):
+    from evolvmem.codex_transcript import parse_transcript
+    from evolvmem.experience_sources import ExperienceSourceResolver
+
+    runtime, adapter = lan
+    text = '项目决定' + separator + '保留完整会话'
+    raw = transcript(text=text)
+    saved = upload(adapter, raw)
+    assert saved.get('status') == 'archived', saved
+    server = runtime.server_for('jiangli')
+    archiver = SessionArchiver(server.config, server.context_service.store)
+    payload = archiver.read_payload(saved['archive_id'])
+    assert json.loads(payload)['transcript'] == raw.decode()
+    rows, messages = parse_transcript(raw, 'session-1')
+    assert len(rows) == 4
+    assert messages[0] == {'role': 'user', 'content': text}
+    resolver = ExperienceSourceResolver(archiver=archiver)
+    evidence = resolver.resolve(source_kind='tool_result',
+        source_ref=f"archive:{saved['archive_id']}#3", task_id='session-1', quote='1 passed in 0.10s')
+    assert evidence.source_ref == f"archive:{saved['archive_id']}#3"
+    user = resolver.resolve(source_kind='user_confirmation',
+        source_ref=f"archive:{saved['archive_id']}#2", task_id='session-1', quote=text)
+    assert user.source_ref == f"archive:{saved['archive_id']}#2"
+
+
 def test_restart_resumes_encrypted_partial_upload_and_rejects_fork(lan):
     from evolvmem.lan_runtime import LanRuntime
     from evolvmem.lan_tools import LanTools
