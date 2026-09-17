@@ -476,15 +476,15 @@ function Initialize-DataProtection {
 function Protect-Bytes([byte[]]$Bytes) {
     Initialize-DataProtection
     $entropy = [Text.Encoding]::UTF8.GetBytes('evolvmem-codex-archive-v1')
-    return [Security.Cryptography.ProtectedData]::Protect(
-        $Bytes, $entropy, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+    return ,([Security.Cryptography.ProtectedData]::Protect(
+        $Bytes, $entropy, [Security.Cryptography.DataProtectionScope]::CurrentUser))
 }
 
 function Unprotect-Bytes([byte[]]$Bytes) {
     Initialize-DataProtection
     $entropy = [Text.Encoding]::UTF8.GetBytes('evolvmem-codex-archive-v1')
-    return [Security.Cryptography.ProtectedData]::Unprotect(
-        $Bytes, $entropy, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+    return ,([Security.Cryptography.ProtectedData]::Unprotect(
+        $Bytes, $entropy, [Security.Cryptography.DataProtectionScope]::CurrentUser))
 }
 
 function Read-CompleteTail([string]$Path, [int64]$Offset) {
@@ -525,9 +525,10 @@ function Test-FilePrefix([string]$Path, [byte[]]$Expected) {
             $wanted = [Math]::Min($buffer.Length, $Expected.Length - $position)
             $read = $stream.Read($buffer, 0, $wanted)
             if ($read -ne $wanted) { return $false }
-            for ($index = 0; $index -lt $read; $index++) {
-                if ($buffer[$index] -ne $Expected[$position + $index]) { return $false }
-            }
+            # Compare in .NET rather than creating one PowerShell operation per
+            # byte of every historical transcript on every scheduler tick.
+            if ([Convert]::ToBase64String($buffer, 0, $read) -cne
+                [Convert]::ToBase64String($Expected, $position, $read)) { return $false }
             $position += $read
         }
         return $true
@@ -560,13 +561,17 @@ function Capture-Transcript($Config, $Event) {
     $sourceBytes = [int64](Get-Value $session 'source_bytes' 0)
     $cacheName = (Get-TextSha256 $sessionId) + '.bin'
     $cachePath = [IO.Path]::Combine($script:ClientHome, 'session-cache', $cacheName)
+    $file = New-Object IO.FileInfo($transcriptPath)
+    if ($sourceBytes -gt 0 -and $file.Length -eq $sourceBytes -and [IO.File]::Exists($cachePath) -and
+        $file.LastWriteTimeUtc.ToString('o') -ceq [string](Get-Value $session 'source_last_write_utc' '')) {
+        return $false
+    }
     $prior = [byte[]]@()
     if ($sourceBytes -gt 0 -and [IO.File]::Exists($cachePath)) {
         $prior = Unprotect-Bytes ([IO.File]::ReadAllBytes($cachePath))
         if ($prior.Length -ne $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@() }
     }
     elseif ($sourceBytes -gt 0) { $sourceBytes = 0 }
-    $file = New-Object IO.FileInfo($transcriptPath)
     if ($file.Length -lt $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@() }
     elseif ($sourceBytes -gt 0 -and -not (Test-FilePrefix $transcriptPath $prior)) {
         # A rewritten or divergent transcript begins a new immutable content
@@ -620,7 +625,11 @@ function Invoke-UploadQueue($Config) {
     Ensure-Directory $queueDir
     Ensure-Directory $statusDir
     $uploaded = 0
-    foreach ($manifestPath in @([IO.Directory]::GetFiles($queueDir, '*.json'))) {
+    $manifests = @([IO.Directory]::GetFiles($queueDir, '*.json') | Sort-Object {
+        try { [int64](Get-Value (Read-JsonFile $_) 'total_bytes' ([int64]::MaxValue)) }
+        catch { [int64]::MaxValue }
+    })
+    foreach ($manifestPath in $manifests) {
         try {
             $manifest = Read-JsonFile $manifestPath
             $sessionScope = Get-SessionLockScope ([string]$manifest.session_id)
@@ -632,7 +641,10 @@ function Invoke-UploadQueue($Config) {
                 continue
             }
             $offset = [int64]$manifest.next_offset
-            while ($offset -lt $plain.Length) {
+            $sentChunks = 0
+            # A large historical version must not monopolize the whole worker.
+            # Its confirmed offset is durable; the next tick continues it.
+            while ($offset -lt $plain.Length -and $sentChunks -lt 16) {
                 $length = [Math]::Min($script:ChunkBytes, $plain.Length - $offset)
                 $chunk = New-Object byte[] ([int]$length)
                 [Array]::Copy($plain, $offset, $chunk, 0, $length)
@@ -647,6 +659,7 @@ function Invoke-UploadQueue($Config) {
                     request_id = $requestId
                 }
                 $response = Invoke-McpTool $Config 'session_archive_upload' $arguments $requestId
+                $sentChunks += 1
                 $remoteStatus = [string](Get-Value $response 'status' '')
                 if ($remoteStatus -eq 'archived' -or $remoteStatus -eq 'stale') {
                     if ($remoteStatus -eq 'archived') {
@@ -692,11 +705,65 @@ function Invoke-UploadQueue($Config) {
     return $uploaded
 }
 
+function Get-CodexRoot($Config) {
+    $configured = [string](Get-Value $Config 'codex_root' '')
+    if ($configured) { return $configured }
+    if ($env:CODEX_HOME) { return [IO.Path]::GetFullPath($env:CODEX_HOME) }
+    if ($env:USERPROFILE) { return [IO.Path]::Combine($env:USERPROFILE, '.codex') }
+    return ''
+}
+
+function Find-LocalSessions($Config) {
+    $found = 0; $errors = 0
+    $root = Get-CodexRoot $Config
+    $sinceText = [string](Get-Value $Config 'capture_since_utc' '')
+    # Upgrades set the cutoff explicitly. Older clients still capture their
+    # registered sessions without silently importing unrelated history.
+    if (-not $root -or -not $sinceText) { return @{ Found = 0; Errors = 0 } }
+    $since = [DateTimeOffset]::Parse($sinceText).UtcDateTime
+    foreach ($folder in @('sessions', 'archived_sessions')) {
+        $directory = [IO.Path]::Combine($root, $folder)
+        if (-not [IO.Directory]::Exists($directory)) { continue }
+        try { $paths = [IO.Directory]::GetFiles($directory, '*.jsonl', [IO.SearchOption]::AllDirectories) }
+        catch { $errors += 1; continue }
+        foreach ($path in $paths) {
+            try {
+                $stream = New-Object IO.FileStream($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                try {
+                    $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8, $true)
+                    try { $line = $reader.ReadLine() }
+                    finally { $reader.Dispose() }
+                }
+                finally { $stream.Dispose() }
+                if (-not $line) { continue }
+                $header = $line | ConvertFrom-Json
+                if ([string](Get-Value $header 'type' '') -ne 'session_meta') { continue }
+                $payload = Get-Value $header 'payload'
+                $sessionId = [string](Get-Value $payload 'id' '')
+                $cwd = [string](Get-Value $payload 'cwd' '')
+                if (-not $sessionId -or -not $cwd) { continue }
+                $registered = [IO.File]::Exists((Get-SessionPath $sessionId))
+                if (-not $registered -and [IO.File]::GetLastWriteTimeUtc($path) -lt $since) { continue }
+                $event = [pscustomobject]@{ session_id = $sessionId; transcript_path = $path; cwd = $cwd }
+                [void](Invoke-WithClientLock { Save-SessionRegistration $Config $event } 1000 (Get-SessionLockScope $sessionId))
+                if (-not $registered) { $found += 1 }
+            }
+            catch { $errors += 1 }
+        }
+    }
+    return @{ Found = $found; Errors = $errors }
+}
+
 function Invoke-Worker($Config) {
+    $started = [DateTime]::UtcNow.ToString('o')
     $scanned = 0
+    $captureErrors = 0
+    $captureFailures = New-Object Collections.Generic.List[object]
     $sessionDir = [IO.Path]::Combine($script:ClientHome, 'sessions')
     Ensure-Directory $sessionDir
+    $discovery = Find-LocalSessions $Config
     foreach ($path in @([IO.Directory]::GetFiles($sessionDir, '*.json'))) {
+        $session = $null
         try {
             $session = Read-JsonFile $path
             $event = [pscustomobject]@{
@@ -706,12 +773,61 @@ function Invoke-Worker($Config) {
             $scope = Get-SessionLockScope ([string]$session.session_id)
             if (Invoke-WithClientLock { Capture-Transcript $Config $event } 5000 $scope) { $scanned += 1 }
         }
-        catch { continue }
+        catch {
+            $captureErrors += 1
+            if ($captureFailures.Count -lt 10) {
+                $captureFailures.Add([ordered]@{
+                    session_id = [string](Get-Value $session 'session_id' '')
+                    error_type = $_.Exception.GetType().FullName
+                    inner_type = if ($_.Exception.InnerException) { $_.Exception.InnerException.GetType().FullName } else { '' }
+                    line = $_.InvocationInfo.ScriptLineNumber
+                    category = [string]$_.CategoryInfo.Category
+                })
+            }
+        }
     }
+    # Background work can wait for a large encrypted staging update; hooks
+    # retain their short request timeout.
+    $script:RpcTimeoutSeconds = 30
     try { $acknowledged = Invoke-WithClientLock { Invoke-UploadQueue $Config } 100 'upload' }
     catch { $acknowledged = 0 }
     $pending = @([IO.Directory]::GetFiles([IO.Path]::Combine($script:ClientHome, 'queue'), '*.json')).Count
-    Write-OutputJson @{ worker_status = 'idle'; captured_versions = $scanned; acknowledged_versions = $acknowledged; pending_versions = $pending }
+    $status = [ordered]@{
+        worker_status = if ($pending -gt 0 -or $captureErrors -gt 0 -or $discovery.Errors -gt 0) { 'retry_pending' } else { 'idle' }
+        last_started_utc = $started; last_finished_utc = [DateTime]::UtcNow.ToString('o')
+        discovered_sessions = $discovery.Found; discovery_errors = $discovery.Errors; capture_errors = $captureErrors
+        capture_failures = $captureFailures.ToArray()
+        captured_versions = $scanned; acknowledged_versions = $acknowledged; pending_versions = $pending
+    }
+    Write-JsonAtomic ([IO.Path]::Combine($script:ClientHome, 'worker-status.json')) $status
+    Write-OutputJson $status
+}
+
+function Get-WorkerTaskStatus {
+    $launcher = [IO.Path]::Combine($script:ClientHome, 'evolvmem-sync.exe')
+    $result = [ordered]@{
+        worker_task_configured = $null; worker_task_enabled = $null; worker_task_state = 'not_windows'
+        worker_task_last_result = $null; worker_task_last_run = $null; worker_task_next_run = $null
+        windowless_launcher_available = [IO.File]::Exists($launcher)
+    }
+    if (-not $script:RunningOnWindows) { return $result }
+    $result.worker_task_configured = $false; $result.worker_task_enabled = $false
+    $result.worker_task_state = 'missing'
+    try {
+        $task = Get-ScheduledTask -TaskName 'EvolvMem Codex Sync' -ErrorAction Stop
+        $actions = @($task.Actions)
+        $result.worker_task_configured = $actions.Count -eq 1 -and
+            ([string]$actions[0].Execute).Trim('"') -ieq $launcher -and
+            -not [string]$actions[0].Arguments -and $result.windowless_launcher_available
+        $result.worker_task_enabled = [bool]$task.Settings.Enabled
+        $result.worker_task_state = [string]$task.State
+        $info = Get-ScheduledTaskInfo -InputObject $task -ErrorAction Stop
+        $result.worker_task_last_result = [int64]$info.LastTaskResult
+        $result.worker_task_last_run = $info.LastRunTime.ToUniversalTime().ToString('o')
+        $result.worker_task_next_run = $info.NextRunTime.ToUniversalTime().ToString('o')
+    }
+    catch { }
+    return $result
 }
 
 function Get-LocalStatus($Config) {
@@ -728,11 +844,18 @@ function Get-LocalStatus($Config) {
         if ($state -in @('pending', 'queued', 'processing')) { $pendingExtraction += 1 }
         elseif ($state -in @('completed', 'extracted')) { $extracted += 1 }
     }
-    return [ordered]@{
+    $result = [ordered]@{
         pending_archive_versions = $pending; acknowledged_archive_versions = $archived
         pending_extractions = $pendingExtraction; completed_extractions = $extracted
         registered_sessions = @([IO.Directory]::GetFiles($sessionDir, '*.json')).Count
     }
+    $taskStatus = Get-WorkerTaskStatus
+    foreach ($key in $taskStatus.Keys) { $result[$key] = $taskStatus[$key] }
+    foreach ($name in @('worker', 'launcher')) {
+        try { $result[$name] = Read-JsonFile ([IO.Path]::Combine($script:ClientHome, $name + '-status.json')) }
+        catch { $result[$name] = @{ error = 'status_receipt_unreadable' } }
+    }
+    return $result
 }
 
 function Invoke-Status($Config) {
@@ -794,12 +917,9 @@ function Invoke-SelfTest($Config) {
     $hooksConfigured = $false
     $hooksFeatureEnabled = $true
     $invalidHooks = New-Object Collections.Generic.List[string]
-    $workerTaskConfigured = $null
-    $codexRoot = if ($env:CODEX_HOME) {
-        [IO.Path]::GetFullPath($env:CODEX_HOME)
-    } elseif ($env:USERPROFILE) {
-        [IO.Path]::Combine($env:USERPROFILE, '.codex')
-    } else { '' }
+    $taskStatus = Get-WorkerTaskStatus
+    $workerTaskConfigured = $taskStatus.worker_task_configured
+    $codexRoot = Get-CodexRoot $Config
     try {
         if ($codexRoot) {
             $tomlPath = [IO.Path]::Combine($codexRoot, 'config.toml')
@@ -904,23 +1024,6 @@ function Invoke-SelfTest($Config) {
         $hooksConfigured = $false
     }
 
-    try {
-        if ($script:RunningOnWindows) {
-            $taskXml = @(& schtasks.exe /Query /TN 'EvolvMem Codex Sync' /XML 2>$null) -join "`n"
-            if ($LASTEXITCODE -eq 0) {
-                $parsedTask = [xml]$taskXml
-                $exec = $parsedTask.Task.Actions.Exec
-                $taskCommand = ([string]$exec.Command) + ' ' + ([string]$exec.Arguments)
-                $workerTaskConfigured = $taskCommand -match [regex]::Escape([string]$PSCommandPath) -and
-                    $taskCommand -match '(?i)(?:^|\s)-Action\s+worker(?:\s|$)'
-            }
-            else { $workerTaskConfigured = $false }
-        }
-    }
-    catch {
-        if ($script:RunningOnWindows) { $workerTaskConfigured = $false }
-    }
-
     $remoteConnected = $false
     $authenticatedUser = ''
     $names = @()
@@ -936,7 +1039,7 @@ function Invoke-SelfTest($Config) {
     catch { }
     $healthy = $remoteConnected -and $missing.Count -eq 0 -and $mcpConfigured -and
         $hooksConfigured -and $hooksFeatureEnabled
-    if ($script:RunningOnWindows) { $healthy = $healthy -and [bool]$workerTaskConfigured }
+    if ($script:RunningOnWindows) { $healthy = $healthy -and [bool]$workerTaskConfigured -and $taskStatus.worker_task_enabled }
     $note = if ($remoteConnected) {
         'Self-test checks configuration and remote MCP only. Review/trust hooks in Codex CLI /hooks; Windows desktop may not show a review prompt. Native hook delivery and DPAPI/task execution require acceptance testing.'
     } else {
@@ -948,6 +1051,8 @@ function Invoke-SelfTest($Config) {
         mcp_configured = $mcpConfigured; hooks_configured = $hooksConfigured
         hooks_feature_enabled = $hooksFeatureEnabled
         invalid_hooks = $invalidHooks.ToArray(); worker_task_configured = $workerTaskConfigured
+        worker_task_enabled = $taskStatus.worker_task_enabled; worker_task_state = $taskStatus.worker_task_state
+        windowless_launcher_available = $taskStatus.windowless_launcher_available
         self_test_scope = 'configuration_and_remote_mcp'; hook_trust_checked = $false
         native_event_test_required = $true; note = $note
     })

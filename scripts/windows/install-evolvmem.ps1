@@ -13,9 +13,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:RunningOnWindows = $env:OS -eq 'Windows_NT'
 $sourceClient = [IO.Path]::Combine($PSScriptRoot, 'evolvmem-codex.ps1')
+$sourceLauncher = [IO.Path]::Combine($PSScriptRoot, 'evolvmem-sync.cs')
+$sourceInstructions = [IO.Path]::Combine($PSScriptRoot, 'AGENTS.evolvmem.md')
 if (-not $env:LOCALAPPDATA) { throw 'The local application data directory is unavailable.' }
 $installRoot = [IO.Path]::Combine($env:LOCALAPPDATA, 'EvolvMem', 'Codex')
 $installedClient = [IO.Path]::Combine($installRoot, 'evolvmem-codex.ps1')
+$installedLauncher = [IO.Path]::Combine($installRoot, 'evolvmem-sync.exe')
 $clientConfigPath = [IO.Path]::Combine($installRoot, 'config.json')
 $codexRoot = if ($env:CODEX_HOME) {
     [IO.Path]::GetFullPath($env:CODEX_HOME)
@@ -337,17 +340,65 @@ function Remove-ManagedHooks($Document) {
     return $Document
 }
 
+function Set-MemoryInstructions([bool]$Remove = $false) {
+    $override = [IO.Path]::Combine($codexRoot, 'AGENTS.override.md')
+    $target = [IO.Path]::Combine($codexRoot, 'AGENTS.md')
+    if ([IO.File]::Exists($override) -and [IO.File]::ReadAllText($override, [Text.Encoding]::UTF8).Trim()) { $target = $override }
+    $pattern = '(?ms)^<!-- BEGIN EVOLVMEM MEMORY -->\r?\n.*?^<!-- END EVOLVMEM MEMORY -->(?:\r?\n)?'
+    foreach ($path in @([IO.Path]::Combine($codexRoot, 'AGENTS.md'), $override)) {
+        $text = if ([IO.File]::Exists($path)) { [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) } else { '' }
+        $updated = [regex]::Replace($text, $pattern, '')
+        if (-not $Remove -and $path -eq $target) {
+            $fragment = [IO.File]::ReadAllText($sourceInstructions, [Text.Encoding]::UTF8)
+            if ($updated -and -not $updated.EndsWith("`n")) { $updated += "`r`n" }
+            $updated += $fragment
+        }
+        if ($updated -cne $text) { Backup-File $path; Write-TextAtomic $path $updated }
+    }
+}
+
+function Install-Launcher {
+    if (-not $script:RunningOnWindows) { return }
+    $compiler = [IO.Path]::Combine([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory(), 'csc.exe')
+    if (-not [IO.File]::Exists($compiler)) { throw 'The Windows .NET Framework C# compiler is unavailable.' }
+    $temp = [IO.Path]::Combine($installRoot, 'evolvmem-sync.' + [Guid]::NewGuid().ToString('N') + '.exe')
+    try {
+        $null = & $compiler /nologo /target:winexe /r:System.Web.Extensions.dll ('/out:' + $temp) $sourceLauncher
+        if ($LASTEXITCODE -ne 0) { throw 'Could not compile the windowless EvolvMem launcher.' }
+        $task = Get-ScheduledTask -TaskName 'EvolvMem Codex Sync' -ErrorAction SilentlyContinue
+        if ($null -ne $task) {
+            Export-ScheduledTask -TaskName 'EvolvMem Codex Sync' | Set-Content -LiteralPath ([IO.Path]::Combine($installRoot, 'task-before-upgrade.xml')) -Encoding UTF8
+            Disable-ScheduledTask -InputObject $task | Out-Null
+            Stop-ScheduledTask -InputObject $task
+        }
+        Backup-File $installedLauncher
+        Copy-Item -LiteralPath $temp -Destination $installedLauncher -Force
+    }
+    finally { if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
+}
+
 function Register-WorkerTask {
     if (-not $script:RunningOnWindows) { return }
-    $taskCommand = 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
-        $installedClient + '" -Action worker'
-    $null = & schtasks.exe /Create /TN 'EvolvMem Codex Sync' /TR $taskCommand /SC MINUTE /MO 5 /F
-    if ($LASTEXITCODE -ne 0) { throw 'Could not register the EvolvMem user scheduled task.' }
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $action = New-ScheduledTaskAction -Execute $installedLauncher -WorkingDirectory $installRoot
+    $minute = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
+    $logon = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -Hidden -StartWhenAvailable -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
+        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    Register-ScheduledTask -TaskName 'EvolvMem Codex Sync' -Action $action -Trigger @($minute, $logon) `
+        -Principal $principal -Settings $settings -Force | Out-Null
+    Start-ScheduledTask -TaskName 'EvolvMem Codex Sync'
 }
 
 function Remove-WorkerTask {
     if (-not $script:RunningOnWindows) { return }
-    $null = & schtasks.exe /Delete /TN 'EvolvMem Codex Sync' /F
+    $task = Get-ScheduledTask -TaskName 'EvolvMem Codex Sync' -ErrorAction SilentlyContinue
+    if ($null -ne $task) {
+        Stop-ScheduledTask -InputObject $task
+        Unregister-ScheduledTask -InputObject $task -Confirm:$false
+    }
 }
 
 if ($Uninstall) {
@@ -365,6 +416,8 @@ if ($Uninstall) {
         }
     }
     Remove-WorkerTask
+    Set-MemoryInstructions $true
+    if ([IO.File]::Exists($installedLauncher)) { Remove-Item -LiteralPath $installedLauncher -Force }
     if ([IO.File]::Exists($installedClient)) { Remove-Item -LiteralPath $installedClient -Force }
     if ([IO.File]::Exists($clientConfigPath)) { Remove-Item -LiteralPath $clientConfigPath -Force }
     Write-Output 'EvolvMem Windows client configuration was removed. Existing hooks and encrypted local archive state were preserved.'
@@ -378,6 +431,8 @@ if (-not [Uri]::IsWellFormedUriString($Url, [UriKind]::Absolute) -or
     ([Uri]$Url).Scheme -notin @('http', 'https')) { throw '-Url must be an absolute HTTP(S) URI.' }
 if ($TokenEnvVar -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw '-TokenEnvVar must be an environment variable name.' }
 if (-not [IO.File]::Exists($sourceClient)) { throw 'evolvmem-codex.ps1 must be next to this installer.' }
+if (-not [IO.File]::Exists($sourceInstructions)) { throw 'AGENTS.evolvmem.md must be next to this installer.' }
+if ($script:RunningOnWindows -and -not [IO.File]::Exists($sourceLauncher)) { throw 'evolvmem-sync.cs must be next to this installer.' }
 
 $existingClient = Read-JsonFile $clientConfigPath
 if ($null -ne $existingClient) {
@@ -408,6 +463,8 @@ foreach ($mapping in $ProjectMapping) {
 
 Ensure-Directory $installRoot
 Ensure-Directory $codexRoot
+Install-Launcher
+Backup-File $installedClient
 Copy-Item -LiteralPath $sourceClient -Destination $installedClient -Force
 
 $deviceId = [string](Get-Value $existingClient 'device_id' '')
@@ -420,6 +477,8 @@ $strictValue = if ($PSBoundParameters.ContainsKey('StrictInjection')) {
 $clientConfig = [ordered]@{
     version = 1; url = $Url; token_env_var = $TokenEnvVar; expected_user = $ExpectedUser
     device_id = $deviceId; projects = $projects; strict_injection = $strictValue
+    codex_root = $codexRoot
+    capture_since_utc = [string](Get-Value $existingClient 'capture_since_utc' ([DateTime]::UtcNow.ToString('o')))
 }
 if ([IO.File]::Exists($clientConfigPath)) { Backup-File $clientConfigPath }
 Write-JsonAtomic $clientConfigPath $clientConfig
@@ -432,10 +491,12 @@ if ($toml -cne (Merge-McpConfig $toml)) {
 $hooks = Read-JsonFile $hooksPath
 if ([IO.File]::Exists($hooksPath)) { Backup-File $hooksPath }
 Write-JsonAtomic $hooksPath (Merge-Hooks $hooks)
-Register-WorkerTask
+Set-MemoryInstructions
 Ensure-McpProxyBypass
+Register-WorkerTask
 
 Write-Output ('EvolvMem Windows client installed for expected user ' + $ExpectedUser + ' with device ' + $deviceId + '.')
+Write-Output 'Windowless background sync runs every minute and after user logon. Complete persisted Codex records are queued locally and retried through MCP; AGENTS memory instructions are installed without replacing your rules.'
 Write-Output ('NO_PROXY includes the EvolvMem endpoint host ' + ([Uri]$Url).DnsSafeHost + '; existing bypass entries are preserved. Restart Codex from a process that has the updated user environment.')
 Write-Output 'Open Codex CLI in your project and use /hooks to review/trust the six EvolvMem hooks. Windows desktop may not show a review prompt. Then restart desktop Codex and verify a new session; self-test does not check hook trust or event delivery.'
 Write-Output ('Status: powershell.exe -NoProfile -File "' + $installedClient + '" -Action status')

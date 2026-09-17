@@ -18,6 +18,12 @@ try {
     [IO.File]::WriteAllText((Join-Path $env:EVOLVMEM_CLIENT_HOME 'config.json'), ($config | ConvertTo-Json -Depth 4), $utf8)
     # Empty worker mode loads the actual client without stdin or network access.
     . $ClientPath -Action worker
+    $sample = [Text.Encoding]::UTF8.GetBytes('dpapi-array-regression')
+    $protectedSample = Protect-Bytes $sample
+    $plainSample = Unprotect-Bytes $protectedSample
+    if ($protectedSample -isnot [byte[]] -or $plainSample -isnot [byte[]]) {
+        throw 'DPAPI must preserve byte arrays without expanding one PowerShell object per byte.'
+    }
     $testConfig = Get-Config
     $transcript = Join-Path $testRoot 'rollout.jsonl'
     $chinese = ([string][char]0x4e2d) + [char]0x6587

@@ -6,6 +6,7 @@ They intentionally do not inspect the PowerShell source text.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -1550,3 +1551,207 @@ def test_installer_rejects_unsupported_header_form_before_any_file_change(tmp_pa
     assert result.returncode != 0
     assert config_path.read_text(encoding="utf-8") == original
     assert not appdata.exists()
+
+
+def run_portable_worker(home: Path):
+    # Only DPAPI is replaced on Linux; discovery, complete-line capture,
+    # retry, HTTP upload and acknowledgements all use the real client.
+    command = (
+        f". '{CLIENT}' -Action snapshot; "
+        "function Protect-Bytes([byte[]]$Bytes) { return ,$Bytes }; "
+        "function Unprotect-Bytes([byte[]]$Bytes) { return ,$Bytes }; "
+        "Invoke-Worker (Get-Config)"
+    )
+    env = os.environ.copy()
+    env.update(EVOLVMEM_CLIENT_HOME=str(home), EVOLVMEM_TEST_TOKEN="top-secret-token")
+    return subprocess.run(
+        [str(PWSH), "-NoLogo", "-NoProfile", "-Command", command],
+        input="", text=True, capture_output=True, env=env, timeout=20,
+    )
+
+
+def test_worker_reports_capture_failure_without_exposing_transcript(client_home):
+    write_config(client_home, "http://127.0.0.1:1/mcp")
+    directory = client_home / "sessions"
+    directory.mkdir()
+    (directory / "broken.json").write_text("{private-unparseable-record", encoding="utf-8")
+    result = run_portable_worker(client_home)
+    assert result.returncode == 0, result.stderr
+    status = json.loads(result.stdout.splitlines()[-1])
+    assert status["worker_status"] == "retry_pending"
+    assert status["capture_errors"] == 1
+    failure = status["capture_failures"][0]
+    assert failure["error_type"]
+    assert failure["line"] > 0
+    assert "private-unparseable-record" not in result.stdout
+
+
+def test_worker_uploads_small_versions_first_and_resumes_large_version(client_home):
+    chunk = 262144
+    large = b"x" * (chunk * 17)
+    small = b'{"small":"complete"}\n'
+    responses = [archive_ack(small)] + [
+        {"authenticated_user": "alice", "status": "receiving", "next_offset": chunk * i}
+        for i in range(1, 17)
+    ] + [archive_ack(large)]
+    fake = FakeMcp(responses)
+    try:
+        write_config(client_home, fake.url)
+        _, _, manifest = queue_plaintext_upload(client_home, large, session="large-old")
+        queue_plaintext_upload(client_home, small, session="small-new")
+        first = run_portable_worker(client_home)
+        assert first.returncode == 0, first.stderr
+        status = json.loads(first.stdout.splitlines()[-1])
+        assert status["acknowledged_versions"] == 1
+        assert status["pending_versions"] == 1
+        assert json.loads(manifest.read_text())["next_offset"] == chunk * 16
+        uploads = [x["request"]["params"]["arguments"] for x in fake.requests
+                   if x["request"].get("params", {}).get("name") == "session_archive_upload"]
+        assert uploads[0]["session_id"] == "small-new"
+        assert len(uploads) == 17
+        second = run_portable_worker(client_home)
+        assert json.loads(second.stdout.splitlines()[-1])["pending_versions"] == 0
+        uploads = [x["request"]["params"]["arguments"] for x in fake.requests
+                   if x["request"].get("params", {}).get("name") == "session_archive_upload"]
+        chunks = [x for x in uploads if x["session_id"] == "large-old"]
+        assert [x["offset"] for x in chunks] == [chunk * i for i in range(17)]
+        assert b"".join(base64.b64decode(x["content_b64"]) for x in chunks) == large
+    finally:
+        fake.close()
+
+
+def setup_discovery(home, codex):
+    config_path = home / "config.json"
+    config = json.loads(config_path.read_text())
+    config.update(codex_root=str(codex), capture_since_utc="2020-01-01T00:00:00Z")
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    (home / "sessions").mkdir(exist_ok=True)
+    (codex / "sessions" / "2026" / "09" / "17").mkdir(parents=True)
+    return codex / "sessions" / "2026" / "09" / "17"
+
+
+def archive_ack(raw):
+    return {"authenticated_user": "alice", "status": "archived", "archive_id": 50,
+            "next_offset": len(raw), "source_sha256": hashlib.sha256(raw).hexdigest(),
+            "extraction_status": "pending"}
+
+
+def test_worker_discovers_unregistered_transcript_and_retries_complete_records(client_home, tmp_path):
+    workspace = tmp_path / "项目 空格"
+    workspace.mkdir()
+    meta = {"type": "session_meta", "payload": {"id": "discovery-new", "cwd": str(workspace)}}
+    message = {"type": "event_msg", "payload": {"type": "user_message", "message": "决定保留每行\u2028原文"}}
+    complete = (json.dumps(meta, ensure_ascii=False) + "\n" + json.dumps(message, ensure_ascii=False) + "\n").encode()
+    tail = b'{"type":"event_msg","payload":{"type":"agent_message","message":"done"}}'
+    finished = complete + tail + b"\n"
+    fake = FakeMcp([503, archive_ack(complete), archive_ack(finished)])
+    try:
+        write_config(client_home, fake.url, projects={str(workspace): "demo"})
+        directory = setup_discovery(client_home, tmp_path / "codex")
+        transcript = directory / "rollout-discovery-new.jsonl"
+        transcript.write_bytes(complete + tail)
+
+        offline = run_portable_worker(client_home)
+        assert offline.returncode == 0, offline.stderr
+        first = json.loads(offline.stdout.splitlines()[-1])
+        assert first["captured_versions"] == 1
+        assert first["pending_versions"] == 1
+        registration = json.loads(next((client_home / "sessions").glob("*.json")).read_text())
+        assert registration["session_id"] == "discovery-new"
+        assert registration["workspace_path"] == str(workspace)
+        assert registration["source_bytes"] == len(complete)
+
+        recovered = run_portable_worker(client_home)
+        assert recovered.returncode == 0, recovered.stderr
+        assert json.loads(recovered.stdout.splitlines()[-1])["pending_versions"] == 0
+        transcript.write_bytes(finished)
+        appended = run_portable_worker(client_home)
+        assert appended.returncode == 0, appended.stderr
+        assert json.loads(appended.stdout.splitlines()[-1])["pending_versions"] == 0
+
+        uploads = [x["request"]["params"]["arguments"] for x in fake.requests
+                   if x["request"].get("params", {}).get("name") == "session_archive_upload"]
+        assert [base64.b64decode(x["content_b64"]) for x in uploads] == [complete, complete, finished]
+        assert all(x["project"] == "demo" for x in uploads)
+        assert uploads[0]["request_id"] == uploads[1]["request_id"]
+        assert uploads[-1]["sha256"] == hashlib.sha256(finished).hexdigest()
+        state = json.loads((client_home / "worker-status.json").read_text())
+        assert state["pending_versions"] == 0
+        assert state["last_finished_utc"]
+    finally:
+        fake.close()
+
+
+def test_worker_keeps_dormant_history_out_and_captures_it_when_resumed(client_home, tmp_path):
+    raw = (json.dumps({"type": "session_meta", "payload": {"id": "resumed-old", "cwd": str(tmp_path / "unbound")}}) + "\n").encode()
+    fake = FakeMcp([archive_ack(raw)])
+    try:
+        write_config(client_home, fake.url)
+        directory = setup_discovery(client_home, tmp_path / "codex")
+        transcript = directory / "rollout-resumed-old.jsonl"
+        transcript.write_bytes(raw)
+        os.utime(transcript, (946684800, 946684800))
+        first = run_portable_worker(client_home)
+        assert first.returncode == 0, first.stderr
+        assert not list((client_home / "sessions").glob("*.json"))
+        assert fake.requests == []
+
+        os.utime(transcript, None)
+        second = run_portable_worker(client_home)
+        assert second.returncode == 0, second.stderr
+        uploads = [x["request"]["params"]["arguments"] for x in fake.requests
+                   if x["request"].get("params", {}).get("name") == "session_archive_upload"]
+        assert len(uploads) == 1
+        assert uploads[0]["project"] == ""
+        assert base64.b64decode(uploads[0]["content_b64"]) == raw
+    finally:
+        fake.close()
+
+
+def test_worker_detects_same_length_rewrite_after_unchanged_scan(client_home, tmp_path):
+    header = json.dumps({"type": "session_meta", "payload": {"id": "rewritten", "cwd": str(tmp_path)}})
+    first = (header + '\n{"text":"before"}\n').encode()
+    rewritten = first.replace(b'before', b'after!')
+    fake = FakeMcp([archive_ack(first), archive_ack(rewritten)])
+    try:
+        write_config(client_home, fake.url)
+        directory = setup_discovery(client_home, tmp_path / "codex")
+        transcript = directory / "rollout-rewritten.jsonl"
+        transcript.write_bytes(first)
+        assert json.loads(run_portable_worker(client_home).stdout.splitlines()[-1])["acknowledged_versions"] == 1
+        assert json.loads(run_portable_worker(client_home).stdout.splitlines()[-1])["captured_versions"] == 0
+        previous_mtime = transcript.stat().st_mtime
+        transcript.write_bytes(rewritten)
+        os.utime(transcript, (previous_mtime + 2, previous_mtime + 2))
+        assert json.loads(run_portable_worker(client_home).stdout.splitlines()[-1])["acknowledged_versions"] == 1
+        uploads = [x["request"]["params"]["arguments"] for x in fake.requests
+                   if x["request"].get("params", {}).get("name") == "session_archive_upload"]
+        assert [base64.b64decode(x["content_b64"]) for x in uploads] == [first, rewritten]
+    finally:
+        fake.close()
+
+
+@pytest.mark.parametrize("global_name", ["AGENTS.md", "AGENTS.override.md"])
+def test_installer_manages_global_memory_section_without_overwriting_user_rules(tmp_path, global_name):
+    codex = tmp_path / "codex"
+    codex.mkdir()
+    original = "# 我的全局规则\n保留这条用户约定。\n"
+    agents = codex / global_name
+    agents.write_text(original, encoding="utf-8")
+    env = os.environ.copy()
+    env.update(LOCALAPPDATA=str(tmp_path / "local"), USERPROFILE=str(tmp_path / "profile"), CODEX_HOME=str(codex))
+    args = [str(PWSH), "-NoProfile", "-File", str(INSTALLER), "-Url", "http://memory.test/mcp", "-ExpectedUser", "alice"]
+    for _ in range(2):
+        installed = subprocess.run(args, text=True, capture_output=True, env=env, timeout=20)
+        assert installed.returncode == 0, installed.stderr
+    text = agents.read_text(encoding="utf-8")
+    assert text.startswith(original)
+    assert text.count("<!-- BEGIN EVOLVMEM MEMORY -->") == 1
+    assert text.count("<!-- END EVOLVMEM MEMORY -->") == 1
+    config = json.loads((tmp_path / "local/EvolvMem/Codex/config.json").read_text())
+    assert config["codex_root"] == str(codex)
+    assert config["capture_since_utc"]
+    removed = subprocess.run([str(PWSH), "-NoProfile", "-File", str(INSTALLER), "-Uninstall"], text=True, capture_output=True, env=env, timeout=20)
+    assert removed.returncode == 0, removed.stderr
+    assert original in agents.read_text(encoding="utf-8")
+    assert "<!-- BEGIN EVOLVMEM MEMORY -->" not in agents.read_text(encoding="utf-8")

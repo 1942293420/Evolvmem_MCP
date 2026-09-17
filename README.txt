@@ -206,7 +206,7 @@ SetEnvironmentVariable(..., 'User') 不会改变已经打开的 PowerShell。执
 
 Windows 原生 Codex 桌面版
 
-接入包包含一个 MCP 配置、全局 hooks 和用户级计划任务。Linux 继续保存加密原文、SQLite 索引、会话总结、项目滚动摘要、经验及任务断点；Windows 不需要安装 Python 或向量模型。已验证 Windows 原生核心读回摘要、31 项 MCP 工具、PowerShell 5.1 加密、计划任务补传与跨端任务绑定；完整桌面验收仍未完成。实测桌面包为 26.908.9136.0，内置核心为 0.154.0-alpha.6.2；新版本须重新核验宿主事件和转写。
+接入包包含一个 MCP 配置、全局 AGENTS 规则、hooks 和无窗口后台同步程序。Linux 继续保存加密原文、SQLite 索引、会话总结、项目滚动摘要、经验及任务断点；Windows 不需要安装 Python 或向量模型。已验证桌面会话读取项目摘要与任务断点、31 项 MCP 工具、PowerShell 5.1 加密、无窗口补传与跨端任务绑定；恢复、清空、压缩等完整桌面生命周期仍待验收。实测桌面包为 26.908.9136.0，内置核心为 0.154.0-alpha.6.2；新版本须重新核验宿主事件和转写。
 
 1. 下载本仓库并解压，在仓库目录打开 Windows PowerShell。准备个人 MCP URL 与私有 token；要与 Linux 的 jiangli 共用记忆，就使用 jiangli 凭据。身份依据是 EvolvMem 凭据映射，device_id 仅区分设备，Codex 登录账号不会自动成为 EvolvMem 身份。
 2. 输入令牌并写入当前 Windows 用户环境，不把令牌写进命令历史：
@@ -227,7 +227,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -Url 'http://memory.lan:9378/mcp' -ExpectedUser 'jiangli' `
   -ProjectMapping 'C:\work\my-project=my-project' -RunSelfTest
 
-安装器将 MCP URL 的主机加入用户级 NO_PROXY，保留已有绕过条目，使原生 Codex 与 PowerShell 对内网地址采用一致的直连路径。安装器备份并合并 %USERPROFILE%\.codex\config.toml 和 hooks.json；设置了 CODEX_HOME 时使用该目录。重复安装保留设备 ID 并更新自身条目，身份不一致时停止。未映射目录只加载通用记忆，归档保持待归属。从已加载新用户环境的进程重新启动 Codex，使 MCP 读取新的凭据及 NO_PROXY；启动器仍持有旧环境时，退出登录后重新登录。桌面版可能不弹出信任提示：实测六个 hooks 配置正确但全部未受信任，因此没有执行。 使用同一 Windows 用户、同一 CODEX_HOME 打开 Codex CLI，在 /hooks 中审阅并信任这六项，再新建桌面会话核验。上述桌面包可使用内置 CLI：
+安装器将 MCP URL 的主机加入用户级 NO_PROXY，保留已有绕过条目，使原生 Codex 与 PowerShell 对内网地址采用一致的直连路径。安装器备份并合并 %USERPROFILE%\.codex\config.toml、hooks.json 与全局 AGENTS.md（已有非空 AGENTS.override.md 时合并到该文件）；设置了 CODEX_HOME 时使用该目录。重复安装保留设备 ID 并更新自身条目，身份不一致时停止。未映射目录只加载通用记忆，归档保持待归属。从已加载新用户环境的进程重新启动 Codex，使 MCP 读取新的凭据及 NO_PROXY；启动器仍持有旧环境时，退出登录后重新登录。桌面版可能不弹出信任提示：实测六个 hooks 配置正确但全部未受信任，因此没有执行。 使用同一 Windows 用户、同一 CODEX_HOME 打开 Codex CLI，在 /hooks 中审阅并信任这六项，再新建桌面会话核验。上述桌面包可使用内置 CLI：
 
 $CodexCli = Join-Path (Get-AppxPackage OpenAI.Codex).InstallLocation 'app\resources\codex.exe'
 & $CodexCli -C 'C:\work\my-project'
@@ -245,9 +245,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Client -Action status
 Get-ChildItem "$env:LOCALAPPDATA\EvolvMem\Codex\receipts\*.json" |
   Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Get-Content
 
-自检只核对连接、authenticated_user、工具清单与 MCP/hook 配置，明确返回 hook_trust_checked=false；healthy=true 不能证明 hooks 已信任或执行。最后一条命令读取最近的本地加载回执，retrieved_for_hook 表示脚本已取到并输出上下文。PowerShell 接入脚本从原始响应字节按 UTF-8 解码，避免 5.1 在 JSON 未声明 charset 时破坏中文摘要。实际注入须核对宿主转写和桌面会话读回。status.archive_sessions 查询服务端实时归档和提炼状态；顶层提取计数来自上传时的本地回执，可能滞后。离线队列还没得到完整确认时保留加密正文。
+自检核对连接、authenticated_user、工具清单、MCP/hook 配置及无窗口任务是否启用，明确返回 hook_trust_checked=false；healthy=true 不能证明 hooks 已信任或执行。最后一条命令读取最近的本地加载回执，retrieved_for_hook 表示脚本已取到并输出上下文。PowerShell 接入脚本从原始响应字节按 UTF-8 解码，避免 5.1 在 JSON 未声明 charset 时破坏中文摘要。实际注入须核对宿主转写和桌面会话读回。status.archive_sessions 查询服务端实时归档和提炼状态；顶层提取计数来自上传时的本地回执，可能滞后。离线队列还没得到完整确认时保留加密正文。status.worker 与 status.launcher 分别报告最近采集和启动结果；worker_task_enabled=false 会使自检不健康。
 
-PowerShell 5.1 接入脚本在加解密前加载 System.Security；可运行 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\windows\test-client-dpapi.ps1 -ClientPath $Client 验证中文完整行、残缺末行和两个加密版本。服务端按 LF 分隔 JSONL 记录，保留字符串内 Unicode 分隔符及原始证据行号。
+PowerShell 5.1 接入脚本在加解密前加载 System.Security；可运行 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\windows\test-client-dpapi.ps1 -ClientPath $Client 验证中文完整行、残缺末行和两个加密版本。服务端按 LF 分隔 JSONL 记录，保留字符串内 Unicode 分隔符及原始证据行号。另可运行 tests/windows/test-background-sync.ps1 -ClientPath $Client 与 tests/windows/test-sync-launcher.ps1 -SourcePath .\scripts\windows\evolvmem-sync.cs 验证独立发现、加密、跨进程离线重试、字节一致与无控制台窗口；两者只使用临时合成数据。
 
 实机操作 | 应核对的结果
 映射目录中开新会话、恢复、清空、手动与自动压缩 | 无需手动要求查历史，已存摘要或断点随 hook 加载；回执属于本次加载
@@ -257,9 +257,9 @@ PowerShell 5.1 接入脚本在加解密前加载 System.Security；可运行 pow
 两端续接同一任务 | 显式 continuity_bind 核对 Git 后绑定；焦点不被抢占，旧 revision 不覆盖新进度
 用真实工具结果反馈经验 | archive:<id>#<行号> 可验证；助手自述不能证明成功，重复事件只计一次
 
-后台每 5 分钟补扫已登记会话并上传；服务端复用现有提炼凭据，摘要生成可能产生与 Linux 相同的模型费用。归档与提炼失败分开报告：session_archive_retry 显式重试，session_archive_assign 把待归属会话分配给已登记项目。收到最新归档后至少闲置 30 分钟才尝试保守断点补录；只处理已有唯一目录绑定的单一来源，不把沉默或助手自述当成任务完成。
+安装时使用 Windows 自带 .NET 编译 evolvmem-sync.exe，计划任务每分钟及用户登录后无窗口启动采集器。它独立扫描 Codex sessions / archived_sessions，发现安装后新建或继续写入的会话，并通过同一个 MCP 上传；不依赖模型记得调用工具，也不依赖 hook 已登记。小版本优先，每版本每轮最多上传 16 块（4 MiB），大历史保留偏移跨轮继续；关闭 Codex 后仍可补传；注销或关机期间暂停，重新登录后继续。服务端复用现有提炼凭据，摘要生成可能产生与 Linux 相同的模型费用。归档与提炼失败分开报告：session_archive_retry 显式重试，session_archive_assign 把待归属会话分配给已登记项目。收到最新归档后至少闲置 30 分钟才尝试保守断点补录；只处理已有唯一目录绑定的单一来源，不把沉默或助手自述当成任务完成。
 
-旧历史批量导入不在默认安装范围；只保证采集已落盘且仍可读取的登记会话。完整实现边界见 Windows 对齐说明 (docs/windows-codex.md) 和架构图册的 Windows 专题。卸载时运行安装器加 -Uninstall，保留已有加密队列，移除自身 hooks、MCP 配置与计划任务。
+全局 AGENTS 规则提醒 Codex 保存已确认决定和任务断点，不能保证逐条调用。后台按完整 JSONL 记录归档已落盘且仍可读取的会话；未写完的行等待补齐，未落盘或采集前已删除的数据无法恢复。默认不批量导入长期未使用的旧历史，升级保留首次采集起点。全局规则在下一次启动会话时加载，见 官方 AGENTS.md 说明 (https://learn.chatgpt.com/docs/agent-configuration/agents-md)。完整实现边界见 Windows 对齐说明 (docs/windows-codex.md) 和架构图册的 Windows 专题。卸载时运行安装器加 -Uninstall，保留已有加密队列，移除自身 hooks、MCP 配置、全局文档中的 EvolvMem 段落、启动器与计划任务。
 
 Claude Code
 
