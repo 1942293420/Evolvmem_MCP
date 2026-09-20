@@ -5,6 +5,7 @@ from dataclasses import fields
 from datetime import datetime, timezone
 import fcntl
 import json
+import logging
 import os
 from pathlib import Path
 import sqlite3
@@ -747,6 +748,128 @@ def test_primary_mode_degrades_on_any_config_diagnostic(test_config, store):
     assert status.ready is False
     assert status.reason_codes == ("degraded_legacy",)
     assert any("context_score_" in message for message in status.diagnostics)
+    service.close()
+
+
+# ---- primary health transition logging ----
+
+
+def _health_warnings(caplog):
+    return [
+        record
+        for record in caplog.records
+        if record.name == "evolvmem.context_service"
+        and record.levelno >= logging.WARNING
+    ]
+
+
+def test_primary_health_failure_logs_once_and_does_not_repeat(
+    test_config, store, caplog
+):
+    add_item(store, "alpha")
+    vector = FakeVectorIndex(test_config, count=1)
+    service = make_service(
+        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector
+    )
+    with caplog.at_level(logging.WARNING, logger="evolvmem.context_service"):
+        service._refresh_health()  # steady healthy state: silent
+        assert _health_warnings(caplog) == []
+
+        vector._dirty = True
+        service._refresh_health()
+        service._refresh_health()  # identical failure: no second line
+
+    warnings = _health_warnings(caplog)
+    assert [record.getMessage() for record in warnings] == [
+        "context health degraded_legacy: context_vector_dirty"
+    ]
+    assert warnings[0].levelno == logging.WARNING
+    assert service.status().ready is False
+    service.close()
+
+
+def test_primary_health_failure_code_change_logs_new_state(
+    test_config, store, caplog
+):
+    add_item(store, "alpha")
+    vector = FakeVectorIndex(test_config, count=1, dirty=True)
+    service = make_service(
+        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector
+    )
+    with caplog.at_level(logging.WARNING, logger="evolvmem.context_service"):
+        service._refresh_health()  # startup failure, same code: silent
+        vector._dirty = False
+        vector._count = 5
+        service._refresh_health()
+        service._refresh_health()  # same new failure: silent
+
+    assert [record.getMessage() for record in _health_warnings(caplog)] == [
+        "context health degraded_legacy: context_vector_dirty",
+        "context health degraded_legacy: context_vector_count_mismatch",
+    ]
+    service.close()
+
+
+def test_primary_health_recovery_logs_once(test_config, store, caplog):
+    add_item(store, "alpha")
+    vector = FakeVectorIndex(test_config, count=1, dirty=True)
+    service = make_service(
+        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector
+    )
+    with caplog.at_level(logging.WARNING, logger="evolvmem.context_service"):
+        vector._dirty = False
+        service._refresh_health()
+        service._refresh_health()  # steady recovery: no second line
+
+    assert [record.getMessage() for record in _health_warnings(caplog)] == [
+        "context health degraded_legacy: context_vector_dirty",
+        "context health recovered: ready",
+    ]
+    assert service.status().ready is True
+    assert service.status().reason_codes == ()
+    service.close()
+
+
+def test_primary_health_transition_logs_whitelisted_codes_only(
+    test_config, store, monkeypatch, caplog
+):
+    add_item(store, "alpha")
+    vector = FakeVectorIndex(test_config, count=1)
+    service = make_service(
+        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector
+    )
+    unsafe = "embedding_model_filename unusable at /home/alice/secret-model.onnx"
+
+    def _unsafe_runtime(*_args, **_kwargs):
+        return (unsafe,)
+
+    monkeypatch.setattr(test_config, "validate_runtime", _unsafe_runtime)
+    with caplog.at_level(logging.WARNING, logger="evolvmem.context_service"):
+        service._refresh_health()
+        service._refresh_health()  # identical unknown state: silent
+
+    assert [record.getMessage() for record in _health_warnings(caplog)] == [
+        "context health degraded_legacy: unknown_diagnostic"
+    ]
+    assert "secret-model" not in caplog.text
+    assert "/home/alice" not in caplog.text
+    # the health computation itself still reports the raw config diagnostic
+    assert unsafe in service.status().diagnostics
+    service.close()
+
+
+def test_primary_health_steady_state_logs_nothing(test_config, store, caplog):
+    add_item(store, "alpha")
+    with caplog.at_level(logging.WARNING, logger="evolvmem.context_service"):
+        service = make_service(
+            test_config, store, mode=ContextMode.PRIMARY,
+            vector_index=FakeVectorIndex(test_config, count=1),
+        )
+        service._refresh_health()
+        service._refresh_health()
+        assert service.status().ready is True
+
+    assert _health_warnings(caplog) == []
     service.close()
 
 

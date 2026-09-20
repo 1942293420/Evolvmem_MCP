@@ -67,12 +67,8 @@ def _import(capture, row):
 
 
 def process_backfill(capture, *, now=None):
-    """One latest snapshot, idle for >=30 minutes. Caller holds dispatch lock."""
-    row = capture.conn.execute('''SELECT a.* FROM lan_session_uploads a
-        WHERE a.archive_id IS NOT NULL AND a.backfill_status='pending' AND a.received_at<=?
-        AND NOT EXISTS (SELECT 1 FROM lan_session_uploads b WHERE b.device_id=a.device_id
-            AND b.session_id=a.session_id AND b.archive_id IS NOT NULL AND b.total_bytes>a.total_bytes)
-        ORDER BY a.rowid LIMIT 1''', ((time.time() if now is None else now) - 1800,)).fetchone()
+    """One current-snapshot version, idle for >=30 minutes. Caller holds dispatch lock."""
+    row = capture.backfill_candidate(before=(time.time() if now is None else now) - 1800)
     if row is None:
         return 0
     try:

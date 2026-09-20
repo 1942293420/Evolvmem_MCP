@@ -31,7 +31,8 @@ ready claim.
 
 Privacy contract: workspace paths are normalized to basename/alias before
 use, and the service neither stores nor logs absolute paths, queries, or
-content — its only logging is stable-code debug lines.
+content — its only logging is stable-code lines: whitelisted
+health-transition warnings plus debug detail.
 """
 
 from dataclasses import dataclass, replace
@@ -134,6 +135,42 @@ _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 # and config validation messages, each truncated to a fixed length.
 _MAX_DIAGNOSTICS = 8
 _MAX_DIAGNOSTIC_CHARS = 160
+
+# Every code the primary health evaluator may log. Diagnostics outside this
+# whitelist — notably config.validate_runtime() messages, which may embed
+# configured filenames or values — collapse to one generic token, so health
+# transition logs can never carry user data.
+_HEALTH_LOG_CODES = frozenset(
+    {
+        "quick_check_failed",
+        "schema_invariant_failed",
+        "layer_invariant_failed",
+        "projection_evaluation_failed",
+        "legacy_mapping_incomplete",
+        "projection_lag_nonzero",
+        "context_vector_path_mismatch",
+        "context_vector_unavailable",
+        "context_vector_dirty",
+        "context_vector_count_mismatch",
+        "degraded_legacy",
+    }
+)
+_UNKNOWN_DIAGNOSTIC = "unknown_diagnostic"
+
+
+def _health_log_codes(diagnostics: tuple[str, ...]) -> tuple[str, ...]:
+    """Whitelist-filter one health evaluation into stable, loggable codes."""
+    return tuple(
+        sorted(
+            {
+                message
+                if isinstance(message, str) and message in _HEALTH_LOG_CODES
+                else _UNKNOWN_DIAGNOSTIC
+                for message in diagnostics
+            }
+        )
+    )
+
 
 # Every mapped live ContextItem has exactly one L0, L1, and L2.
 _ALL_LAYERS = (ContextLayer.L0, ContextLayer.L1, ContextLayer.L2)
@@ -258,6 +295,7 @@ class ContextService:
         self._ready = False
         self._reason_codes: tuple[str, ...] = ()
         self._diagnostics: tuple[str, ...] = ()
+        self._health_transition_codes: tuple[str, ...] | None = None
 
     # ---- lifecycle ----
 
@@ -316,6 +354,7 @@ class ContextService:
             self._ready = False
             self._reason_codes = ()
             self._diagnostics = ()
+            self._health_transition_codes = None
 
     def status(self) -> ContextServiceStatus:
         """Content-free snapshot: modes, counts, flags, reason codes, diagnostics."""
@@ -384,6 +423,24 @@ class ContextService:
         self._ready = not diagnostics
         self._reason_codes = () if self._ready else ("degraded_legacy",)
         self._diagnostics = diagnostics
+        self._log_health_transition(diagnostics)
+
+    def _log_health_transition(self, diagnostics: tuple[str, ...]) -> None:
+        """Emit one stable warning per distinct primary-health state.
+
+        The resident service configures no logging, so WARNING is the only
+        level that reaches the journal; whitelisting keeps the line
+        content-free and the stored baseline keeps repeats silent.
+        """
+        codes = _health_log_codes(diagnostics)
+        if codes == self._health_transition_codes:
+            return
+        previous = self._health_transition_codes
+        self._health_transition_codes = codes
+        if codes:
+            logger.warning("context health degraded_legacy: %s", ",".join(codes))
+        elif previous:
+            logger.warning("context health recovered: ready")
 
     def _primary_diagnostics(self) -> tuple[str, ...]:
         """Revalidate the startup primary invariants, content-free.

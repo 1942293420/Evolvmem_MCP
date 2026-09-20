@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-09-17",
+  "reviewed_at": "2026-09-21",
   "source": {
-    "sha256": "d46ccd795d443793b023678a4892c867f9315687c0fb86430a69c6c88bc7b1b4",
-    "bytes": 151074
+    "sha256": "dbc0ff7b85e4f46ecbe774d63b8d4dd29d5fd942d4a69f76d6da5cf8e2fbf7e4",
+    "bytes": 155754
   },
   "chapters": [
     {
@@ -210,12 +210,12 @@
       "chapter": "windows-codex",
       "type": "architecture",
       "specification": {
-        "sha256": "cd6f1364f5db682381e5432f3099582224978ec95f8c4af1ba70553b4706f123",
-        "bytes": 4852
+        "sha256": "fd722495e336ebc0c6e7ac2ad783656ec2655bb9848798a2c17b098ef971c095",
+        "bytes": 4869
       },
       "artifact": {
-        "sha256": "97844f105201cc211a96e14176d4b86226fc5b20039493358caac2b92458f1aa",
-        "bytes": 611833
+        "sha256": "1458b0b6eaafe745f470e2180d41ef23091ef1e10cfa69df2e88ce0cb4705950",
+        "bytes": 611901
       },
       "validation": {
         "checksPassed": 9,
@@ -228,9 +228,8 @@
     }
   ],
   "atlas": {
-    "sha256": "f774984deeaef640f3cde0bcaaf1525db95a9f05ccf52cf09ecb3f87ef6582a8",
-    "bytes": 1688213
+    "sha256": "04fdaa61a59c8ec640c0fbef2e7d43a6c647965ff3963d3c156845271ae7f4e6",
+    "bytes": 1690989
   },
-  "visual_review": "2026-09-17: passed. Local headless Chrome verified 11 chapter links and ready iframe. Windows light/dark screenshots inspected; independent discovery and windowless worker labels fit without overlap or clipping.",
-  "correction_rounds": 0
+  "visual_review": "2026-09-21: Windows chapter HTML byte-identical to the headless Chrome screenshot inspected after the node-label changes; labels fit without clipping. Final build: 11 chapters, each 9/9 checks and zero composition errors/warnings. Production extraction and native desktop lifecycle remain separate, incomplete acceptance checks."
 }

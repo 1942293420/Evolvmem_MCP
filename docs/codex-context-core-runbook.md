@@ -192,6 +192,45 @@ Restoring a backup (database/vector files or the full pre-cutover stanza
 snapshot) is a separate destructive recovery operation and requires its own
 explicit human approval; it is never part of the normal rollback path.
 
+## Dependency pin: USearch 2.26.2
+
+USearch 2.26.0 corrupts memory in the native load path of its Python
+extension. On restore, the C++ binding (`python/lib.cpp`) calls `try_reserve`
+with the valid entry count, and `index_dense.hpp` shrinks the vector pointer
+table to it while still copying the old table (`memcpy`; ASAN points at line
+1069 in 2.26.0). It triggers only at specific capacity boundaries — not every
+index with deleted slots — and often only later, at save, reset, or
+destruction. The index bytes are not corrupt: 2.26.2 loads and frees the same
+file cleanly because its `try_reserve` never drops capacity below the
+existing member capacity and pointer table.
+
+- **Version.** Run `usearch==2.26.2`: `pyproject.toml` pins that exact
+  version, while a `>=2.14` floor can still resolve to 2.26.0; verify the
+  interpreter that actually runs the service reports it.
+- **Shared cache.** Keep `SharedVectorCache` as is: under the index-file
+  lock it reloads the latest disk image, merges this process's pending
+  increments, and saves by atomic replace, so concurrent local writers do not
+  overwrite each other's increments. Disabling it does not remove the
+  load-time defect.
+- **Index repair.** This defect is recovered by the version change alone; do
+  not delete or rebuild index files for it. That is not a general ban on
+  rebuilds: a dirty marker, a count mismatch with SQLite, or a missing/empty
+  index file still means repairing the derived cache from SQLite via the
+  existing sync/rebuild flow — never delete a marker by hand. A pre-existing
+  marker is not owned by `initialize()`, survives a normal save-after-load,
+  and only that rebuild path clears it.
+
+### Acceptance points
+
+1. The running service interpreter reports `usearch.__version__ == "2.26.2"`.
+2. The service starts, loads the index files at their normal paths, serves
+   normal retrieval and MCP calls, and stays up over a normal workload window.
+3. Add / remove / save / reopen is exercised on copies in an isolated
+   directory; 2.26.0 surfaced on the save/reopen path after deletions, so one
+   clean load is not proof.
+4. Acceptance covers only the exact environment tested; record interpreter
+   path, version, and index paths with the result.
+
 ## Phase 3 operations: session archives, purge, and candidate review
 
 ### Archive key and payload files

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "title": "EvolvMem 完整架构图册",
-  "reviewed_at": "2026-09-17",
+  "reviewed_at": "2026-09-21",
   "source_root": ".",
   "chapters": [
     {
@@ -652,6 +652,39 @@
             "Web 展示进程自身不构造 EmbeddingEngine。模型文件存在、Engine 已加载、索引可查、primary ready 是四个不同条件。",
             "普通 Context 向量检索还检查路径、dirty、count；提交后的索引同步失败保留 dirty，不回滚已保存的 SQLite 正文。"
           ]
+        },
+        {
+          "title": "版本固定与共享缓存机制",
+          "wide": true,
+          "paragraphs": [
+            "USearch 固定 2.26.2。2.26.0 的缺陷在 Python 扩展的原生加载路径：恢复索引时 C++ 绑定 python/lib.cpp 调用 try_reserve，而 index_dense.hpp 按有效条目数缩小向量指针表，却仍按旧长度 memcpy，造成越界写（ASAN 定位 index_dense.hpp:1069，2.26.0）。它只在特定容量边界触发，并非含删除项的索引都必崩，且常在之后的保存、reset 或析构才暴露，而不是加载时。",
+            "索引文件本身没有损坏：同一份索引字节在 2.26.2 下加载与释放正常，其 try_reserve 取现有成员容量与指针表的最大值，容量不再收缩。该缺陷只换库版本、不为它删除或重建索引；但这不是“一律不重建”：dirty marker 存在、计数与 SQLite 不符或索引文件缺失/为空时，仍按既有同步/重建流程从 SQLite 修复派生缓存，不能手删 marker 冒充通过。",
+            "SharedVectorCache 与 HTTP embedding 路径保留原样：在索引文件锁内 reload 最新磁盘镜像、合并本进程 pending 增量、以临时文件原子替换保存，避免多个本机写进程相互覆盖增量；它不改变加载期的容量缺陷，关闭或改写不能绕过崩溃。"
+          ],
+          "table": {
+            "headers": [
+              "项",
+              "要求 / 机制"
+            ],
+            "rows": [
+              [
+                "USearch 版本",
+                "固定 usearch==2.26.2（pyproject 用固定版本而非下限）；必须由实际运行的解释器核实该版本，清单或锁文件不算证据。"
+              ],
+              [
+                "共享向量缓存",
+                "lan_shared_vector_cache / embedding_http_url / lan_mcp_client_config 下经 SharedVectorCache：文件锁内 reload、合并 pending、原子保存，防止本机多写进程互相覆盖增量；机制不变。"
+              ],
+              [
+                "索引修复",
+                "该库缺陷只换版本，不为它删除/重建索引；dirty marker、计数不符或文件缺失/为空时，按既有同步/重建流程从 SQLite 修复，不能手删 marker 冒充通过。"
+              ],
+              [
+                "验收规则",
+                "以实际运行解释器 usearch.__version__ == \"2.26.2\"、正常加载/检索/MCP 调用与稳定 uptime 为准；并在隔离目录的索引副本上核对 add / remove / save / 重新打开。结论只覆盖实测环境，记录解释器路径、版本与索引路径。"
+              ]
+            ]
+          }
         }
       ],
       "sources": [
@@ -678,6 +711,22 @@
         {
           "label": "写后单项同步",
           "path": "evolvmem/context_vector_sync.py:72"
+        },
+        {
+          "label": "USearch 版本固定",
+          "path": "pyproject.toml:14"
+        },
+        {
+          "label": "索引加载与 dirty 标记",
+          "path": "evolvmem/vector_index.py:45"
+        },
+        {
+          "label": "保存只清理本进程标记",
+          "path": "evolvmem/vector_index.py:154"
+        },
+        {
+          "label": "共享向量缓存",
+          "path": "evolvmem/lan_vector_cache.py:13"
         }
       ]
     },
@@ -4175,7 +4224,7 @@
             "id": "worker",
             "type": "backend",
             "label": "无窗口后台程序",
-            "sublabel": "每分钟 · 登录启动 · MCP 补传",
+            "sublabel": "当前锚点先确认 · 旧队列后补传",
             "pos": [
               660,
               275
@@ -4189,7 +4238,7 @@
             "id": "archive",
             "type": "database",
             "label": "服务端加密归档",
-            "sublabel": "完整校验 · 不可变版本",
+            "sublabel": "不可变历史 · 显式当前版本",
             "pos": [
               975,
               275
@@ -4203,7 +4252,7 @@
             "id": "extract",
             "type": "backend",
             "label": "复用提炼与滚动摘要",
-            "sublabel": "归档 / 提炼状态分别报告",
+            "sublabel": "只整理当前版本 · 历史不倒灌",
             "pos": [
               975,
               470
@@ -4348,12 +4397,18 @@
             "Windows 自带 .NET 编译 winexe，任务每分钟及用户登录后无控制台启动 PowerShell。扫描 sessions / archived_sessions，发现安装后新建或继续写入的会话，保留升级起点与已登记游标，不批量导入闲置旧历史。",
             "状态区分待上传、已归档、待提炼、已提炼、失败与待归属。session_archive_retry 重试提炼；session_archive_assign 按用户确认分类。闲置日志补录只保留有实际依据的未完成进展。",
             "Windows PowerShell 5.1 加解密前加载 System.Security。JSONL 仅按 LF 分记录，字符串内 Unicode 分隔符不拆行，归档原文与经验引用行号保持一致。",
-            "完整行先加密排队，经同一 session_archive_upload 分块上传；小版本优先，每版本每轮最多 16 块，保留偏移供下轮继续。未变文件跳过重复解密，DPAPI 保留 byte[]，避免大日志内存展开。校验确认才删除；status 提供失败会话和运行回执。注销和关机期间暂停，登录后继续。"
+            "完整行先加密排队，经同一 session_archive_upload 分块上传；当前锚点优先，每版本每轮最多 16 块，保留偏移供下轮继续。未变文件跳过重复解密，DPAPI 保留 byte[]，避免大日志内存展开。校验确认才删除；status 提供失败会话和运行回执。注销和关机期间暂停，登录后继续。",
+            "每次真实捕获持久化 source_order 和本地 current_sha256；重试次序不变。升级先确认当前缓存锚点，再补传旧版本；缺少可靠缓存时保留队列并报告迁移失败。",
+            "服务端以显式 head 选择当前快照，不按文件体积或到达时间猜测。合法改写及变短可推进；旧版本完整归档但不覆盖当前、不排队提炼。回退到已归档内容时，以严格更高捕获次序重新选择原不可变归档。",
+            "当前锚点须收到 archived、自己的摘要和完整长度、archive_id、current=true 及同一 source_order 才确认；历史已归档不等于当前已确认。旧客户端保留追加/分叉校验。",
+            "每条失败保留稳定 last_error；pending_failed_versions / pending_error_codes 汇总原因。未知服务端文本不写入状态，不丢弃待传。",
+            "登记与采集前核对转写首条 session_meta 的会话 ID，父会话事件不得误用子会话文件；不通过编号校验就不登记、不排队。"
           ]
         },
         {
           "title": "验收范围",
           "paragraphs": [
+            "2026-09-21 修复已部署：服务端相关回归 158 项通过；Windows PowerShell 5.1 四套测试通过，版本套件含 11 类场景。真实待传归零，误标父会话的重复副本已有正确子会话归档并保留在本机恢复目录。服务与两套向量恢复正常；DeepSeek 额度不可用，按用户要求暂不测试新对话自动提炼及其跨端读回。",
             "桌面用户已读回项目摘要和任务断点，并成功调用 memory_status / continuity_resume。客户端回归 46 项通过、4 项跳过；Windows 原生无控制台、真实 DPAPI、独立发现、残缺末行、新进程重试及字节一致测试通过。",
             "原生 MCP 加载 31 工具，同源仓库可恢复 Linux 任务并保留焦点；仓库新鲜度仍为 unknown。恢复、清空、压缩、多项目与真实断网等完整桌面生命周期仍待验收；实时提取以 archive_sessions 为准。"
           ]

@@ -142,6 +142,10 @@ class LanTools:
             source = 'codex:' + row['device_id'] + ':' + row['session_id']
             prepared = prepare_extraction(capture.server.config, row['project'], source, messages, credentials)
             with self.lock:
+                # A newer snapshot may have replaced this one while the model worked.
+                if not capture.is_current(row):
+                    capture.finish_extraction(row, superseded=True, error='version_superseded')
+                    return 1
                 result = capture.server.context_service.persist_legacy_extraction(prepared, source_archive_id=row['archive_id'])
                 summary_id = result.summary.context_id if result.summary else None
                 receipt = {'summary_context_id': summary_id, 'persisted': result.persisted,

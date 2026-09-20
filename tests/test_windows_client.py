@@ -70,6 +70,9 @@ class FakeMcp:
                     }
                 else:
                     item = outer.responses.pop(0)
+                if callable(item):
+                    # Contract-shaped receipts are derived from the request.
+                    item = item(request)
                 if isinstance(item, int):
                     self.send_response(item)
                     body = b'{"error":"synthetic"}'
@@ -759,14 +762,7 @@ def test_upload_resumes_at_acknowledged_offset_with_stable_request_ids(client_ho
         [
             {"authenticated_user": "alice", "status": "receiving", "next_offset": 262144},
             503,
-            {
-                "authenticated_user": "alice",
-                "status": "archived",
-                "next_offset": len(content),
-                "archive_id": "archive-1",
-                "source_sha256": sha,
-                "extraction_status": "pending",
-            },
+            archive_ack(content),
         ]
     )
     try:
@@ -804,6 +800,131 @@ def test_upload_resumes_at_acknowledged_offset_with_stable_request_ids(client_ho
         receipt = json.loads((client_home / "archive-status" / f"{sha}.json").read_text())
         assert receipt["archive_status"] == "archived"
         assert receipt["extraction_status"] == "pending"
+    finally:
+        fake.close()
+
+
+def error_tool_result(text: str) -> dict:
+    return {
+        "_rpc_result": {
+            "content": [{"type": "text", "text": text}],
+            "isError": True,
+        }
+    }
+
+
+def test_upload_keeps_transcript_fork_code_and_legacy_manifest_fields(client_home):
+    content = b'{"type":"user","text":"synthetic"}\n'
+    sha, data_path, manifest_path = queue_plaintext_upload(client_home, content, session="fork")
+    original = json.loads(manifest_path.read_text())
+    fake = FakeMcp([error_tool_result(json.dumps({"error": "transcript_fork"}))])
+    try:
+        write_config(client_home, fake.url)
+        result = run_portable_upload_harness(client_home)
+
+        assert result.returncode == 0, result.stderr
+        assert data_path.exists() and manifest_path.exists()
+        saved = json.loads(manifest_path.read_text())
+        assert saved["last_error"] == "transcript_fork"
+        assert saved["last_error_utc"]
+        assert saved["sha256"] == sha == original["sha256"]
+        assert saved["next_offset"] == 0
+        assert saved["total_bytes"] == len(content)
+        assert "top-secret-token" not in manifest_path.read_text()
+    finally:
+        fake.close()
+
+
+def test_upload_refuses_mismatched_identity_and_keeps_version_queued(client_home):
+    content = b'{"type":"user","text":"synthetic"}\n'
+    _, data_path, manifest_path = queue_plaintext_upload(client_home, content, session="identity")
+    fake = FakeMcp([{"authenticated_user": "mallory", "status": "receiving", "next_offset": 0}])
+    try:
+        write_config(client_home, fake.url, user="alice")
+        result = run_portable_upload_harness(client_home)
+
+        assert result.returncode == 0, result.stderr
+        assert data_path.exists() and manifest_path.exists()
+        saved = json.loads(manifest_path.read_text())
+        assert saved["last_error"] == "identity_mismatch"
+        assert saved["next_offset"] == 0
+        assert "mallory" not in manifest_path.read_text()
+    finally:
+        fake.close()
+
+
+def test_upload_status_reports_bounded_failure_without_server_text(client_home):
+    content = b'{"type":"user","text":"synthetic"}\n'
+    _, data_path, manifest_path = queue_plaintext_upload(client_home, content, session="unknown")
+    fake = FakeMcp(
+        [error_tool_result(json.dumps({"error": "private detail https://example.invalid/?token=leak"}))]
+    )
+    try:
+        write_config(client_home, fake.url)
+        result = run_portable_upload_harness(client_home)
+        assert result.returncode == 0, result.stderr
+        saved = json.loads(manifest_path.read_text())
+        assert saved["last_error"] == "server_error"
+        assert "private detail" not in manifest_path.read_text()
+
+        status = run_script(client_home, "status")
+        assert status.returncode == 0, status.stderr
+        payload = json.loads(status.stdout)
+        assert payload["pending_failed_versions"] == 1
+        assert payload["pending_error_codes"] == ["server_error"]
+        assert "leak" not in status.stdout
+    finally:
+        fake.close()
+
+
+def test_upload_progress_clears_stale_failure_code(client_home):
+    chunk = 262144
+    content = b"x" * (chunk + 16)
+    _, data_path, manifest_path = queue_plaintext_upload(client_home, content, session="progress")
+    fake = FakeMcp(
+        [
+            error_tool_result(json.dumps({"error": "transcript_fork"})),
+            {"authenticated_user": "alice", "status": "receiving", "next_offset": chunk},
+            {"authenticated_user": "alice", "status": "receiving", "next_offset": len(content)},
+        ]
+    )
+    try:
+        write_config(client_home, fake.url)
+        assert run_portable_upload_harness(client_home).returncode == 0
+        assert json.loads(manifest_path.read_text())["last_error"] == "transcript_fork"
+
+        assert run_portable_upload_harness(client_home).returncode == 0
+        saved = json.loads(manifest_path.read_text())
+        assert saved["next_offset"] == len(content)
+        assert "last_error" not in saved and "last_error_utc" not in saved
+        assert data_path.exists() and manifest_path.exists()
+    finally:
+        fake.close()
+
+
+def test_upload_deletes_queue_only_after_terminal_acknowledgement(client_home):
+    content = b'{"type":"user","text":"synthetic-complete"}\n'
+    sha, data_path, manifest_path = queue_plaintext_upload(client_home, content, session="terminal")
+    fake = FakeMcp(
+        [
+            {
+                "authenticated_user": "alice",
+                "status": "archived",
+                "next_offset": len(content),
+                "archive_id": "archive-1",
+                "source_sha256": sha,
+                "extraction_status": "pending",
+            }
+        ]
+    )
+    try:
+        write_config(client_home, fake.url)
+        result = run_portable_upload_harness(client_home)
+
+        assert result.returncode == 0, result.stderr
+        assert not data_path.exists() and not manifest_path.exists()
+        receipt = json.loads((client_home / "archive-status" / f"{sha}.json").read_text())
+        assert receipt["archive_status"] == "archived"
     finally:
         fake.close()
 
@@ -1631,9 +1752,23 @@ def setup_discovery(home, codex):
 
 
 def archive_ack(raw):
-    return {"authenticated_user": "alice", "status": "archived", "archive_id": 50,
-            "next_offset": len(raw), "source_sha256": hashlib.sha256(raw).hexdigest(),
-            "extraction_status": "pending"}
+    """Archived receipt that echoes the request's own version fields.
+
+    The service fixes a version's source order by sha and only reports
+    current=true when this upload owns the session head, so the fake derives
+    both fields from the request instead of inventing them.
+    """
+
+    def respond(request):
+        arguments = request["params"]["arguments"]
+        sha = hashlib.sha256(raw).hexdigest()
+        return {"authenticated_user": "alice", "status": "archived", "archive_id": 50,
+                "next_offset": len(raw), "source_sha256": sha,
+                "source_order": arguments.get("source_order"),
+                "current": arguments.get("current_sha256") == sha,
+                "extraction_status": "pending"}
+
+    return respond
 
 
 def test_worker_discovers_unregistered_transcript_and_retries_complete_records(client_home, tmp_path):
