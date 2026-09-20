@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-09-15",
+  "reviewed_at": "2026-09-20",
   "source": {
-    "sha256": "1cc21ee122336f1bfa134cf18a6b8c7805448ad5e8d5cd7827d5d886d110ffcf",
-    "bytes": 135583
+    "sha256": "0ec681ef086f2abbdf3094e92440eb3a03aa91ea7745f0b5d8d1b4945861ca8b",
+    "bytes": 138766
   },
   "chapters": [
     {
@@ -208,8 +208,8 @@
     }
   ],
   "atlas": {
-    "sha256": "dfe2a9aea946366e7881e56f6afa2e935a6415a13e3706ee7e32d19408ebc0da",
-    "bytes": 1535189
+    "sha256": "9efbcebf87f176836a8ca2a0a1efaef2ea840e7e5ff275cff75cbdc01250bf18",
+    "bytes": 1537001
   },
-  "visual_review": "2026-09-15: Chrome headless inspected the overview at /tmp/evolvmem-task4-r1-atlas-final/workflow.png; Kane bearer /mcp, owner loopback entry, three namespaces, owner-only Web, and shared embedding are visible without overlap or clipping."
+  "visual_review": "passed — 2026-09-20: inspected browser-rendered model chapter screenshots; updated dependency/recovery section and table fit without clipping or overlap. Scope: public source atlas: model chapter."
 }
