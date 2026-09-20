@@ -9,12 +9,14 @@ import threading
 from evolvmem.config import Config
 from evolvmem.embedding import EmbeddingEngine
 from evolvmem.lan_config import LanSettings
+from evolvmem.lan_daily_rollup import LanDailyRollup
 from evolvmem.mcp_server import MemoryMCPServer
 from evolvmem.workspace_identity import WorkspaceIdentityProvider
 
 
 _USERS = frozenset({"jiangli", "kane"})
 _SPACES = frozenset({"personal", "public"})
+_CAPTURE_POLL_SECONDS = 5.0
 
 
 class _UnavailableEmbeddingEngine:
@@ -159,15 +161,23 @@ class LanRuntime:
     def start_capture_worker(self, adapter):
         if self._capture_worker is not None:
             return
+        daily = LanDailyRollup(adapter)
+
         def run():
             try:
-                while not self._capture_stop.wait(5):
+                while not self._capture_stop.wait(_CAPTURE_POLL_SECONDS):
                     try:
                         adapter.process_backfills()
                         adapter.process_pending()
                     except Exception:
                         # Jobs remain queryable; never log transcript/provider details.
-                        continue
+                        pass
+                    try:
+                        # Uploads and extractions win; daily summaries come after.
+                        daily.check()
+                    except Exception:
+                        # Daily maintenance must never take the capture worker down.
+                        pass
             finally:
                 if self._closed:
                     self._close_resources()

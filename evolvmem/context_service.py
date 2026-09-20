@@ -39,6 +39,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import logging
+import sqlite3
 from pathlib import PurePosixPath
 
 import numpy as np
@@ -478,16 +479,26 @@ class ContextService:
     def _quick_check_diagnostics(self) -> tuple[str, ...]:
         try:
             conn = self.store._connection()
-            # SQLite 3.53 FTS5 can retain its previous checksum snapshot after
-            # another client commits. A bounded read refreshes each virtual
-            # table before quick_check; this changes neither data nor counters.
-            conn.execute("SAVEPOINT evolvmem_health_snapshot")
-            try:
-                for table in ("context_layers_fts", "context_layers_fts_trigram"):
-                    conn.execute(f"SELECT rowid FROM {table} LIMIT 1").fetchall()
-                rows = conn.execute("PRAGMA quick_check").fetchall()
-            finally:
-                conn.execute("RELEASE evolvmem_health_snapshot")
+            # SQLite 3.53 FTS5 can retain a resident checksum snapshot after
+            # another client commits. Check committed data with a fresh,
+            # read-only connection instead of depending on a partial vtab
+            # refresh. Never replace the transaction's view with an older
+            # committed snapshot when this connection has pending writes.
+            if not conn.in_transaction:
+                uri = self.config.db_path.expanduser().resolve().as_uri() + "?mode=ro"
+                probe = sqlite3.connect(uri, uri=True)
+                try:
+                    rows = probe.execute("PRAGMA quick_check").fetchall()
+                finally:
+                    probe.close()
+            else:
+                conn.execute("SAVEPOINT evolvmem_health_snapshot")
+                try:
+                    for table in ("context_layers_fts", "context_layers_fts_trigram"):
+                        conn.execute(f"SELECT rowid FROM {table} LIMIT 1").fetchall()
+                    rows = conn.execute("PRAGMA quick_check").fetchall()
+                finally:
+                    conn.execute("RELEASE evolvmem_health_snapshot")
         except Exception:
             return ("quick_check_failed",)
         if rows and all(str(row[0]).lower() == "ok" for row in rows):
@@ -620,7 +631,7 @@ class ContextService:
         return results
 
     def session_start(
-        self, request: ContextSessionStartRequest
+        self, request: ContextSessionStartRequest, *, project_only: bool = False
     ) -> ContextSessionStartResult:
         """Render a bounded L1 history block; update access only for rendered IDs.
 
@@ -648,6 +659,7 @@ class ContextService:
                 l1=self.store.get_layer(result.id, ContextLayer.L1) or "",
             )
             for result in self._session_candidates(project, request.query)
+            if not project_only or result.project == project
         )
         rendered = self.renderer.render(
             candidates, project=project, max_chars=request.max_chars

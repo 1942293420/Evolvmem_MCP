@@ -52,7 +52,7 @@ _LEGACY_TOOLS = {
     "memory_replace", "memory_remove", "memory_consolidate",
 }
 _CONTEXT_TOOLS = {
-    "context_session_start", "context_search", "context_read", "context_status",
+    "context_session_start", "context_project_recall", "context_search", "context_read", "context_status",
     "context_confirm", "context_record_outcome",
     "context_archive_project", "context_sweep",
     "experience_recall", "experience_record",
@@ -74,6 +74,7 @@ _PROBE_ARGS = {
     "memory_remove": {},
     "memory_consolidate": {},
     "context_session_start": {},
+    "context_project_recall": {"query": "demo"},
     "context_search": {},
     "context_read": {},
     "context_status": {},

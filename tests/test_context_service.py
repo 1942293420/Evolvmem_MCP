@@ -281,6 +281,41 @@ def test_health_snapshot_refresh_still_detects_corrupt_fts(service, store, test_
     assert service._quick_check_diagnostics() == ('quick_check_failed',)
 
 
+def test_health_committed_check_is_independent_of_resident_fts_cache(service, store, monkeypatch):
+    """A stale resident FTS handle must not turn a valid committed DB unhealthy."""
+    add_item(store, 'project:proj:fact:resident-cache')
+    real = store._connection()
+
+    class StaleResident:
+        in_transaction = False
+
+        def execute(self, sql, *args):
+            if sql == 'PRAGMA quick_check':
+                class Rows:
+                    def fetchall(self):
+                        return [('fts5: checksum mismatch for table "context_layers_fts"',)]
+                return Rows()
+            return real.execute(sql, *args)
+
+    monkeypatch.setattr(store, '_connection', lambda: StaleResident())
+    assert service._quick_check_diagnostics() == ()
+
+
+def test_health_inside_transaction_checks_uncommitted_damage(service, store):
+    """Fresh committed snapshots must not hide invalid writes in our transaction."""
+    add_item(store, 'project:proj:fact:transaction-integrity')
+    class RollBackProbe(Exception):
+        pass
+    with pytest.raises(RollBackProbe):
+        with store.transaction():
+            store._connection().execute(
+                "UPDATE context_layers_fts_content SET c0='corrupted uncommitted index'"
+            )
+            assert service._quick_check_diagnostics() == ('quick_check_failed',)
+            raise RollBackProbe()
+    assert service._quick_check_diagnostics() == ()
+
+
 def _search_request(**overrides):
     return ContextSearchRequest(**{"query": "zebra", "project": "proj", **overrides})
 

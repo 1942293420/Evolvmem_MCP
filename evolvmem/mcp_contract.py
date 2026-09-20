@@ -5,8 +5,9 @@ The registry is a pure function of (adapter, context mode, Context health):
 - legacy mode and adapters outside the cutover set (Codex/Kimi) expose only
   the six legacy ``memory_*`` tools; compat exposes no ``context_*`` tools.
 - Codex/Kimi shadow/primary with a ready ContextService additionally expose
-  the eight ``context_*`` tools (session start, search, exact read, status,
-  confirm, record outcome, archive project, sweep).
+  the nine ``context_*`` tools (session start, search, project mention
+  recall, exact read, status, confirm, record outcome, archive project,
+  sweep).
 - Codex/Kimi compat/shadow/primary additionally expose the five
   ``continuity_*`` tools — compat included, and no Context health
   requirement: continuity readiness (schema table + workspace identity key)
@@ -33,6 +34,7 @@ from evolvmem.context_models import (
     ContextServiceStatus,
 )
 from evolvmem.continuity_models import ContinuityAction
+from evolvmem.project_mention_recall import DEFAULT_MAX_CHARS
 
 CODEX_ADAPTER = "codex"
 KIMI_ADAPTER = "kimi"
@@ -331,6 +333,29 @@ _CONTEXT_SEARCH_SPEC = McpToolSpec(
     annotations=_READ_ONLY,
 )
 
+_CONTEXT_PROJECT_RECALL_SPEC = McpToolSpec(
+    name="context_project_recall",
+    description="Read-only recall of bounded project history for projects explicitly mentioned in the query text. Matches only this user's registered active canonical names and aliases (whole-word ASCII, case-insensitive; substring for Chinese), ignores short, generic, and ambiguous surfaces, returns at most two projects in first-mention order, and returns an empty block when nothing is mentioned. It never changes the workspace binding or the continuity focus.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Current task text; mentioned projects are resolved from this text alone",
+            },
+            "max_chars": {
+                "type": "integer",
+                "minimum": 1,
+                "default": DEFAULT_MAX_CHARS,
+                "description": "Total render budget shared by all mentioned projects",
+            },
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    annotations=_READ_ONLY,
+)
+
 _CONTEXT_READ_SPEC = McpToolSpec(
     name="context_read",
     description="Read one exact context item layer (l1 or l2, default l1) by exact context ID. Returns a structured error for missing, deleted, or unreadable IDs; never substitutes a similar item.",
@@ -478,6 +503,7 @@ _CONTEXT_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     _EXPERIENCE_RECORD_SPEC,
     _CONTEXT_SESSION_START_SPEC,
     _CONTEXT_SEARCH_SPEC,
+    _CONTEXT_PROJECT_RECALL_SPEC,
     _CONTEXT_READ_SPEC,
     _CONTEXT_STATUS_SPEC,
     _CONTEXT_CONFIRM_SPEC,

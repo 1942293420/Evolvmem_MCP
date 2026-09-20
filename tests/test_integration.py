@@ -796,7 +796,7 @@ class TestIntegration:
                 })
                 adapter_names = {t["name"] for t in response["result"]["tools"]}
                 assert adapter_names == expected | {
-                    "context_session_start", "context_search",
+                    "context_session_start", "context_project_recall", "context_search",
                     "context_read", "context_status",
                     "context_confirm", "context_record_outcome",
                     "context_archive_project", "context_sweep",

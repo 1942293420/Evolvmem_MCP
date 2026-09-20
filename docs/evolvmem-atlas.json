@@ -1059,6 +1059,12 @@
             "Retriever 内：模型、路径、dirty、编码或索引异常 → 向量候选为空，词法仍可运行。",
             "Primary 入口：更上层可能因 SQLite、mapping、projection lag 或 Context vector 健康不满足而先阻断 Core serving。不能把“检索器能退词法”写成“primary 永远可用”。"
           ]
+        },
+        {
+          "title": "显式项目提及",
+          "paragraphs": [
+            "context_project_recall 只按本用户登记名称和别名匹配，歧义不猜，最多两个项目。复用候选与L1渲染，但排除其他项目及通用置顶记录；不传workspace_path、不绑定目录、不切换continuity焦点。Windows和DSH逐轮入口共用该逻辑。"
+          ]
         }
       ],
       "sources": [
@@ -1085,6 +1091,10 @@
         {
           "label": "最终访问计数",
           "path": "evolvmem/context_service.py:542"
+        },
+        {
+          "label": "项目提及识别与预算",
+          "path": "evolvmem/project_mention_recall.py"
         }
       ]
     },
@@ -3555,7 +3565,8 @@
           "paragraphs": [
             "收集该项目所有 active session_summary、上次覆盖水位以来的新原子知识，以及当前 project_summary 的 L1。当前 rollup 为 ready 且来源集合 hash 未变时跳过生成；failed / vector_dirty 状态仍可重试。",
             "脱敏后的 L1 进入远程 chat，生成 L0/L1/L2，经输出门后将新 active 项目摘要、来源边和 rollup 指针同事务保存。旧摘要被替代；失败保留原有效摘要。",
-            "后续向量同步失败记录 vector_dirty。rollup 是实际保存的项目知识与覆盖水位，不是临时缓存，也不等于删除已被概括的全部原始内容。"
+            "后续向量同步失败记录 vector_dirty。rollup 是实际保存的项目知识与覆盖水位，不是临时缓存，也不等于删除已被概括的全部原始内容。",
+            "新增LAN后台每日检查：当地04:17后运行，启动补跑；仅owner个人库，失败一小时后重试。无增量只记录当日已检查，不调用模型重写；状态文件保存项目ID与覆盖时间。模型期间新写入使本次生成失效。当前部署尚未启用日更调度，真实内容外发授权待明确。"
           ]
         },
         {
@@ -3664,6 +3675,10 @@
         {
           "label": "维护默认间隔",
           "path": "evolvmem/config.py:144"
+        },
+        {
+          "label": "日更检查与状态",
+          "path": "evolvmem/lan_daily_rollup.py"
         }
       ]
     },
@@ -4119,7 +4134,7 @@
       "id": "windows-codex",
       "title": "Windows Codex 接入",
       "english": "WINDOWS CODEX MEMORY",
-      "subtitle": "全局规则保存决策与断点；无窗口后台采集完整记录，经一个 MCP 归档。",
+      "subtitle": "同库读写与项目提及召回；每日摘要生成与桌面事件交付分别验收。",
       "takeaway": "身份由 EvolvMem 凭据映射决定，与 Codex 登录账号分开。Windows 和 Linux 访问同一个个人库，无需复制 SQLite；源代码仍需各端自行同步。",
       "diagram": {
         "schema_version": 1,
@@ -4154,7 +4169,7 @@
             "id": "hook",
             "type": "frontend",
             "label": "已信任的 hook 拉取摘要",
-            "sublabel": "CLI /hooks 审阅 · 身份核对",
+            "sublabel": "开场注入 · 逐轮项目提及召回",
             "pos": [
               345,
               80
@@ -4252,7 +4267,7 @@
             "id": "extract",
             "type": "backend",
             "label": "复用提炼与滚动摘要",
-            "sublabel": "只整理当前版本 · 历史不倒灌",
+            "sublabel": "官方 Chat · 当前版本 · 日更检查",
             "pos": [
               975,
               470
@@ -4280,7 +4295,7 @@
             "id": "context",
             "type": "frontend",
             "label": "下一会话读取并交付",
-            "sublabel": "additionalContext · 版本回执",
+            "sublabel": "项目 L1 · 4000 字符预算",
             "pos": [
               345,
               470
@@ -4386,7 +4401,7 @@
           "paragraphs": [
             "实测桌面包 26.908.9136.0 没有弹出信任提示，但原生核心报告六个 hooks 均 untrusted；经同一用户的 CLI /hooks 审阅后执行。安装自检不验证信任或实际交付。",
             "安装器把 MCP URL 主机追加到用户 NO_PROXY 并保留已有条目；重启后的原生 Codex 与 PowerShell 均能访问同一内网服务。PowerShell 5.1 以原始响应字节解码 UTF-8，中文摘要和断点保持可读。",
-            "SessionStart 拉取有界上下文；UserPromptSubmit 检查本次加载回执与 memory_revision，缺失或变化时刷新，再补充当前问题的相关经验。恢复和压缩都是新的加载机会。",
+            "SessionStart 拉取有界上下文；UserPromptSubmit 按 memory_revision 补齐刷新，再独立调用 context_project_recall 和 experience_recall。项目块只来自显式提及的已登记项目，不被全局置顶条目替代；最多两项目、4000字符，同轮刷新预留空间，总预算8000。",
             "项目使用显式目录映射。未绑定时仅加载通用记忆；故障提示后继续，默认不阻断正常开发。回执 retrieved_for_hook 不能替代宿主实际注入证据。",
             "全局 AGENTS 托管段落提醒保存已确认决定、真实进度及任务断点，保留用户原文并兼容 override。提示词无法保证逐条写入；完整原文由独立采集器处理。"
           ]
@@ -4408,9 +4423,9 @@
         {
           "title": "验收范围",
           "paragraphs": [
-            "2026-09-21 修复已部署：服务端相关回归 158 项通过；Windows PowerShell 5.1 四套测试通过，版本套件含 11 类场景。真实待传归零，误标父会话的重复副本已有正确子会话归档并保留在本机恢复目录。服务与两套向量恢复正常；DeepSeek 额度不可用，按用户要求暂不测试新对话自动提炼及其跨端读回。",
+            "2026-09-21 上传修复已部署并推送；真实待传归零。官方模型直连可用，Windows/Linux 双向受控写入的 ID 与内容摘要一致，同查询的5条记忆一致。健康检查改用新的只读连接校验已提交库，事务内保留当前视图；真实历史提炼外发仍待授权，不能据此宣称自动闭环完成。",
             "桌面用户已读回项目摘要和任务断点，并成功调用 memory_status / continuity_resume。客户端回归 46 项通过、4 项跳过；Windows 原生无控制台、真实 DPAPI、独立发现、残缺末行、新进程重试及字节一致测试通过。",
-            "原生 MCP 加载 31 工具，同源仓库可恢复 Linux 任务并保留焦点；仓库新鲜度仍为 unknown。恢复、清空、压缩、多项目与真实断网等完整桌面生命周期仍待验收；实时提取以 archive_sessions 为准。"
+            "新增项目召回经真实 MCP 返回目标项目记录；Windows原生PowerShell5.1通过37个断言。直接调用hook与桌面宿主实际交付属于不同证据；恢复、清空、压缩、多项目与真实断网等完整桌面生命周期仍待验收。"
           ]
         }
       ],
@@ -4458,6 +4473,18 @@
         {
           "label": "原生无窗口验收",
           "path": "tests/windows/test-sync-launcher.ps1"
+        },
+        {
+          "label": "项目提及与有界渲染",
+          "path": "evolvmem/project_mention_recall.py"
+        },
+        {
+          "label": "每日服务内摘要检查",
+          "path": "evolvmem/lan_daily_rollup.py"
+        },
+        {
+          "label": "原生项目召回回归",
+          "path": "tests/windows/test-project-mention.ps1"
         }
       ]
     }

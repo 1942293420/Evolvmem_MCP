@@ -437,6 +437,87 @@ class TestRecall:
         assert "untrusted" in block
         assert captured["closed"] is True
 
+    def test_recall_appends_mentioned_project_details_when_experience_is_empty(
+            self, monkeypatch, test_config):
+        """经验为空也要输出明确提及项目；共享 service、不传 workspace_path。"""
+        import evolvmem.context_service as context_service
+        import evolvmem.embedding as embedding
+        from evolvmem.config import Config
+        from evolvmem.context_models import ContextSessionStartResult
+        from evolvmem.project_models import ProjectRegistrySnapshot
+
+        test_config.context_mode = "primary"
+        captured = {"requests": []}
+
+        class FakeEngine:
+            is_loaded = True
+
+            def __init__(self, config):
+                pass
+
+            def initialize(self):
+                pass
+
+        class FakeVectorIndex:
+            def initialize(self, *, dim):
+                pass
+
+        class FakeExperiences:
+            def recall(self, **kwargs):
+                return {"results": [], "used_chars": 0}
+
+        class FakeProjectStore:
+            def snapshot(self):
+                return ProjectRegistrySnapshot(
+                    projects=("beta",), aliases=(), bindings=(),
+                    generic_names=(), revision=1,
+                )
+
+        class FakeService:
+            def __init__(self, config, embedding_engine=None):
+                self.vector_index = FakeVectorIndex()
+
+            def initialize(self, *, mode, adapter):
+                pass
+
+            def _refresh_health(self):
+                pass
+
+            def experiences(self):
+                return FakeExperiences()
+
+            def _project_store(self):
+                return FakeProjectStore()
+
+            def session_start(self, request, *, project_only=False):
+                assert project_only is True
+                captured["requests"].append(request)
+                return ContextSessionStartResult(
+                    block="beta 部署前必须先做备份演练",
+                    selected_ids=(9,), used_chars=14, excluded_counts=(),
+                )
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            Config, "from_file",
+            classmethod(lambda cls, path=None: test_config),
+        )
+        monkeypatch.setattr(embedding, "EmbeddingEngine", FakeEngine)
+        monkeypatch.setattr(context_service, "ContextService", FakeService)
+
+        block = recall(project="alpha", query="beta 部署清单怎么排")
+
+        assert block.startswith("[BEGIN EVOLVMEM PROJECT RECALL]")
+        assert "beta 部署前必须先做备份演练" in block
+        assert len(captured["requests"]) == 1
+        request = captured["requests"][0]
+        assert request.project == "beta"
+        assert request.query == "beta 部署清单怎么排"
+        # 不传 workspace_path：无续接路由、不改绑定与 continuity 焦点
+        assert request.workspace_path == ""
+
 class TestExtract:
     def test_short_conversation_skipped(self):
         status, details = extract_from_messages(

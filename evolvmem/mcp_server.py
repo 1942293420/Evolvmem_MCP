@@ -12,6 +12,7 @@ Tools (legacy, always registered):
 Context tools (Codex/Kimi shadow/primary with a ready ContextService):
   context_session_start — bounded rendered L1 history block
   context_search        — thresholded Core retrieval, L0 metadata only
+  context_project_recall — read-only recall for explicitly mentioned projects
   context_read          — exact-ID L1/L2 read
   context_status        — content-free diagnostic snapshot
   context_confirm       — promote one candidate to active (review path)
@@ -57,6 +58,10 @@ from evolvmem.context_models import (
     ContextValidationError,
 )
 from evolvmem.context_service import ContextService
+from evolvmem.project_mention_recall import (
+    DEFAULT_MAX_CHARS as DEFAULT_PROJECT_RECALL_MAX_CHARS,
+    recall_mentioned_projects,
+)
 from evolvmem.continuity_models import (
     ContinuityAction,
     ContinuityBeginRequest,
@@ -322,6 +327,7 @@ class MemoryMCPServer:
             "memory_consolidate": self._memory_consolidate,
             "context_session_start": self._context_session_start,
             "context_search": self._context_search,
+            "context_project_recall": self._context_project_recall,
             "experience_recall": self._experience_recall,
             "experience_record": self._experience_record,
             "context_read": self._context_read,
@@ -802,6 +808,40 @@ class MemoryMCPServer:
                 for r in results
             ],
             "count": len(results),
+        }
+
+    def _context_project_recall(self, args: dict) -> dict:
+        """只读项目提及召回：query 文本 + 已登记项目，绝不改绑定/焦点。"""
+        if not isinstance(args, dict) or set(args) - {"query", "max_chars"}:
+            return self._context_error("invalid_arguments")
+        query = args.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return self._context_error("invalid_arguments")
+        max_chars = args.get("max_chars", DEFAULT_PROJECT_RECALL_MAX_CHARS)
+        if (
+            isinstance(max_chars, bool)
+            or not isinstance(max_chars, int)
+            or max_chars < 1
+        ):
+            return self._context_error("invalid_arguments")
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            result = recall_mentioned_projects(
+                self.context_service, query=query, max_chars=max_chars,
+            )
+        except (ContextValidationError, ValueError, TypeError):
+            return self._context_error("invalid_arguments")
+        except ContextServiceError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        return {
+            "block": result.block,
+            "selected_ids": list(result.selected_ids),
+            "matched_projects": list(result.matched_projects),
+            "used_chars": result.used_chars,
         }
 
     def _context_read(self, args: dict) -> dict:

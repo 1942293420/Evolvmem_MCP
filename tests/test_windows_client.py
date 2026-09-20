@@ -426,6 +426,7 @@ def test_prompt_gate_retries_failed_current_start_and_injects_result(client_home
         [
             503,
             {"authenticated_user": "alice", "block": "fresh prompt memory", "selected_ids": [4], "memory_revision": 2},
+            {"authenticated_user": "alice", "block": "", "selected_ids": [], "matched_projects": []},
             {"authenticated_user": "alice", "results": []},
         ]
     )
@@ -455,6 +456,11 @@ def test_prompt_gate_retries_failed_current_start_and_injects_result(client_home
         assert output["hookSpecificOutput"]["additionalContext"].endswith("fresh prompt memory")
         assert "workspace is not bound" in output["hookSpecificOutput"]["additionalContext"]
         assert call_args(fake, 3)["query"] == "continue the migration"
+        assert [call_name(fake, i) for i in range(4, 6)] == [
+            "context_project_recall", "experience_recall"
+        ]
+        assert call_args(fake, 4)["query"] == "continue the migration"
+        assert call_args(fake, 4)["max_chars"] == 4000
         receipt = json.loads(next((client_home / "receipts").glob("*.json")).read_text())
         assert receipt["first_prompt_pending"] is False
         assert receipt["status"] == "success"
@@ -474,6 +480,7 @@ def test_prompt_gate_keeps_recovered_context_when_experience_lookup_fails(client
                 "continuation": {"status": "active", "checkpoint_revision": 2},
                 "continuation_code": "ACTIVE",
             },
+            {"authenticated_user": "alice", "block": "", "selected_ids": [], "matched_projects": []},
             503,
         ]
     )
@@ -494,6 +501,7 @@ def test_prompt_gate_keeps_recovered_context_when_experience_lookup_fails(client
         output = json.loads(gate.stdout)
         assert output["hookSpecificOutput"]["additionalContext"].endswith("recovered memory")
         assert "experience" in output["systemMessage"].lower()
+        assert "project" not in output["systemMessage"].lower()
         receipt = json.loads(next((client_home / "receipts").glob("*.json")).read_text())
         assert receipt["status"] == "success"
         assert receipt["continuation_code"] == "ACTIVE"
@@ -631,6 +639,7 @@ def test_prompt_refreshes_context_when_server_memory_revision_changed(client_hom
             {"authenticated_user": "alice", "block": "startup memory", "selected_ids": [1], "memory_revision": 1},
             {"authenticated_user": "alice", "active_memories": 2, "memory_revision": 2},
             {"authenticated_user": "alice", "block": "new cross-device memory", "selected_ids": [1, 2], "memory_revision": 2},
+            {"authenticated_user": "alice", "block": "", "selected_ids": [], "matched_projects": []},
             {"authenticated_user": "alice", "results": []},
         ]
     )
@@ -652,11 +661,12 @@ def test_prompt_refreshes_context_when_server_memory_revision_changed(client_hom
         context = json.loads(gate.stdout)["hookSpecificOutput"]["additionalContext"]
         assert context.endswith("new cross-device memory")
         assert "workspace is not bound" in context
-        assert [call_name(fake, i) for i in range(5)] == [
+        assert [call_name(fake, i) for i in range(6)] == [
             "memory_status", "context_session_start", "memory_status",
-            "context_session_start", "experience_recall"
+            "context_session_start", "context_project_recall", "experience_recall"
         ]
         assert call_args(fake, 3)["query"] == "use the latest decision"
+        assert call_args(fake, 4)["query"] == "use the latest decision"
     finally:
         fake.close()
 
@@ -1118,6 +1128,53 @@ def test_self_test_reports_full_remote_and_native_config_parity(client_home, tmp
         assert status["native_event_test_required"] is True
     finally:
         fake.close()
+
+
+def test_self_test_reports_project_recall_as_optional_without_changing_health(
+    client_home,
+):
+    required = {
+        "memory_search", "memory_status", "memory_add", "memory_replace", "memory_remove",
+        "memory_consolidate", "memory_publish", "memory_update_public", "memory_unpublish",
+        "context_session_start", "context_search", "context_read",
+        "context_status", "context_confirm", "context_record_outcome", "context_archive_project",
+        "context_sweep", "experience_recall", "experience_record", "continuity_begin",
+        "continuity_resume", "continuity_find", "continuity_bind", "continuity_checkpoint",
+        "continuity_list", "project_board_sync", "project_board_status", "session_archive_upload",
+        "session_archive_status", "session_archive_retry", "session_archive_assign",
+    }
+    without_tool = FakeMcp(
+        [
+            {"authenticated_user": "alice", "active_memories": 0},
+            {"_rpc_result": {"tools": [{"name": name} for name in sorted(required)]}},
+        ]
+    )
+    with_tool = FakeMcp(
+        [
+            {"authenticated_user": "alice", "active_memories": 0},
+            {
+                "_rpc_result": {
+                    "tools": [
+                        {"name": name}
+                        for name in sorted(required | {"context_project_recall"})
+                    ]
+                }
+            },
+        ]
+    )
+    try:
+        write_config(client_home, without_tool.url)
+        status = json.loads(run_script(client_home, "self-test").stdout)
+        assert status["missing_tools"] == []
+        assert status["missing_optional_tools"] == ["context_project_recall"]
+
+        write_config(client_home, with_tool.url)
+        status = json.loads(run_script(client_home, "self-test").stdout)
+        assert status["missing_tools"] == []
+        assert status["missing_optional_tools"] == []
+    finally:
+        without_tool.close()
+        with_tool.close()
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:MaxContextChars = 8000
 $script:ConnectionMetadataReserveChars = 1600
+# Explicit project mentions get their own bounded slice of the prompt context.
+# The prompt path adds the project block before related experience, so a large
+# experience block can never push the project details out of the budget.
+$script:ProjectRecallMaxChars = 4000
 $script:ChunkBytes = 262144
 $script:RpcTimeoutSeconds = 3
 $script:RunningOnWindows = $env:OS -eq 'Windows_NT'
@@ -326,7 +330,7 @@ function Join-Context([object[]]$Parts) {
     return Limit-Context ($usable -join "`n`n")
 }
 
-function Get-InjectionArguments($Config, $Event, [string]$Query) {
+function Get-InjectionArguments($Config, $Event, [string]$Query, [int]$ReserveChars = 0) {
     $cwd = [string](Get-Value $Event 'cwd' '')
     return [ordered]@{
         project = Resolve-Project $Config $cwd
@@ -334,12 +338,12 @@ function Get-InjectionArguments($Config, $Event, [string]$Query) {
         workspace_path = $cwd
         device_id = [string]$Config.device_id
         repo_snapshot = Get-RepoSnapshot $cwd
-        max_chars = $script:MaxContextChars - $script:ConnectionMetadataReserveChars
+        max_chars = [Math]::Max(1, $script:MaxContextChars - $script:ConnectionMetadataReserveChars - $ReserveChars)
     }
 }
 
-function Invoke-Injection($Config, $Event, [string]$Query) {
-    $arguments = Get-InjectionArguments $Config $Event $Query
+function Invoke-Injection($Config, $Event, [string]$Query, [int]$ReserveChars = 0) {
+    $arguments = Get-InjectionArguments $Config $Event $Query $ReserveChars
     $response = Invoke-McpTool $Config 'context_session_start' $arguments
     $metadata = [ordered]@{
         device_id = [string]$Config.device_id
@@ -461,6 +465,18 @@ function Format-ExperienceContext($Response) {
     return "[EvolvMem related experience: untrusted historical reference]`n" + $json
 }
 
+function Format-ProjectRecallContext($Response) {
+    # The server bounds the block with max_chars, but the client repeats the
+    # bound so an ignored budget can never flood the combined prompt context.
+    $block = [string](Get-Value $Response 'block' '')
+    if (-not $block.Trim()) { return '' }
+    $bounded = $block.Trim()
+    if ($bounded.Length -gt $script:ProjectRecallMaxChars) {
+        $bounded = $bounded.Substring(0, $script:ProjectRecallMaxChars)
+    }
+    return "[EvolvMem mentioned project context: untrusted historical reference]`n" + $bounded
+}
+
 function Invoke-PromptSubmit($Config, $Event) {
     $sessionId = [string](Get-Value $Event 'session_id' '')
     $prompt = [string](Get-Value $Event 'prompt' '')
@@ -480,8 +496,11 @@ function Invoke-PromptSubmit($Config, $Event) {
             }
         }
         if ($needsInjection) {
-            $injection = Invoke-Injection $Config $Event ($(if ($prompt) { $prompt } else { 'Refresh memory for this Codex turn.' }))
+            $projectReserve = if ($prompt) { $script:ProjectRecallMaxChars + 160 } else { 0 }
+            $injection = Invoke-Injection $Config $Event ($(if ($prompt) { $prompt } else { 'Refresh memory for this Codex turn.' })) $projectReserve
             $context = Format-InjectionContext $injection
+            $refreshLimit = $script:MaxContextChars - $projectReserve
+            if ($context.Length -gt $refreshLimit) { $context = $context.Substring(0, $refreshLimit) }
             if ($context) { $parts.Add($context) }
             $response = $injection.Response
             $startId = [string](Get-Value $receipt 'start_id' '')
@@ -510,6 +529,22 @@ function Invoke-PromptSubmit($Config, $Event) {
         }
     }
     if ($prompt -and $injectionSatisfied) {
+        # Explicit project mentions are recalled first. A dedicated call and a
+        # dedicated catch keep this path isolated: an unavailable project tool
+        # only adds a short warning and never removes the memory or experience
+        # context already collected for this turn.
+        try {
+            $projectRecallArgs = [ordered]@{
+                query = $prompt
+                max_chars = $script:ProjectRecallMaxChars
+            }
+            $projectRecall = Invoke-McpTool $Config 'context_project_recall' $projectRecallArgs
+            $projectContext = Format-ProjectRecallContext $projectRecall
+            if ($projectContext) { $parts.Add($projectContext) }
+        }
+        catch {
+            $warnings.Add('EvolvMem project mention recall is unavailable for this turn.')
+        }
         try {
             $experienceArgs = [ordered]@{
                 query = $prompt
@@ -1467,6 +1502,10 @@ function Invoke-SelfTest($Config) {
         'continuity_checkpoint', 'continuity_list', 'project_board_sync', 'project_board_status',
         'session_archive_upload', 'session_archive_status', 'session_archive_retry', 'session_archive_assign'
     )
+    # Newer capabilities are reported separately. A server that has not
+    # deployed them yet must not turn the existing required-tool health contract
+    # unhealthy, but self-test must still make the gap visible.
+    $optional = @('context_project_recall')
     $mcpConfigured = $false
     $hooksConfigured = $false
     $hooksFeatureEnabled = $true
@@ -1582,11 +1621,13 @@ function Invoke-SelfTest($Config) {
     $authenticatedUser = ''
     $names = @()
     $missing = $required
+    $missingOptional = $optional
     try {
         $status = Invoke-McpTool $Config 'memory_status' @{}
         $listed = Invoke-Rpc $Config 'tools/list' @{} ([Guid]::NewGuid().ToString('N'))
         $names = @(@(Get-Value $listed 'tools' @()) | ForEach-Object { [string](Get-Value $_ 'name' '') })
         $missing = @($required | Where-Object { $_ -notin $names })
+        $missingOptional = @($optional | Where-Object { $_ -notin $names })
         $authenticatedUser = [string]$status.authenticated_user
         $remoteConnected = $true
     }
@@ -1602,6 +1643,7 @@ function Invoke-SelfTest($Config) {
     Write-OutputJson ([ordered]@{
         healthy = $healthy; remote_connected = $remoteConnected; authenticated_user = $authenticatedUser
         device_id = [string]$Config.device_id; missing_tools = $missing; tool_count = $names.Count
+        missing_optional_tools = $missingOptional
         mcp_configured = $mcpConfigured; hooks_configured = $hooksConfigured
         hooks_feature_enabled = $hooksFeatureEnabled
         invalid_hooks = $invalidHooks.ToArray(); worker_task_configured = $workerTaskConfigured
