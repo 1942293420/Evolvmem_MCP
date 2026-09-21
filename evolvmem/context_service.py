@@ -653,10 +653,14 @@ class ContextService:
             if isinstance(routed, ContextSessionStartResult):
                 return routed
             continuation_code, continuation = routed
+        # 当前项目 ready rollup 的确切摘要：只标记这一个条目，让 renderer 为它
+        # 预留名额与字符预算；标记不改变任何准入闸门，未通过闸门时等同未标记。
+        reserved_id = self._ready_project_summary_context_id(project)
         candidates = tuple(
             ContextRenderCandidate(
                 result=result,
                 l1=self.store.get_layer(result.id, ContextLayer.L1) or "",
+                reserved=reserved_id is not None and result.id == reserved_id,
             )
             for result in self._session_candidates(project, request.query)
             if not project_only or result.project == project
@@ -850,6 +854,30 @@ class ContextService:
                     item for item in value if isinstance(item, str)
                 )
         return content
+
+    def _ready_project_summary_context_id(self, project: str) -> int | None:
+        """The exact current_context_id of the project's ready rollup row.
+
+        Read-only and fail-open: an empty project, a missing table/row, or a
+        non-integer pointer means "no reservation" on the injection path and
+        never raises into it.
+        """
+        if not project:
+            return None
+        try:
+            row = self.store._connection().execute(
+                "SELECT current_context_id FROM context_project_rollups "
+                "WHERE project=? AND status='ready'",
+                (project,),
+            ).fetchone()
+        except Exception:
+            return None
+        if row is None or row["current_context_id"] is None:
+            return None
+        try:
+            return int(row["current_context_id"])
+        except (TypeError, ValueError):
+            return None
 
     def _ready_project_summary_l1(self, project: str) -> str:
         """The project's ready rollup L1, best-effort; '' when unavailable."""
@@ -1422,11 +1450,14 @@ class ContextService:
                 available_layers=_ALL_LAYERS,
                 changed=True,
             ),
+            # The legacy cache mirrors every non-deleted projection row
+            # (all_ids is its sync contract): the superseded predecessor stays
+            # in the memories table, so its vector must stay too. Dropping it
+            # would leave the reopened index one key short of all_ids and make
+            # every startup count check rebuild the whole index. The context
+            # cache is active-only, so it still drops the predecessor.
             _VectorAftermath(
                 legacy_upserts=((new_id, request.new_value),),
-                legacy_removals=(
-                    (old_legacy_id,) if old_legacy_id is not None else ()
-                ),
                 context_upserts=((item.id, new_l0),),
                 context_removals=(
                     (old_context_id,) if old_context_id is not None else ()
@@ -2277,13 +2308,14 @@ class ContextService:
                         backend._projection().set_status(
                             request.legacy_id, legacy_status
                         )
-            if row is not None:
+            if row is not None and reactivate:
+                # Restoring re-encodes the value; archiving keeps the vector —
+                # the row stays non-deleted and therefore stays in the legacy
+                # cache's all_ids expectation set.
                 self._apply_vector_aftermath(
                     _VectorAftermath(
                         legacy_upserts=((request.legacy_id, row["value"]),),
                     )
-                    if reactivate
-                    else _VectorAftermath(legacy_removals=(request.legacy_id,))
                 )
             return LegacyMutationResult(
                 legacy_id=request.legacy_id,
@@ -2315,16 +2347,17 @@ class ContextService:
                         )
                     l0 = self.store.get_layer(context_id, ContextLayer.L0) or ""
         if changed:
+            # Archiving keeps the legacy vector for the same reason as replace:
+            # the projection row is still non-deleted, so the legacy cache
+            # (which mirrors all_ids for the startup count check) must keep it.
+            # The active-only context cache still drops the item.
             self._apply_vector_aftermath(
                 _VectorAftermath(
                     legacy_upserts=((request.legacy_id, row_value),),
                     context_upserts=((context_id, l0),),
                 )
                 if reactivate
-                else _VectorAftermath(
-                    legacy_removals=(request.legacy_id,),
-                    context_removals=(context_id,),
-                )
+                else _VectorAftermath(context_removals=(context_id,))
             )
         return LegacyMutationResult(
             legacy_id=request.legacy_id,

@@ -5,8 +5,11 @@ LLM), a failed generation keeps the old active summary and flips the rollup
 row to ``failed``, one active ``project:{p}:knowledge:current`` identity per
 project, degradation without an LLM writes nothing, the relational source
 closure is recorded as ``context_reference`` rows, and the full output gate
-set matches the playbook generator's. All LLM calls are fake callables; no
-real backend is ever contacted.
+set matches the playbook generator's. Also pinned: an over-length response
+gets exactly one strictly budgeted compression retry (and only that reason),
+while every other failure — sensitive content included — is terminal on the
+first attempt. All LLM calls are fake callables; no real backend is ever
+contacted.
 """
 
 import json
@@ -14,6 +17,7 @@ import logging
 
 import pytest
 
+import evolvmem.project_rollup as project_rollup
 from evolvmem.context_models import (
     ContextContentType,
     ContextItemDraft,
@@ -68,6 +72,26 @@ class _SpyLlm:
 class _RaisingLlm:
     def __call__(self, prompt: str):
         raise RuntimeError("backend exploded at /home/alice/secret.gguf")
+
+
+class _SequenceLlm:
+    """Replays one response per call; the final response repeats forever.
+
+    An ``Exception`` entry is raised instead of returned, so one callable can
+    model a failing compression retry after a successful first attempt.
+    """
+
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.prompts: list[str] = []
+
+    def __call__(self, prompt: str):
+        self.prompts.append(prompt)
+        index = min(len(self.prompts) - 1, len(self.responses) - 1)
+        response = self.responses[index]
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def _ok_response(**overrides) -> str:
@@ -384,6 +408,144 @@ def test_failed_rollup_is_retried_not_skipped(test_config, store):
     assert _rollup_row(store, "eva")["status"] == "ready"
 
 
+# ---- over-length recovery: exactly one strictly budgeted compression retry ----
+
+
+def _over_long_response() -> str:
+    """The archive-572 shape: valid and sensitive-clean, but over the l2 budget."""
+    return _ok_response(l2="完整细节" * 1510)  # 6040 > context_l2_max_chars
+
+
+def test_over_long_output_recovers_with_one_compression_retry(test_config, store):
+    _make_summary(store, "eva", "a")
+    llm = _SequenceLlm(_over_long_response(), _ok_response())
+
+    report = ProjectRollupGenerator(test_config, store, llm=llm).rollup_project("eva")
+
+    assert report.status == "ready"
+    assert len(llm.prompts) == 2  # one bounded retry, never a loop
+    stored = store.get_item(report.context_id)
+    assert stored.status is ContextStatus.ACTIVE
+    assert len(stored.layers.l2) <= test_config.context_l2_max_chars
+    row = _rollup_row(store, "eva")
+    assert row["status"] == "ready" and row["current_context_id"] == report.context_id
+
+    retry_prompt = llm.prompts[1]
+    assert retry_prompt != llm.prompts[0]
+    # the retry asks for the conservative generation budgets, not the limits
+    assert "不超过 80 个字符" in retry_prompt
+    assert "不超过 400 个字符" in retry_prompt
+    assert "不超过 1800 个字符" in retry_prompt
+    assert len(retry_prompt) <= project_rollup._COMPRESSION_PROMPT_MAX_CHARS
+
+
+def test_over_long_retry_failure_keeps_old_summary_and_watermark(test_config, store):
+    _make_summary(store, "eva", "a")
+    ready = ProjectRollupGenerator(test_config, store, llm=_SpyLlm(_ok_response()))
+    first = ready.rollup_project("eva")
+    assert first.status == "ready"
+
+    _make_summary(store, "eva", "b")
+    llm = _SequenceLlm(_over_long_response(), _over_long_response())
+    report = ProjectRollupGenerator(test_config, store, llm=llm).rollup_project("eva")
+
+    assert report.status == "failed" and report.reason == "layer_too_long"
+    assert len(llm.prompts) == 2  # a still-too-long retry fails without another try
+    old = store.get_item(first.context_id)
+    assert old.status is ContextStatus.ACTIVE
+    row = _rollup_row(store, "eva")
+    assert row["status"] == "failed"
+    assert row["current_context_id"] == first.context_id
+    assert row["covered_through"] == first.covered_through
+    assert report.context_id == first.context_id
+    assert report.covered_through == first.covered_through
+    assert store.list_item_ids(
+        status=ContextStatus.ACTIVE,
+        content_type=ContextContentType.PROJECT_SUMMARY,
+        project="eva",
+    ) == [first.context_id]
+
+
+def test_sensitive_output_is_never_retried(test_config, store):
+    _make_summary(store, "eva", "a")
+    sensitive = _ok_response(
+        l1="步骤：读取配置，其中 api_key=sk-live-abcdef123456 直接用。"
+    )
+    llm = _SequenceLlm(sensitive, _ok_response())
+
+    report = ProjectRollupGenerator(test_config, store, llm=llm).rollup_project("eva")
+
+    assert report.status == "failed" and report.reason == "sensitive_content"
+    assert len(llm.prompts) == 1  # a sensitive response is never echoed back
+    assert store.list_item_ids(content_type=ContextContentType.PROJECT_SUMMARY) == []
+
+
+def test_invalid_json_output_is_never_retried(test_config, store):
+    _make_summary(store, "eva", "a")
+    llm = _SequenceLlm("这不是 JSON。", _ok_response())
+
+    report = ProjectRollupGenerator(test_config, store, llm=llm).rollup_project("eva")
+
+    assert report.status == "failed" and report.reason == "invalid_json"
+    assert len(llm.prompts) == 1
+
+
+def test_compression_retry_output_is_regated_before_storage(test_config, store):
+    _make_summary(store, "eva", "a")
+    sensitive = _ok_response(
+        l1="步骤：读取配置，其中 api_key=sk-live-abcdef123456 直接用。"
+    )
+    llm = _SequenceLlm(_over_long_response(), sensitive)
+
+    report = ProjectRollupGenerator(test_config, store, llm=llm).rollup_project("eva")
+
+    assert report.status == "failed" and report.reason == "sensitive_content"
+    assert len(llm.prompts) == 2
+    assert store.list_item_ids(content_type=ContextContentType.PROJECT_SUMMARY) == []
+
+
+def test_compression_retry_call_failure_keeps_old_summary(test_config, store):
+    _make_summary(store, "eva", "a")
+    ready = ProjectRollupGenerator(test_config, store, llm=_SpyLlm(_ok_response()))
+    first = ready.rollup_project("eva")
+    assert first.status == "ready"
+
+    _make_summary(store, "eva", "b")
+    llm = _SequenceLlm(
+        _over_long_response(), RuntimeError("backend died at /home/alice/secret.bin")
+    )
+    report = ProjectRollupGenerator(test_config, store, llm=llm).rollup_project("eva")
+
+    assert report.status == "failed" and report.reason == "llm_no_response"
+    assert len(llm.prompts) == 2  # the failed retry is not chained
+    old = store.get_item(first.context_id)
+    assert old.status is ContextStatus.ACTIVE
+    row = _rollup_row(store, "eva")
+    assert row["status"] == "failed"
+    assert row["current_context_id"] == first.context_id
+    assert row["covered_through"] == first.covered_through
+
+
+def test_compression_retry_prompt_is_redacted_and_clamped(test_config, store):
+    """Defense in depth: the retry prompt never carries an unbounded or
+    un-redacted copy of the previous response back to the model."""
+    secret = "sk-live-abcdef123456"
+    payload = _ok_response(
+        l1=f"进展：token={secret} 已完成联调。", l2="完整细节" * 40000
+    )
+    gen = ProjectRollupGenerator(test_config, store, llm=_SpyLlm(_ok_response()))
+
+    # an absurd project name must not be able to push the prompt past its cap
+    prompt = gen._build_compression_prompt("p" * 5000, payload)
+
+    assert prompt is not None
+    assert secret not in prompt
+    assert "token=[已脱敏:token]" in prompt
+    assert len(prompt) <= project_rollup._COMPRESSION_PROMPT_MAX_CHARS
+    assert "完整细节" * 4000 not in prompt  # the pathological tail is dropped
+    assert "…（超出重试输入预算" in prompt  # the omission is disclosed
+
+
 # ---- prompt hygiene ----
 
 
@@ -451,9 +613,9 @@ def test_prompt_uses_conservative_generation_targets(test_config, store):
 
     assert report.status == "ready"
     prompt = llm.prompts[0]
-    assert "l0 为一句话项目状态要点，不超过 160 字" in prompt
-    assert "l1 为当前进展、关键决定与待办，不超过 800 字" in prompt
-    assert "l2 为完整细节与来源脉络，不超过 3000 字" in prompt
+    assert "l0 为一句话状态，不超过 80 个字符" in prompt
+    assert "l1 不超过 400 个字符" in prompt
+    assert "l2 不超过 1800 个字符" in prompt
     assert "不超过 6000 字" not in prompt
 
 

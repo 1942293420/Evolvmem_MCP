@@ -79,10 +79,17 @@ _EXCLUSION_ORDER = (
 
 @dataclass(frozen=True, slots=True)
 class ContextRenderCandidate:
-    """One retrieval result plus its caller-loaded exact L1 text."""
+    """One retrieval result plus its caller-loaded exact L1 text.
+
+    ``reserved`` is the caller's marker for the exact current ready project
+    rollup summary: at most one candidate carries it, and it keeps one item
+    slot plus its rendered characters out of the pool competition. Every
+    eligibility gate still decides whether it enters a pool at all.
+    """
 
     result: ContextSearchResult
     l1: str
+    reserved: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.result, ContextSearchResult):
@@ -91,6 +98,8 @@ class ContextRenderCandidate:
             )
         if not isinstance(self.l1, str):
             raise ContextValidationError("l1 must be a string")
+        if not isinstance(self.reserved, bool):
+            raise ContextValidationError("reserved must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +165,7 @@ class _EligibleEntry:
     result: ContextSearchResult
     reason: ContextSelectionReason
     rendered: str
+    reserved: bool = False
 
 
 class ContextRenderer:
@@ -173,7 +183,13 @@ class ContextRenderer:
         project: str,
         max_chars: int | None = None,
     ) -> ContextRenderResult:
-        """Select eligible L1 payloads into a bounded, escaped history block."""
+        """Select eligible L1 payloads into a bounded, escaped history block.
+
+        A caller-reserved candidate (the exact current ready project-rollup
+        summary) keeps one item slot and its rendered characters out of the
+        pool competition; it is still only reachable through the unchanged
+        eligibility gates, and the global caps still bind.
+        """
         items = _normalize_candidates(candidates)
         if not isinstance(project, str):
             raise ContextValidationError("project must be a string")
@@ -273,7 +289,12 @@ class ContextRenderer:
             f"### context #{result.id} "
             f"({result.content_type.value}, {reason.value})\n{escaped}\n\n"
         )
-        return _EligibleEntry(result=result, reason=reason, rendered=rendered)
+        return _EligibleEntry(
+            result=result,
+            reason=reason,
+            rendered=rendered,
+            reserved=candidate.reserved,
+        )
 
     @staticmethod
     def _pool_index(result: ContextSearchResult) -> int:
@@ -296,6 +317,18 @@ class ContextRenderer:
             self._config.context_inject_related_max_chars,
         )
         max_items = self._config.context_inject_max_items
+        # 当前 ready 项目摘要的预留：先从全局条目名额与字符预算里扣下这一条，
+        # pinned/历史池无法花掉；条目本身仍只在通过全部准入闸门后进池，未标记、
+        # 不达标或单条就超预算时，行为与预留前完全一致。预留只计全局预算，
+        # 各池预算继续只约束该池的其他条目。
+        reserved = _reserved_entry(pools)
+        if reserved is not None and (
+            max_items < 1 or len(reserved.rendered) > items_budget
+        ):
+            reserved = None  # 名额或单条字符放不下：不预留，按普通竞争处理
+        reserved_cost = len(reserved.rendered) if reserved is not None else 0
+        other_budget = items_budget - reserved_cost
+        pending_reserved = 1 if reserved is not None else 0
         spent_total = 0
         leftover = 0
         for pool, pool_budget in zip(pools, pool_budgets):
@@ -303,10 +336,15 @@ class ContextRenderer:
             spent = 0
             for entry in pool:
                 cost = len(entry.rendered)
+                if entry is reserved:
+                    # 预留名额在其自然池位置产出，保持既有块内顺序。
+                    selected.append(entry)
+                    pending_reserved = 0
+                    continue
                 if (
-                    len(selected) >= max_items
+                    len(selected) + pending_reserved >= max_items
                     or spent + cost > available
-                    or spent_total + cost > items_budget
+                    or spent_total + cost > other_budget
                 ):
                     excluded[_REASON_OVER_BUDGET] = (
                         excluded.get(_REASON_OVER_BUDGET, 0) + 1
@@ -316,6 +354,17 @@ class ContextRenderer:
                 spent += cost
                 spent_total += cost
             leftover = available - spent
+
+
+def _reserved_entry(
+    pools: tuple[list[_EligibleEntry], ...],
+) -> _EligibleEntry | None:
+    """The first caller-reserved eligible entry, if any (at most one expected)."""
+    for pool in pools:
+        for entry in pool:
+            if entry.reserved:
+                return entry
+    return None
 
 
 def _selection_reason(result: ContextSearchResult) -> ContextSelectionReason:

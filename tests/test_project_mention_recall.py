@@ -18,9 +18,15 @@ import pytest
 from evolvmem.config import Config
 from evolvmem.conflict_detector import ConflictDetector
 from evolvmem.context_models import (
+    ContextContentType,
+    ContextItemDraft,
+    ContextLayers,
     ContextMode,
+    ContextScope,
     ContextServiceStatus,
     ContextSessionStartResult,
+    ContextStatus,
+    ContextTier,
 )
 from evolvmem.context_service import ContextService
 from evolvmem.legacy_models import LegacyAddRequest
@@ -507,6 +513,61 @@ def _seed(service, key, value):
     )
 
 
+def _add_project_pinned(service, project: str, index: int) -> int:
+    """One project-scoped pinned constraint; fills the recall item cap.
+
+    Direct store writes bypass the service write path, so the fake context
+    index is updated explicitly to keep primary health ready.
+    """
+    item = service.store.create_item(ContextItemDraft(
+        identity_key=f"project:{project}:constraint:pinned-{index}",
+        content_type=ContextContentType.CONSTRAINT,
+        layers=ContextLayers(
+            l0=f"{project} 约束 {index}。",
+            l1=f"{project} 约束 {index}：必须保留。",
+            l2=f"{project} 约束 {index} 的来源。",
+            generator="test-suite",
+        ),
+        project=project,
+        scope=ContextScope.PROJECT,
+        status=ContextStatus.ACTIVE,
+        tier=ContextTier.PINNED,
+        importance=9.0,
+        confidence=1.0,
+    ))
+    service.vector_index.add(item.id, [0.0] * service.config.embedding_dim)
+    return item.id
+
+
+def _add_ready_rollup_summary(service, project: str, *, l1: str) -> int:
+    """Create the project's current summary and point a ready rollup at it."""
+    item = service.store.create_item(ContextItemDraft(
+        identity_key=f"project:{project}:knowledge:current",
+        content_type=ContextContentType.PROJECT_SUMMARY,
+        layers=ContextLayers(
+            l0=f"{project} 当前状态。", l1=l1, l2=f"{project} 完整细节。",
+            generator="test-suite",
+        ),
+        project=project,
+        scope=ContextScope.PROJECT,
+        status=ContextStatus.ACTIVE,
+        importance=9.0,
+        confidence=0.9,
+    ))
+    # Direct store writes bypass the service write path, so primary health
+    # would otherwise see the item missing from the context vector index.
+    service.vector_index.add(item.id, [0.0] * service.config.embedding_dim)
+    with service.store.transaction():
+        service.store._connection().execute(
+            "INSERT INTO context_project_rollups (project, current_context_id,"
+            " source_set_hash, covered_through, generator_version, status,"
+            " revision, updated_at) VALUES (?, ?, '', '', 'test-suite', 'ready',"
+            " 1, ?)",
+            (project, item.id, "2026-09-21 00:00:00"),
+        )
+    return item.id
+
+
 def _tool_call(server, name, arguments, req_id=7):
     response = server._handle_request({
         "method": "tools/call", "id": req_id, "jsonrpc": "2.0",
@@ -552,6 +613,32 @@ class TestMcpProjectRecallTool:
         snapshot = service._project_store().snapshot()
         assert snapshot.bindings == ()
         assert snapshot.projects == ("alpha", "beta")
+
+    def test_project_recall_injects_the_current_ready_rollup_summary(
+            self, test_config):
+        server = _make_server(test_config)
+        service = server.context_service
+        _register(service, "alpha", "beta")
+        # Twelve project-scoped pinned constraints fill the 12-item cap.
+        for index in range(12):
+            _add_project_pinned(service, "alpha", index)
+        summary_id = _add_ready_rollup_summary(
+            service, "alpha", l1="alpha 当前进展：每日摘要注入待验收。")
+        other_id = _add_ready_rollup_summary(
+            service, "beta", l1="beta 当前进展：部署流程待复核。")
+
+        result, payload = _tool_call(
+            server, "context_project_recall", {"query": "alpha 的问题"},
+        )
+
+        assert result.get("isError") is not True, payload
+        assert payload["matched_projects"] == ["alpha"]
+        assert summary_id in payload["selected_ids"]
+        assert other_id not in payload["selected_ids"]
+        assert len(payload["selected_ids"]) <= test_config.context_inject_max_items
+        assert payload["used_chars"] == len(payload["block"]) <= DEFAULT_MAX_CHARS
+        assert "alpha 当前进展：每日摘要注入待验收。" in payload["block"]
+        assert "beta 当前进展：部署流程待复核。" not in payload["block"]
 
     def test_project_recall_excludes_global_pinned_policy(self, test_config):
         server = _make_server(test_config)

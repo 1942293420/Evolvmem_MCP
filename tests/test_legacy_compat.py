@@ -1320,7 +1320,11 @@ def test_add_updates_both_indexes_after_commit(test_config, store):
     service.close()
 
 
-def test_replace_swaps_predecessor_entries_for_successors(test_config, store):
+def test_replace_swaps_context_entry_and_keeps_superseded_legacy_vector(
+    test_config, store
+):
+    """The active-only context cache swaps; the all-non-deleted legacy cache keeps
+    the superseded row's vector so a reopened index still matches all_ids()."""
     _create_legacy_schema(test_config)
     test_config.embedding_dim = 3
     service, legacy_index, context_index = _make_real_vector_service(
@@ -1332,14 +1336,99 @@ def test_replace_swaps_predecessor_entries_for_successors(test_config, store):
         LegacyReplaceRequest(key="alpha", new_value="second version")
     )
 
-    assert _index_ids(legacy_index) == {result.legacy_id}
+    assert _index_ids(legacy_index) == {old_legacy_id, result.legacy_id}
     assert _index_ids(context_index) == {result.context_id}
-    assert old_legacy_id not in _index_ids(legacy_index)
     assert old_context_id not in _index_ids(context_index)
     service.close()
 
 
-def test_remove_archive_and_hard_delete_drop_both_mapped_entries(test_config, store):
+def test_add_replace_remove_leave_a_reloadable_index_matching_all_ids(
+    test_config, store
+):
+    """Every non-deleted projection row keeps a persisted legacy vector.
+
+    ``mcp_server.initialize`` accepts the reopened index only when its count
+    equals ``len(facade.all_ids())``. A replace that drops the superseded
+    row's vector leaves a permanent one-key gap, so every later startup
+    rebuilds the whole index from SQLite.
+    """
+    _create_legacy_schema(test_config)
+    test_config.embedding_dim = 3
+    service, legacy_index, _ = _make_real_vector_service(
+        test_config, store, engine=FixedVectorEngine(), mode=ContextMode.PRIMARY
+    )
+    facade = service.legacy_facade()
+
+    added = service.legacy_add(LegacyAddRequest(key="alpha", value="first version"))
+    assert set(facade.all_ids()) == {added.legacy_id}
+    assert legacy_index.ids() == [added.legacy_id]
+    assert legacy_index.check_consistency(len(facade.all_ids())) is True
+
+    replaced = service.legacy_replace(
+        LegacyReplaceRequest(key="alpha", new_value="second version")
+    )
+    # The superseded predecessor stays non-deleted, so it stays countable.
+    expected = [added.legacy_id, replaced.legacy_id]
+    assert sorted(facade.all_ids()) == expected
+    assert legacy_index.ids() == expected
+    assert legacy_index.check_consistency(len(facade.all_ids())) is True
+    assert legacy_index.is_dirty() is False
+
+    removed = service.legacy_add(LegacyAddRequest(key="beta", value="deleted later"))
+    service.legacy_remove(LegacyRemoveRequest(legacy_id=removed.legacy_id))
+    assert sorted(facade.all_ids()) == expected
+    assert legacy_index.ids() == expected
+    assert legacy_index.check_consistency(len(facade.all_ids())) is True
+    assert legacy_index.is_dirty() is False
+
+    # Save/reload: the file a later startup opens already satisfies the check.
+    legacy_index.close()
+    reopened = VectorIndex(test_config)
+    reopened.initialize(dim=3)
+    try:
+        assert reopened.ids() == expected
+        assert reopened.check_consistency(len(facade.all_ids())) is True
+    finally:
+        reopened.close()
+    service.close()
+
+
+def test_archive_keeps_the_legacy_vector_for_startup_consistency(test_config, store):
+    """An archived projection row is still non-deleted, so its legacy vector stays.
+
+    The context cache is active-only and drops the archived item; the legacy
+    cache mirrors every non-deleted row, so dropping it there would leave the
+    same one-key startup gap as a replace.
+    """
+    _create_legacy_schema(test_config)
+    test_config.embedding_dim = 3
+    service, legacy_index, context_index = _make_real_vector_service(
+        test_config, store, engine=FixedVectorEngine(), mode=ContextMode.PRIMARY
+    )
+    facade = service.legacy_facade()
+
+    archived = service.legacy_add(LegacyAddRequest(key="alpha", value="archived later"))
+    service.legacy_archive(LegacyStatusRequest(legacy_id=archived.legacy_id))
+
+    assert set(facade.all_ids()) == {archived.legacy_id}
+    assert legacy_index.ids() == [archived.legacy_id]
+    assert legacy_index.check_consistency(len(facade.all_ids())) is True
+    assert _index_ids(context_index) == set()
+
+    legacy_index.close()
+    reopened = VectorIndex(test_config)
+    reopened.initialize(dim=3)
+    try:
+        assert reopened.ids() == [archived.legacy_id]
+        assert reopened.check_consistency(len(facade.all_ids())) is True
+    finally:
+        reopened.close()
+    service.close()
+
+
+def test_archive_keeps_legacy_vector_while_remove_and_hard_delete_drop_both(
+    test_config, store
+):
     _create_legacy_schema(test_config)
     test_config.embedding_dim = 3
     service, legacy_index, context_index = _make_real_vector_service(
@@ -1348,7 +1437,9 @@ def test_remove_archive_and_hard_delete_drop_both_mapped_entries(test_config, st
 
     archived_id, archived_context_id = _seed_pair(service, key="archived")
     service.legacy_archive(LegacyStatusRequest(legacy_id=archived_id))
-    assert archived_id not in _index_ids(legacy_index)
+    # The row stays non-deleted, so the legacy cache keeps it countable; the
+    # active-only context cache still drops it.
+    assert archived_id in _index_ids(legacy_index)
     assert archived_context_id not in _index_ids(context_index)
 
     restored_id, restored_context_id = archived_id, archived_context_id

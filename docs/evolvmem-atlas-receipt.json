@@ -2,8 +2,8 @@
   "schema_version": 1,
   "reviewed_at": "2026-09-21",
   "source": {
-    "sha256": "174468d3f7516175a5acd255e8d1bd6e94929ad976f861529846abf2f0a0841e",
-    "bytes": 157207
+    "sha256": "cad61a0ff61430d720115bf825e4c3dba2f91ad0855f84d01c094cb36ac14cf1",
+    "bytes": 157967
   },
   "chapters": [
     {
@@ -228,12 +228,8 @@
     }
   ],
   "atlas": {
-    "sha256": "de82376d3d708804a5aa7a256e30cdae0a30e9d97b40169c5371eb78b5c48614",
-    "bytes": 1691817
+    "sha256": "3951c505021d9b04b19955eca0f7c6d46477447a4caec4d6397269a62fff251b",
+    "bytes": 1692421
   },
-  "visual_review": {
-    "status": "passed",
-    "scope": "Updated Windows chapter rendered in Google Chrome at 1400x900; inspected labels, arrows, clipping and contrast. Unchanged diagrams retain prior layout.",
-    "screenshot": "windows-preview.png"
-  }
+  "visual_review": "2026-09-21: Windows Codex chapter rendered in headless Chrome at 1400x900 and visually reviewed: readable labels, clear flow, no overlap. All 11 chapters passed structural validation."
 }
