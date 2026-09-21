@@ -2,8 +2,8 @@
   "schema_version": 1,
   "reviewed_at": "2026-09-21",
   "source": {
-    "sha256": "cad61a0ff61430d720115bf825e4c3dba2f91ad0855f84d01c094cb36ac14cf1",
-    "bytes": 157967
+    "sha256": "dbbe00050ee6bdeafd8423de3f8b84c96ccd0b5b89f9e778af91cb9a3f5d8096",
+    "bytes": 159511
   },
   "chapters": [
     {
@@ -210,12 +210,12 @@
       "chapter": "windows-codex",
       "type": "architecture",
       "specification": {
-        "sha256": "638ae349539b0a182be8578a6a3d84c651c2201565bc94c6e38391acd737d9da",
-        "bytes": 4876
+        "sha256": "977c378aeac704242e42f0efe2c663af08fd2a2e8d844ce92906dc65378b5d8d",
+        "bytes": 4879
       },
       "artifact": {
-        "sha256": "058a15a03d80c7263a919d44cb68e310df30b7a69256afde50b64f769b57a6b4",
-        "bytes": 611929
+        "sha256": "de0dbf939721e7e1983154153ce47663a31bdd3ad00d6f1d65e05ab3b97ac630",
+        "bytes": 611941
       },
       "validation": {
         "checksPassed": 9,
@@ -228,8 +228,8 @@
     }
   ],
   "atlas": {
-    "sha256": "3951c505021d9b04b19955eca0f7c6d46477447a4caec4d6397269a62fff251b",
-    "bytes": 1692421
+    "sha256": "e7fcff7abe80e51e00ffdba5a4c7fa846cb5fd6f4a4227b7b1fa042845e2c21f",
+    "bytes": 1693325
   },
-  "visual_review": "2026-09-21: Windows Codex chapter rendered in headless Chrome at 1400x900 and visually reviewed: readable labels, clear flow, no overlap. All 11 chapters passed structural validation."
+  "visual_review": "Windows Codex chapter rendered in Chrome at 1400x1000 and screenshot inspected on 2026-09-21; existing layout readable, new progress label and matching/alias rules included."
 }

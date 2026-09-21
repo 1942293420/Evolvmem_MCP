@@ -499,10 +499,14 @@ def test_begin_content_rejection_leaves_no_registration(
         ] == 0, table
 
 
-def test_begin_rejects_shared_namespace_conflicts(
+def test_begin_shared_namespace_conflicts_and_alias_resolution(
     ready_server, git_workspace, tmp_path
 ):
-    """canonical 与 alias 共享规范化命名空间（大小写与 resolver 一致）。"""
+    """canonical 与 alias 共享规范化命名空间（大小写与 resolver 一致）。
+
+    显式给出的已登记别名先解析到唯一 active canonical；只有 alias 撞别人
+    canonical、以及无别名的大小写变体项目名，才是硬冲突。
+    """
     _begin(ready_server, git_workspace, project="alpha", alias="")
     other = tmp_path / "other"
     other.mkdir()
@@ -519,17 +523,17 @@ def test_begin_rejects_shared_namespace_conflicts(
     assert conn.execute(
         "SELECT COUNT(*) c FROM context_project_registry"
     ).fetchone()["c"] == 1
-    # 项目名撞已有别名
+    # 项目名命中已有别名：解析到唯一 active canonical，复用而非另立项目
     _begin(ready_server, other, project="gamma", alias="审批别名")
     third = tmp_path / "third"
     third.mkdir()
-    result, payload = _call(
-        ready_server,
-        "continuity_begin",
-        _begin_args(third, project="审批别名", alias=""),
-    )
-    assert result["isError"] is True
-    assert payload["error"] == "alias_conflict"
+    resolved = _begin(ready_server, third, project="审批别名", alias="")
+    assert resolved["project"] == "gamma"
+    assert resolved["registered"] is False
+    assert resolved["alias_added"] is False
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM context_project_registry"
+    ).fetchone()["c"] == 2  # 只有 alpha/gamma，别名不新建项目
     # 大小写变体项目名：resolver 只认一个，注册即冲突
     result, payload = _call(
         ready_server,

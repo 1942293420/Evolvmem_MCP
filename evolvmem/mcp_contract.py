@@ -335,7 +335,7 @@ _CONTEXT_SEARCH_SPEC = McpToolSpec(
 
 _CONTEXT_PROJECT_RECALL_SPEC = McpToolSpec(
     name="context_project_recall",
-    description="Read-only recall of bounded project history for projects explicitly mentioned in the query text. Matches only this user's registered active canonical names and aliases (whole-word ASCII, case-insensitive; substring for Chinese), ignores short, generic, and ambiguous surfaces, returns at most two projects in first-mention order, and returns an empty block when nothing is mentioned. It never changes the workspace binding or the continuity focus.",
+    description="Read-only recall of bounded project history and recent current-workstream progress for projects explicitly mentioned in the query text. Matches only this user's registered active names and aliases (whole-word ASCII; case-insensitive mixed-script names with optional ASCII/Chinese boundary whitespace), ignores short, generic, and ambiguous surfaces, and returns at most two projects in first-mention order. Progress dates are UTC record times, not verified Git/deployment times. Returns an empty block when nothing is mentioned; never changes workspace bindings or continuity focus.",
     input_schema={
         "type": "object",
         "properties": {

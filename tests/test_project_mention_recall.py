@@ -3,6 +3,8 @@
 覆盖已授权需求：
 - 当前任务提到已登记项目 B → 只召回 B 的项目详情（不跨未提及项目）；
 - 英文 canonical 名/别名完整词边界，中文别名子串；
+- 中英混合名（AI采购 / AI 采购）大小写与中英边界空白等价，xAI采购 不命中，
+  归一化后同一表面归两个项目时拒绝猜测；
 - 过短/通用别名过滤，歧义不猜（绝不返回错误项目）；
 - 最多两个提及项目、总预算有界；
 - 不传 workspace_path（无续接路由、不改工作区绑定与 continuity 焦点）；
@@ -117,6 +119,141 @@ class TestDetectMentionedProjects:
         matches = detect_mentioned_projects(
             "beta 又 beta 了", projects=("beta",),
         )
+        assert [match.project for match in matches] == ["beta"]
+
+
+# ---------------------------------------------------------------------------
+# 中英混合项目名：真实故障（Windows 侧 "AI采购" 只召回 8/31、9/5，漏 9/18）
+# ---------------------------------------------------------------------------
+
+
+class TestMixedScriptMentions:
+    """canonical/别名内的 ASCII 与中文必须同一视之，且只在中英边界放宽空白。"""
+
+    @pytest.mark.parametrize(
+        "query",
+        (
+            "查询一下 我的AI采购项目最后一次更新是啥时候",
+            "查询一下 我的ai采购项目最后一次更新是啥时候",
+            "查询一下 我的AI 采购项目最后一次更新是啥时候",
+            "查询一下 我的Ai  采购项目: 更新了啥",
+        ),
+    )
+    def test_mixed_script_mention_is_case_and_boundary_space_insensitive(
+            self, query):
+        matches = detect_mentioned_projects(query, projects=("AI采购",))
+
+        assert [match.project for match in matches] == ["AI采购"]
+        assert matches[0].surface in query
+        assert query[matches[0].start:
+                     matches[0].start + len(matches[0].surface)] \
+            == matches[0].surface
+
+    def test_ascii_word_boundary_still_rejects_attached_prefix(self):
+        # xAI采购 只是别的词的一部分，绝不是对 AI采购 的提及
+        matches = detect_mentioned_projects(
+            "xAI采购 的更新", projects=("AI采购",),
+        )
+
+        assert matches == ()
+
+    def test_surface_is_the_actual_text_span_including_the_space(self):
+        matches = detect_mentioned_projects(
+            "先看 AI 采购 的进展", projects=("AI采购",),
+        )
+
+        assert len(matches) == 1
+        assert matches[0].start == 3
+        assert matches[0].surface == "AI 采购"
+
+    def test_boundary_space_is_optional_on_both_sides(self):
+        # 库里存的是带空格的别名，查询可能不带空格，反之亦然
+        spaced = detect_mentioned_projects(
+            "AI采购 的进展",
+            projects=("evolvmem",),
+            aliases=(("AI 采购", "evolvmem"),),
+        )
+        unspaced = detect_mentioned_projects(
+            "AI 采购 的进展",
+            projects=("AI采购",),
+        )
+
+        assert [match.project for match in spaced] == ["evolvmem"]
+        assert [match.project for match in unspaced] == ["AI采购"]
+
+    def test_plain_english_matching_is_unchanged(self):
+        matches = detect_mentioned_projects(
+            "Please check EVOLVMEM now; betamax 与 beta2 都不算",
+            projects=("evolvmem", "beta", "AI采购"),
+        )
+
+        assert [match.project for match in matches] == ["evolvmem"]
+        assert matches[0].surface == "EVOLVMEM"
+        assert matches[0].start == 13
+
+    def test_ascii_internal_space_is_not_folded_against_canonical(self):
+        # 空白折叠只发生在中英边界：键仍含英文词内空格，只匹配带空格的表面
+        spaced = detect_mentioned_projects(
+            "a i 立项", projects=("a i",),
+        )
+        attached = detect_mentioned_projects(
+            "ai 立项", projects=("a i",),
+        )
+
+        assert [match.project for match in spaced] == ["a i"]
+        assert attached == ()
+
+    def test_fullwidth_punctuation_does_not_open_a_space_gap(self):
+        # 中英边界放宽限定在中文与 ASCII 词字符之间，全角标点旁不放空白
+        matches = detect_mentioned_projects(
+            "（ AI采购 的问题", projects=("（AI采购",),
+        )
+
+        assert matches == ()
+
+    def test_chinese_alias_still_matches_as_substring(self):
+        matches = detect_mentioned_projects(
+            "我的AI采购项目最后一次更新",
+            projects=("evolvmem",),
+            aliases=(("AI采购", "evolvmem"),),
+        )
+
+        assert [match.project for match in matches] == ["evolvmem"]
+        assert matches[0].surface == "AI采购"
+        assert matches[0].start == 2
+
+    def test_same_project_spacing_variants_are_not_treated_as_ambiguous(self):
+        # 同一项目的等价别名各自归到该项目，而不是互相顶掉
+        matches = detect_mentioned_projects(
+            "AI 采购 与 AI采购", projects=("alpha",),
+            aliases=(("AI采购", "alpha"), ("AI 采购", "alpha")),
+        )
+
+        assert [match.project for match in matches] == ["alpha"]
+
+    def test_normalization_collision_across_projects_is_never_guessed(self):
+        # 归一化后同一表面同时归两个项目：必须拒绝猜测，两个都不返回
+        matches = detect_mentioned_projects(
+            "AI 采购 的最新状态", projects=("alpha", "beta"),
+            aliases=(("AI采购", "alpha"), ("AI 采购", "beta")),
+        )
+
+        assert matches == ()
+
+    def test_collision_does_not_suppress_unrelated_projects(self):
+        matches = detect_mentioned_projects(
+            "AI 采购 与 beta", projects=("alpha", "beta"),
+            aliases=(("AI采购", "alpha"), ("AI采购", "alpha")),
+        )
+
+        assert [match.project for match in matches] == ["alpha", "beta"]
+
+    def test_colliding_surface_does_not_hide_a_second_mention(self):
+        matches = detect_mentioned_projects(
+            "AI 采购 与 beta", projects=("alpha", "beta"),
+            aliases=(("AI采购", "alpha"), ("AI 采购", "beta")),
+        )
+
         assert [match.project for match in matches] == ["beta"]
 
 

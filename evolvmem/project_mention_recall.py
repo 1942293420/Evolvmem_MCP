@@ -3,15 +3,18 @@
 已授权边界（用户 2026-09-21 明确授权）：
 
 - 只匹配本用户命名空间内已登记 active project 的 canonical 名与别名；
-  英文按完整词边界（大小写不敏感），中文按子串；
+  英文按完整词边界（大小写不敏感），中文按子串；中英混合名（AI采购 /
+  AI 采购）在中英边界上大小写与空白等价，ASCII 侧仍守完整词边界
+  （xAI采购 不命中）；
 - 过短表面（<2 字符）与 registry 通用名（generic_names）不参与匹配；
-- 同一表面同时指向多个项目时不猜，直接忽略；最多返回两个提及项目，
-  按首次提及顺序；
+- 同一表面（含上述空白等价归一化后同一表面）同时指向多个项目时不猜，
+  直接忽略；最多返回两个提及项目，按首次提及顺序；
 - 每个项目一次只读 ``ContextService.session_start``，**不传 workspace_path**：
   不触发续接路由，也不改工作区绑定或 continuity 焦点；
 - 所有提及项目共享一个 ``max_chars`` 预算，信封（BEGIN/NOTE/END/项目标题）
   也计入预算，预算不足时返回空 block 而不是超发；
-- 仅返回有界 L1 历史，不更改记忆内容或焦点，不跨用户；沿用读取计数。
+- 返回有界 L1 历史与该项目当前任务指针的最近进展，标注记录时间；
+  不更改记忆内容或焦点，不跨用户；知识池沿用读取计数。
 
 普通 ``context_search`` 过滤与经验 transferable 规则完全不受本模块影响。
 """
@@ -23,6 +26,7 @@ from dataclasses import dataclass
 
 from evolvmem.context_models import ContextSessionStartRequest
 from evolvmem.project_models import ProjectRegistrySnapshot
+from evolvmem.project_progress_recall import read_recent_project_progress
 
 DEFAULT_MAX_CHARS = 4000
 MAX_MENTIONED_PROJECTS = 2
@@ -93,17 +97,18 @@ def detect_mentioned_projects(
         return ()
 
     generic = {
-        name.strip().casefold()
+        _normalize_surface(name.strip())
         for name in generic_names
         if isinstance(name, str) and name.strip()
     }
 
-    # folded surface -> canonical owners; >1 owner means ambiguous.
+    # normalized surface -> canonical owners; >1 owner means ambiguous.
     owners: dict[str, set[str]] = {}
     for canonical in active.values():
-        if canonical.casefold() in generic:
+        folded = _normalize_surface(canonical)
+        if folded in generic:
             continue
-        owners.setdefault(canonical.casefold(), set()).add(canonical)
+        owners.setdefault(folded, set()).add(canonical)
     for entry in aliases:
         if not isinstance(entry, (tuple, list)) or len(entry) != 2:
             continue
@@ -115,7 +120,7 @@ def detect_mentioned_projects(
             # 别名指向未登记项目：忽略，绝不凭别名召回
             continue
         surface = alias.strip()
-        folded = surface.casefold()
+        folded = _normalize_surface(surface)
         if (
             len(surface) < MIN_SURFACE_CHARS
             or len(surface) > MAX_SURFACE_CHARS
@@ -126,6 +131,7 @@ def detect_mentioned_projects(
 
     matches: list[ProjectMention] = []
     for folded, candidates in owners.items():
+        # >1 owner：经空白归一化后同一表面归两个项目，拒绝猜测
         if len(candidates) != 1:
             continue
         matches.extend(_find_mentions(text, folded, next(iter(candidates))))
@@ -134,32 +140,111 @@ def detect_mentioned_projects(
     return _select_mentions(matches)
 
 
+def _is_ascii_word(char: str) -> bool:
+    return bool(_ASCII_WORD_CHAR.match(char))
+
+
+def _is_cjk_word(char: str) -> bool:
+    """非 ASCII 的“词字符”（汉字/假名/谚文等）；标点与空白都不算。"""
+    return not char.isascii() and char.isalnum()
+
+
+def _char_kind(char: str) -> str:
+    if char.isspace():
+        return "space"
+    if _is_ascii_word(char):
+        return "ascii"
+    if _is_cjk_word(char):
+        return "cjk"
+    return "other"
+
+
+def _surface_runs(surface: str) -> list[tuple[str, str]]:
+    """折叠后切 run：``(类型, 文本)``，空白自成 run，其余按同类聚合。
+
+    首尾空白先剥掉（调用方也已 strip）；内部空白保留为独立 run，
+    由 :func:`_normalize_surface` 决定是否折叠。
+    """
+    return _runs_for(surface.strip().casefold())
+
+
+def _runs_for(folded: str) -> list[tuple[str, str]]:
+    runs: list[list[str]] = []
+    for char in folded:
+        kind = _char_kind(char)
+        part = char
+        if runs and runs[-1][0] == kind:
+            runs[-1][1] += part
+        else:
+            runs.append([kind, part])
+    return [(kind, run) for kind, run in runs]
+
+
+def _is_script(kind: str) -> bool:
+    return kind in ("ascii", "cjk")
+
+
+def _space_is_optional(runs: list[tuple[str, str]], index: int) -> bool:
+    """只有中英交界处的空白才算排版差异；同类空白与标点旁都是字面内容。"""
+    left = runs[index - 1][0]
+    right = runs[index + 1][0] if index + 1 < len(runs) else ""
+    return _is_script(left) and _is_script(right) and left != right
+
+
+def _normalize_surface(surface: str) -> str:
+    """大小写折叠 + 中英交界空白折叠，得到规范表面。
+
+    规范表面既是歧义判定用的匹配键，也是生成匹配正则的输入：
+    ``AI 采购`` 与 ``AI采购`` 都归一到 ``ai采购``（交界空白视为排版差异）；
+    英文词内空格（``a i``）与中文词内空格（``记忆 插件``）保留字面空白，
+    与 ``ai`` / ``记忆插件`` 区分为两个不同表面；标点旁空白也不折叠。
+    """
+    runs = _surface_runs(surface)
+    parts: list[str] = []
+    for index, (kind, run) in enumerate(runs):
+        if kind == "space" and _space_is_optional(runs, index):
+            continue
+        parts.append(run)
+    return "".join(parts)
+
+
+def _mention_pattern(normalized: str) -> re.Pattern[str]:
+    """规范表面 → 正则；中英交界空白可选，ASCII 侧保留整词边界。
+
+    归一化键自身不含交界空白（``ai采购``），所以先按同类 run 还原，
+    再在 ASCII↔中文的每个 run 交界处插入可选空白：``AI采购`` 与
+    ``AI 采购`` 都能命中，``a i`` 这种词内空格不会被一并吃掉。
+    """
+    if not normalized:
+        # 调用方已按 MIN_SURFACE_CHARS 过滤；此处只保证空输入不会越界
+        return re.compile(r"(?!x)x")
+
+
+    runs = _runs_for(normalized)
+    body: list[str] = []
+    previous_kind = ""
+    for kind, run in runs:
+        if body and _is_script(kind) and _is_script(previous_kind):
+            if kind != previous_kind:
+                body.append(r"\s*")
+        body.append(re.escape(run))
+        previous_kind = kind
+    body = "".join(body)
+    left = r"(?<![0-9A-Za-z_])" if _is_ascii_word(normalized[0]) else ""
+    right = r"(?![0-9A-Za-z_])" if _is_ascii_word(normalized[-1]) else ""
+    return re.compile(left + body + right, re.IGNORECASE)
+
+
 def _find_mentions(
     text: str, folded: str, project: str
 ) -> list[ProjectMention]:
-    """查找 ``folded`` 在 ``text`` 中的全部出现（英文整词，中文子串）。"""
-    if folded.isascii():
-        pattern = _ascii_word_pattern(folded)
-        return [
-            ProjectMention(project=project, surface=match.group(0),
-                           start=match.start())
-            for match in pattern.finditer(text)
-        ]
-    found: list[ProjectMention] = []
-    start = text.find(folded)
-    while start != -1:
-        found.append(
-            ProjectMention(project=project, surface=folded, start=start)
+    """查找 ``folded``（规范表面）在 ``text`` 中的全部出现。"""
+    return [
+        ProjectMention(
+            project=project, surface=match.group(0), start=match.start(),
         )
-        start = text.find(folded, start + len(folded))
-    return found
-
-
-def _ascii_word_pattern(folded: str) -> re.Pattern[str]:
-    """整词匹配：边界外侧不能再是 ASCII 词字符（beta 不匹配 betamax/beta2）。"""
-    left = r"(?<![0-9A-Za-z_])" if _ASCII_WORD_CHAR.match(folded[0]) else ""
-    right = r"(?![0-9A-Za-z_])" if _ASCII_WORD_CHAR.match(folded[-1]) else ""
-    return re.compile(left + re.escape(folded) + right, re.IGNORECASE)
+        for match in _mention_pattern(folded).finditer(text)
+    ]
 
 
 def _select_mentions(
@@ -230,19 +315,28 @@ def recall_mentioned_projects(
     body: list[str] = []
     selected_ids: list[int] = []
     for match, budget in zip(matches, budgets):
+        # Current workstream checkpoints are deliberately excluded from the
+        # knowledge pool. Read their dated progress separately, without
+        # changing confidence gates, focus, or the overall project budget.
+        progress = read_recent_project_progress(
+            service, match.project, max_chars=max(1, min(2000, budget * 3 // 5)),
+        )
+        knowledge_budget = budget - len(progress.text) - (1 if progress.text else 0)
         result = service.session_start(
             ContextSessionStartRequest(
                 project=match.project,
                 query=query,
-                max_chars=budget,
+                max_chars=max(1, knowledge_budget),
                 # workspace_path 保持缺省 "": 无续接路由、无绑定/焦点变化
             ),
             project_only=True,
         )
         content = str(getattr(result, "block", "") or "").strip()
-        if content:
+        parts = [part for part in (progress.text, content) if part]
+        if parts:
             body.append(_project_header(match.project))
-            body.append(content)
+            body.append("\n".join(parts))
+            selected_ids.extend(progress.selected_ids)
             selected_ids.extend(getattr(result, "selected_ids", ()) or ())
     if not body:
         return ProjectRecallResult(matched_projects=matched_projects)

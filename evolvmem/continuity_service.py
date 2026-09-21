@@ -23,6 +23,7 @@ in a fresh transaction after the rollback so the audit survives.
 """
 
 from collections.abc import Mapping
+from dataclasses import replace
 import json
 import logging
 import re
@@ -395,7 +396,11 @@ class ContinuityService:
         focused workstream, or read back the existing one.
 
         The explicit caller declaration is the only project signal: nothing
-        is inferred from a generic home/cwd. Content policy is validated
+        is inferred from a generic home/cwd. An explicitly declared name that
+        is a registered alias resolves to its unique active canonical before
+        registration, so a merged alias reuses that project instead of
+        registering a second one; ambiguous, dangling or archived alias
+        targets stay hard errors. Content policy is validated
         before any write, and registration, alias, binding and workstream
         creation share one atomic transaction — a rejected begin leaves no
         half-registered state. Task identity is the (normalized) objective,
@@ -422,6 +427,9 @@ class ContinuityService:
         fingerprint = identity.fingerprint
         # 登记/别名/绑定/建任务同一原子边界（内层 checkpoint 事务并入外层）
         with self._store.transaction():
+            resolved = self._resolve_declared_project(request.project)
+            if resolved != request.project:
+                request = replace(request, project=resolved)
             project_store = ProjectStore(
                 self._store._connection(),
                 self._store._require_transaction,
@@ -553,6 +561,49 @@ class ContinuityService:
             alias_added=alias_added,
             bound=True,
         )
+
+    def _resolve_declared_project(self, project: str) -> str:
+        """Resolve one explicitly declared registered alias to its unique
+        active canonical; otherwise return the declaration unchanged.
+
+        Only the explicit declaration is consulted — never display_name and
+        never a fuzzy/natural-language match. A same-named active canonical
+        that disagrees with the alias target, several case-variant alias
+        targets, or a dangling/archived target is a hard failure, never a
+        guess; leaving the name untouched keeps the original registration
+        path (including its conflicts) exactly as it was.
+        """
+        conn = self._store._connection()
+        aliases = conn.execute(
+            "SELECT alias, project FROM context_project_aliases "
+            "WHERE lower(alias)=lower(?)",
+            (project,),
+        ).fetchall()
+        if not aliases:
+            return project
+        targets = {row["project"] for row in aliases}
+        if len(targets) != 1:
+            raise ContinuityError("alias_conflict")
+        target = targets.pop()
+        active_canonicals = {
+            row["project"]
+            for row in conn.execute(
+                "SELECT project FROM context_project_registry "
+                "WHERE lower(project)=lower(?) AND status='active'",
+                (project,),
+            )
+        }
+        if active_canonicals - {target}:
+            raise ContinuityError("alias_conflict")
+        row = conn.execute(
+            "SELECT status FROM context_project_registry WHERE project=?",
+            (target,),
+        ).fetchone()
+        if row is None:
+            raise ContinuityError("alias_conflict")
+        if row["status"] != "active":
+            raise ContinuityError("project_archived")
+        return target
 
     def _ensure_project(self, project_store: ProjectStore, project: str) -> bool:
         """Register the declared project if missing.
