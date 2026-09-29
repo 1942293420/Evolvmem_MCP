@@ -231,5 +231,5 @@
     "sha256": "e7fcff7abe80e51e00ffdba5a4c7fa846cb5fd6f4a4227b7b1fa042845e2c21f",
     "bytes": 1693325
   },
-  "visual_review": "Windows Codex chapter rendered in Chrome at 1400x1000 and screenshot inspected on 2026-09-21; existing layout readable, new progress label and matching/alias rules included."
+  "visual_review": "Pending browser inspection; diagram validation does not substitute for visual review."
 }
