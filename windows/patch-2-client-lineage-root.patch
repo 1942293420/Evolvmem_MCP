@@ -1,0 +1,73 @@
+--- a/scripts/windows/evolvmem-codex.ps1
++++ b/scripts/windows/evolvmem-codex.ps1
+@@ -171,7 +171,7 @@
+     if (-not $actual -or $actual -cne [string]$Config.expected_user) {
+         throw 'EvolvMem authenticated user does not match this installation'
+     }
+-    if (Get-Value $value 'error') { throw 'remote MCP tool failed' }
++    if (Get-Value $value 'error') { throw ('remote MCP tool failed: ' + [string](Get-Value $value 'error')) }
+     return $value
+ }
+ 
+@@ -567,9 +567,10 @@
+         return $false
+     }
+     $prior = [byte[]]@()
++    $lineageBreak = $false
+     if ($sourceBytes -gt 0 -and [IO.File]::Exists($cachePath)) {
+         $prior = Unprotect-Bytes ([IO.File]::ReadAllBytes($cachePath))
+-        if ($prior.Length -ne $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@() }
++        if ($prior.Length -ne $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@(); $lineageBreak = $true }
+     }
+     elseif ($sourceBytes -gt 0) { $sourceBytes = 0 }
+     if ($file.Length -lt $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@() }
+@@ -578,6 +579,7 @@
+         # version. Older unacknowledged queue entries remain untouched.
+         $sourceBytes = 0
+         $prior = [byte[]]@()
++        $lineageBreak = $true
+     }
+     $tail = Read-CompleteTail $transcriptPath $sourceBytes
+     if ($tail.Bytes.Length -eq 0) { return $false }
+@@ -594,6 +596,7 @@
+         Write-JsonAtomic $manifestPath ([ordered]@{
+             version = 1; session_id = $sessionId; project = Resolve-Project $Config ([string](Get-Value $Event 'cwd' ''))
+             sha256 = $sha; total_bytes = $combined.Length; next_offset = 0; extract = $true
++            lineage_break = [bool]$lineageBreak
+             created_utc = [DateTime]::UtcNow.ToString('o')
+         })
+     }
+@@ -658,7 +661,18 @@
+                     content_b64 = [Convert]::ToBase64String($chunk); extract = [bool]$manifest.extract
+                     request_id = $requestId
+                 }
+-                $response = Invoke-McpTool $Config 'session_archive_upload' $arguments $requestId
++                if ([bool](Get-Value $manifest 'lineage_break' $false)) { $arguments['parent_sha256'] = '' }
++                try {
++                    $response = Invoke-McpTool $Config 'session_archive_upload' $arguments $requestId
++                }
++                catch {
++                    # A version captured after a rewritten rollout is refused until it is
++                    # declared as a new immutable lineage root. Retry the same chunk only.
++                    if ($_.Exception.Message -notlike '*transcript_fork*') { throw }
++                    $arguments['parent_sha256'] = ''
++                    $response = Invoke-McpTool $Config 'session_archive_upload' $arguments $requestId
++                    $manifest.lineage_break = $true
++                }
+                 $sentChunks += 1
+                 $remoteStatus = [string](Get-Value $response 'status' '')
+                 if ($remoteStatus -eq 'archived' -or $remoteStatus -eq 'stale') {
+@@ -699,6 +713,13 @@
+         }
+         catch {
+             # Unacknowledged data and its stable request position remain queued.
++            # Keep the remote error code visible instead of only reporting retry_pending.
++            try {
++                $manifest.last_error = [string]$_.Exception.Message
++                $manifest.last_error_utc = [DateTime]::UtcNow.ToString('o')
++                Invoke-WithClientLock { Write-JsonAtomic $manifestPath $manifest } 5000 $sessionScope
++            }
++            catch { }
+             continue
+         }
+     }

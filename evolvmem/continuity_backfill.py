@@ -329,7 +329,7 @@ def _is_checkpoint_call(payload: dict) -> bool:
     return False
 
 
-def _parse_events(path: Path, seed: _ParsedSession, events: list) -> None:
+def _parse_events(path: Path, seed: _ParsedSession, events: list, *, same_workspace=_same_workspace) -> None:
     """把增量事件并入会话状态（跨扫描累积，偏移持久化在状态文件）。"""
     for lineno, event in events:
         seed.last_lineno = max(seed.last_lineno, lineno)
@@ -349,7 +349,7 @@ def _parse_events(path: Path, seed: _ParsedSession, events: list) -> None:
         if event.get("type") == "turn_context" and isinstance(payload, dict):
             cwd = payload.get("cwd")
             if isinstance(cwd, str) and cwd:
-                if seed.cwd and not _same_workspace(seed.cwd, cwd):
+                if seed.cwd and not same_workspace(seed.cwd, cwd):
                     # 中途切换到别的工作区：混合来源，只能候选
                     seed.excluded = "mixed_workspace"
                 elif not seed.cwd:

@@ -18,12 +18,21 @@ class EmbeddingEngine:
     def __init__(self, config: Config):
         self.config = config
         self._model = None
+        self._http = None
         self._dim: int | None = None
 
     # ---- lifecycle ----
 
     def initialize(self) -> None:
         """Load the GGUF embedding model."""
+        if self.config.embedding_http_url:
+            from evolvmem.embedding_client import HttpEmbeddingProvider
+            self.close()
+            provider = HttpEmbeddingProvider(self.config)
+            provider.initialize()
+            self._http = provider
+            self._dim = provider.dim
+            return
         diagnostics = self.config.validate_runtime(require_model=True)
         if diagnostics:
             raise RuntimeConfigurationError("\n".join(diagnostics))
@@ -56,6 +65,9 @@ class EmbeddingEngine:
             raise
 
     def close(self) -> None:
+        if self._http is not None:
+            self._http.close()
+            self._http = None
         model = self._model
         self._model = None
         self._dim = None
@@ -71,7 +83,7 @@ class EmbeddingEngine:
 
     @property
     def is_loaded(self) -> bool:
-        return self._model is not None
+        return self._model is not None or (self._http is not None and self._http.is_loaded)
 
     @property
     def dim(self) -> int:
@@ -84,6 +96,8 @@ class EmbeddingEngine:
     def encode(self, text: str) -> list[float]:
         """Encode a single text to an embedding vector."""
         self._ensure_loaded()
+        if self._http is not None:
+            return self._http.encode(text, "raw")
         return self._normalize_embedding(self._model.embed(text))
 
     @staticmethod
@@ -98,10 +112,14 @@ class EmbeddingEngine:
 
     def encode_query(self, text: str) -> list[float]:
         """Encode a search query, applying the configured query task prefix."""
+        if self._http is not None:
+            return self._http.encode(text, "query")
         return self.encode(self.config.embedding_query_prefix + text)
 
     def encode_document(self, text: str) -> list[float]:
         """Encode a document for indexing, applying the configured document prefix."""
+        if self._http is not None:
+            return self._http.encode(text, "document")
         return self.encode(self.config.embedding_doc_prefix + text)
 
     def encode_batch(self, texts: list[str]) -> list[list[float]]:
@@ -113,7 +131,7 @@ class EmbeddingEngine:
         return embeddings
 
     def _ensure_loaded(self):
-        if self._model is None:
+        if not self.is_loaded:
             raise RuntimeError(
                 "EmbeddingEngine not initialized, call initialize() first"
             )

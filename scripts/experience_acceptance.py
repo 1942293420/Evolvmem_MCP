@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run the frozen experience suite against isolated SQLite and local Nomic."""
+"""Evaluate public synthetic scenarios using isolated SQLite and an optional local model.
+
+Generated evidence is explicitly synthetic test input, never a historical repair
+claim. An injected embedding double exercises workflows only; semantic acceptance
+requires a real local Nomic model and is reported separately.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +32,6 @@ from evolvmem.project_store import ProjectStore
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FIXTURE = ROOT / "tests" / "fixtures" / "experience_acceptance.json"
-FIX_ROOT = Path.home() / "fix-records" / "records"
 SENTINEL = ".evolvmem-experience-acceptance.sentinel"
 
 
@@ -38,6 +42,8 @@ def load_fixture(path: str | Path = DEFAULT_FIXTURE) -> dict:
         raise ValueError("fixture must contain exactly 30 scenarios")
     if len({item.get("id") for item in scenarios}) != 30:
         raise ValueError("scenario IDs must be unique")
+    if fixture.get("source_policy", {}).get("kind") != "synthetic":
+        raise ValueError("acceptance fixtures must be explicitly synthetic")
     return fixture
 
 
@@ -48,6 +54,7 @@ class SeededLibrary:
     core: ContextService
     experiences: ExperienceService
     labels: dict[str, int]
+    real_embedding: bool
 
     def close(self) -> None:
         self.core.close()
@@ -67,32 +74,33 @@ def seed_library(
     fixture: dict | None = None,
     *,
     model_path: str | Path | None = None,
+    embedding_engine=None,
 ) -> SeededLibrary:
-    """Open an isolated real service and seed verified/candidate source cases."""
+    """Seed synthetic verified/candidate examples through the real source resolver."""
     data_dir = Path(data_dir).resolve()
     _prepare_empty_library(data_dir)
     fixture = fixture or load_fixture()
-    filename = Config().embedding_model_filename
-    source_model = Path(model_path or (
-        Path.home() / ".claude" / "evolvmem" / "models" / filename
-    )).resolve()
-    if not source_model.is_file():
-        raise FileNotFoundError("local Nomic embedding model is unavailable")
-    model_dir = data_dir / "models"
-    model_dir.mkdir()
-    (model_dir / filename).symlink_to(source_model)
-
     config = Config(data_dir=data_dir)
-    engine = EmbeddingEngine(config)
-    engine.initialize()
+    # The explicitly isolated directory wins over an inherited runtime setting.
+    config.data_dir = data_dir
+    real_embedding = embedding_engine is None
+    engine = embedding_engine
+    if real_embedding:
+        source_model = Path(model_path or Config().model_path).expanduser().resolve()
+        if not source_model.is_file():
+            raise FileNotFoundError("local Nomic model unavailable; pass --model-file")
+        model_dir = data_dir / "models"
+        model_dir.mkdir()
+        (model_dir / config.embedding_model_filename).symlink_to(source_model)
+        engine = EmbeddingEngine(config)
+        engine.initialize()
     core = ContextService(config, embedding_engine=engine)
     core.initialize(mode=ContextMode.SHADOW, adapter="codex")
-    service = ExperienceService(
-        core, source_resolver=ExperienceSourceResolver(fix_root=FIX_ROOT))
+    service = ExperienceService(core, source_resolver=synthetic_source_resolver(data_dir))
     labels: dict[str, int] = {}
     try:
         for seed in fixture["seed_cases"]:
-            evidence = seed.get("evidence") or []
+            evidence = materialize_seed_evidence(data_dir, seed)
             saved = service.record(
                 seed["case"], evidence=evidence[0] if evidence else None)
             for proof in evidence[1:]:
@@ -100,10 +108,41 @@ def seed_library(
             if saved["status"] != seed["expected_status"]:
                 raise RuntimeError("seed status differs from frozen fixture")
             labels[seed["label"]] = saved["id"]
-        return SeededLibrary(data_dir, config, core, service, labels)
+        return SeededLibrary(data_dir, config, core, service, labels, real_embedding)
     except Exception:
         core.close()
         raise
+
+
+def synthetic_source_resolver(data_dir: Path) -> ExperienceSourceResolver:
+    """Resolve only generated test events, with all personal adapter roots disabled."""
+    return ExperienceSourceResolver(
+        codex_roots=(data_dir / "synthetic-codex",), kimi_roots=(), dsh_roots=(),
+        fix_root=data_dir / "unused-synthetic-records")
+
+
+def materialize_seed_evidence(data_dir: Path, seed: dict) -> list[dict]:
+    if seed.get("synthetic") is not True:
+        raise ValueError("seed must be explicitly synthetic")
+    root = data_dir / "synthetic-codex"
+    root.mkdir(parents=True, exist_ok=True)
+    evidence = []
+    for index, template in enumerate(seed.get("evidence", []), 1):
+        task = f"synthetic-seed-{seed['label']}-{index}"
+        quote = f"[synthetic test fixture] {seed['label']}: {seed['case']['result']}"
+        transcript = root / f"rollout-{task}.jsonl"
+        transcript.write_text(json.dumps({
+            "type": "response_item",
+            "payload": {"type": "function_call_output", "output": quote},
+        }, ensure_ascii=False) + "\n", encoding="utf-8")
+        evidence.append({
+            "source_kind": "tool_result", "source_ref": f"{transcript.resolve()}#1",
+            "quote": quote, "task_id": task, "event_id": template["synthetic_event"],
+            "outcome": template["outcome"], "level": template["level"],
+            "conditions": template["conditions"],
+            "note": "[synthetic test fixture] Source-binding test; no historical repair claim.",
+        })
+    return evidence
 
 
 def _timed(case_id, operation):
@@ -135,11 +174,11 @@ def _retrieval_case(library: SeededLibrary, scenario: dict):
                          else "inapplicable_case_omitted" if correct
                          else "transfer_expectation_missed")
     forbidden = {
-        "N02": "eva_refresh_context_race_investigation_only",
-        "N03": "evolvmem_projection_reconcile_and_vector_rebuild",
-        "N04": "eva_claim_attachment_channel_dispatch",
-        "N05": "bluewhale_session_terminated_retry_budget",
-        "N06": "evolvmem_projection_reconcile_and_vector_rebuild",
+        "N02": "demo_support_refresh_context_race_investigation_only",
+        "N03": "demo_memory_projection_reconcile_and_vector_rebuild",
+        "N04": "demo_support_claim_attachment_channel_dispatch",
+        "N05": "demo_runner_session_terminated_retry_budget",
+        "N06": "demo_memory_projection_reconcile_and_vector_rebuild",
     }.get(scenario["id"])
     if scenario["id"] == "N01":
         return (not ids, "empty" if not ids else "unexpected_case")
@@ -158,8 +197,6 @@ def _synthetic_proof(library, scenario, conditions):
         "type": "response_item",
         "payload": {"type": "function_call_output", "output": quote},
     }, ensure_ascii=False) + "\n", encoding="utf-8")
-    library.experiences.source_resolver = ExperienceSourceResolver(
-        codex_roots=(root,), fix_root=FIX_ROOT)
     return {
         "task_id": task, "event_id": f"verification-{scenario['id']}",
         "outcome": scenario["feedback"]["outcome"], "level": "technical",
@@ -172,10 +209,10 @@ def _synthetic_proof(library, scenario, conditions):
 
 def _feedback_case(library: SeededLibrary, scenario: dict):
     label = {
-        "F01": "bluewhale_session_terminated_retry_budget",
-        "F02": "eva_claim_attachment_channel_dispatch",
-        "F03": "bluewhale_session_terminated_retry_budget",
-        "F04": "eva_refresh_context_race_investigation_only",
+        "F01": "demo_runner_session_terminated_retry_budget",
+        "F02": "demo_support_claim_attachment_channel_dispatch",
+        "F03": "demo_runner_session_terminated_retry_budget",
+        "F04": "demo_support_refresh_context_race_investigation_only",
     }[scenario["id"]]
     item_id = library.labels[label]
     before = library.experiences.read(item_id)
@@ -288,9 +325,11 @@ def run_acceptance(
     *,
     data_dir: str | Path,
     model_path: str | Path | None = None,
+    embedding_engine=None,
 ) -> dict:
     fixture = load_fixture(fixture_path)
-    library = seed_library(data_dir, fixture, model_path=model_path)
+    library = seed_library(data_dir, fixture, model_path=model_path,
+                           embedding_engine=embedding_engine)
     try:
         seed_statuses = {
             label: library.experiences.read(item_id)["status"]
@@ -321,10 +360,16 @@ def run_acceptance(
                            for case in groups[prefix]))
         return {
             "schema_version": "experience-acceptance-report-v1",
-            "overall": "pass" if overall else "fail",
+            "overall": ("pass" if overall else "fail") if library.real_embedding
+                       else "not_evaluated",
+            "workflow_status": "pass" if all(case["pass"] for prefix in "TNFC"
+                                             for case in groups[prefix]) else "fail",
             "runtime": {"sqlite": True,
-                        "embedding": library.config.embedding_model_filename},
-            "baseline": {"status": "not_run", "reason": "delegated_to_root"},
+                        "embedding": library.config.embedding_model_filename
+                                     if library.real_embedding else "injected_test_double",
+                        "semantic_model_verified": library.real_embedding and overall,
+                        "sources": "synthetic"},
+            "baseline": {"status": "not_run", "reason": "no_external_baseline_requested"},
             "seed_statuses": seed_statuses, "goals": goals, "cases": cases,
         }
     finally:

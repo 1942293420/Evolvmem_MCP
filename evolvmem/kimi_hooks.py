@@ -25,6 +25,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from pathlib import Path
 
+from evolvmem.config import Config
 from evolvmem.extraction_policy import (
     contains_sensitive_text,
     evaluate_candidate,
@@ -36,8 +37,9 @@ from evolvmem.extraction_policy import (
 _KIMI_API = "https://api.kimi.com/coding/v1/chat/completions"
 _SESSIONS_DIR = Path.home() / ".kimi-code" / "sessions"
 _MODEL = "kimi-for-coding"
-_LLM_CONFIG_PATH = (Path.home() / ".claude" / "evolvmem"
-                    / "llm_credentials.json")
+# Resolve once per hook process; keep individual paths replaceable by callers.
+_DATA_DIR = Config().data_dir
+_LLM_CONFIG_PATH = _DATA_DIR / "llm_credentials.json"
 _PROVIDER_DEFAULTS = {
     "deepseek": (
         "https://api.deepseek.com/chat/completions",
@@ -55,9 +57,9 @@ _MAX_PROJECT_CHARS = 48
 _MAX_SOURCE_SESSION_CHARS = 128
 _SESSION_SUMMARY_KEY = "SESSION_SUMMARY"
 _WD_DIR_RE = re.compile(r"^wd_(.+)_[0-9a-f]{8,}$")
-_HOOKS_LOG_PATH = Path.home() / ".claude" / "evolvmem" / "hooks.log"
+_HOOKS_LOG_PATH = _DATA_DIR / "hooks.log"
 _HOOKS_LOG_MAX_BYTES = 1024 * 1024
-_LIVE_DIR = Path.home() / ".claude" / "evolvmem" / "live"
+_LIVE_DIR = _DATA_DIR / "live"
 
 
 class ContextOverflowError(RuntimeError):
@@ -168,9 +170,10 @@ def session_start(payload: dict | None = None) -> None:
 
 # ---- session-end ----
 
-def _load_llm_config(*, log_errors: bool = True) -> LLMConfig | None:
+def _load_llm_config(*, log_errors: bool = True, config_path=None) -> LLMConfig | None:
+    credential_path = config_path if config_path is not None else _LLM_CONFIG_PATH
     try:
-        data = json.loads(_LLM_CONFIG_PATH.read_text(encoding="utf-8"))
+        data = json.loads(credential_path.read_text(encoding="utf-8"))
         provider = str(data.get("provider", "deepseek")).strip().casefold()
         if provider not in _PROVIDER_DEFAULTS:
             if log_errors:
@@ -179,7 +182,7 @@ def _load_llm_config(*, log_errors: bool = True) -> LLMConfig | None:
         api_key = str(data.get("api_key", "")).strip()
         if not api_key:
             if log_errors:
-                _log(f"{_LLM_CONFIG_PATH} has no api_key, skip extraction")
+                _log("extraction credentials have no api_key, skip extraction")
             return None
         default_url, default_model = _PROVIDER_DEFAULTS[provider]
         return LLMConfig(

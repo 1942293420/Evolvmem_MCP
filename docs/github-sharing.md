@@ -16,7 +16,7 @@ python3 scripts/export_source.py --output dist/evolvmem-github
   `LICENSE`（存在时）、`THIRD_PARTY_NOTICES.md`、`migrate_claude_mem.py`。
 - 公开目录：`evolvmem/`、`tests/`、`examples/`、`LICENSES/`、`dsh/`、`scripts/`、`.github/`。
 - 文档：`docs/context-core.md`、`docs/codex-context-core-runbook.md`、
-  `docs/github-sharing.md`、`docs/evolvmem-workflow.json`、
+  `docs/github-sharing.md`、`docs/windows-codex.md`、`docs/evolvmem-workflow.json`、
   `docs/evolvmem-atlas.json`、`docs/evolvmem-atlas-template.html`、
   `docs/evolvmem-atlas-receipt.json`。
 

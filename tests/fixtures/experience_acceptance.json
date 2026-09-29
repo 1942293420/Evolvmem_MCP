@@ -1,26 +1,26 @@
 {
-  "schema_version": "evolvmem-experience-acceptance-draft-v1",
-  "generated_on": "2026-09-05",
+  "schema_version": "evolvmem-experience-acceptance-synthetic-v1",
   "language": "zh-CN",
   "source_policy": {
-    "record_count": 5,
+    "kind": "synthetic",
     "projects": [
-      "evolvmem",
-      "eva",
-      "bluewhale"
+      "demo-memory",
+      "demo-support",
+      "demo-runner"
     ],
-    "quotes_are_minimal": true,
-    "contains_secrets": false,
-    "investigation_rule": "2026-08-06 与 2026-08-24 的 Eva refresh-context 记录均未修复，只能作为 candidate，不得作为成功方案召回。"
+    "historical_records_used": false,
+    "purpose": "公开回归夹具：案例、观测和场景均为合成示例，不代表作者或任何真实项目的修复历史。",
+    "evidence_rule": "运行时仅在隔离测试目录生成标注 synthetic 的本地事件，验证来源绑定和反馈语义；不读取个人历史修复记录。",
+    "investigation_rule": "并发刷新示例仅有合成诊断，不含修复成功证据，必须保持 candidate。"
   },
   "seed_cases": [
     {
-      "label": "evolvmem_projection_reconcile_and_vector_rebuild",
-      "classification": "verified_fix",
+      "label": "demo_memory_projection_reconcile_and_vector_rebuild",
+      "classification": "synthetic_verified_example",
       "expected_status": "active",
       "case": {
-        "project": "evolvmem",
-        "problem": "Context PRIMARY 因 legacy 归档未同步而出现 status_mismatch 投影滞后，随后暴露 active 集合与向量缓存计数不一致。",
+        "project": "demo-memory",
+        "problem": "合成场景：Context PRIMARY 因 legacy 归档未同步而出现 status_mismatch 投影滞后，随后暴露 active 集合与向量缓存计数不一致。",
         "conditions": {
           "mode": "primary",
           "projection_lag_type": "status_mismatch",
@@ -34,26 +34,22 @@
           "新建 ContextService 重新评估 PRIMARY 健康状态与 projection_lag。"
         ],
         "rationale": "状态对账修复 legacy 与 Context 的投影差异，随后重建 active L0 向量才能同时满足 PRIMARY 的投影和向量门禁。",
-        "result": "新建 PRIMARY 服务后 ready 为 True，projection_lag 为 0，candidate 清理后 active 数与向量缓存一致。",
+        "result": "合成观测：状态对账后 projection_lag 为 0，重建向量后 active 集合与缓存一致；只代表夹具预设。",
         "applicability": [
           "legacy 状态变更未双写 Context",
           "projection lag 明确为 status_mismatch",
           "修复状态后出现 context_vector_count_mismatch"
         ],
         "exclusions": [
-          "DeepSeek HTTP 402 凭证或额度故障",
-          "损坏 DSH 会话的读取失败",
+          "供应商 HTTP 402 凭证或额度故障",
+          "损坏会话文件的读取失败",
           "尚未定位类型的 missing mapping 或 L1 内容差异"
         ],
         "transferable": true
       },
       "evidence": [
         {
-          "source_kind": "historical_record",
-          "source_ref": "/home/jiangli/fix-records/records/2026-08-22-evolvmem-dsh-integration-tuneup.md",
-          "quote": "修复后新建 ContextService（PRIMARY）：`ready: True, reason_codes: (), diagnostics: (), projection_lag: 0`",
-          "task_id": "historical:2026-08-22-evolvmem-dsh-tuneup",
-          "event_id": "verification:primary-ready",
+          "synthetic_event": "seed-observation-1",
           "outcome": "success",
           "level": "technical",
           "conditions": {
@@ -61,18 +57,18 @@
             "projection_lag_type": "status_mismatch",
             "legacy_update_path": "archive_without_context_projection",
             "vector_state": "active_count_mismatch"
-          },
-          "note": "状态对账后 projection_lag 归零，重建向量缓存后 active 390 与缓存计数一致。"
+          }
         }
-      ]
+      ],
+      "synthetic": true
     },
     {
-      "label": "eva_claim_attachment_channel_dispatch",
-      "classification": "verified_fix",
+      "label": "demo_support_claim_attachment_channel_dispatch",
+      "classification": "synthetic_verified_example",
       "expected_status": "active",
       "case": {
-        "project": "eva",
-        "problem": "索赔消息附件误走普通消息下载地址，导致旧地址 404 或携带 post_sale tag 时 403。",
+        "project": "demo-support",
+        "problem": "合成场景：索赔消息附件误走普通消息下载地址，导致旧地址 404 或携带 post_sale tag 时 403。",
         "conditions": {
           "message_channel": "claim",
           "claim_id": "present",
@@ -81,12 +77,12 @@
         },
         "steps": [
           "根据 message.channel 判断索赔消息，不用普通消息附件路径。",
-          "从消息记录取 claim_id 和 filename，调用 /post-purchase/v1/claims/{claim_id}/attachments/{filename}/download。",
+          "在示例接口中根据 claim_id 和 filename 选择 /claims/{claim_id}/attachments/{filename}/download。",
           "索赔消息缺 claim_id 时直接返回 404，不向平台发送错误请求。",
           "保留平台 4xx 与网络异常统一映射为代理端 502 的既有口径。"
         ],
         "rationale": "索赔附件与普通消息附件属于两套平台接口，按渠道分派才能避免错误前缀和不适用的 post_sale tag。",
-        "result": "索赔渠道真实下载返回 200，并以 mock 测试覆盖路径、参数、缺 claim_id 和 403 映射。",
+        "result": "合成观测：示例 claim 下载返回 200，缺少 claim_id 时没有上游请求；不代表外部平台实测。",
         "applicability": [
           "message.channel 等于 claim",
           "消息具有 claim_id",
@@ -95,36 +91,32 @@
         "exclusions": [
           "普通 message/pack 渠道附件",
           "缺少 claim_id 的索赔消息",
-          "尚未用真实数据验证的 /messages/attachments 普通消息路径"
+          "未在该合成场景中验证的普通消息附件路径"
         ],
         "transferable": true
       },
       "evidence": [
         {
-          "source_kind": "historical_record",
-          "source_ref": "/home/jiangli/fix-records/records/2026-08-13-eva-attachment-download-404-403.md",
-          "quote": "claim 下载路径为用户真实 API 实测 200 的口径",
-          "task_id": "historical:2026-08-13-eva-claim-attachment",
-          "event_id": "verification:claim-download-200",
+          "synthetic_event": "seed-observation-1",
           "outcome": "success",
-          "level": "business",
+          "level": "technical",
           "conditions": {
             "message_channel": "claim",
             "claim_id": "present",
             "attachment_metadata": "raw.attachments",
             "failure": "generic_route_404_or_403"
-          },
-          "note": "附件适配器与 workbench gaps 定向测试分别 39 项和 26 项通过；claim 路径另有真实 API 200 证据。"
+          }
         }
-      ]
+      ],
+      "synthetic": true
     },
     {
-      "label": "bluewhale_session_terminated_retry_budget",
-      "classification": "verified_fix",
+      "label": "demo_runner_session_terminated_retry_budget",
+      "classification": "synthetic_verified_example",
       "expected_status": "active",
       "case": {
-        "project": "bluewhale",
-        "problem": "上游偶发终止会话的窗口持续 15 至 30 秒，原 5 次指数退避总预算约 15 秒，导致交互查询和采集提前失败。",
+        "project": "demo-runner",
+        "problem": "合成场景：上游偶发终止会话的窗口持续 15 至 30 秒，原 5 次指数退避总预算约 15 秒，导致交互查询和采集提前失败。",
         "conditions": {
           "error_class": "transport_session_terminated",
           "observed_window": "15-30s",
@@ -138,14 +130,14 @@
           "业务错误保持不重试，并保留进程内串行锁。"
         ],
         "rationale": "服务端短暂终止窗口长于原预算；扩大仅针对传输错误的等待预算可以跨过已观测窗口，同时避免对确定性业务错误重复调用。",
-        "result": "重试配置和传输错误退避逻辑通过 67 项组件测试及 285 项平台测试，重启后实时详情链路返回 200。",
+        "result": "合成观测：十次尝试、单次八秒封顶覆盖模拟的二十秒传输中断；业务错误不重试。",
         "applicability": [
           "Session terminated 传输错误",
           "失败窗口约 15 至 30 秒后自行恢复",
           "本地调用已串行且不存在并发争用"
         ],
         "exclusions": [
-          "LanjingApiError 等业务错误",
+          "确定性的业务参数校验错误",
           "持续超过约 55 秒的故障",
           "尚未证实的服务端配额或限流根因"
         ],
@@ -153,11 +145,7 @@
       },
       "evidence": [
         {
-          "source_kind": "historical_record",
-          "source_ref": "/home/jiangli/fix-records/records/2026-09-02-bluewhale-session-terminated-retry-budget.md",
-          "quote": "bluewhale-mcp：67 项测试通过，Ruff、mypy 通过。",
-          "task_id": "historical:2026-09-02-bluewhale-retry-budget",
-          "event_id": "verification:retry-suite-and-production-route",
+          "synthetic_event": "seed-observation-1",
           "outcome": "success",
           "level": "technical",
           "conditions": {
@@ -165,19 +153,19 @@
             "observed_window": "15-30s",
             "local_calls": "serialized",
             "business_error": "false"
-          },
-          "note": "平台 285 项测试通过；服务重启后实时详情请求返回 200，但上游主动终止的根因仍未证实。"
+          }
         }
-      ]
+      ],
+      "synthetic": true
     },
     {
-      "label": "eva_refresh_context_race_investigation_only",
-      "classification": "investigation_only",
+      "label": "demo_support_refresh_context_race_investigation_only",
+      "classification": "synthetic_investigation_example",
       "expected_status": "candidate",
       "must_not_be_presented_as_fixed": true,
       "case": {
-        "project": "eva",
-        "problem": "refresh-context 并发测试间歇性出现第一个请求 changed=False，单测与全量结果随调度变化。",
+        "project": "demo-support",
+        "problem": "合成场景：refresh-context 并发测试间歇性出现第一个请求 changed=False，单测与全量结果随调度变化。",
         "conditions": {
           "endpoint": "refresh-context",
           "request_count": "two_concurrent",
@@ -188,10 +176,10 @@
           "在干净树和工作区分别重复运行同一用例，确认两边均可复现。",
           "排除每用例数据库状态污染与在途改动模块关联。",
           "检查 pull commit、翻译和 snapshot 重新加锁之间的时序窗口。",
-          "记录可选修复方向，但不修改 endpoint 或测试。"
+          "记录可能的修复方向，不把尚未实施的方案标成成功。"
         ],
         "rationale": "第一个请求释放行锁后，第二个请求可能先创建 version 2；第一个请求随后读取最新快照便返回 changed=False。",
-        "result": "两次调查均确认既有竞态及约 50% 的偶发性，但没有实施或验证修复。",
+        "result": "合成诊断：两个并发请求在释放锁期间竞争快照；未实现或验证修复。",
         "applicability": [
           "同一 case 的两个 refresh-context 请求并发",
           "pull 与 snapshot 之间释放行锁",
@@ -206,38 +194,29 @@
       },
       "evidence": [
         {
-          "source_kind": "historical_record",
-          "source_ref": "/home/jiangli/fix-records/records/2026-08-06-workbench-refresh-context-flaky-test.md",
-          "quote": "基线（ignore 新测试文件）6 连跑：第 2 次失败于同一测试同一断言",
-          "task_id": "historical:2026-08-06-eva-refresh-race",
-          "event_id": "diagnosis:baseline-flake-reproduced",
+          "synthetic_event": "seed-observation-1",
           "outcome": "unknown",
-          "level": "diagnostic",
+          "level": "technical",
           "conditions": {
             "endpoint": "refresh-context",
             "request_count": "two_concurrent",
             "lock_scope": "released_between_pull_and_snapshot",
             "test_sync": "sleep_0.05"
-          },
-          "note": "基线 6 连跑第 2 次复现同一断言失败，只证明竞态存在，不证明修复。"
+          }
         },
         {
-          "source_kind": "historical_record",
-          "source_ref": "/home/jiangli/fix-records/records/2026-08-24-eva-refresh-context-flaky-test.md",
-          "quote": "全量套件除该用例外 596 个全部通过。",
-          "task_id": "historical:2026-08-24-eva-refresh-race",
-          "event_id": "diagnosis:clean-and-worktree-flake",
+          "synthetic_event": "seed-observation-2",
           "outcome": "unknown",
-          "level": "diagnostic",
+          "level": "technical",
           "conditions": {
             "endpoint": "refresh-context",
             "request_count": "two_concurrent",
             "lock_scope": "released_between_pull_and_snapshot",
             "test_sync": "sleep_0.05"
-          },
-          "note": "干净树与工作区均约 50% 通过或失败，再次证明既有竞态，但仍未修复。"
+          }
         }
-      ]
+      ],
+      "synthetic": true
     }
   ],
   "scenario_counts": {
@@ -252,9 +231,9 @@
     {
       "id": "I01",
       "category": "implicit_paraphrase",
-      "project": "evolvmem",
+      "project": "demo-memory",
       "prompt": "上下文服务启动后显示 degraded_legacy，归档条目的两边状态对不上，帮我恢复可用。",
-      "expected_case_label": "evolvmem_projection_reconcile_and_vector_rebuild",
+      "expected_case_label": "demo_memory_projection_reconcile_and_vector_rebuild",
       "expected": {
         "recall": "must_include",
         "adoption": "compare_conditions_then_apply"
@@ -263,9 +242,9 @@
     {
       "id": "I02",
       "category": "implicit_paraphrase",
-      "project": "evolvmem",
+      "project": "demo-memory",
       "prompt": "管理台归档了一批条目，旧表已经 archived，新表仍是 active，该怎么把状态对齐？",
-      "expected_case_label": "evolvmem_projection_reconcile_and_vector_rebuild",
+      "expected_case_label": "demo_memory_projection_reconcile_and_vector_rebuild",
       "expected": {
         "recall": "must_include",
         "key_step": "run_idempotent_migration_reconcile"
@@ -274,9 +253,9 @@
     {
       "id": "I03",
       "category": "implicit_paraphrase",
-      "project": "evolvmem",
+      "project": "demo-memory",
       "prompt": "投影差异已经清零，但 active 数量和向量缓存计数还不一致，下一步怎么处理？",
-      "expected_case_label": "evolvmem_projection_reconcile_and_vector_rebuild",
+      "expected_case_label": "demo_memory_projection_reconcile_and_vector_rebuild",
       "expected": {
         "recall": "must_include",
         "key_step": "rebuild_active_l0"
@@ -285,9 +264,9 @@
     {
       "id": "I04",
       "category": "implicit_paraphrase",
-      "project": "eva",
+      "project": "demo-support",
       "prompt": "索赔消息里的买家照片下载总是 403，消息里有 claim_id，帮我改通。",
-      "expected_case_label": "eva_claim_attachment_channel_dispatch",
+      "expected_case_label": "demo_support_claim_attachment_channel_dispatch",
       "expected": {
         "recall": "must_include",
         "key_step": "route_by_claim_channel"
@@ -296,9 +275,9 @@
     {
       "id": "I05",
       "category": "implicit_paraphrase",
-      "project": "eva",
+      "project": "demo-support",
       "prompt": "附件代理还在请求带 marketplace 前缀的地址，平台直接返回 404，应该走哪个入口？",
-      "expected_case_label": "eva_claim_attachment_channel_dispatch",
+      "expected_case_label": "demo_support_claim_attachment_channel_dispatch",
       "expected": {
         "recall": "must_include",
         "key_step": "use_claim_download_endpoint_when_channel_is_claim"
@@ -307,9 +286,9 @@
     {
       "id": "I06",
       "category": "implicit_paraphrase",
-      "project": "eva",
+      "project": "demo-support",
       "prompt": "一条索赔消息能看到附件名却没有 claim_id，代理端现在还会继续请求平台。",
-      "expected_case_label": "eva_claim_attachment_channel_dispatch",
+      "expected_case_label": "demo_support_claim_attachment_channel_dispatch",
       "expected": {
         "recall": "must_include",
         "key_step": "return_404_without_upstream_call"
@@ -318,9 +297,9 @@
     {
       "id": "I07",
       "category": "implicit_paraphrase",
-      "project": "bluewhale",
+      "project": "demo-runner",
       "prompt": "商品查询连续几次报 Session terminated，大约二十秒后自己恢复，怎么减少用户看到失败？",
-      "expected_case_label": "bluewhale_session_terminated_retry_budget",
+      "expected_case_label": "demo_runner_session_terminated_retry_budget",
       "expected": {
         "recall": "must_include",
         "key_step": "extend_transport_retry_budget"
@@ -329,9 +308,9 @@
     {
       "id": "I08",
       "category": "implicit_paraphrase",
-      "project": "bluewhale",
+      "project": "demo-runner",
       "prompt": "每日采集总有一小批请求在十五秒左右耗尽重试，但稍后单独查又成功。",
-      "expected_case_label": "bluewhale_session_terminated_retry_budget",
+      "expected_case_label": "demo_runner_session_terminated_retry_budget",
       "expected": {
         "recall": "must_include",
         "key_step": "ten_attempts_with_eight_second_cap"
@@ -340,9 +319,9 @@
     {
       "id": "I09",
       "category": "implicit_paraphrase",
-      "project": "bluewhale",
+      "project": "demo-runner",
       "prompt": "调用已经用全局锁串行了，上游仍会短暂掐断会话，原来的五次退避覆盖不住。",
-      "expected_case_label": "bluewhale_session_terminated_retry_budget",
+      "expected_case_label": "demo_runner_session_terminated_retry_budget",
       "expected": {
         "recall": "must_include",
         "must_not_claim": "local_concurrency_is_root_cause"
@@ -351,9 +330,9 @@
     {
       "id": "I10",
       "category": "implicit_paraphrase",
-      "project": "bluewhale",
+      "project": "demo-runner",
       "prompt": "这个传输错误会持续半分钟左右，业务参数错误又不应该反复调用，给我一个收敛方案。",
-      "expected_case_label": "bluewhale_session_terminated_retry_budget",
+      "expected_case_label": "demo_runner_session_terminated_retry_budget",
       "expected": {
         "recall": "must_include",
         "must_preserve": "business_errors_are_not_retried"
@@ -362,9 +341,9 @@
     {
       "id": "T01",
       "category": "transfer",
-      "project": "eva",
+      "project": "demo-support",
       "prompt": "普通售后消息的附件也下载失败了，它没有 claim_id，能直接照索赔消息的做法改吗？",
-      "expected_case_label": "eva_claim_attachment_channel_dispatch",
+      "expected_case_label": "demo_support_claim_attachment_channel_dispatch",
       "constraints": {
         "message_channel": "message",
         "claim_id": "absent"
@@ -378,9 +357,9 @@
     {
       "id": "T02",
       "category": "transfer",
-      "project": "eva-latam",
+      "project": "demo-support-alt",
       "prompt": "另一个站点的索赔照片也返回 403，记录里同样有 claim_id，能复用按渠道分派吗？",
-      "expected_case_label": "eva_claim_attachment_channel_dispatch",
+      "expected_case_label": "demo_support_claim_attachment_channel_dispatch",
       "constraints": {
         "message_channel": "claim",
         "claim_id": "present",
@@ -395,9 +374,9 @@
     {
       "id": "T03",
       "category": "transfer",
-      "project": "bluewhale",
+      "project": "demo-runner",
       "prompt": "这次返回的是明确的业务参数错误，也要把次数加到十次吗？",
-      "expected_case_label": "bluewhale_session_terminated_retry_budget",
+      "expected_case_label": "demo_runner_session_terminated_retry_budget",
       "constraints": {
         "error_class": "business_error",
         "business_error": "true"
@@ -411,9 +390,9 @@
     {
       "id": "T04",
       "category": "transfer",
-      "project": "bluewhale",
+      "project": "demo-runner",
       "prompt": "我们观测到同类中断要七十秒才恢复，原来的退避上限还能直接沿用吗？",
-      "expected_case_label": "bluewhale_session_terminated_retry_budget",
+      "expected_case_label": "demo_runner_session_terminated_retry_budget",
       "constraints": {
         "error_class": "transport_session_terminated",
         "observed_window": "70s"
@@ -427,9 +406,9 @@
     {
       "id": "T05",
       "category": "transfer",
-      "project": "evolvmem",
+      "project": "demo-memory",
       "prompt": "这次差异类型是 missing mapping，不是两边状态不一致，也先跑同一套对账和重建吗？",
-      "expected_case_label": "evolvmem_projection_reconcile_and_vector_rebuild",
+      "expected_case_label": "demo_memory_projection_reconcile_and_vector_rebuild",
       "constraints": {
         "projection_lag_type": "missing_mapping"
       },
@@ -442,9 +421,9 @@
     {
       "id": "T06",
       "category": "transfer",
-      "project": "another-context-app",
+      "project": "demo-memory-alt",
       "prompt": "另一个本地双表服务在归档后也出现旧表已变、新表未变，能借用这套恢复顺序吗？",
-      "expected_case_label": "evolvmem_projection_reconcile_and_vector_rebuild",
+      "expected_case_label": "demo_memory_projection_reconcile_and_vector_rebuild",
       "constraints": {
         "projection_lag_type": "status_mismatch",
         "schema": "different_project"
@@ -458,7 +437,7 @@
     {
       "id": "N01",
       "category": "negative",
-      "project": "eva",
+      "project": "demo-support",
       "prompt": "把登录页按钮改成靠右并调整成蓝色。",
       "expected_case_label": null,
       "expected": {
@@ -468,19 +447,19 @@
     {
       "id": "N02",
       "category": "negative",
-      "project": "eva",
+      "project": "demo-support",
       "prompt": "并发刷新时第一个响应偶尔说没有变化，请直接给我一个确实跑通的修复办法。",
       "expected_case_label": null,
-      "forbidden_case_label": "eva_refresh_context_race_investigation_only",
+      "forbidden_case_label": "demo_support_refresh_context_race_investigation_only",
       "expected": {
         "recall": "must_not_present_candidate_as_success",
-        "note": "两份来源都明确未修复"
+        "note": "合成候选仅含诊断，不构成修复成功证据。"
       }
     },
     {
       "id": "N03",
       "category": "negative",
-      "project": "evolvmem",
+      "project": "demo-memory",
       "prompt": "提炼请求返回 HTTP 402，怎样恢复供应商额度？",
       "expected_case_label": null,
       "expected": {
@@ -491,7 +470,7 @@
     {
       "id": "N04",
       "category": "negative",
-      "project": "eva",
+      "project": "demo-support",
       "prompt": "普通消息渠道没有 claim_id，下载地址是否已经在真实店铺验证通过？",
       "constraints": {
         "message_channel": "message",
@@ -506,7 +485,7 @@
     {
       "id": "N05",
       "category": "negative",
-      "project": "bluewhale",
+      "project": "demo-runner",
       "prompt": "平台返回确定的参数校验错误，帮我用更多重试把它绕过去。",
       "constraints": {
         "business_error": "true"
@@ -520,7 +499,7 @@
     {
       "id": "N06",
       "category": "negative",
-      "project": "evolvmem",
+      "project": "demo-memory",
       "prompt": "语义检索结果排序不理想，但两边状态、映射和向量数量都一致。",
       "constraints": {
         "projection_lag_type": "none",
@@ -534,9 +513,9 @@
     {
       "id": "F01",
       "category": "feedback",
-      "project": "bluewhale",
+      "project": "demo-runner",
       "prompt": "刚在另一轮采集按十次尝试和八秒封顶处理，短暂中断后最终成功，测试与采集结果都在这次运行记录里。",
-      "setup_case_label": "bluewhale_session_terminated_retry_budget",
+      "setup_case_label": "demo_runner_session_terminated_retry_budget",
       "feedback": {
         "outcome": "success",
         "independent_task": true,
@@ -550,9 +529,9 @@
     {
       "id": "F02",
       "category": "feedback",
-      "project": "eva",
+      "project": "demo-support",
       "prompt": "同样是 claim 渠道、有 claim_id 且走专用下载地址，这次真实请求仍然失败，响应证据已附上。",
-      "setup_case_label": "eva_claim_attachment_channel_dispatch",
+      "setup_case_label": "demo_support_claim_attachment_channel_dispatch",
       "feedback": {
         "outcome": "failure",
         "same_conditions": true,
@@ -566,9 +545,9 @@
     {
       "id": "F03",
       "category": "feedback",
-      "project": "bluewhale",
+      "project": "demo-runner",
       "prompt": "我们这里两秒就恢复，而且错误是业务校验失败，这套长退避不适用，请只标明这个条件差异。",
-      "setup_case_label": "bluewhale_session_terminated_retry_budget",
+      "setup_case_label": "demo_runner_session_terminated_retry_budget",
       "feedback": {
         "outcome": "inapplicable",
         "conditions": {
@@ -585,9 +564,9 @@
     {
       "id": "F04",
       "category": "feedback",
-      "project": "eva",
+      "project": "demo-support",
       "prompt": "并发刷新那个问题我只口头说已经好了，没有运行结果或请求记录，也请把它当成已解决。",
-      "setup_case_label": "eva_refresh_context_race_investigation_only",
+      "setup_case_label": "demo_support_refresh_context_race_investigation_only",
       "feedback": {
         "outcome": "success",
         "evidence_required": true,
@@ -602,8 +581,8 @@
     {
       "id": "C01",
       "category": "continuity",
-      "project": "evolvmem",
-      "workspace": "/tmp/acceptance/evolvmem",
+      "project": "demo-memory",
+      "workspace": "/tmp/acceptance/demo-memory",
       "prompt": "我先停在投影差异分类完成这里：下一步备份临时库并运行状态对账，稍后从这里继续。",
       "setup": {
         "focused_workstreams": 0
@@ -617,8 +596,8 @@
     {
       "id": "C02",
       "category": "continuity",
-      "project": "evolvmem",
-      "workspace": "/tmp/acceptance/evolvmem",
+      "project": "demo-memory",
+      "workspace": "/tmp/acceptance/demo-memory",
       "prompt": "继续刚才的投影修复，先告诉我停在哪里和唯一下一步。",
       "setup": {
         "focused_workstreams": 1,
@@ -634,12 +613,12 @@
     {
       "id": "C03",
       "category": "continuity",
-      "project": "eva",
-      "workspace": "/tmp/acceptance/eva-other",
+      "project": "demo-support",
+      "workspace": "/tmp/acceptance/demo-support-other",
       "prompt": "继续刚才做到一半的附件代理修改。",
       "setup": {
         "focused_workstreams": 1,
-        "focused_project": "eva",
+        "focused_project": "demo-support",
         "workspace_matches": false
       },
       "expected": {
@@ -651,8 +630,8 @@
     {
       "id": "C04",
       "category": "continuity",
-      "project": "bluewhale",
-      "workspace": "/tmp/acceptance/bluewhale",
+      "project": "demo-runner",
+      "workspace": "/tmp/acceptance/demo-runner",
       "prompt": "接着做刚才的采集稳定性任务。",
       "setup": {
         "focused_workstreams": 2,
@@ -666,5 +645,5 @@
       }
     }
   ],
-  "freeze_note": "预期于首轮实现后、验收执行前冻结；基线使用相同资料和场景，不能声称开发前已冻结。"
+  "freeze_note": "保留 I01-I10、T01-T06、N01-N06、F01-F04、C01-C04 的场景机制与技术约束；合成向量测试不证明真实模型语义质量。"
 }

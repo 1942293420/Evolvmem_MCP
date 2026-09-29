@@ -102,12 +102,14 @@ class ContextMatchType(str, Enum):
     LEXICAL = "lexical"
     VECTOR = "vector"
     PINNED_POLICY = "pinned_policy"
+    PROJECT_CONTEXT = "project_context"
 
 
 class ContextSelectionReason(str, Enum):
     PINNED_POLICY = "pinned_policy"
     LEXICAL = "lexical"
     VECTOR = "vector"
+    PROJECT_CONTEXT = "project_context"
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,16 +1,14 @@
 """Migrate claude-mem session summaries from Chroma into EvolvMem.
 
 Usage:
-  uv run python /home/jiangli/hermes-memory-plugin/migrate_claude_mem.py
+  python migrate_claude_mem.py
+  python migrate_claude_mem.py --source-db /path/to/chroma.sqlite3
 """
 
+import argparse
 import sqlite3
-import sys
-import os
-from datetime import datetime, timezone
-
-# Add evolvmem to path
-sys.path.insert(0, "/home/jiangli/hermes-memory-plugin")
+from contextlib import closing
+from pathlib import Path
 
 from evolvmem.config import Config
 from evolvmem.context_models import ContextMode
@@ -20,7 +18,7 @@ from evolvmem.vector_index import VectorIndex
 from evolvmem.embedding import EmbeddingEngine
 import numpy as np
 
-CHROMA_DB = "/home/jiangli/.claude-mem/chroma/chroma.sqlite3"
+CHROMA_DB = Path.home() / ".claude-mem" / "chroma" / "chroma.sqlite3"
 
 
 def _ensure_legacy_schema(config: Config) -> None:
@@ -33,13 +31,14 @@ def _ensure_legacy_schema(config: Config) -> None:
         pass
 
 
-def extract_summaries() -> list[dict]:
-    """Extract all session summaries from claude-mem Chroma DB."""
-    conn = sqlite3.connect(CHROMA_DB)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-
-    cur.execute('''
+def extract_summaries(source_db: str | Path | None = None) -> list[dict]:
+    """Read session summaries without creating or modifying the source DB."""
+    source = Path(source_db if source_db is not None else CHROMA_DB).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Source Chroma database not found: {source}")
+    with closing(sqlite3.connect(f"{source.as_uri()}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute('''
         SELECT e.id, m.string_value as doc,
                (SELECT m2.int_value FROM embedding_metadata m2
                 WHERE m2.id = e.id AND m2.key = 'created_at_epoch') as created_at,
@@ -54,18 +53,14 @@ def extract_summaries() -> list[dict]:
             AND m3.string_value = 'session_summary'
         )
         ORDER BY e.id
-    ''')
+        ''').fetchall()
 
-    results = []
-    for row in cur.fetchall():
-        results.append({
+    return [{
             "chroma_id": row["id"],
             "doc": row["doc"],
             "created_at_epoch": row["created_at"],
             "project": row["project"] or "unknown",
-        })
-    conn.close()
-    return results
+        } for row in rows]
 
 
 def import_summaries(config: Config, summaries: list[dict]) -> dict:
@@ -122,14 +117,23 @@ def import_summaries(config: Config, summaries: list[dict]) -> dict:
         service.close()
 
 
-def main():
+def main(argv: list[str] | None = None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--source-db", type=Path,
+        help="Source Chroma SQLite database (default: ~/.claude-mem/chroma/chroma.sqlite3)",
+    )
+    args = parser.parse_args(argv)
     print("=" * 60)
     print("claude-mem → EvolvMem 数据迁移")
     print("=" * 60)
 
     # Step 1: Extract
     print("\n[1/4] 从 Chroma 提取 session summaries...")
-    summaries = extract_summaries()
+    try:
+        summaries = extract_summaries(args.source_db)
+    except (FileNotFoundError, sqlite3.Error) as exc:
+        parser.error(str(exc))
     print(f"  提取到 {len(summaries)} 条 session summary")
 
     if not summaries:

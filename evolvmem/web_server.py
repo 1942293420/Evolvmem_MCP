@@ -1,7 +1,7 @@
 """Local web memory management console: stdlib-only HTTP server + JSON API.
 
-Serves a single-page UI (evolvmem/web_static/index.html) and a JSON API on
-top of a ContextService + legacy compatibility facade — no third-party
+Serves the Signal workspace, a working-principle flowchart, and a JSON
+API on top of a ContextService + legacy compatibility facade — no third-party
 dependencies. Every lifecycle mutation (importance/tier/attribute/tags
 update, archive, restore, soft delete, hard delete) routes through the typed
 facade so compat/shadow/primary modes mirror it onto the mapped Context side
@@ -33,8 +33,21 @@ from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
 from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.project_store import ProjectStore, ProjectStoreError
+from evolvmem.web_auth import AuthSettings, WebAuth
 
 _STATIC_INDEX = Path(__file__).parent / "web_static" / "index.html"
+_STATIC_SIGNAL = _STATIC_INDEX.parent / "designs" / "signal.html"
+_STATIC_ARCH = Path(__file__).parent / "web_static" / "architecture.html"
+_INSIGHT_ASSETS = {'/insights.js': 'text/javascript', '/insights.css': 'text/css',
+                   '/auth.js': 'text/javascript'}
+_DESIGN_NAMES = ('orbit', 'atlas', 'halo', 'signal', 'nocturne')
+_DESIGN_ASSETS = {
+    'index.html': 'text/html', 'common.css': 'text/css',
+    'app.js': 'text/javascript', 'galaxy.js': 'text/javascript',
+    'organizer.js': 'text/javascript',
+    **{f'{name}.{ext}': mime for name in _DESIGN_NAMES
+       for ext, mime in (('html', 'text/html'), ('css', 'text/css'), ('png', 'image/png'))},
+}
 
 _SORT_COLUMNS = {
     "access_count": "access_count",
@@ -72,8 +85,24 @@ def _context_mode(config: Config) -> ContextMode:
 
 # ---- API logic (plain functions over the facade, unit-testable) ----
 
+def _today_bounds_utc() -> tuple[str, str]:
+    """本机自然日 [00:00, 次日00:00) 换算成库里 UTC 时间串（%Y-%m-%d %H:%M:%S）。"""
+    from datetime import datetime, timedelta, timezone
+
+    now_local = datetime.now().astimezone()
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    fmt = "%Y-%m-%d %H:%M:%S"
+    return (
+        start_local.astimezone(timezone.utc).strftime(fmt),
+        end_local.astimezone(timezone.utc).strftime(fmt),
+    )
+
+
 def api_stats(
-    facade: LegacyCompatibilityFacade, store: ContextStore | None = None
+    facade: LegacyCompatibilityFacade,
+    store: ContextStore | None = None,
+    config: Config | None = None,
 ) -> dict:
     """Aggregate stats over active memories.
 
@@ -81,13 +110,12 @@ def api_stats(
     unexpired rows; the breakdowns scan status='active' rows (including
     not-yet-archived expired ones). When the Context store is available the
     payload also carries project-attribution counters and the pending review
-    queue depth.
+    queue depth; with a config it additionally reports the daily-overview
+    counters (today's new memories, forgetting candidates, skill candidates).
     """
     total_active = facade.count_active()
-    rows = [
-        r for r in facade.get_by_ids(facade.all_ids())
-        if r["status"] == "active"
-    ]
+    all_rows = facade.get_by_ids(facade.all_ids())
+    rows = [r for r in all_rows if r["status"] == "active"]
 
     by_tier: dict[str, int] = {}
     for r in rows:
@@ -135,6 +163,22 @@ def api_stats(
                 by_attribution[project] = by_attribution.get(project, 0) + 1
         pending_review = _count_pending_resolutions(store)
 
+    # 今日概览：今日新增（含非 active，按本机自然日）、skill 候选（高频命中）、
+    # 待归档候选（遗忘引擎同口径：久未访问 + 低命中 + 非 pinned + 限速窗口外）
+    day_start, day_end = _today_bounds_utc()
+    today_new = sum(
+        1 for r in all_rows
+        if r["created_at"] and day_start <= r["created_at"] < day_end
+    )
+    skill_candidates = sum(1 for r in rows if r["access_count"] >= 3)
+    forgetting_candidates = 0
+    if config is not None:
+        forgetting_candidates = len(facade.get_forgetting_candidates(
+            days_threshold=config.forget_days_threshold,
+            access_threshold=config.forget_access_count_threshold,
+            rate_limit_days=config.forget_rate_limit_days,
+        ))
+
     return {
         "total_active": total_active,
         "by_tier": by_tier,
@@ -146,6 +190,9 @@ def api_stats(
         "pending_review": pending_review,
         "never_accessed": never_accessed,
         "top_accessed": top_accessed,
+        "today_new": today_new,
+        "skill_candidates": skill_candidates,
+        "forgetting_candidates": forgetting_candidates,
     }
 
 
@@ -156,28 +203,40 @@ _BATCH_ACCEPT_MAX = 500
 
 
 def _legacy_attribution_map(store: ContextStore) -> dict[int, dict]:
-    """legacy_memory_id -> attribution edit metadata via the migration mapping.
+    """legacy_memory_id -> attribution/review metadata via the migration mapping.
 
     Each entry carries the context ``item_id``, the attributed ``project``
-    ("" when unattributed), and the resolution row's ``revision`` (None when
-    the item has no resolution row) so the console can reassign attribution
-    through the same revision-CAS accept path as the review queue.
+    ("" when unattributed), and the resolution row's revision/state/proposal
+    (None/"" fields when the item has no resolution row) so the console's
+    single organizing list can drive both remapping and review through the
+    same revision-CAS paths. Evidence stays the resolver's bounded public rows.
     """
     rows = store._connection().execute(
         "SELECT m.legacy_memory_id AS legacy_id, i.id AS item_id,"
-        " i.project AS project, r.revision AS resolution_revision "
+        " i.project AS project, r.revision AS resolution_revision,"
+        " r.resolution_state, r.review_state, r.proposed_project,"
+        " r.confidence, r.evidence_json "
         "FROM legacy_memory_migrations m "
         "JOIN context_items i ON i.id = m.context_item_id "
         "LEFT JOIN context_project_resolutions r ON r.item_id = i.id"
     ).fetchall()
-    return {
-        row["legacy_id"]: {
+    out = {}
+    for row in rows:
+        try:
+            evidence = json.loads(row["evidence_json"] or "[]")
+        except ValueError:
+            evidence = []
+        out[row["legacy_id"]] = {
             "item_id": row["item_id"],
             "project": row["project"],
             "resolution_revision": row["resolution_revision"],
+            "resolution_state": row["resolution_state"],
+            "review_state": row["review_state"],
+            "proposed_project": row["proposed_project"],
+            "confidence": row["confidence"],
+            "evidence": evidence,
         }
-        for row in rows
-    }
+    return out
 
 
 def _legacy_project_map(store: ContextStore) -> dict[int, str]:
@@ -316,6 +375,7 @@ def api_resolutions(
         out.append({
             "item_id": row["item_id"],
             "legacy_id": row["legacy_id"],
+            "legacy_available": legacy is not None,
             "key": legacy["key"] if legacy else row["identity_key"],
             "value": legacy["value"] if legacy else l0_by_item.get(row["item_id"], ""),
             "item_status": row["item_status"],
@@ -447,6 +507,54 @@ def _valid_display_name(name: object) -> bool:
     )
 
 
+def api_memory_context(
+    facade: LegacyCompatibilityFacade, store: ContextStore, mem_id: int
+) -> dict:
+    """来源上下文：这条记忆出自哪次会话、会话摘要、同会话的兄弟记忆。
+
+    整理归属时单看一条原子记忆往往无法判断项目——会话摘要（这次对话干了
+    什么）+ 同批提取的兄弟记忆（它们的归属）才是可判读的上下文。展示的
+    都是控制台本就有权读取的数据；facade 没有按会话查询的窄接口，这里经
+    共享连接直读 legacy 投影表（与 project_cli 直读安全列同一先例）。
+    """
+    row = facade.get_by_id(mem_id)
+    if row is None:
+        return {"ok": False, "error": "not found"}
+    session = (row.get("source_session") or "").strip()
+    if not session:
+        return {"ok": True, "source_session": "", "session_summary": None,
+                "siblings": []}
+    conn = store._connection()
+    summary_row = conn.execute(
+        "SELECT id, key, value FROM memories "
+        "WHERE source_session=? AND key LIKE '%:progress:log:%' "
+        "ORDER BY id DESC LIMIT 1",
+        (session,),
+    ).fetchone()
+    siblings = conn.execute(
+        "SELECT id, key, substr(value, 1, 121) AS preview, status "
+        "FROM memories WHERE source_session=? AND id<>? "
+        "AND key NOT LIKE '%:progress:log:%' "
+        "ORDER BY id LIMIT 30",
+        (session, mem_id),
+    ).fetchall()
+    proj_map = _legacy_project_map(store)
+    return {
+        "ok": True,
+        "source_session": session,
+        "session_summary": (
+            {"id": summary_row["id"], "key": summary_row["key"],
+             "value": summary_row["value"]}
+            if summary_row is not None else None
+        ),
+        "siblings": [
+            {"id": s["id"], "key": s["key"], "preview": s["preview"],
+             "status": s["status"], "project": proj_map.get(s["id"], "")}
+            for s in siblings
+        ],
+    }
+
+
 def api_project_register(service: ContextService, body: dict) -> dict:
     """Register a project from the review UI (idempotent)."""
     name = str(body.get("name", "")).strip()
@@ -481,30 +589,263 @@ def api_project_set_display_name(service: ContextService, body: dict) -> dict:
     return {"ok": True, "project": project, "display_name": display_name}
 
 
+_BATCH_DISPLAY_NAME_MAX = 100
+
+
+def api_projects_set_display_names(service: ContextService, body: dict) -> dict:
+    """Batch display-name save; per-item CAS, one failure never rolls back the rest."""
+    items = body.get("items")
+    if not isinstance(items, list) or not 1 <= len(items) <= _BATCH_DISPLAY_NAME_MAX:
+        return {"ok": False, "error": "invalid_items"}
+    parsed = []
+    for entry in items:
+        if not isinstance(entry, dict):
+            return {"ok": False, "error": "invalid_items"}
+        project = str(entry.get("project", "")).strip()
+        display_name = str(entry.get("display_name", "")).strip()
+        expected = _parse_expected_revision(entry)
+        if not project or not _valid_display_name(display_name) or expected is None:
+            return {"ok": False, "error": "invalid_items"}
+        parsed.append((project, display_name, expected))
+    results = []
+    for project, display_name, expected in parsed:
+        try:
+            with service.store.transaction():
+                _project_store(service).set_display_name(
+                    project, display_name, expected_revision=expected
+                )
+            results.append({"project": project, "ok": True})
+        except ProjectStoreError as exc:
+            results.append({"project": project, "ok": False, "error": exc.code})
+    saved = sum(1 for r in results if r["ok"])
+    return {"ok": True, "saved": saved, "failed": len(results) - saved,
+            "results": results}
+
+
+_ORGANIZE_MAX_ITEMS = 100
+_ORGANIZE_VALUE_CHARS = 160
+_NEW_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def api_memories_organize_suggest(
+    service: ContextService, facade: LegacyCompatibilityFacade, body: dict
+) -> dict:
+    """AI 整理：为给定的记忆（legacy ids）建议项目映射。
+
+    key 前缀优先：`project:<已注册slug>:` 的记忆按 canonical_key 强信号直接
+    判定（不过 LLM、无幻觉）；只有 key 看不出来的才交给 deepseek-v4-flash
+    （注册表 slug+中文名 + 每条 key + 截断 value）。AI 可以造新 slug，但
+    必须过 resolver 的 slug 形态校验，保证自动归属链路对新项目仍然有效；
+    空串表示"拿不准，保持未映射"。本端点只给建议不落库，保存走
+    batch_accept。返回里 `via` 标明每条建议来自 key 直判还是 AI。
+    """
+    import time
+
+    from evolvmem.kimi_hooks import _call_llm, _load_llm_config
+    # canonical_key 信号的同一来源，保证控制台与 resolver 判定一致
+    from evolvmem.project_resolver import _CANONICAL_KEY_PATTERN
+
+    legacy_ids = body.get("legacy_ids")
+    if (
+        not isinstance(legacy_ids, list)
+        or not 1 <= len(legacy_ids) <= _ORGANIZE_MAX_ITEMS
+        or any(not isinstance(i, int) or isinstance(i, bool) or i < 1
+               for i in legacy_ids)
+    ):
+        return {"ok": False, "error": "invalid_items"}
+
+    rows = [r for r in facade.get_by_ids(list(legacy_ids)) if r is not None]
+    if not rows:
+        return {"ok": False, "error": "invalid_items"}
+    registry = service.store._connection().execute(
+        "SELECT project, display_name FROM context_project_registry "
+        "WHERE status='active' ORDER BY project"
+    ).fetchall()
+    known = {row["project"] for row in registry}
+
+    # 第一遍：key 前缀直判，不走 AI
+    assignments: dict[str, str] = {}
+    via: dict[str, str] = {}
+    ai_rows = []
+    for r in rows:
+        m = _CANONICAL_KEY_PATTERN.match((r["key"] or "").strip().casefold())
+        if m and m.group(1) in known:
+            assignments[str(r["id"])] = m.group(1)
+            via[str(r["id"])] = "key"
+        else:
+            ai_rows.append(r)
+
+    new_projects: list[str] = []
+    if ai_rows:
+        llm_config = _load_llm_config()
+        if llm_config is None:
+            return {"ok": False, "error": "llm_unavailable",
+                    "assignments": assignments, "via": via}
+        project_lines = "\n".join(
+            f"- {row['project']}"
+            + (f"（{row['display_name']}）" if row["display_name"] else "")
+            for row in registry
+        ) or "（注册表为空）"
+        memory_lines = "\n".join(
+            f"[{r['id']}] key: {r['key']}\n    内容: "
+            f"{(r['value'] or '')[:_ORGANIZE_VALUE_CHARS]}"
+            for r in ai_rows
+        )
+        prompt = (
+            "你是记忆库的图书管理员。下面是一份项目清单（英文 slug，括号内是"
+            "中文显示名）和若干条记忆。请判断每条记忆属于哪个项目：\n"
+            "- 记忆的 key 若以 project:X: 开头，X 是最强信号：X 在项目清单中"
+            "就直接选它；不在清单中但 X 是合法 slug 时，可以把 X 当作新项目"
+            "返回；\n"
+            "- 其余情况优先从现有项目中选择最贴切的一个；\n"
+            "- 确实都不合适时，可以造一个新的英文小写 slug（字母数字开头，"
+            "可含 . _ -，不超过 64 字符）；\n"
+            "- 拿不准就返回空串，宁缺毋滥，不要硬猜。\n"
+            "只输出 JSON，不要任何解释：{\"assignments\": {\"<记忆ID>\": "
+            "\"<项目slug或空串>\"}}。\n\n"
+            f"项目清单：\n{project_lines}\n\n记忆列表：\n{memory_lines}"
+        )
+        raw = _call_llm(prompt, llm_config, deadline=time.monotonic() + 90)
+        try:
+            parsed = json.loads(raw).get("assignments", {})
+        except (ValueError, AttributeError):
+            return {"ok": False, "error": "llm_bad_response"}
+        if not isinstance(parsed, dict):
+            return {"ok": False, "error": "llm_bad_response"}
+
+        valid_ai_ids = {str(r["id"]) for r in ai_rows}
+        for raw_id, raw_slug in parsed.items():
+            slug = str(raw_slug).strip()
+            if str(raw_id) not in valid_ai_ids:
+                continue
+            if slug == "":
+                continue  # 拿不准 = 不给建议
+            if slug not in known and not _NEW_SLUG_RE.match(slug):
+                continue  # 非法新 slug 丢弃
+            assignments[str(raw_id)] = slug
+            via[str(raw_id)] = "ai"
+            if slug not in known and slug not in new_projects:
+                new_projects.append(slug)
+    return {
+        "ok": True,
+        "assignments": assignments,
+        "via": via,
+        "new_projects": new_projects,
+        "key_decided": sum(1 for v in via.values() if v == "key"),
+    }
+
+
+_SUGGEST_MAX_PROJECTS = 50
+_SUGGEST_SAMPLE_KEYS = 3
+
+
+def api_projects_suggest_display_names(service: ContextService) -> dict:
+    """Ask the extraction LLM (deepseek-v4-flash) for Chinese display names.
+
+    Reuses the credential/endpoint channel from ``kimi_hooks``. Each active
+    project is described by its slug plus up to three high-importance identity
+    keys of its active items; suggestions are validated against the same rules
+    as manual entry, and unknown slugs are dropped. Failure modes are honest:
+    ``llm_unavailable`` (no credentials) / ``llm_bad_response`` (unparseable);
+    provider faults surface through the handler's bounded 500.
+    """
+    import time
+
+    from evolvmem.kimi_hooks import _call_llm, _load_llm_config
+
+    llm_config = _load_llm_config()
+    if llm_config is None:
+        return {"ok": False, "error": "llm_unavailable"}
+
+    store = service.store
+    registry = store._connection().execute(
+        "SELECT project FROM context_project_registry "
+        "WHERE status='active' ORDER BY project LIMIT ?",
+        (_SUGGEST_MAX_PROJECTS,),
+    ).fetchall()
+    if not registry:
+        return {"ok": True, "names": {}}
+
+    samples: dict[str, list[str]] = {}
+    for row in registry:
+        keys = store._connection().execute(
+            "SELECT identity_key FROM context_items "
+            "WHERE project=? AND status='active' "
+            "ORDER BY importance DESC, id LIMIT ?",
+            (row["project"], _SUGGEST_SAMPLE_KEYS),
+        ).fetchall()
+        samples[row["project"]] = [k["identity_key"] for k in keys]
+
+    listing = "\n".join(
+        f"- {slug}"
+        + (f"（样本记忆 key: {', '.join(keys)}）" if keys else "（暂无记忆）")
+        for slug, keys in samples.items()
+    )
+    prompt = (
+        "你是记忆库的图书管理员。下面是若干项目的英文规范名（slug）和它们的"
+        "样本记忆 key。请为每个 slug 起一个简短准确的中文显示名（2~10 字，"
+        "可保留常见英文缩写如 AI、EVA），仅依据名称和样本判断，不要编造细节。"
+        "只输出 JSON，不要任何解释：{\"names\": {\"<slug>\": \"<中文名>\"}}。\n\n"
+        f"项目列表：\n{listing}"
+    )
+    raw = _call_llm(prompt, llm_config, deadline=time.monotonic() + 45)
+    try:
+        parsed = json.loads(raw).get("names", {})
+    except (ValueError, AttributeError):
+        return {"ok": False, "error": "llm_bad_response"}
+    if not isinstance(parsed, dict):
+        return {"ok": False, "error": "llm_bad_response"}
+    names = {
+        slug: str(name).strip()
+        for slug, name in parsed.items()
+        if slug in samples and _valid_display_name(str(name).strip())
+        and str(name).strip()
+    }
+    return {"ok": True, "names": names}
+
+
 def api_memories(
     facade: LegacyCompatibilityFacade,
     params: dict,
     store: ContextStore | None = None,
-) -> list[dict]:
-    """List memories with filtering and sorting.
+    config: Config | None = None,
+) -> dict:
+    """List memories with filtering, sorting, and pagination.
 
     params keys (from query string): status, tier, attribute, project, q,
-    sort, order, plus attribution (project attribution filter; ``__none__``
-    selects unattributed rows). Every row carries a ``project`` field with
-    its Context-side attribution when the store is available.
+    sort, order, page, page_size, plus attribution (project attribution
+    filter; ``__none__`` selects unattributed rows), review (resolution review
+    state: pending|accepted|rejected|not_required|none — 审核队列只是这份
+    列表的一个过滤视图), and preset (``today`` 今日新增 / ``skill``
+    高频候选 / ``forgetting`` 待归档候选，与遗忘引擎同口径). Every row carries
+    ``project``/``item_id``/``resolution_revision``/review metadata when the
+    store is available.
 
-    Reads go through the facade, whose surface excludes deleted rows:
-    status='deleted'/'all' therefore no longer list soft-deleted memories.
+    Returns ``{rows, total, page, page_size}`` — total is the filtered count
+    before slicing. Reads go through the facade, whose surface excludes
+    deleted rows: status='deleted'/'all' therefore no longer list soft-deleted
+    memories.
     """
     status = params.get("status", "active")
     tier = params.get("tier", "")
     attribute = params.get("attribute", "")
     project = params.get("project", "").strip()
     attribution = params.get("attribution", "").strip()
+    review = params.get("review", "").strip()
+    preset = params.get("preset", "").strip()
     q = params.get("q", "").strip()
     sort = _SORT_COLUMNS.get(params.get("sort", "access_count"),
                              "access_count")
     desc = params.get("order", "desc").lower() != "asc"
+    try:
+        page = max(1, int(params.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(params.get("page_size", 50))
+    except (TypeError, ValueError):
+        page_size = 50
+    page_size = max(1, min(page_size, 200))
 
     rows = facade.get_by_ids(facade.all_ids())
     if status in _VALID_STATUSES:
@@ -534,15 +875,57 @@ def api_memories(
     elif attribution:
         rows = [r for r in rows if proj_of.get(r["id"], "") == attribution]
 
+    if review in _REVIEW_STATES:
+        rows = [
+            r for r in rows
+            if attr_map.get(r["id"], {}).get("review_state") == review
+        ]
+    elif review == "none":
+        rows = [
+            r for r in rows
+            if attr_map.get(r["id"], {}).get("review_state") is None
+        ]
+
+    if preset == "skill":
+        rows = [r for r in rows if r["access_count"] >= 3]
+    elif preset == "today":
+        day_start, day_end = _today_bounds_utc()
+        rows = [
+            r for r in rows
+            if r["created_at"] and day_start <= r["created_at"] < day_end
+        ]
+    elif preset == "forgetting" and config is not None:
+        candidate_ids = {
+            c["id"] for c in facade.get_forgetting_candidates(
+                days_threshold=config.forget_days_threshold,
+                access_threshold=config.forget_access_count_threshold,
+                rate_limit_days=config.forget_rate_limit_days,
+            )
+        }
+        rows = [r for r in rows if r["id"] in candidate_ids]
+
+    total = len(rows)
     rows = _sort_rows(rows, sort, desc)
-    return [
-        {**{field: r.get(field) for field in _MEMORY_FIELDS},
-         "project": proj_of.get(r["id"], ""),
-         "item_id": attr_map.get(r["id"], {}).get("item_id"),
-         "resolution_revision": attr_map.get(r["id"], {}).get(
-             "resolution_revision")}
-        for r in rows[:500]
-    ]
+    page_rows = rows[(page - 1) * page_size: page * page_size]
+    return {
+        "rows": [
+            {
+                **{field: r.get(field) for field in _MEMORY_FIELDS},
+                "project": proj_of.get(r["id"], ""),
+                "item_id": (meta := attr_map.get(r["id"], {})).get("item_id"),
+                "resolution_revision": meta.get("resolution_revision"),
+                "resolution_state": meta.get("resolution_state"),
+                "review_state": meta.get("review_state"),
+                "proposed_project": meta.get("proposed_project") or "",
+                "confidence": meta.get("confidence") or "",
+                "evidence": meta.get("evidence") or [],
+            }
+            for r in page_rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 def _sort_rows(rows: list[dict], sort: str, desc: bool) -> list[dict]:
@@ -641,6 +1024,7 @@ def api_hard_delete(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
 
 _MEM_ACTION_RE = re.compile(r"^/api/memory/(\d+)/(update|archive|restore|delete|hard_delete)$")
 _RES_ACTION_RE = re.compile(r"^/api/resolution/(\d+)/(accept|reject)$")
+_MEM_CONTEXT_RE = re.compile(r"^/api/memory/(\d+)/context$")
 
 _BODY_LIMIT = 64 * 1024
 
@@ -649,25 +1033,34 @@ def make_handler(service: ContextService):
     """Build the handler owning a ContextService compatibility facade."""
     facade = service.legacy_facade()
     store = service.store
+    auth = WebAuth(AuthSettings.load(service.config.data_dir))
 
     class MemoryWebHandler(BaseHTTPRequestHandler):
         server_version = "EvolvMemWeb/1.0"
 
-        def _send_json(self, payload, status=200):
+        def end_headers(self):
+            self.send_header("Referrer-Policy", "no-referrer")
+            super().end_headers()
+
+        def _send_json(self, payload, status=200, headers=()):
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            for name, value in headers:
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(data)
 
-        def _send_html(self, html: str, status=200):
+        def _send_html(self, html: str, status=200, headers=()):
             data = html.encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            for name, value in headers:
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(data)
 
@@ -695,21 +1088,100 @@ def make_handler(service: ContextService):
         def do_GET(self):
             parsed = urlparse(self.path)
             path = parsed.path
-            if path == "/":
+            if auth.handle_get(self, parsed):
+                return
+            if path in ('/designs', '/designs/') or path.startswith('/designs/'):
+                name = 'index.html' if path in ('/designs', '/designs/') else path[len('/designs/'):]
+                asset = _STATIC_INDEX.parent / 'designs' / name
+                if name not in _DESIGN_ASSETS or not asset.is_file():
+                    self._send_json({'ok': False, 'error': 'design asset not found'}, 404)
+                    return
+                data = asset.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', _DESIGN_ASSETS[name])
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if path in _INSIGHT_ASSETS:
+                asset = _STATIC_INDEX.parent / path.lstrip('/')
+                if not asset.is_file():
+                    self._send_json({'ok': False, 'error': 'asset missing'}, 404)
+                    return
+                data = asset.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', _INSIGHT_ASSETS[path] + '; charset=utf-8')
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            insight_routes = {
+                '/api/insights': 'overview', '/api/experiences': 'experiences',
+                '/api/project-summaries': 'summaries', '/api/workstreams': 'workstreams',
+            }
+            detail = re.fullmatch(r'/api/(experiences|project-summaries|workstreams)/([\w-]+)', path)
+            if path in insight_routes or detail:
                 try:
-                    self._send_html(
-                        _STATIC_INDEX.read_text(encoding="utf-8"))
+                    model = service.insights()
+                    params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                    if detail:
+                        kind, identifier = detail.groups()
+                        if kind == 'workstreams':
+                            result = model.workstream(identifier)
+                        elif identifier.isdigit():
+                            method = model.experience if kind == 'experiences' else model.summary
+                            result = method(int(identifier))
+                        else:
+                            raise LookupError('not found')
+                    else:
+                        method = getattr(model, insight_routes[path])
+                        result = method() if path == '/api/insights' else method(params)
+                    self._send_json(result)
+                except LookupError:
+                    self._send_json({'ok': False, 'error': 'not found'}, 404)
+                except ValueError:
+                    self._send_json({'ok': False, 'error': 'invalid filters'}, 400)
+                except Exception as exc:
+                    self._send_json({'ok': False, 'error': _bounded_error(exc)}, 500)
+                return
+            if path in ("/organize", "/organize/"):
+                self.send_response(302)
+                self.send_header('Location', '/#memories')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            pages = {
+                '/': _STATIC_SIGNAL,
+                '/workflow': _STATIC_INDEX.parent / 'workflow.html',
+                '/workflow/': _STATIC_INDEX.parent / 'workflow.html',
+                '/workflow-diagram': _STATIC_INDEX.parent / 'workflow-diagram.html',
+            }
+            if path in pages:
+                page = pages[path]
+                try:
+                    self._send_html(page.read_text(encoding="utf-8"))
                 except FileNotFoundError:
                     self._send_json({"ok": False,
-                                     "error": "index.html missing"}, 404)
+                                     "error": "page missing"}, 404)
+                return
+            if path in ("/architecture", "/architecture.html"):
+                try:
+                    self._send_html(
+                        _STATIC_ARCH.read_text(encoding="utf-8"))
+                except FileNotFoundError:
+                    self._send_json({"ok": False,
+                                     "error": "architecture.html missing"}, 404)
                 return
             if path == "/api/stats":
-                self._send_json(api_stats(facade, store))
+                self._send_json(api_stats(facade, store, service.config))
                 return
             if path == "/api/memories":
                 qs = parse_qs(parsed.query)
                 params = {k: v[0] for k, v in qs.items()}
-                self._send_json(api_memories(facade, params, store))
+                self._send_json(api_memories(facade, params, store, service.config))
                 return
             if path == "/api/projects":
                 self._send_json(api_projects(facade, store))
@@ -719,10 +1191,20 @@ def make_handler(service: ContextService):
                 params = {k: v[0] for k, v in qs.items()}
                 self._send_json(api_resolutions(facade, store, params))
                 return
+            m = _MEM_CONTEXT_RE.match(path)
+            if m:
+                self._send_json(api_memory_context(facade, store,
+                                                   int(m.group(1))))
+                return
             self._send_json({"ok": False, "error": "unknown endpoint"}, 404)
 
         def do_POST(self):
             path = urlparse(self.path).path
+            if path == "/auth/logout":
+                auth.logout(self)
+                return
+            if not auth.require_write(self):
+                return
             m = _MEM_ACTION_RE.match(path)
             if m:
                 self._handle_memory_action(int(m.group(1)), m.group(2))
@@ -733,7 +1215,10 @@ def make_handler(service: ContextService):
                 return
             if path in ("/api/resolutions/batch_accept",
                         "/api/projects/register",
-                        "/api/projects/display_name"):
+                        "/api/projects/display_name",
+                        "/api/projects/display_names",
+                        "/api/projects/suggest_display_names",
+                        "/api/memories/organize_suggest"):
                 body, failed = self._read_body()
                 if failed:
                     return
@@ -742,8 +1227,15 @@ def make_handler(service: ContextService):
                         result = api_resolutions_batch_accept(service, body)
                     elif path == "/api/projects/register":
                         result = api_project_register(service, body)
-                    else:
+                    elif path == "/api/projects/display_name":
                         result = api_project_set_display_name(service, body)
+                    elif path == "/api/projects/display_names":
+                        result = api_projects_set_display_names(service, body)
+                    elif path == "/api/projects/suggest_display_names":
+                        result = api_projects_suggest_display_names(service)
+                    else:
+                        result = api_memories_organize_suggest(
+                            service, facade, body)
                 except Exception as exc:  # bounded surface; writes roll back
                     self._send_json({"ok": False, "error": _bounded_error(exc)},
                                     500)
@@ -752,6 +1244,12 @@ def make_handler(service: ContextService):
                 return
             self._send_json({"ok": False,
                              "error": "unknown endpoint"}, 404)
+
+        def _unsupported_write(self):
+            if auth.require_write(self):
+                self._send_json({"ok": False, "error": "method_not_allowed"}, 405)
+
+        do_PUT = do_PATCH = do_DELETE = _unsupported_write
 
         def _handle_memory_action(self, mem_id: int, action: str):
             body = {}

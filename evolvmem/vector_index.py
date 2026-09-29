@@ -34,6 +34,7 @@ class VectorIndex:
         self._dim: int | None = None
         self._view_mode: bool = False
         self._owns_dirty_marker: bool = False
+        self._shared_cache = None
 
     @property
     def _dirty_path(self) -> Path:
@@ -57,10 +58,15 @@ class VectorIndex:
             )
             self._view_mode = False
 
+        if self.config.lan_shared_vector_cache or self.config.embedding_http_url or self.config.lan_mcp_client_config:
+            from evolvmem.lan_vector_cache import SharedVectorCache
+            self._shared_cache = SharedVectorCache(self)
+
     def close(self) -> None:
         if self._index is not None:
             self._index = None
         self._view_mode = False
+        self._shared_cache = None
 
     def __enter__(self):
         self.initialize()
@@ -74,6 +80,12 @@ class VectorIndex:
     def add(self, mem_id: int, embedding: np.ndarray) -> None:
         """Add a single vector."""
         self._ensure_initialized()
+        if self._shared_cache is not None:
+            self._shared_cache.refresh()
+        self._add_without_refresh(mem_id, embedding)
+
+    def _add_without_refresh(self, mem_id: int, embedding: np.ndarray) -> None:
+        """Stage a vector without replacing the image being built."""
         vec = embedding.astype(np.float32)
         if vec.ndim != 1 or len(vec) != self._dim:
             raise ValueError(
@@ -82,6 +94,8 @@ class VectorIndex:
         self.mark_dirty()
         try:
             self._index.add(mem_id, vec)
+            if self._shared_cache is not None:
+                self._shared_cache.pending[mem_id] = vec.copy()
         except Exception:
             self.preserve_dirty()
             raise
@@ -95,11 +109,15 @@ class VectorIndex:
     def remove(self, mem_id: int) -> bool:
         """Remove a single vector. Returns True if removed, False if absent."""
         self._ensure_initialized()
+        if self._shared_cache is not None:
+            self._shared_cache.refresh()
         try:
             if mem_id not in self._index:
                 return False
             self.mark_dirty()
             self._index.remove(mem_id)
+            if self._shared_cache is not None:
+                self._shared_cache.pending[mem_id] = None
             return True
         except Exception:
             self.preserve_dirty()
@@ -110,6 +128,10 @@ class VectorIndex:
         """Full index rebuild (SQLite as source, for crash recovery)."""
         if self._dim is None:
             raise RuntimeError("VectorIndex not initialized, call initialize() first")
+        if self._shared_cache is not None:
+            # Delete only IDs from this loaded snapshot. A later disk image can
+            # include another writer's new rows, absent from our rebuild input.
+            self._shared_cache.pending.update({int(key): None for key in self._index.keys})
         self.mark_dirty()
         # Explicitly release old mmap index to avoid resource leak
         if self._index is not None:
@@ -121,19 +143,28 @@ class VectorIndex:
             metric=MetricKind.Cos,
             dtype=ScalarKind.F32,
         )
-        self.add_batch(ids, embeddings)
+        # Build the replacement image before merging with the latest disk
+        # cache. add_batch would refresh between inserts and reintroduce IDs
+        # that may also be in this rebuild input.
+        for mem_id, embedding in zip(ids, embeddings):
+            self._add_without_refresh(mem_id, embedding)
         self.save()
         self.clear_dirty()
 
     def save(self) -> None:
         """Persist to disk."""
         self._ensure_initialized()
+        if self._shared_cache is not None:
+            self._shared_cache.refresh()
         if self._view_mode:
             raise RuntimeError(
                 "cannot save a view-mode index; use rebuild() instead"
             )
         path = str(self.path)
-        self._index.save(path)
+        if self._shared_cache is not None:
+            self._shared_cache.save()
+        else:
+            self._index.save(path)
         if self._owns_dirty_marker:
             self.clear_dirty()
 
@@ -162,6 +193,8 @@ class VectorIndex:
     def search(self, embedding: np.ndarray, k: int = 20) -> list[dict]:
         """HNSW approximate nearest neighbor search. Returns [{id, distance}, ...] by distance ascending."""
         self._ensure_initialized()
+        if self._shared_cache is not None:
+            self._shared_cache.refresh()
         if self.count() == 0:
             return []
         vec = embedding.astype(np.float32)
@@ -179,6 +212,8 @@ class VectorIndex:
 
     def count(self) -> int:
         self._ensure_initialized()
+        if self._shared_cache is not None:
+            self._shared_cache.refresh()
         return len(self._index)
 
     def check_consistency(self, expected_count: int) -> bool:
@@ -195,6 +230,8 @@ class VectorIndex:
         truncated.
         """
         self._ensure_initialized()
+        if self._shared_cache is not None:
+            self._shared_cache.refresh()
         if limit < 0:
             raise ValueError("ids inspection limit must be non-negative")
         keys = sorted(int(key) for key in self._index.keys)
@@ -212,6 +249,8 @@ class VectorIndex:
         diagnosable.
         """
         self._ensure_initialized()
+        if self._shared_cache is not None:
+            self._shared_cache.refresh()
         return VectorIndexMetadata(
             count=len(self._index),
             dimension=int(self._index.ndim),

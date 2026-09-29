@@ -31,13 +31,15 @@ ready claim.
 
 Privacy contract: workspace paths are normalized to basename/alias before
 use, and the service neither stores nor logs absolute paths, queries, or
-content — its only logging is stable-code debug lines.
+content — its only logging is stable-code lines: whitelisted
+health-transition warnings plus debug detail.
 """
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import logging
+import sqlite3
 from pathlib import PurePosixPath
 
 import numpy as np
@@ -134,6 +136,42 @@ _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 # and config validation messages, each truncated to a fixed length.
 _MAX_DIAGNOSTICS = 8
 _MAX_DIAGNOSTIC_CHARS = 160
+
+# Every code the primary health evaluator may log. Diagnostics outside this
+# whitelist — notably config.validate_runtime() messages, which may embed
+# configured filenames or values — collapse to one generic token, so health
+# transition logs can never carry user data.
+_HEALTH_LOG_CODES = frozenset(
+    {
+        "quick_check_failed",
+        "schema_invariant_failed",
+        "layer_invariant_failed",
+        "projection_evaluation_failed",
+        "legacy_mapping_incomplete",
+        "projection_lag_nonzero",
+        "context_vector_path_mismatch",
+        "context_vector_unavailable",
+        "context_vector_dirty",
+        "context_vector_count_mismatch",
+        "degraded_legacy",
+    }
+)
+_UNKNOWN_DIAGNOSTIC = "unknown_diagnostic"
+
+
+def _health_log_codes(diagnostics: tuple[str, ...]) -> tuple[str, ...]:
+    """Whitelist-filter one health evaluation into stable, loggable codes."""
+    return tuple(
+        sorted(
+            {
+                message
+                if isinstance(message, str) and message in _HEALTH_LOG_CODES
+                else _UNKNOWN_DIAGNOSTIC
+                for message in diagnostics
+            }
+        )
+    )
+
 
 # Every mapped live ContextItem has exactly one L0, L1, and L2.
 _ALL_LAYERS = (ContextLayer.L0, ContextLayer.L1, ContextLayer.L2)
@@ -258,6 +296,7 @@ class ContextService:
         self._ready = False
         self._reason_codes: tuple[str, ...] = ()
         self._diagnostics: tuple[str, ...] = ()
+        self._health_transition_codes: tuple[str, ...] | None = None
 
     # ---- lifecycle ----
 
@@ -288,16 +327,18 @@ class ContextService:
         self._refresh_health()
         return self.status()
 
-    def close(self) -> None:
+    def close(self, *, close_embedding_engine: bool = True) -> None:
         """Close every dependency the lifecycle coordinates; safe to repeat."""
         try:
-            for resource in (
+            resources = (
                 self.store,
                 self.vector_index,
                 self._legacy_vector,
                 self._legacy_store,
-                self.embedding_engine,
-            ):
+            )
+            if close_embedding_engine:
+                resources += (self.embedding_engine,)
+            for resource in resources:
                 close = getattr(resource, "close", None)
                 if callable(close):
                     close()
@@ -314,6 +355,7 @@ class ContextService:
             self._ready = False
             self._reason_codes = ()
             self._diagnostics = ()
+            self._health_transition_codes = None
 
     def status(self) -> ContextServiceStatus:
         """Content-free snapshot: modes, counts, flags, reason codes, diagnostics."""
@@ -382,6 +424,24 @@ class ContextService:
         self._ready = not diagnostics
         self._reason_codes = () if self._ready else ("degraded_legacy",)
         self._diagnostics = diagnostics
+        self._log_health_transition(diagnostics)
+
+    def _log_health_transition(self, diagnostics: tuple[str, ...]) -> None:
+        """Emit one stable warning per distinct primary-health state.
+
+        The resident service configures no logging, so WARNING is the only
+        level that reaches the journal; whitelisting keeps the line
+        content-free and the stored baseline keeps repeats silent.
+        """
+        codes = _health_log_codes(diagnostics)
+        if codes == self._health_transition_codes:
+            return
+        previous = self._health_transition_codes
+        self._health_transition_codes = codes
+        if codes:
+            logger.warning("context health degraded_legacy: %s", ",".join(codes))
+        elif previous:
+            logger.warning("context health recovered: ready")
 
     def _primary_diagnostics(self) -> tuple[str, ...]:
         """Revalidate the startup primary invariants, content-free.
@@ -407,7 +467,9 @@ class ContextService:
             diagnostics.append("layer_invariant_failed")
             documents = None
         diagnostics.extend(self._projection_invariant_diagnostics())
-        diagnostics.extend(self._vector_diagnostics(documents))
+        vector_diagnostics = self._vector_diagnostics(documents)
+        if self.config.context_vectors_required:
+            diagnostics.extend(vector_diagnostics)
         deduped = list(dict.fromkeys(diagnostics))
         return tuple(
             message[:_MAX_DIAGNOSTIC_CHARS]
@@ -417,16 +479,26 @@ class ContextService:
     def _quick_check_diagnostics(self) -> tuple[str, ...]:
         try:
             conn = self.store._connection()
-            # SQLite 3.53 FTS5 can retain its previous checksum snapshot after
-            # another client commits. A bounded read refreshes each virtual
-            # table before quick_check; this changes neither data nor counters.
-            conn.execute("SAVEPOINT evolvmem_health_snapshot")
-            try:
-                for table in ("context_layers_fts", "context_layers_fts_trigram"):
-                    conn.execute(f"SELECT rowid FROM {table} LIMIT 1").fetchall()
-                rows = conn.execute("PRAGMA quick_check").fetchall()
-            finally:
-                conn.execute("RELEASE evolvmem_health_snapshot")
+            # SQLite 3.53 FTS5 can retain a resident checksum snapshot after
+            # another client commits. Check committed data with a fresh,
+            # read-only connection instead of depending on a partial vtab
+            # refresh. Never replace the transaction's view with an older
+            # committed snapshot when this connection has pending writes.
+            if not conn.in_transaction:
+                uri = self.config.db_path.expanduser().resolve().as_uri() + "?mode=ro"
+                probe = sqlite3.connect(uri, uri=True)
+                try:
+                    rows = probe.execute("PRAGMA quick_check").fetchall()
+                finally:
+                    probe.close()
+            else:
+                conn.execute("SAVEPOINT evolvmem_health_snapshot")
+                try:
+                    for table in ("context_layers_fts", "context_layers_fts_trigram"):
+                        conn.execute(f"SELECT rowid FROM {table} LIMIT 1").fetchall()
+                    rows = conn.execute("PRAGMA quick_check").fetchall()
+                finally:
+                    conn.execute("RELEASE evolvmem_health_snapshot")
         except Exception:
             return ("quick_check_failed",)
         if rows and all(str(row[0]).lower() == "ok" for row in rows):
@@ -559,7 +631,7 @@ class ContextService:
         return results
 
     def session_start(
-        self, request: ContextSessionStartRequest
+        self, request: ContextSessionStartRequest, *, project_only: bool = False
     ) -> ContextSessionStartResult:
         """Render a bounded L1 history block; update access only for rendered IDs.
 
@@ -581,12 +653,17 @@ class ContextService:
             if isinstance(routed, ContextSessionStartResult):
                 return routed
             continuation_code, continuation = routed
+        # 当前项目 ready rollup 的确切摘要：只标记这一个条目，让 renderer 为它
+        # 预留名额与字符预算；标记不改变任何准入闸门，未通过闸门时等同未标记。
+        reserved_id = self._ready_project_summary_context_id(project)
         candidates = tuple(
             ContextRenderCandidate(
                 result=result,
                 l1=self.store.get_layer(result.id, ContextLayer.L1) or "",
+                reserved=reserved_id is not None and result.id == reserved_id,
             )
             for result in self._session_candidates(project, request.query)
+            if not project_only or result.project == project
         )
         rendered = self.renderer.render(
             candidates, project=project, max_chars=request.max_chars
@@ -778,6 +855,30 @@ class ContextService:
                 )
         return content
 
+    def _ready_project_summary_context_id(self, project: str) -> int | None:
+        """The exact current_context_id of the project's ready rollup row.
+
+        Read-only and fail-open: an empty project, a missing table/row, or a
+        non-integer pointer means "no reservation" on the injection path and
+        never raises into it.
+        """
+        if not project:
+            return None
+        try:
+            row = self.store._connection().execute(
+                "SELECT current_context_id FROM context_project_rollups "
+                "WHERE project=? AND status='ready'",
+                (project,),
+            ).fetchone()
+        except Exception:
+            return None
+        if row is None or row["current_context_id"] is None:
+            return None
+        try:
+            return int(row["current_context_id"])
+        except (TypeError, ValueError):
+            return None
+
     def _ready_project_summary_l1(self, project: str) -> str:
         """The project's ready rollup L1, best-effort; '' when unavailable."""
         if not project:
@@ -821,6 +922,13 @@ class ContextService:
         )
         for record in seeds:
             by_id.setdefault(record.item.id, self._pinned_seed_result(record))
+        from dataclasses import replace
+        for record in self.store.list_project_context_records(
+            project=project, min_confidence=self.config.context_min_confidence
+        ):
+            seed = replace(self._pinned_seed_result(record),
+                           match_types=(ContextMatchType.PROJECT_CONTEXT,))
+            by_id.setdefault(record.item.id, seed)
         return tuple(by_id.values())
 
     @staticmethod
@@ -1034,6 +1142,11 @@ class ContextService:
         if not hasattr(self, "_experiences"):
             self._experiences = ExperienceService(self)
         return self._experiences
+
+    def insights(self):
+        """Read-only operator view of experiences and saved project progress."""
+        from evolvmem.context_insights import ContextInsights
+        return ContextInsights(self)
 
     def confirm(self, item_id: int) -> EvidenceReport:
         """Promote one candidate to active through the lifecycle state machine.
@@ -1337,11 +1450,14 @@ class ContextService:
                 available_layers=_ALL_LAYERS,
                 changed=True,
             ),
+            # The legacy cache mirrors every non-deleted projection row
+            # (all_ids is its sync contract): the superseded predecessor stays
+            # in the memories table, so its vector must stay too. Dropping it
+            # would leave the reopened index one key short of all_ids and make
+            # every startup count check rebuild the whole index. The context
+            # cache is active-only, so it still drops the predecessor.
             _VectorAftermath(
                 legacy_upserts=((new_id, request.new_value),),
-                legacy_removals=(
-                    (old_legacy_id,) if old_legacy_id is not None else ()
-                ),
                 context_upserts=((item.id, new_l0),),
                 context_removals=(
                     (old_context_id,) if old_context_id is not None else ()
@@ -2192,13 +2308,14 @@ class ContextService:
                         backend._projection().set_status(
                             request.legacy_id, legacy_status
                         )
-            if row is not None:
+            if row is not None and reactivate:
+                # Restoring re-encodes the value; archiving keeps the vector —
+                # the row stays non-deleted and therefore stays in the legacy
+                # cache's all_ids expectation set.
                 self._apply_vector_aftermath(
                     _VectorAftermath(
                         legacy_upserts=((request.legacy_id, row["value"]),),
                     )
-                    if reactivate
-                    else _VectorAftermath(legacy_removals=(request.legacy_id,))
                 )
             return LegacyMutationResult(
                 legacy_id=request.legacy_id,
@@ -2230,16 +2347,17 @@ class ContextService:
                         )
                     l0 = self.store.get_layer(context_id, ContextLayer.L0) or ""
         if changed:
+            # Archiving keeps the legacy vector for the same reason as replace:
+            # the projection row is still non-deleted, so the legacy cache
+            # (which mirrors all_ids for the startup count check) must keep it.
+            # The active-only context cache still drops the item.
             self._apply_vector_aftermath(
                 _VectorAftermath(
                     legacy_upserts=((request.legacy_id, row_value),),
                     context_upserts=((context_id, l0),),
                 )
                 if reactivate
-                else _VectorAftermath(
-                    legacy_removals=(request.legacy_id,),
-                    context_removals=(context_id,),
-                )
+                else _VectorAftermath(context_removals=(context_id,))
             )
         return LegacyMutationResult(
             legacy_id=request.legacy_id,

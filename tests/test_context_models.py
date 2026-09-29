@@ -129,10 +129,10 @@ def test_mode_match_and_selection_enums_expose_the_persisted_values():
         "legacy", "compat", "shadow", "primary",
     }
     assert {member.value for member in ContextMatchType} == {
-        "lexical", "vector", "pinned_policy",
+        "lexical", "vector", "pinned_policy", "project_context",
     }
     assert {member.value for member in ContextSelectionReason} == {
-        "pinned_policy", "lexical", "vector",
+        "pinned_policy", "lexical", "vector", "project_context",
     }
 
 

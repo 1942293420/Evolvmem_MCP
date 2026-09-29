@@ -1,0 +1,6 @@
+{
+  "lan_mcp_client_config": "/absolute/private/evolvmem-lan/clients/jiangli-client.json",
+  "lan_shared_vector_cache": true,
+  "embedding_http_url": "http://127.0.0.1:9378",
+  "embedding_http_token_file": "/absolute/private/evolvmem-lan/clients/jiangli-token"
+}

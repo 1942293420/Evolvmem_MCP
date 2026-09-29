@@ -20,6 +20,9 @@ class Config:
 
     # Data directory
     data_dir: Path = Path.home() / ".claude" / "evolvmem"
+    # LAN runtime passes explicit namespace settings and must not inherit a
+    # process-wide client override intended for standalone usage.
+    apply_environment: bool = field(default=True, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Honour EVOLVMEM_DATA_DIR for all construction paths.
@@ -27,10 +30,11 @@ class Config:
         DSH 薄壳通过该环境变量显式指向共享库；未设置时保持 Claude 侧默认
         路径不变，两侧零影响。
         """
-        env_dir = os.environ.get("EVOLVMEM_DATA_DIR")
-        if env_dir:
-            self.data_dir = Path(env_dir).expanduser()
-        self._apply_context_environment()
+        if self.apply_environment:
+            env_dir = os.environ.get("EVOLVMEM_DATA_DIR")
+            if env_dir:
+                self.data_dir = Path(env_dir).expanduser()
+            self._apply_context_environment()
 
     # SQLite 数据库路径
     @property
@@ -70,7 +74,13 @@ class Config:
     forget_access_count_threshold: int = 2   # 最大访问次数（低于此值可降级）
     forget_rate_limit_days: int = 7          # 同一记忆两次降级的最小间隔
 
+    # Opt-in existing Linux MCP entry forwarding. Secrets live in token files.
+    lan_mcp_client_config: str = ""
+    lan_shared_vector_cache: bool = False
+
     # --- embedding 参数 ---
+    embedding_http_url: str = ""
+    embedding_http_token_file: str = ""
     embedding_model_filename: str = DEFAULT_EMBEDDING_CONTRACT.filename
     embedding_dim: int = DEFAULT_EMBEDDING_CONTRACT.dimension
     # nomic-embed-text-v1.5 任务前缀；置空字符串可关闭
@@ -92,6 +102,10 @@ class Config:
     context_inject_related_max_chars: int = 1500  # related 池字符预算
     context_min_confidence: float = 0.55         # 注入/检索最低置信度
     context_vector_min_similarity: float = 0.80  # 纯向量候选最低归一化相似度
+    # Existing local configurations keep strict primary vector gates. LAN
+    # namespaces explicitly opt out because their SQLite/FTS path remains
+    # usable while the shared optional model is unavailable.
+    context_vectors_required: bool = True
     context_fts_weight: float = 0.60    # 词法通道融合权重
     context_vector_weight: float = 0.40  # 向量通道融合权重
     context_score_relevance_weight: float = 0.35
@@ -202,7 +216,7 @@ class Config:
                 "context_l1_max_chars <= context_l2_max_chars"
             )
 
-        if require_model and filename_is_safe and not self.model_path.is_file():
+        if require_model and not self.embedding_http_url and filename_is_safe and not self.model_path.is_file():
             diagnostics.append(
                 f"Model file not found: embedding_model_filename '{filename}' "
                 "is missing from the configured models directory"
@@ -251,6 +265,8 @@ class Config:
     def _validate_context_config(self) -> list[str]:
         """Validate the independent Context Core retrieval/injection settings."""
         diagnostics: list[str] = []
+        if type(self.context_vectors_required) is not bool:
+            diagnostics.append("context_vectors_required must be a boolean")
         if self.context_mode not in self._CONTEXT_MODE_VALUES:
             diagnostics.append(
                 "context_mode must be one of 'legacy', 'compat', 'shadow', 'primary'"
@@ -316,18 +332,34 @@ class Config:
         return diagnostics
 
     @classmethod
-    def from_file(cls, path: Path | None = None) -> "Config":
+    def from_file(
+        cls,
+        path: Path | None = None,
+        *,
+        data_dir: Path | None = None,
+        apply_environment: bool = True,
+        ensure_dirs: bool = True,
+    ) -> "Config":
         """Load config from config.json; missing fields use defaults."""
-        config = cls()
-        config.ensure_dirs()
+        if data_dir is None:
+            config = cls(apply_environment=apply_environment)
+        else:
+            config = cls(data_dir=data_dir, apply_environment=apply_environment)
+        if ensure_dirs:
+            config.ensure_dirs()
         load_path = path or config.config_path
         if load_path.exists():
             with open(load_path, encoding="utf-8") as f:
                 data = json.load(f)
             for key, value in data.items():
+                if key == "data_dir" and data_dir is not None:
+                    # Callers that provide a directory own that namespace;
+                    # persisted JSON must not redirect it.
+                    continue
                 if hasattr(config, key):
                     setattr(config, key, value)
-        config._apply_context_environment()
+        if apply_environment:
+            config._apply_context_environment()
         return config
 
     def save(self) -> None:
@@ -348,6 +380,10 @@ class Config:
             "forget_days_threshold": self.forget_days_threshold,
             "forget_access_count_threshold": self.forget_access_count_threshold,
             "forget_rate_limit_days": self.forget_rate_limit_days,
+            "lan_shared_vector_cache": self.lan_shared_vector_cache,
+            "lan_mcp_client_config": self.lan_mcp_client_config,
+            "embedding_http_url": self.embedding_http_url,
+            "embedding_http_token_file": self.embedding_http_token_file,
             "embedding_model_filename": self.embedding_model_filename,
             "embedding_dim": self.embedding_dim,
             "embedding_query_prefix": self.embedding_query_prefix,
@@ -364,6 +400,7 @@ class Config:
             "context_inject_related_max_chars": self.context_inject_related_max_chars,
             "context_min_confidence": self.context_min_confidence,
             "context_vector_min_similarity": self.context_vector_min_similarity,
+            "context_vectors_required": self.context_vectors_required,
             "context_fts_weight": self.context_fts_weight,
             "context_vector_weight": self.context_vector_weight,
             "context_score_relevance_weight": self.context_score_relevance_weight,

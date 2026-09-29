@@ -12,6 +12,7 @@ Tools (legacy, always registered):
 Context tools (Codex/Kimi shadow/primary with a ready ContextService):
   context_session_start — bounded rendered L1 history block
   context_search        — thresholded Core retrieval, L0 metadata only
+  context_project_recall — read-only recall for explicitly mentioned projects
   context_read          — exact-ID L1/L2 read
   context_status        — content-free diagnostic snapshot
   context_confirm       — promote one candidate to active (review path)
@@ -25,6 +26,10 @@ Continuity tools (Codex/Kimi compat/shadow/primary; call-time readiness):
   continuity_resume     — exact focus-pointer resume, bounded checkpoint
   continuity_checkpoint — action whitelist + revision CAS mutation
   continuity_list       — unfinished workstream L0 summaries
+
+Project-board tools (same adapters/modes; optional private configuration):
+  project_board_sync    — manually deliver committed checkpoint progress
+  project_board_status  — read local delivery state without network activity
 
 The exposed tool set comes from one registry (evolvmem.mcp_contract):
 tools/list and tools/call share it, so a hidden tool cannot still be
@@ -53,7 +58,12 @@ from evolvmem.context_models import (
     ContextValidationError,
 )
 from evolvmem.context_service import ContextService
+from evolvmem.project_mention_recall import (
+    DEFAULT_MAX_CHARS as DEFAULT_PROJECT_RECALL_MAX_CHARS,
+    recall_mentioned_projects,
+)
 from evolvmem.continuity_models import (
+    ContinuityAction,
     ContinuityBeginRequest,
     ContinuityCheckpointRequest,
     ContinuityError,
@@ -62,6 +72,7 @@ from evolvmem.continuity_models import (
     ContinuityValidationError,
 )
 from evolvmem.continuity_service import ContinuityService
+from evolvmem.project_board_sync import ProjectBoardSync
 from evolvmem.cutover_checks import compare_shadow
 from evolvmem.legacy_models import (
     LegacyAddRequest,
@@ -144,13 +155,33 @@ def _is_low_info(value: str) -> bool:
     return any(v.startswith(p.casefold()) for p in _LOW_INFO_PATTERNS)
 
 
+_DEFAULT_EMBEDDING_ENGINE = object()
+
+
+class _UnavailableEmbeddingEngine:
+    """Explicit injected no-model boundary for FTS-only server instances."""
+
+    is_loaded = False
+
+    def initialize(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
 class MemoryMCPServer:
     """stdio MCP Server — JSON-RPC protocol."""
 
     # 握手等待轻量 Context 健康评估的上限；绝不等待 embedding 模型加载
     _HEALTH_WAIT_TIMEOUT_S = 5
 
-    def __init__(self, config: Config | None = None, context_service=None):
+    def __init__(
+        self,
+        config: Config | None = None,
+        context_service=None,
+        embedding_engine=_DEFAULT_EMBEDDING_ENGINE,
+    ):
         self.config = config if config is not None else Config.from_file()
         self.adapter = self.config.adapter or "mcp"
         try:
@@ -161,7 +192,16 @@ class MemoryMCPServer:
             # 未知 mode：Context 功能 fail-closed（只留 context_status 诊断）
             self.context_mode = None
         self.vidx = VectorIndex(self.config)
-        self.engine = EmbeddingEngine(self.config)
+        self._owns_embedding_engine = embedding_engine is _DEFAULT_EMBEDDING_ENGINE
+        self.engine = (
+            EmbeddingEngine(self.config)
+            if self._owns_embedding_engine
+            else (
+                embedding_engine
+                if embedding_engine is not None
+                else _UnavailableEmbeddingEngine()
+            )
+        )
         # 所有 legacy 读写都经 ContextService 兼容门面（access 计数也不例外）；
         # 本模块不再持有裸 MemoryStore
         self.context_service = context_service
@@ -169,6 +209,7 @@ class MemoryMCPServer:
         # 借用 context_service 的 store，与其同生命周期（shutdown 统一关闭）
         self._continuity_service = None
         self._workspace_identity_provider = None
+        self._project_board_adapter = None
         self.retriever = None
         self.conflict_detector = None
         self.forgetting = None
@@ -218,7 +259,8 @@ class MemoryMCPServer:
 
         # Try loading the embedding model (FTS5 search works without it)
         try:
-            self.engine.initialize()
+            if self._owns_embedding_engine:
+                self.engine.initialize()
         except Exception:
             # 宽捕获：模型加载的任何瞬时失败（缺文件/缺依赖/内存不足）都降级为
             # 仅 FTS 搜索，而不是让整个会话的 tools/call 被 _init_error 堵死
@@ -247,7 +289,7 @@ class MemoryMCPServer:
         try:
             service = getattr(self, "context_service", None)
             if service:
-                service.close()
+                service.close(close_embedding_engine=self._owns_embedding_engine)
         except Exception:
             pass
         try:
@@ -257,7 +299,7 @@ class MemoryMCPServer:
         except Exception:
             pass
         try:
-            if self.engine:
+            if self._owns_embedding_engine and self.engine:
                 self.engine.close()
         except Exception:
             pass
@@ -285,6 +327,7 @@ class MemoryMCPServer:
             "memory_consolidate": self._memory_consolidate,
             "context_session_start": self._context_session_start,
             "context_search": self._context_search,
+            "context_project_recall": self._context_project_recall,
             "experience_recall": self._experience_recall,
             "experience_record": self._experience_record,
             "context_read": self._context_read,
@@ -298,6 +341,8 @@ class MemoryMCPServer:
             "continuity_list": self._continuity_list,
             "continuity_begin": self._continuity_begin,
             "continuity_find": self._continuity_find,
+            "project_board_sync": self._project_board_sync,
+            "project_board_status": self._project_board_status,
         }
 
     def _memory_search(self, args: dict) -> dict:
@@ -459,6 +504,7 @@ class MemoryMCPServer:
 
     def _memory_status(self, args: dict) -> dict:
         status = self._live_status()
+        embedding_diagnostics = self._embedding_diagnostics()
         if status is None:
             # 无可用服务（非法配置/未初始化）：只给安全诊断，不伪造计数
             return {
@@ -468,9 +514,7 @@ class MemoryMCPServer:
                     else "not_initialized"
                 ),
                 "embedding_loaded": self.engine.is_loaded,
-                "diagnostics": list(
-                    self.config.validate_runtime(require_model=True)
-                )[:8],
+                "diagnostics": embedding_diagnostics,
             }
         facade = self.context_service.legacy_facade()
         return {
@@ -479,9 +523,7 @@ class MemoryMCPServer:
             "vector_count": self.vidx.count(),
             "embedding_loaded": self.engine.is_loaded,
             "embedding_dim": self.config.embedding_dim,
-            "embedding_diagnostics": list(
-                self.config.validate_runtime(require_model=True)
-            )[:8],
+            "embedding_diagnostics": embedding_diagnostics,
             # 安全的可用性/dirty 诊断；绝不输出绝对数据目录
             "legacy_vector_dirty": status.legacy_vector_dirty,
             "context_mode": status.mode.value,
@@ -489,6 +531,19 @@ class MemoryMCPServer:
             "context_ready": status.ready,
             "context_vector_dirty": status.context_vector_dirty,
         }
+
+    def _embedding_diagnostics(self) -> list[str]:
+        """Report the actual model boundary, not a borrowed namespace path."""
+        diagnostics = list(
+            self.config.validate_runtime(require_model=self._owns_embedding_engine)
+        )
+        if (
+            not self._owns_embedding_engine
+            and not getattr(self.engine, "is_loaded", False)
+        ):
+            diagnostics.append("shared embedding engine unavailable")
+        return diagnostics[:8]
+
 
     def _memory_add(self, args: dict) -> dict:
         key = args.get("key", "")
@@ -753,6 +808,40 @@ class MemoryMCPServer:
                 for r in results
             ],
             "count": len(results),
+        }
+
+    def _context_project_recall(self, args: dict) -> dict:
+        """只读项目提及召回：query 文本 + 已登记项目，绝不改绑定/焦点。"""
+        if not isinstance(args, dict) or set(args) - {"query", "max_chars"}:
+            return self._context_error("invalid_arguments")
+        query = args.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return self._context_error("invalid_arguments")
+        max_chars = args.get("max_chars", DEFAULT_PROJECT_RECALL_MAX_CHARS)
+        if (
+            isinstance(max_chars, bool)
+            or not isinstance(max_chars, int)
+            or max_chars < 1
+        ):
+            return self._context_error("invalid_arguments")
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        try:
+            result = recall_mentioned_projects(
+                self.context_service, query=query, max_chars=max_chars,
+            )
+        except (ContextValidationError, ValueError, TypeError):
+            return self._context_error("invalid_arguments")
+        except ContextServiceError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        return {
+            "block": result.block,
+            "selected_ids": list(result.selected_ids),
+            "matched_projects": list(result.matched_projects),
+            "used_chars": result.used_chars,
         }
 
     def _context_read(self, args: dict) -> dict:
@@ -1225,6 +1314,80 @@ class MemoryMCPServer:
         rows = [self._workstream_summary(item) for item in summaries]
         return {"workstreams": rows, "count": len(rows)}
 
+    # ---- optional existing-project progress synchronization ----
+
+    _PROJECT_BOARD_FIELDS = frozenset({
+        "workspace_path", "project_hint", "workstream_id",
+    })
+
+    def _project_board(self):
+        adapter = self._project_board_adapter
+        if adapter is None:
+            context = getattr(self, "context_service", None)
+            store = getattr(context, "store", None)
+            if store is None:
+                return None
+            adapter = ProjectBoardSync(
+                self.config, store, self._workspace_identity()
+            )
+            self._project_board_adapter = adapter
+        return adapter
+
+    def _project_board_args(self, args: dict) -> dict | None:
+        if not isinstance(args, dict) or set(args) - self._PROJECT_BOARD_FIELDS:
+            return None
+        workspace_path = args.get("workspace_path")
+        project_hint = args.get("project_hint", "")
+        workstream_id = args.get("workstream_id", "")
+        if (
+            not isinstance(workspace_path, str)
+            or not workspace_path.strip()
+            or not isinstance(project_hint, str)
+            or not isinstance(workstream_id, str)
+        ):
+            return None
+        return {
+            "workspace_path": workspace_path,
+            "project_hint": project_hint,
+            "workstream_id": workstream_id,
+        }
+
+    def _project_board_sync(self, args: dict) -> dict:
+        request = self._project_board_args(args)
+        if request is None:
+            return self._context_error("invalid_arguments")
+        adapter = self._project_board()
+        if adapter is None:
+            return {
+                "status": "disabled",
+                "message": "project board sync is disabled",
+            }
+        try:
+            return adapter.sync(**request)
+        except Exception:
+            return {
+                "status": "pending",
+                "message": "project board sync remains pending",
+            }
+
+    def _project_board_status(self, args: dict) -> dict:
+        request = self._project_board_args(args)
+        if request is None:
+            return self._context_error("invalid_arguments")
+        adapter = self._project_board()
+        if adapter is None:
+            return {
+                "status": "disabled",
+                "message": "project board sync is disabled",
+            }
+        try:
+            return adapter.status(**request)
+        except Exception:
+            return {
+                "status": "pending",
+                "message": "project board sync status is unavailable",
+            }
+
     @staticmethod
     def _workstream_summary(summary) -> dict:
         """Bounded candidate projection: metadata plus L0, never L1/L2."""
@@ -1283,8 +1446,36 @@ class MemoryMCPServer:
             return self._context_error(exc.code)
         except Exception:
             return self._context_error("context_unavailable")
+        sync_receipt = None
+        if request.action in {
+            ContinuityAction.UPDATE.value,
+            ContinuityAction.PAUSE.value,
+            ContinuityAction.RESUME.value,
+            ContinuityAction.BLOCK.value,
+            ContinuityAction.UNBLOCK.value,
+            ContinuityAction.COMPLETE.value,
+            ContinuityAction.CANCEL.value,
+        }:
+            # Persistence has committed before this best-effort transport.
+            # Any config/state/network failure remains delivery state and must
+            # never turn a saved checkpoint into an apparent failed write.
+            try:
+                adapter = self._project_board()
+                if adapter is not None:
+                    candidate = adapter.sync(
+                        request.workspace_path,
+                        project_hint=request.project_hint,
+                        workstream_id=result.workstream_id,
+                    )
+                    if candidate.get("status") != "disabled":
+                        sync_receipt = candidate
+            except Exception:
+                sync_receipt = {
+                    "status": "pending",
+                    "message": "project board sync remains pending",
+                }
         # 只有指针/修订状态：无正文、无绝对路径、无指纹材料
-        return {
+        payload = {
             "workstream_id": result.workstream_id,
             "checkpoint_revision": result.checkpoint_revision,
             "state_version": result.state_version,
@@ -1292,6 +1483,9 @@ class MemoryMCPServer:
             "status": result.status,
             "context_id": result.context_id,
         }
+        if sync_receipt is not None:
+            payload["project_board_sync"] = sync_receipt
+        return payload
 
     # ---- mode/health views and mutation boundary helpers ----
 
@@ -1637,7 +1831,7 @@ class MemoryMCPServer:
                 # 与 tools/list 同一注册表：隐藏工具不能被调用；
                 # 未知工具也无需等待初始化门闩
                 result = {"error": f"Unknown tool: {tool_name}"}
-            elif tool_name.startswith(("context_", "continuity_")):
+            elif tool_name.startswith(("context_", "continuity_", "project_board_")):
                 # context_*/continuity_* 不等重初始化门闩：服务未就绪即返回
                 # 各自的稳定错误（continuity_not_ready / context_* gate）
                 result = self.handle_tool_call(tool_name, tool_args)
@@ -1675,7 +1869,13 @@ class MemoryMCPServer:
 
 
 def main():
-    server = MemoryMCPServer()
+    config = Config.from_file(ensure_dirs=False)
+    if config.lan_mcp_client_config:
+        from evolvmem.lan_stdio import run
+        run(config.lan_mcp_client_config)
+        return
+    config.ensure_dirs()
+    server = MemoryMCPServer(config=config)
     server.run()
 
 

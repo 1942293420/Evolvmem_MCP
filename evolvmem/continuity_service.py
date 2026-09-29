@@ -23,6 +23,7 @@ in a fresh transaction after the rollback so the audit survives.
 """
 
 from collections.abc import Mapping
+from dataclasses import replace
 import json
 import logging
 import re
@@ -78,6 +79,56 @@ logger = logging.getLogger(__name__)
 # arrays are bounded before the layer budgets apply.
 MAX_CHECKPOINT_STRING_CHARS = 2000
 MAX_CHECKPOINT_ARRAY_ITEMS = 50
+
+
+def _resolve_bound_project(
+    store: ContextStore, fingerprint: str, hint: str
+) -> str | None:
+    """Resolve one active project using continuity's authoritative rules."""
+    conn = store._connection()
+    if hint.strip():
+        normalized = hint.strip().casefold()
+        aliases = conn.execute(
+            "SELECT alias, project FROM context_project_aliases"
+        ).fetchall()
+        alias_map = {
+            row["alias"].casefold(): row["project"] for row in aliases
+        }
+        candidate = alias_map.get(normalized, normalized)
+        row = conn.execute(
+            "SELECT project FROM context_project_registry "
+            "WHERE lower(project)=lower(?) AND status='active'",
+            (candidate,),
+        ).fetchone()
+        if row is None:
+            return None
+        project = row["project"]
+        bound = conn.execute(
+            "SELECT 1 FROM context_project_workspace_bindings "
+            "WHERE workspace_fingerprint=? AND project=? AND state='active'",
+            (fingerprint, project),
+        ).fetchone()
+        return project if bound is not None else None
+    rows = conn.execute(
+        "SELECT project, is_default FROM context_project_workspace_bindings "
+        "WHERE workspace_fingerprint=? AND state='active'",
+        (fingerprint,),
+    ).fetchall()
+    if not rows:
+        return None
+    if len(rows) > 1:
+        defaults = [row for row in rows if row["is_default"]]
+        if len(defaults) != 1:
+            return None
+        rows = defaults
+    project = rows[0]["project"]
+    active = conn.execute(
+        "SELECT 1 FROM context_project_registry "
+        "WHERE project=? AND status='active'",
+        (project,),
+    ).fetchone()
+    return project if active is not None else None
+
 
 _MAX_CANDIDATES = 50
 _FIND_SCAN_LIMIT = 200
@@ -220,7 +271,8 @@ class ContinuityService:
 
     VERSION = "continuity.v1"
 
-    def __init__(self, config: Config, store: ContextStore, workspace_identity) -> None:
+    def __init__(self, config: Config, store: ContextStore, workspace_identity, *,
+                 repo_anchor=None, ancestor=None) -> None:
         if not isinstance(config, Config):
             raise ContextValidationError("config must be a Config instance")
         if not isinstance(store, ContextStore):
@@ -232,6 +284,8 @@ class ContinuityService:
         self._config = config
         self._store = store
         self._workspace_identity = workspace_identity
+        self._repo_anchor = repo_anchor or _collect_repo_anchor
+        self._ancestor = ancestor or _is_ancestor
 
     # ---- public API ----
 
@@ -249,11 +303,11 @@ class ContinuityService:
             raise ContinuityError("project_unresolved")
         try:
             if request.action == ContinuityAction.CREATE.value:
-                anchor = _collect_repo_anchor(request.workspace_path)
+                anchor = self._repo_anchor(request.workspace_path)
                 return self._create(request, project, identity.fingerprint, anchor)
             if request.action in _FOCUS_ACTIONS:
                 return self._mutate_focus(request, project, identity.fingerprint)
-            anchor = _collect_repo_anchor(request.workspace_path)
+            anchor = self._repo_anchor(request.workspace_path)
             return self._mutate_content(request, project, identity.fingerprint, anchor)
         except ContinuityError as exc:
             self._record_failure_event(request, exc.code)
@@ -342,7 +396,11 @@ class ContinuityService:
         focused workstream, or read back the existing one.
 
         The explicit caller declaration is the only project signal: nothing
-        is inferred from a generic home/cwd. Content policy is validated
+        is inferred from a generic home/cwd. An explicitly declared name that
+        is a registered alias resolves to its unique active canonical before
+        registration, so a merged alias reuses that project instead of
+        registering a second one; ambiguous, dangling or archived alias
+        targets stay hard errors. Content policy is validated
         before any write, and registration, alias, binding and workstream
         creation share one atomic transaction — a rejected begin leaves no
         half-registered state. Task identity is the (normalized) objective,
@@ -369,6 +427,9 @@ class ContinuityService:
         fingerprint = identity.fingerprint
         # 登记/别名/绑定/建任务同一原子边界（内层 checkpoint 事务并入外层）
         with self._store.transaction():
+            resolved = self._resolve_declared_project(request.project)
+            if resolved != request.project:
+                request = replace(request, project=resolved)
             project_store = ProjectStore(
                 self._store._connection(),
                 self._store._require_transaction,
@@ -500,6 +561,49 @@ class ContinuityService:
             alias_added=alias_added,
             bound=True,
         )
+
+    def _resolve_declared_project(self, project: str) -> str:
+        """Resolve one explicitly declared registered alias to its unique
+        active canonical; otherwise return the declaration unchanged.
+
+        Only the explicit declaration is consulted — never display_name and
+        never a fuzzy/natural-language match. A same-named active canonical
+        that disagrees with the alias target, several case-variant alias
+        targets, or a dangling/archived target is a hard failure, never a
+        guess; leaving the name untouched keeps the original registration
+        path (including its conflicts) exactly as it was.
+        """
+        conn = self._store._connection()
+        aliases = conn.execute(
+            "SELECT alias, project FROM context_project_aliases "
+            "WHERE lower(alias)=lower(?)",
+            (project,),
+        ).fetchall()
+        if not aliases:
+            return project
+        targets = {row["project"] for row in aliases}
+        if len(targets) != 1:
+            raise ContinuityError("alias_conflict")
+        target = targets.pop()
+        active_canonicals = {
+            row["project"]
+            for row in conn.execute(
+                "SELECT project FROM context_project_registry "
+                "WHERE lower(project)=lower(?) AND status='active'",
+                (project,),
+            )
+        }
+        if active_canonicals - {target}:
+            raise ContinuityError("alias_conflict")
+        row = conn.execute(
+            "SELECT status FROM context_project_registry WHERE project=?",
+            (target,),
+        ).fetchone()
+        if row is None:
+            raise ContinuityError("alias_conflict")
+        if row["status"] != "active":
+            raise ContinuityError("project_archived")
+        return target
 
     def _ensure_project(self, project_store: ProjectStore, project: str) -> bool:
         """Register the declared project if missing.
@@ -749,7 +853,7 @@ class ContinuityService:
             ):
                 raise ContinuityError("workstream_not_found")
             if row is None:
-                anchor = _collect_repo_anchor(request.workspace_path)
+                anchor = self._repo_anchor(request.workspace_path)
                 created = self._create(
                     ContinuityCheckpointRequest(
                         action=ContinuityAction.CREATE.value,
@@ -813,7 +917,7 @@ class ContinuityService:
             merged = self._request_content(effective)
             if _content_unchanged(previous, merged):
                 return ContinuityImportResult(code="unchanged", **base)
-            anchor = _collect_repo_anchor(request.workspace_path)
+            anchor = self._repo_anchor(request.workspace_path)
             result = self._mutate_content(
                 effective, project, identity.fingerprint, anchor, merge=False
             )
@@ -843,49 +947,7 @@ class ContinuityService:
         one active binding (or a single active default among several) decides;
         anything else is unresolved — never a guess.
         """
-        conn = self._store._connection()
-        if hint.strip():
-            normalized = hint.strip().casefold()
-            aliases = conn.execute(
-                "SELECT alias, project FROM context_project_aliases"
-            ).fetchall()
-            alias_map = {
-                row["alias"].casefold(): row["project"] for row in aliases
-            }
-            candidate = alias_map.get(normalized, normalized)
-            row = conn.execute(
-                "SELECT project FROM context_project_registry "
-                "WHERE lower(project)=lower(?) AND status='active'",
-                (candidate,),
-            ).fetchone()
-            if row is None:
-                return None
-            project = row["project"]
-            bound = conn.execute(
-                "SELECT 1 FROM context_project_workspace_bindings "
-                "WHERE workspace_fingerprint=? AND project=? AND state='active'",
-                (fingerprint, project),
-            ).fetchone()
-            return project if bound is not None else None
-        rows = conn.execute(
-            "SELECT project, is_default FROM context_project_workspace_bindings "
-            "WHERE workspace_fingerprint=? AND state='active'",
-            (fingerprint,),
-        ).fetchall()
-        if not rows:
-            return None
-        if len(rows) > 1:
-            defaults = [row for row in rows if row["is_default"]]
-            if len(defaults) != 1:
-                return None
-            rows = defaults
-        project = rows[0]["project"]
-        active = conn.execute(
-            "SELECT 1 FROM context_project_registry "
-            "WHERE project=? AND status='active'",
-            (project,),
-        ).fetchone()
-        return project if active is not None else None
+        return _resolve_bound_project(self._store, fingerprint, hint)
 
     def _schema_ready(self) -> bool:
         row = self._store._connection().execute(
@@ -1487,19 +1549,21 @@ class ContinuityService:
             return "wrong_workspace"
         if row["repo_kind"] != "git" or not row["repo_head_commit"]:
             return "unknown"
-        anchor = _collect_repo_anchor(workspace_path)
+        anchor = self._repo_anchor(workspace_path)
         if anchor["kind"] != "git" or not anchor["head_commit"]:
             return "unknown"
         checkpoint_head = row["repo_head_commit"]
         current_head = anchor["head_commit"]
         if current_head == checkpoint_head and anchor["branch"] == row["repo_branch"]:
             return "fresh"
-        checkpoint_is_ancestor = _is_ancestor(
+        checkpoint_is_ancestor = self._ancestor(
             workspace_path, checkpoint_head, current_head
         )
-        current_is_ancestor = _is_ancestor(
+        current_is_ancestor = self._ancestor(
             workspace_path, current_head, checkpoint_head
         )
+        if checkpoint_is_ancestor is None or current_is_ancestor is None:
+            return "unknown"
         if not checkpoint_is_ancestor and not current_is_ancestor:
             return "head_diverged"
         if anchor["branch"] != row["repo_branch"]:

@@ -1063,7 +1063,7 @@ def test_workspace_paths_normalize_to_basename_and_alias(test_config, store):
     retriever = FakeRetriever()
     service = make_service(test_config, store, retriever=retriever)
 
-    service.session_start(_session_request(project="/home/jiangli/alpha-work"))
+    service.session_start(_session_request(project="/home/demo-user/alpha-work"))
     service.session_start(_session_request(project="C:\\ws\\beta"))
     service.session_start(_session_request(project="plain-name"))
     service.search(_search_request(project="/srv/work/alpha-work"))

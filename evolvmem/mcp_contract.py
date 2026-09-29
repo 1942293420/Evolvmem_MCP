@@ -5,8 +5,9 @@ The registry is a pure function of (adapter, context mode, Context health):
 - legacy mode and adapters outside the cutover set (Codex/Kimi) expose only
   the six legacy ``memory_*`` tools; compat exposes no ``context_*`` tools.
 - Codex/Kimi shadow/primary with a ready ContextService additionally expose
-  the eight ``context_*`` tools (session start, search, exact read, status,
-  confirm, record outcome, archive project, sweep).
+  the nine ``context_*`` tools (session start, search, project mention
+  recall, exact read, status, confirm, record outcome, archive project,
+  sweep).
 - Codex/Kimi compat/shadow/primary additionally expose the five
   ``continuity_*`` tools — compat included, and no Context health
   requirement: continuity readiness (schema table + workspace identity key)
@@ -33,6 +34,7 @@ from evolvmem.context_models import (
     ContextServiceStatus,
 )
 from evolvmem.continuity_models import ContinuityAction
+from evolvmem.project_mention_recall import DEFAULT_MAX_CHARS
 
 CODEX_ADAPTER = "codex"
 KIMI_ADAPTER = "kimi"
@@ -331,6 +333,29 @@ _CONTEXT_SEARCH_SPEC = McpToolSpec(
     annotations=_READ_ONLY,
 )
 
+_CONTEXT_PROJECT_RECALL_SPEC = McpToolSpec(
+    name="context_project_recall",
+    description="Read-only recall of bounded project history and recent current-workstream progress for projects explicitly mentioned in the query text. Matches only this user's registered active names and aliases (whole-word ASCII; case-insensitive mixed-script names with optional ASCII/Chinese boundary whitespace), ignores short, generic, and ambiguous surfaces, and returns at most two projects in first-mention order. Progress dates are UTC record times, not verified Git/deployment times. Returns an empty block when nothing is mentioned; never changes workspace bindings or continuity focus.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Current task text; mentioned projects are resolved from this text alone",
+            },
+            "max_chars": {
+                "type": "integer",
+                "minimum": 1,
+                "default": DEFAULT_MAX_CHARS,
+                "description": "Total render budget shared by all mentioned projects",
+            },
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    annotations=_READ_ONLY,
+)
+
 _CONTEXT_READ_SPEC = McpToolSpec(
     name="context_read",
     description="Read one exact context item layer (l1 or l2, default l1) by exact context ID. Returns a structured error for missing, deleted, or unreadable IDs; never substitutes a similar item.",
@@ -478,6 +503,7 @@ _CONTEXT_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     _EXPERIENCE_RECORD_SPEC,
     _CONTEXT_SESSION_START_SPEC,
     _CONTEXT_SEARCH_SPEC,
+    _CONTEXT_PROJECT_RECALL_SPEC,
     _CONTEXT_READ_SPEC,
     _CONTEXT_STATUS_SPEC,
     _CONTEXT_CONFIRM_SPEC,
@@ -720,12 +746,50 @@ _CONTINUITY_FIND_SPEC = McpToolSpec(
     annotations=_READ_ONLY,
 )
 
+_PROJECT_BOARD_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "workspace_path": {
+            "type": "string",
+            "description": "Transient workspace path used to resolve the exact registered project binding",
+        },
+        "project_hint": {
+            "type": "string",
+            "default": "",
+            "description": "Optional registered project name or alias bound to this workspace",
+        },
+        "workstream_id": {
+            "type": "string",
+            "default": "",
+            "description": "Optional exact workstream; omitted syncs or reports all latest checkpoints in this project/workspace",
+        },
+    },
+    "required": ["workspace_path"],
+    "additionalProperties": False,
+}
+
+_PROJECT_BOARD_SYNC_SPEC = McpToolSpec(
+    name="project_board_sync",
+    description="Manually synchronize committed checkpoint progress for one exact registered project/workspace to its existing bound project-board record. Never creates or binds a remote project.",
+    input_schema=_PROJECT_BOARD_INPUT_SCHEMA,
+    annotations=_WRITE_TOOL_ANNOTATIONS,
+)
+
+_PROJECT_BOARD_STATUS_SPEC = McpToolSpec(
+    name="project_board_status",
+    description="Read the local delivery state for committed checkpoint progress in one exact registered project/workspace without contacting the project board.",
+    input_schema=_PROJECT_BOARD_INPUT_SCHEMA,
+    annotations=_READ_ONLY,
+)
+
 _CONTINUITY_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     _CONTINUITY_BEGIN_SPEC,
     _CONTINUITY_FIND_SPEC,
     _CONTINUITY_RESUME_SPEC,
     _CONTINUITY_CHECKPOINT_SPEC,
     _CONTINUITY_LIST_SPEC,
+    _PROJECT_BOARD_SYNC_SPEC,
+    _PROJECT_BOARD_STATUS_SPEC,
 )
 
 

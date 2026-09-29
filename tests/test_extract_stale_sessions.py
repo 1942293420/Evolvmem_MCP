@@ -1,10 +1,37 @@
 """Offline stale-session worker state progression tests."""
 
 import os
+import importlib.util
 from types import SimpleNamespace
+
+import pytest
 
 from evolvmem import kimi_hooks
 from scripts import extract_stale_sessions as stale
+
+
+@pytest.fixture(autouse=True)
+def isolated_worker_paths(tmp_path, monkeypatch):
+    """Existing worker tests must never prune real heartbeat files."""
+    monkeypatch.setattr(stale, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(stale, "STATE_PATH", tmp_path / ".extracted_sessions.json")
+    monkeypatch.setattr(stale, "LIVE_DIR", tmp_path / "live")
+    monkeypatch.setattr(stale, "SESSIONS_GLOB", str(tmp_path / "sessions" / "*"))
+
+
+def test_worker_state_uses_configured_data_directory(tmp_path, monkeypatch):
+    destination = tmp_path / "custom-data"
+    monkeypatch.setenv("EVOLVMEM_DATA_DIR", str(destination))
+    spec = importlib.util.spec_from_file_location("isolated_stale", stale.__file__)
+    worker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(worker)
+
+    assert worker.DATA_DIR == destination
+    worker.save_state({"sample-session": {"mtime": 123}})
+
+    assert worker.load_state() == {"sample-session": {"mtime": 123}}
+    assert (destination / ".extracted_sessions.json").is_file()
+    assert worker.LIVE_DIR == destination / "live"
 
 
 class FakeKimiHooks:

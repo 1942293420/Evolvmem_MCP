@@ -2,10 +2,13 @@
 
 import io
 import json
+import os
 import sqlite3
+import subprocess
 import sys
 from email.message import Message
 from io import BytesIO
+from pathlib import Path
 from urllib.error import HTTPError
 
 import pytest
@@ -85,6 +88,50 @@ def _write_wire(tmp_path, user_text: str, assistant_text: str = "处理完成"):
 
 
 class TestLLMConfig:
+    @pytest.mark.parametrize("custom_data_dir", [False, True], ids=["default", "override"])
+    def test_runtime_directory_routes_credentials_log_and_heartbeat(
+            self, tmp_path, custom_data_dir):
+        home = tmp_path / "home"
+        data_dir = home / "custom-data" if custom_data_dir else home / ".claude" / "evolvmem"
+        data_dir.mkdir(parents=True)
+        (data_dir / "llm_credentials.json").write_text(json.dumps({
+            "provider": "kimi",
+            "api_key": "test-only-key",
+            "model": "test-only-model",
+        }), encoding="utf-8")
+        repository = Path(__file__).resolve().parents[1]
+        env = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith("EVOLVMEM_")
+        }
+        env.update({
+            "HOME": str(home),
+            "PYTHONPATH": str(repository),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        })
+        if custom_data_dir:
+            env["EVOLVMEM_DATA_DIR"] = "~/custom-data"
+        probe = subprocess.run(
+            [sys.executable, "-c", """
+from evolvmem import kimi_hooks
+
+config = kimi_hooks._load_llm_config(log_errors=False)
+assert config is not None, "fake credentials were not found in the data directory"
+assert config.provider == "kimi"
+assert config.api_key == "test-only-key"
+assert config.model == "test-only-model"
+kimi_hooks._log("isolated-path-probe")
+kimi_hooks._touch_heartbeat("test-session")
+"""],
+            cwd=repository, env=env, capture_output=True, text=True, timeout=20,
+        )
+
+        assert probe.returncode == 0, probe.stderr
+        assert "isolated-path-probe" in (data_dir / "hooks.log").read_text()
+        assert (data_dir / "live" / "test-session").is_file()
+        if custom_data_dir:
+            assert not (home / ".claude").exists()
+
     def test_load_llm_callable_adapts_existing_retrying_chat(self, monkeypatch):
         config = _llm_config()
         monkeypatch.setattr(hooks, "_load_llm_config", lambda: config)

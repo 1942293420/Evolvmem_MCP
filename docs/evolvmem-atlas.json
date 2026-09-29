@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "title": "EvolvMem 完整架构图册",
-  "reviewed_at": "2026-09-09",
-  "source_root": "/home/jiangli/hermes-memory-plugin",
+  "reviewed_at": "2026-09-21",
+  "source_root": ".",
   "chapters": [
     {
       "id": "overview",
       "title": "系统总览",
       "english": "SYSTEM OVERVIEW",
-      "subtitle": "10 个专题覆盖接入、模型、召回、写入、存储、经验演化与精确续接。",
-      "takeaway": "EvolvMem 是由客户端调用的本地记忆系统。MCP 与 Web 是不同入口；ContextService 负责记忆协调，ContinuityService 独立管理项目任务与断点。SQLite 保存事实，检索索引提供候选；Codex 断点补录在本地读取会话事件。",
+      "subtitle": "11 个专题覆盖本机与 Windows 接入、模型、召回、写入、存储、经验演化与精确续接。",
+      "takeaway": "EvolvMem 由客户端调用；Windows 原生 Codex 通过用户级 hooks、加密队列与一个 LAN MCP 接入同一 Linux 核心。凭据映射决定个人身份，SQLite 保存索引、记忆与断点，原始会话保存在加密文件。ContextService 协调记忆，ContinuityService 管理项目与任务；public 共享仍须显式发布。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -28,7 +28,7 @@
           {
             "id": "agents",
             "type": "external",
-            "label": "AI 助手",
+            "label": "Owner 原生入口",
             "sublabel": "Codex · Kimi · Claude · DSH",
             "pos": [
               35,
@@ -42,8 +42,8 @@
           {
             "id": "mcp",
             "type": "frontend",
-            "label": "MCP 工具入口",
-            "sublabel": "主动查询 · 写入 · 续接",
+            "label": "stdio / HTTP MCP 接入",
+            "sublabel": "owner loopback · Windows /mcp",
             "pos": [
               395,
               350
@@ -56,8 +56,8 @@
           {
             "id": "service",
             "type": "backend",
-            "label": "ContextService",
-            "sublabel": "模式分流 · 项目范围 · 一致性",
+            "label": "LAN Runtime / ContextService",
+            "sublabel": "固定身份 · namespace · 一致性",
             "pos": [
               755,
               350
@@ -70,8 +70,8 @@
           {
             "id": "sqlite",
             "type": "database",
-            "label": "SQLite / memory.db",
-            "sublabel": "Context · 证据 · 断点 · 旧投影",
+            "label": "三份 SQLite namespace",
+            "sublabel": "jiangli · kane · explicit public",
             "pos": [
               1115,
               350
@@ -85,7 +85,7 @@
             "id": "capture",
             "type": "frontend",
             "label": "Hook 与会话采集",
-            "sublabel": "Kimi / DSH 自动路径",
+            "sublabel": "Windows / Kimi / DSH",
             "pos": [
               35,
               130
@@ -112,10 +112,10 @@
           {
             "id": "remote",
             "type": "cloud",
-            "label": "远程生成模型",
-            "sublabel": "按配置调用 DeepSeek / Kimi",
+            "label": "Windows 原生 Codex",
+            "sublabel": "个人凭据 · hooks · 一个 /mcp",
             "pos": [
-              395,
+              35,
               10
             ],
             "size": [
@@ -126,8 +126,8 @@
           {
             "id": "web",
             "type": "frontend",
-            "label": "Signal 工作台",
-            "sublabel": "查看 · 整理 · 来源与任务",
+            "label": "Owner-only Signal Web",
+            "sublabel": "owner read/write · viewer 禁止 personal 读取",
             "pos": [
               755,
               130
@@ -168,8 +168,8 @@
           {
             "id": "embedding",
             "type": "backend",
-            "label": "本地 Embedding",
-            "sublabel": "nomic v1.5 · GGUF · 768 维",
+            "label": "一个共享可选 Embedding",
+            "sublabel": "LAN runtime 独占 · loopback HTTP",
             "pos": [
               755,
               790
@@ -183,7 +183,7 @@
             "id": "continuity",
             "type": "backend",
             "label": "任务续接",
-            "sublabel": "begin · find · 本地补录",
+            "sublabel": "begin · find · 有据补录",
             "pos": [
               1115,
               130
@@ -251,8 +251,24 @@
           {
             "id": "remote-extract",
             "from": "remote",
-            "to": "extract",
-            "variant": "dashed"
+            "to": "mcp",
+            "variant": "dashed",
+            "fromSide": "left",
+            "toSide": "top",
+            "via": [
+              [
+                10,
+                54
+              ],
+              [
+                10,
+                310
+              ],
+              [
+                520,
+                310
+              ]
+            ]
           }
         ]
       },
@@ -268,18 +284,18 @@
           "title": "六个职责分区",
           "paragraphs": [],
           "items": [
-            "接入：Codex / Kimi / Claude 的 MCP；Kimi 与 DSH 的专用 hook；Codex 本地会话补录；Signal Web 工作台。",
+            "接入：原生 MCP、Windows PowerShell hooks 与加密采集队列、Kimi / DSH hooks、Codex 中断补录，以及 Signal Web 工作台。",
             "协调：ContextService 的记忆模式与健康门；ContinuityService 的独立任务入口、项目绑定和版本协议；兼容 facade。",
             "读取：legacy / Context / experience 三条检索路径，以及精确 context_read。",
             "生成与写入：会话提炼、确定性内容门、冲突与语义替代、项目摘要和候选方法。",
-            "事实：SQLite 条目、层、来源、证据、项目、滚动摘要与任务状态。",
+            "事实：SQLite 条目、层、来源、证据、项目、滚动摘要与任务状态；LAN 只共享经 memory_publish 明确写入 public 的整理内容。",
             "派生与维护：FTS5、双 USearch 索引、dirty 标记、归档保留、检查与切换。"
           ]
         },
         {
           "title": "本次核对的运行边界",
           "paragraphs": [
-            "部署与共享配置沿用 2026-09-08 的核对快照；本次于 2026-09-09 同步 continuity 源码、图文及生成产物。实时健康由各进程单独报告。"
+            "运行配置快照沿用既有核对；2026-09-16 增加 Windows 接入实现。下列配置并非实时监控；Windows 原生桌面宿主事件、DPAPI 与任务计划仍须实机验收。"
           ],
           "table": {
             "headers": [
@@ -306,6 +322,10 @@
               [
                 "Web 与模型",
                 "Web run() 没有创建 EmbeddingEngine；MCP 与部分提炼/维护路径才加载它。"
+              ],
+              [
+                "LAN 边界",
+                "lan_server 的 /mcp 认证后按固定用户选择 namespace；/owner/mcp 仅 jiangli 的 loopback 连接可用。public 只能显式发布，Web owner_only 可阻止同租户 viewer 读取 owner 库。"
               ],
               [
                 "图的边界",
@@ -348,6 +368,14 @@
         {
           "label": "Codex 本地断点补录",
           "path": "evolvmem/continuity_backfill.py:547"
+        },
+        {
+          "label": "固定 LAN HTTP 入口与 owner loopback 限制",
+          "path": "evolvmem/lan_server.py:16"
+        },
+        {
+          "label": "LAN namespace 和 public 共享工具",
+          "path": "evolvmem/lan_runtime.py:1"
         }
       ]
     },
@@ -356,7 +384,7 @@
       "title": "本地模型与向量索引",
       "english": "LOCAL MODEL & INDEX",
       "subtitle": "同一 GGUF 模型用于文档编码和查询编码；向量是搜索表示，不是聊天答案。",
-      "takeaway": "768 维意味着每段被编码的文本对应 768 个数。文档向量提前建索引，查询到来时只编码问题，再用 HNSW 找邻居。图中两处编码节点表示同一类本地模型的两种用途。",
+      "takeaway": "768 维意味着每段被编码的文本对应 768 个数。文档向量提前建索引，查询到来时只编码问题，再用 HNSW 找邻居。LAN 运行时只有一个可选 shared embedding model；owner 原生进程经 loopback HTTP 请求它，LAN 自身不再向自己转发。图中两处编码节点表示同一类本地模型的两种用途。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -624,6 +652,39 @@
             "Web 展示进程自身不构造 EmbeddingEngine。模型文件存在、Engine 已加载、索引可查、primary ready 是四个不同条件。",
             "普通 Context 向量检索还检查路径、dirty、count；提交后的索引同步失败保留 dirty，不回滚已保存的 SQLite 正文。"
           ]
+        },
+        {
+          "title": "版本固定与共享缓存机制",
+          "wide": true,
+          "paragraphs": [
+            "USearch 固定 2.26.2。2.26.0 的缺陷在 Python 扩展的原生加载路径：恢复索引时 C++ 绑定 python/lib.cpp 调用 try_reserve，而 index_dense.hpp 按有效条目数缩小向量指针表，却仍按旧长度 memcpy，造成越界写（ASAN 定位 index_dense.hpp:1069，2.26.0）。它只在特定容量边界触发，并非含删除项的索引都必崩，且常在之后的保存、reset 或析构才暴露，而不是加载时。",
+            "索引文件本身没有损坏：同一份索引字节在 2.26.2 下加载与释放正常，其 try_reserve 取现有成员容量与指针表的最大值，容量不再收缩。该缺陷只换库版本、不为它删除或重建索引；但这不是“一律不重建”：dirty marker 存在、计数与 SQLite 不符或索引文件缺失/为空时，仍按既有同步/重建流程从 SQLite 修复派生缓存，不能手删 marker 冒充通过。",
+            "SharedVectorCache 与 HTTP embedding 路径保留原样：在索引文件锁内 reload 最新磁盘镜像、合并本进程 pending 增量、以临时文件原子替换保存，避免多个本机写进程相互覆盖增量；它不改变加载期的容量缺陷，关闭或改写不能绕过崩溃。"
+          ],
+          "table": {
+            "headers": [
+              "项",
+              "要求 / 机制"
+            ],
+            "rows": [
+              [
+                "USearch 版本",
+                "固定 usearch==2.26.2（pyproject 用固定版本而非下限）；必须由实际运行的解释器核实该版本，清单或锁文件不算证据。"
+              ],
+              [
+                "共享向量缓存",
+                "lan_shared_vector_cache / embedding_http_url / lan_mcp_client_config 下经 SharedVectorCache：文件锁内 reload、合并 pending、原子保存，防止本机多写进程互相覆盖增量；机制不变。"
+              ],
+              [
+                "索引修复",
+                "该库缺陷只换版本，不为它删除/重建索引；dirty marker、计数不符或文件缺失/为空时，按既有同步/重建流程从 SQLite 修复，不能手删 marker 冒充通过。"
+              ],
+              [
+                "验收规则",
+                "以实际运行解释器 usearch.__version__ == \"2.26.2\"、正常加载/检索/MCP 调用与稳定 uptime 为准；并在隔离目录的索引副本上核对 add / remove / save / 重新打开。结论只覆盖实测环境，记录解释器路径、版本与索引路径。"
+              ]
+            ]
+          }
         }
       ],
       "sources": [
@@ -650,6 +711,22 @@
         {
           "label": "写后单项同步",
           "path": "evolvmem/context_vector_sync.py:72"
+        },
+        {
+          "label": "USearch 版本固定",
+          "path": "pyproject.toml:14"
+        },
+        {
+          "label": "索引加载与 dirty 标记",
+          "path": "evolvmem/vector_index.py:45"
+        },
+        {
+          "label": "保存只清理本进程标记",
+          "path": "evolvmem/vector_index.py:154"
+        },
+        {
+          "label": "共享向量缓存",
+          "path": "evolvmem/lan_vector_cache.py:13"
         }
       ]
     },
@@ -982,6 +1059,12 @@
             "Retriever 内：模型、路径、dirty、编码或索引异常 → 向量候选为空，词法仍可运行。",
             "Primary 入口：更上层可能因 SQLite、mapping、projection lag 或 Context vector 健康不满足而先阻断 Core serving。不能把“检索器能退词法”写成“primary 永远可用”。"
           ]
+        },
+        {
+          "title": "显式项目提及",
+          "paragraphs": [
+            "context_project_recall 只按本用户登记名称和别名匹配，歧义不猜，最多两个项目。复用候选与L1渲染，但排除其他项目及通用置顶记录；不传workspace_path、不绑定目录、不切换continuity焦点。Windows和DSH逐轮入口共用该逻辑。"
+          ]
         }
       ],
       "sources": [
@@ -1008,6 +1091,10 @@
         {
           "label": "最终访问计数",
           "path": "evolvmem/context_service.py:542"
+        },
+        {
+          "label": "项目提及识别与预算",
+          "path": "evolvmem/project_mention_recall.py"
         }
       ]
     },
@@ -1537,7 +1624,7 @@
           {
             "id": "resolve",
             "type": "security",
-            "label": "原生来源校验",
+            "label": "原生 / 归档来源校验",
             "sublabel": "task · event · quote · hash",
             "pos": [
               660,
@@ -1733,6 +1820,13 @@
             "条件、步骤变化时建立派生案例，保留 parent_experience_id；不覆盖原案例来伪造同一条件成功。",
             "结构化写入或结果更新成为 active，且本地模型和经验簇资格满足时，MCP 可以在提交后 best-effort 调远程 chat 生成候选方法。新方法仍要独立验证，不能继承所有来源案例的成功结论。"
           ]
+        },
+        {
+          "title": "Windows 归档事件证据",
+          "paragraphs": [
+            "远程 source_ref 使用 archive:<id>#<JSONL 行号>，或 archive:<id> 加唯一原文片段。只在认证用户库内解密版本，核对实际会话、工具或用户事件、引用与内容哈希；助手自述不能证明成功。",
+            "每份已完成归档版本不可变，追加会话不会破坏旧证据；context_sources 关联 archive_id，沿用归档保留规则。验证只证明客户端上报事件内的依据，不代表服务端亲自运行了 Windows 操作。"
+          ]
         }
       ],
       "sources": [
@@ -1759,6 +1853,10 @@
         {
           "label": "MCP 写后候选方法生成",
           "path": "evolvmem/mcp_server.py:852"
+        },
+        {
+          "label": "归档来源解析",
+          "path": "evolvmem/experience_sources.py"
         }
       ]
     },
@@ -2031,7 +2129,7 @@
             "rows": [
               [
                 "Codex",
-                "显式 MCP 记忆 / Context / experience / continuity 调用；另有 continuity_backfill 从本地 rollout 增量补录任务断点，默认 dry-run，--apply 才保存；没有完整的自动 SessionEnd 提炼 hook。"
+                "Windows 接入包独立发现新建和继续使用的持久转写；Linux 中断补录沿用独立 CLI。"
               ],
               [
                 "Kimi",
@@ -2113,6 +2211,13 @@
             "rollup、consolidation、经验晋升或候选方法生成按各入口条件执行，彼此并非一个全局学习循环。Kimi 与 DSH 的后处理覆盖也不完全相同。"
           ],
           "wide": true
+        },
+        {
+          "title": "Windows 的先归档、后提炼路径",
+          "paragraphs": [
+            "Windows 结束 hooks 采集已持久化完整 JSONL；无窗口任务每分钟独立发现并补扫新建与恢复会话。DPAPI CurrentUser 保护待传正文，每块最多 256 KiB，经同一个 MCP 校验后加密归档。",
+            "同一设备、会话与版本幂等；旧归档版本保留用于证据。归档成功与提炼成功分别报告，服务端 worker 复用现有提炼器与项目滚动摘要；提炼失败可显式重试。未绑定或混合工作区保持待归属。"
+          ]
         }
       ],
       "sources": [
@@ -2159,6 +2264,14 @@
         {
           "label": "补录项目归属与入口",
           "path": "evolvmem/continuity_backfill.py:483"
+        },
+        {
+          "label": "分段归档与状态",
+          "path": "evolvmem/lan_capture.py"
+        },
+        {
+          "label": "共享提炼准备",
+          "path": "evolvmem/session_extraction.py"
         }
       ]
     },
@@ -2167,7 +2280,7 @@
       "title": "存储、三层上下文与注入",
       "english": "STORAGE, LAYERS & CONTEXT",
       "subtitle": "SQLite 保存条目、正文、出处和任务状态；FTS 与向量服务检索，原始聊天另行加密归档。",
-      "takeaway": "L0 是搜索预览，L1 是常用上下文，L2 是这条知识的完整表示。SessionStart 先选择候选，再在总预算内装入整条 L1；L2 需要时按精确 ID 获取。",
+      "takeaway": "L0 是搜索预览，L1 是常用上下文，L2 是这条知识的完整表示。SessionStart 先选择候选，再在总预算内装入整条 L1；L2 需要时按精确 ID 获取。LAN 为 jiangli、kane 和 public 分别保存 SQLite namespace，public 内容来自显式发布，不能从 personal DB 推断。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -2228,8 +2341,8 @@
           {
             "id": "pinned",
             "type": "backend",
-            "label": "补充适用 pinned",
-            "sublabel": "政策 / 约束 / 偏好",
+            "label": "补充固定上下文",
+            "sublabel": "适用 pinned · 同项目摘要",
             "pos": [
               975,
               80
@@ -2558,6 +2671,13 @@
             "registry、aliases、workspace binding 和每条 resolution 构成独立的项目归属层；保留 resolved / unresolved / conflict / global / ignored 以及自动和人工判断。",
             "维护中的自动回填尊重已接受或已拒绝的人为决策。普通 session_start 的项目名处理与 continuity 的 active workspace binding 门是不同路径，不能把目录同名视为已经绑定。"
           ]
+        },
+        {
+          "title": "Windows 启动摘要与版本回执",
+          "paragraphs": [
+            "会话启动额外装入同项目最新一条 project_summary 和三条 session_summary，再遵守有效状态、置信度、期限及预算筛选；不依赖问题必须命中摘要关键词。",
+            "LAN 启动先恢复精确任务断点，再装入普通记忆及剩余预算内的 public 摘要。SQLite 变更计数供下一次提示词发现跨端更新；读访问计数不触发刷新。钩子回执只证明已获取并交付输出，宿主实际注入须另行核对。"
+          ]
         }
       ],
       "sources": [
@@ -2588,6 +2708,14 @@
         {
           "label": "精确读取契约",
           "path": "evolvmem/mcp_contract.py:324"
+        },
+        {
+          "label": "启动项目摘要种子",
+          "path": "evolvmem/context_store.py"
+        },
+        {
+          "label": "远程断点与预算",
+          "path": "evolvmem/lan_tools.py"
         }
       ]
     },
@@ -2595,20 +2723,20 @@
       "id": "continuity",
       "title": "任务续接与检查点",
       "english": "EXACT CONTINUITY & CHECKPOINTS",
-      "subtitle": "begin 明确登记，find 跨项目发现，resume 精确恢复；checkpoint 与本地补录各自保留任务和焦点边界。",
-      "takeaway": "任务身份来自明确项目、工作区与目标。begin 登记并绑定，find 只读发现，resume 按 focus / workstream 指针恢复，checkpoint 携版本推进。Codex 本地补录只保存可归属的事件断点，保留人工进度和终态任务；这些路径不依赖经验召回或 ANN 健康。",
+      "subtitle": "begin 登记、find 发现、resume 恢复；已提交的 MCP 进展可同步到妙搭中已绑定的立项。",
+      "takeaway": "任务身份来自明确项目、工作区与目标。begin 登记并绑定，find 只读发现，resume 按 focus / workstream 指针恢复，checkpoint 携版本推进。远端非空 workspace_path 需要稳定 device_id，Git snapshot 是客户端报告值；bind 不抢占 focus，切换要显式 checkpoint。Codex 本地补录只保存可归属的事件断点，保留人工进度和终态任务；这些路径不依赖经验召回或 ANN 健康。 可选的项目看板同步在断点提交后执行，按项目绑定与工作流版本更新进展；没有立项不创建，失败保留待同步，任务完成不会改变项目验收结论。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
         "meta": {
           "title": "EvolvMem · 任务续接与检查点",
-          "subtitle": "begin 登记 / find 发现；resume 精确恢复 → checkpoint 版本事务",
+          "subtitle": "精确续接与版本事务；提交后可选同步到已绑定立项",
           "quality_profile": "showcase",
           "visual_preset": "blueprint",
           "animation": "none",
           "viewBox": [
             1270,
-            650
+            835
           ]
         },
         "components": [
@@ -2779,6 +2907,34 @@
               245,
               84
             ]
+          },
+          {
+            "id": "board-sync",
+            "type": "cloud",
+            "label": "妙搭已绑定立项",
+            "sublabel": "核对记录与绑定 · 分任务版本",
+            "pos": [
+              975,
+              665
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "board-pending",
+            "type": "database",
+            "label": "本地待同步状态",
+            "sublabel": "保留断点 · 下次或手动补同步",
+            "pos": [
+              660,
+              665
+            ],
+            "size": [
+              245,
+              84
+            ]
           }
         ],
         "connections": [
@@ -2847,6 +3003,21 @@
             "from": "transaction",
             "to": "result",
             "variant": "emphasis"
+          },
+          {
+            "id": "continuity-to-board",
+            "from": "result",
+            "to": "board-sync",
+            "variant": "dashed",
+            "label": "MCP 进展",
+            "labelDy": 24
+          },
+          {
+            "id": "board-sync-pending",
+            "from": "board-sync",
+            "to": "board-pending",
+            "variant": "dashed",
+            "label": "失败"
           }
         ]
       },
@@ -3023,6 +3194,38 @@
             ]
           },
           "wide": true
+        },
+        {
+          "title": "已有立项才接收开发进展",
+          "paragraphs": [
+            "项目负责人在妙搭项目详情绑定 EvolvMem 的规范项目名。同步器查询精确绑定，接收端每次重新核对项目记录 ID、绑定 ID 与项目有效状态；未立项、未绑定或旧绑定的请求不会创建或修改项目。",
+            "只同步目标、已完成事项、当前步骤、下一步、阻塞、任务状态和来源更新时间。按 workstreamId 分别维护快照，同版本重复请求和旧版本不覆盖已有新进展；不传源码、完整对话或本地路径。",
+            "同步区负责开发事项展示；项目总百分比、负责人、计划日期与验收结论仍由看板维护。workstream completed 只代表该开发任务完成，不代表整个项目已验收。"
+          ]
+        },
+        {
+          "title": "自动触发与手动补同步",
+          "paragraphs": [
+            "MCP 的内容更新动作成功提交后才尝试同步；创建、begin、读取及焦点操作不触发。业务内容未变化时跳过；网络或平台异常不能回滚已经提交的 EvolvMem 检查点。",
+            "私有 project_board.json 配置可选启用连接；关闭时保留原续接行为。待同步状态保存在本机数据目录，下次有效更新或 project_board_sync 手动调用时再尝试；project_board_status 只读查看状态。",
+            "同步通过妙搭平台 OpenAPI 网关验证 API Key；接口只暴露绑定查询和进度接收，没有立项或绑定写入口。配置与密钥不进入公开源码和页面。"
+          ],
+          "formula": "已提交断点 → 精确绑定 → 版本校验 → 更新该任务进展\n未立项 / 未绑定：跳过；网络失败：待补同步；项目验收：由看板维护",
+          "wide": true
+        },
+        {
+          "title": "Windows 跨设备续接与中断补录",
+          "paragraphs": [
+            "设备 ID 与客户端目录形成私有指纹；显式 continuity_bind 核对项目与实际 Git 根提交后关联既有任务，保留焦点。分支与 head 来自本机 Git，远端无法证明祖先关系时返回未知。",
+            "最新归档收到后闲置至少 30 分钟才补录；仅已有唯一目录绑定、来源单一且有真实用户目标的会话可写。复用原生事件解析与 import_interrupted，保留人工和终态断点、不改变焦点；子代理归档保留父关联，不创建新的用户任务。"
+          ]
+        },
+        {
+          "title": "显式项目别名复用",
+          "paragraphs": [
+            "begin 先将显式传入的已登记别名解析到唯一有效项目，再登记、绑定或复用任务。已归并的中文别名不再建立第二份项目；旧名保留 archived 登记时可通过明确别名进入有效项目。",
+            "同名 active 项目与别名目标冲突、目标不存在或已归档时拒绝处理；不根据显示名或对话内容猜测，也不自动合并历史数据。历史归属修复须先核对身份、保留备份和断点来源。"
+          ]
         }
       ],
       "sources": [
@@ -3089,6 +3292,18 @@
         {
           "label": "增量来源与确认 ID 回归覆盖",
           "path": "tests/test_continuity_incremental_boundaries.py:10"
+        },
+        {
+          "label": "项目看板同步适配器",
+          "path": "evolvmem/project_board_sync.py"
+        },
+        {
+          "label": "远程工作区与看板适配",
+          "path": "evolvmem/lan_context.py"
+        },
+        {
+          "label": "归档中断补录",
+          "path": "evolvmem/lan_backfill.py"
         }
       ]
     },
@@ -3357,7 +3572,8 @@
           "paragraphs": [
             "收集该项目所有 active session_summary、上次覆盖水位以来的新原子知识，以及当前 project_summary 的 L1。当前 rollup 为 ready 且来源集合 hash 未变时跳过生成；failed / vector_dirty 状态仍可重试。",
             "脱敏后的 L1 进入远程 chat，生成 L0/L1/L2，经输出门后将新 active 项目摘要、来源边和 rollup 指针同事务保存。旧摘要被替代；失败保留原有效摘要。",
-            "后续向量同步失败记录 vector_dirty。rollup 是实际保存的项目知识与覆盖水位，不是临时缓存，也不等于删除已被概括的全部原始内容。"
+            "后续向量同步失败记录 vector_dirty。rollup 是实际保存的项目知识与覆盖水位，不是临时缓存，也不等于删除已被概括的全部原始内容。",
+            "新增LAN后台每日检查：当地04:17后运行，启动补跑；仅owner个人库，失败一小时后重试。无增量只记录当日已检查，不调用模型重写；状态文件保存项目ID与覆盖时间。模型期间新写入使本次生成失效。用户已授权记忆提炼与每日摘要外发，日更线程已部署；当天真实检查36项目无失败，输入未变不重写。项目摘要仅在长度超限时追加一次脱敏压缩重试，仍须通过原入库校验；失败保留旧摘要及水位。生成采用80/400/1800字符精简状态卡，计数包含英文、数字和标点。"
           ]
         },
         {
@@ -3466,6 +3682,10 @@
         {
           "label": "维护默认间隔",
           "path": "evolvmem/config.py:144"
+        },
+        {
+          "label": "日更检查与状态",
+          "path": "evolvmem/lan_daily_rollup.py"
         }
       ]
     },
@@ -3474,7 +3694,7 @@
       "title": "运行模式、Web 与维护",
       "english": "MODES, WEB & OPERATIONS",
       "subtitle": "进程 mode、adapter 和 readiness 决定工具行为；维护只在明确入口触发。",
-      "takeaway": "共享配置并不能代表每个客户端的实际模式。MCP 每次按最新健康决定可用工具；Web 是自己的进程。维护和切换是独立运维操作，不是用户每次检索都会执行的步骤。",
+      "takeaway": "共享配置并不能代表每个客户端的实际模式。MCP 每次按最新健康决定可用工具；Web 是自己的进程。LAN server 是第三个独立进程，owner 的 native MCP/hooks 需要在 opt-in 配置更新后重启；它的 local index merge/refresh 只协调同机缓存，不是多主机同步。维护和切换是独立运维操作，不是用户每次检索都会执行的步骤。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -3841,6 +4061,13 @@
             "legacy MCP 启动可在模型加载后按 dirty/count 判断重建，使用独立 .rebuild.lock 并保存；这把锁与 cutover.lock 不同。ContextService 初始化不自动全量重建 Core 向量。",
             "普通单项同步不能清除先前已存在的 dirty。切换专用 Core stager 才使用临时文件、完整 ID/维度核验、fsync 和 atomic replace；显式允许 FTS-only 时如实记录降级。"
           ]
+        },
+        {
+          "title": "Windows 接入及同用户维护",
+          "paragraphs": [
+            "Linux 核心继续运行现有 LAN 进程及共享模型，Windows 无需安装 Python、向量模型或数据库。远程维护工具使用当前个人库；看板按每次请求的工作区身份及用户数据目录内的配置执行。",
+            "安装器备份并合并 Codex config.toml、hooks.json 与全局 AGENTS 托管段落。无窗口用户任务每分钟及登录后采集补传；状态单独报告任务启用、运行回执与队列，不能把联网成功当作桌面验收通过。"
+          ]
         }
       ],
       "sources": [
@@ -3899,6 +4126,384 @@
         {
           "label": "重复迁移保留 candidate",
           "path": "evolvmem/context_migration.py:70"
+        },
+        {
+          "label": "Windows 安装器",
+          "path": "scripts/windows/install-evolvmem.ps1"
+        },
+        {
+          "label": "Windows hooks 与采集脚本",
+          "path": "scripts/windows/evolvmem-codex.ps1"
+        }
+      ]
+    },
+    {
+      "id": "windows-codex",
+      "title": "Windows Codex 接入",
+      "english": "WINDOWS CODEX MEMORY",
+      "subtitle": "同库读写与项目提及召回；每日摘要生成与桌面事件交付分别验收。",
+      "takeaway": "身份由 EvolvMem 凭据映射决定，与 Codex 登录账号分开。Windows 和 Linux 访问同一个个人库，无需复制 SQLite；源代码仍需各端自行同步。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · Windows Codex 接入",
+          "subtitle": "一次安装 · 一个 MCP · Linux 共用记忆核心",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "desktop",
+            "type": "external",
+            "label": "Windows Codex 会话",
+            "sublabel": "全局 AGENTS · hooks · 本地转写",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "hook",
+            "type": "frontend",
+            "label": "已信任的 hook 拉取摘要",
+            "sublabel": "开场注入 · 逐轮项目提及召回",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "mcp",
+            "type": "cloud",
+            "label": "一个远程 MCP",
+            "sublabel": "NO_PROXY 直连 · 凭据映射身份",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "core",
+            "type": "backend",
+            "label": "现有 Linux 核心",
+            "sublabel": "项目摘要 · 断点 · 经验",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "rollout",
+            "type": "external",
+            "label": "新建及恢复的持久转写",
+            "sublabel": "独立发现 · LF 完整行 · 增量采集",
+            "pos": [
+              30,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "queue",
+            "type": "database",
+            "label": "Windows 加密待传队列",
+            "sublabel": "DPAPI · 先加载 System.Security",
+            "pos": [
+              345,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "worker",
+            "type": "backend",
+            "label": "无窗口后台程序",
+            "sublabel": "当前锚点先确认 · 旧队列后补传",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "archive",
+            "type": "database",
+            "label": "服务端加密归档",
+            "sublabel": "不可变历史 · 显式当前版本",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "extract",
+            "type": "backend",
+            "label": "复用提炼与滚动摘要",
+            "sublabel": "官方 Chat · 当前版本 · 日更检查",
+            "pos": [
+              975,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "memory",
+            "type": "database",
+            "label": "同一用户 SQLite",
+            "sublabel": "索引 · 记忆 · 项目 · 断点",
+            "pos": [
+              660,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "context",
+            "type": "frontend",
+            "label": "下一会话读取并交付",
+            "sublabel": "项目 L1 + 带日期近期进展",
+            "pos": [
+              345,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "verify",
+            "type": "external",
+            "label": "两端继续同一任务",
+            "sublabel": "实机核验注入与跨端读回",
+            "pos": [
+              30,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "windows-path-1",
+            "from": "desktop",
+            "to": "hook",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-2",
+            "from": "hook",
+            "to": "mcp",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-3",
+            "from": "mcp",
+            "to": "core",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-4",
+            "from": "rollout",
+            "to": "queue",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-5",
+            "from": "queue",
+            "to": "worker",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-6",
+            "from": "worker",
+            "to": "mcp",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-7",
+            "from": "archive",
+            "to": "extract",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-8",
+            "from": "extract",
+            "to": "memory",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-9",
+            "from": "memory",
+            "to": "context",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-10",
+            "from": "context",
+            "to": "verify",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-11",
+            "from": "hook",
+            "to": "queue",
+            "variant": "emphasis"
+          },
+          {
+            "id": "windows-path-12",
+            "from": "core",
+            "to": "archive",
+            "variant": "emphasis"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "安装后每次会话怎样读取",
+          "paragraphs": [
+            "实测桌面包 26.908.9136.0 没有弹出信任提示，但原生核心报告六个 hooks 均 untrusted；经同一用户的 CLI /hooks 审阅后执行。安装自检不验证信任或实际交付。",
+            "安装器把 MCP URL 主机追加到用户 NO_PROXY 并保留已有条目；重启后的原生 Codex 与 PowerShell 均能访问同一内网服务。PowerShell 5.1 以原始响应字节解码 UTF-8，中文摘要和断点保持可读。",
+            "SessionStart 拉取有界上下文；UserPromptSubmit 按 memory_revision 补齐刷新，再独立调用 context_project_recall 和 experience_recall。项目块只来自显式提及的已登记项目，不被全局置顶条目替代；最多两项目、4000字符，同轮刷新预留空间，总预算8000。",
+            "项目使用显式目录映射。未绑定时仅加载通用记忆；故障提示后继续，默认不阻断正常开发。回执 retrieved_for_hook 不能替代宿主实际注入证据。",
+            "全局 AGENTS 托管段落提醒保存已确认决定、真实进度及任务断点，保留用户原文并兼容 override。提示词无法保证逐条写入；完整原文由独立采集器处理。"
+          ]
+        },
+        {
+          "title": "归档和总结怎样推进",
+          "paragraphs": [
+            "Windows 自带 .NET 编译 winexe，任务每分钟及用户登录后无控制台启动 PowerShell。扫描 sessions / archived_sessions，发现安装后新建或继续写入的会话，保留升级起点与已登记游标，不批量导入闲置旧历史。",
+            "状态区分待上传、已归档、待提炼、已提炼、失败与待归属。session_archive_retry 重试提炼；session_archive_assign 按用户确认分类。闲置日志补录只保留有实际依据的未完成进展。",
+            "Windows PowerShell 5.1 加解密前加载 System.Security。JSONL 仅按 LF 分记录，字符串内 Unicode 分隔符不拆行，归档原文与经验引用行号保持一致。",
+            "完整行先加密排队，经同一 session_archive_upload 分块上传；当前锚点优先，每版本每轮最多 16 块，保留偏移供下轮继续。未变文件跳过重复解密，DPAPI 保留 byte[]，避免大日志内存展开。校验确认才删除；status 提供失败会话和运行回执。注销和关机期间暂停，登录后继续。",
+            "每次真实捕获持久化 source_order 和本地 current_sha256；重试次序不变。升级先确认当前缓存锚点，再补传旧版本；缺少可靠缓存时保留队列并报告迁移失败。",
+            "服务端以显式 head 选择当前快照，不按文件体积或到达时间猜测。合法改写及变短可推进；旧版本完整归档但不覆盖当前、不排队提炼。回退到已归档内容时，以严格更高捕获次序重新选择原不可变归档。",
+            "当前锚点须收到 archived、自己的摘要和完整长度、archive_id、current=true 及同一 source_order 才确认；历史已归档不等于当前已确认。旧客户端保留追加/分叉校验。",
+            "每条失败保留稳定 last_error；pending_failed_versions / pending_error_codes 汇总原因。未知服务端文本不写入状态，不丢弃待传。",
+            "登记与采集前核对转写首条 session_meta 的会话 ID，父会话事件不得误用子会话文件；不通过编号校验就不登记、不排队。"
+          ]
+        },
+        {
+          "title": "验收范围",
+          "paragraphs": [
+            "2026-09-21 上传修复已部署并推送；真实待传归零。官方模型直连可用，Windows/Linux 双向受控写入的 ID 与内容摘要一致，同查询的5条记忆一致。健康检查改用新的只读连接校验已提交库，事务内保留当前视图；用户已授权真实内容外发，归档572提炼成功且两端读回摘要一致；当日摘要真实生成通过；18条已归属失败归档全部补提炼成功。开场与项目提及为当前ready项目摘要预留条目/字符，在原总预算和门控内确保入选；两端真实入口同摘要ID同内容哈希。桌面宿主最终采用和完整生命周期仍单独验收。legacy索引保持全部非deleted行的契约，replace/archive保留历史向量；Context索引仍只含active记录，避免重启因期望集合冲突反复重建。",
+            "桌面用户已读回项目摘要和任务断点，并成功调用 memory_status / continuity_resume。客户端回归 46 项通过、4 项跳过；Windows 原生无控制台、真实 DPAPI、独立发现、残缺末行、新进程重试及字节一致测试通过。",
+            "新增项目召回经真实 MCP 返回目标项目记录；Windows原生PowerShell5.1通过37个断言。直接调用hook与桌面宿主实际交付属于不同证据；恢复、清空、压缩、多项目与真实断网等完整桌面生命周期仍待验收。"
+          ]
+        },
+        {
+          "title": "项目名称与最近更新召回",
+          "paragraphs": [
+            "已登记的中英混合名称兼容大小写与中英边界空白，例如 AI采购 与 AI 采购；规范化后指向多个项目时仍拒绝猜测，不做模糊归属。",
+            "项目块先读取该项目当前任务断点的最近三条有界 L1，按断点记录时间排序，附原状态、ID 与 UTC 记录时间；它们是历史任务记录，不代表 Git 提交时间或线上即时状态。",
+            "进展与知识池共享 4000 字符总预算，进展最多占单项目预算的六成且不超过 2000 字符；知识池保留原置信度和当前摘要预留规则。不改变 workspace 绑定、焦点或普通知识搜索对断点的隔离。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "安装与配置合并",
+          "path": "scripts/windows/install-evolvmem.ps1"
+        },
+        {
+          "label": "注入与加密队列",
+          "path": "scripts/windows/evolvmem-codex.ps1"
+        },
+        {
+          "label": "归档与提炼调度",
+          "path": "evolvmem/lan_tools.py"
+        },
+        {
+          "label": "归档协议",
+          "path": "evolvmem/lan_capture.py"
+        },
+        {
+          "label": "中断补录",
+          "path": "evolvmem/lan_backfill.py"
+        },
+        {
+          "label": "JSONL 记录与证据行号",
+          "path": "evolvmem/codex_transcript.py"
+        },
+        {
+          "label": "原生 PowerShell 加密回归",
+          "path": "tests/windows/test-client-dpapi.ps1"
+        },
+        {
+          "label": "无窗口启动器",
+          "path": "scripts/windows/evolvmem-sync.cs"
+        },
+        {
+          "label": "全局记忆规则",
+          "path": "scripts/windows/AGENTS.evolvmem.md"
+        },
+        {
+          "label": "原生后台补传验收",
+          "path": "tests/windows/test-background-sync.ps1"
+        },
+        {
+          "label": "原生无窗口验收",
+          "path": "tests/windows/test-sync-launcher.ps1"
+        },
+        {
+          "label": "项目提及与有界渲染",
+          "path": "evolvmem/project_mention_recall.py"
+        },
+        {
+          "label": "每日服务内摘要检查",
+          "path": "evolvmem/lan_daily_rollup.py"
+        },
+        {
+          "label": "原生项目召回回归",
+          "path": "tests/windows/test-project-mention.ps1"
+        },
+        {
+          "label": "带日期的当前任务进展",
+          "path": "evolvmem/project_progress_recall.py"
         }
       ]
     }

@@ -16,10 +16,12 @@
 
 用法（crontab，每小时一次）：
   23 * * * * /usr/bin/flock -n ~/.claude/evolvmem/.extract_stale.lock \
-    env PYTHONPATH=/home/jiangli/hermes-memory-plugin \
-    /home/jiangli/hermes-memory-plugin/.venv/bin/python \
-    /home/jiangli/hermes-memory-plugin/scripts/extract_stale_sessions.py \
+    /path/to/evolvmem-plugin/.venv/bin/python \
+    /path/to/evolvmem-plugin/scripts/extract_stale_sessions.py \
     >> ~/.claude/evolvmem/extract_stale.log 2>&1
+
+将 /path/to/evolvmem-plugin 换成源码目录；数据目录遵从 Config 和
+EVOLVMEM_DATA_DIR，自定义时同步调整 cron 的锁文件与日志路径。
 """
 
 import glob
@@ -29,7 +31,11 @@ import sys
 import time
 from pathlib import Path
 
-DATA_DIR = Path.home() / ".claude" / "evolvmem"
+# Allow running this source-checkout utility by its absolute script path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from evolvmem.config import Config
+
+DATA_DIR = Config().data_dir
 STATE_PATH = DATA_DIR / ".extracted_sessions.json"
 LOG_PATH = DATA_DIR / "extract_stale.log"
 LIVE_DIR = DATA_DIR / "live"
@@ -77,6 +83,7 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = STATE_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1),
                    encoding="utf-8")

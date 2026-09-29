@@ -1,0 +1,68 @@
+--- a/evolvmem/lan_capture.py
++++ b/evolvmem/lan_capture.py
+@@ -25,13 +25,16 @@
+               'offset': {'type': 'integer', 'minimum': 0},
+               'content_b64': {'type': 'string', 'maxLength': 349528},
+               'extract': {'type': 'boolean'},
++              # Optional, so already deployed clients keep validating unchanged.
++              'parent_sha256': {'type': 'string', 'maxLength': 64},
+               'request_id': {'type': 'string', 'minLength': 1, 'maxLength': 128}}
+     retry = {**identity, 'request_id': upload['request_id']}
+     assign = {**retry, 'project': {'type': 'string', 'minLength': 1, 'maxLength': 128}}
+     return {name: {'name': name, 'description': description,
+                    'annotations': {'readOnlyHint': readonly},
+                    'inputSchema': {'type': 'object', 'properties': props,
+-                                   'required': list(props), 'additionalProperties': False}}
++                                   'required': [k for k in props if k != 'parent_sha256'],
++                                   'additionalProperties': False}}
+             for name, props, readonly, description in (
+                 ('session_archive_upload', upload, False,
+                  'Upload a complete persisted Codex JSONL snapshot in sequential base64 chunks. '
+@@ -109,7 +112,7 @@
+     def _latest(self, identity):
+         return self.conn.execute('''SELECT * FROM lan_session_uploads
+             WHERE device_id=? AND session_id=? AND archive_id IS NOT NULL
+-            ORDER BY total_bytes DESC, rowid DESC LIMIT 1''', identity).fetchone()
++            ORDER BY received_at DESC, rowid DESC LIMIT 1''', identity).fetchone()
+ 
+     @staticmethod
+     def _receipt(row, status=None):
+@@ -209,6 +212,8 @@
+         if not re.fullmatch(r'[0-9a-f]{64}', digest):
+             raise LanError('invalid_transcript_hash')
+         key = (*identity, digest)
++        # An explicitly empty parent_sha256 declares an intentional new lineage root.
++        lineage_root = args.get('parent_sha256') == ''
+         total, offset = args['total_bytes'], args['offset']
+         try:
+             chunk = base64.b64decode(args['content_b64'], validate=True)
+@@ -241,6 +246,7 @@
+         project = row['project'] if row is not None else args['project']
+         details = {}
+         reason = row['attribution_reason'] if row is not None else ''
++        new_root = False
+         if complete:
+             if hashlib.sha256(raw).hexdigest() != digest:
+                 raise LanError('transcript_hash_mismatch')
+@@ -269,7 +275,11 @@
+                         submitted_total_bytes=total,
+                     )
+                 if prior is not None and not raw.startswith(prior):
+-                    raise LanError('transcript_fork')
++                    if not lineage_root:
++                        raise LanError('transcript_fork')
++                    # The rollout was rewritten. Older archives stay immutable; this
++                    # version is recorded as a new root instead of stalling the queue.
++                    new_root = True
+         # Retain encrypted staging until the archive pointer is committed.
+         if not archive_id:
+             self._write_stage(path, raw)
+@@ -305,4 +315,7 @@
+                     (*identity, total))
+         if complete:
+             path.unlink(missing_ok=True)
+-        return self._receipt(self.conn.execute('SELECT * FROM lan_session_uploads WHERE device_id=? AND session_id=? AND sha256=?', key).fetchone())
++        receipt = self._receipt(self.conn.execute('SELECT * FROM lan_session_uploads WHERE device_id=? AND session_id=? AND sha256=?', key).fetchone())
++        if new_root:
++            receipt['lineage'] = 'new_root'
++        return receipt

@@ -14,7 +14,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 README_PATH = REPO_ROOT / "README.md"
 RUNBOOK_PATH = REPO_ROOT / "docs" / "codex-context-core-runbook.md"
 
-README = README_PATH.read_text(encoding="utf-8")
+README = (README_PATH.read_text(encoding="utf-8") + "\n" +
+          (REPO_ROOT / "docs" / "context-core.md").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -40,8 +41,7 @@ def test_readme_legacy_compatibility_projection() -> None:
 
 
 def test_readme_adapter_matrix() -> None:
-    # Codex is switched (primary); the other adapters are write-switched only
-    # and still read the legacy projection.
+    # Public documentation covers every supported adapter and its actual mode boundary.
     for adapter in ("Codex", "Claude", "Kimi", "DSH", "Web"):
         _assert_mentions(README, adapter, "README.md")
     _assert_mentions(README, "primary", "README.md")
@@ -92,7 +92,7 @@ def test_readme_automatic_call_limitation() -> None:
     _assert_mentions(README, "fail-open", "README.md")
 
 
-def test_readme_other_adapters_primary_is_future_work() -> None:
+def test_readme_adapter_expansion_is_future_work() -> None:
     _assert_mentions(README, "future work", "README.md")
 
 

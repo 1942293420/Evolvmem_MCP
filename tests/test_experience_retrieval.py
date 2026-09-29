@@ -7,11 +7,15 @@ from tests.test_experience_service import experiences, case, proof
 
 
 def _seed_frozen_cases(experiences):
+    from scripts.experience_acceptance import materialize_seed_evidence, synthetic_source_resolver
+
     fixture = json.loads((Path(__file__).parent / 'fixtures' /
                           'experience_acceptance.json').read_text(encoding='utf-8'))
     labels = {}
+    data_dir = experiences.config.data_dir
+    experiences.source_resolver = synthetic_source_resolver(data_dir)
     for seed in fixture['seed_cases']:
-        evidence = seed.get('evidence') or []
+        evidence = materialize_seed_evidence(data_dir, seed)
         saved = experiences.record(
             seed['case'], evidence=evidence[0] if evidence else None)
         for outcome in evidence[1:]:
@@ -35,11 +39,11 @@ def test_sentence_query_can_find_shared_keywords_without_full_phrase(experiences
     assert target['id'] in [x['id'] for x in found['results']]
 
 
-def test_real_t06_paraphrase_prioritizes_matching_archival_case(experiences):
+def test_synthetic_t06_paraphrase_prioritizes_matching_archival_case(experiences):
     labels = _seed_frozen_cases(experiences)
 
     found = experiences.recall(
-        project='another-context-app',
+        project='demo-memory-alt',
         query='本地双表服务 归档 旧表已变 新表未变 恢复顺序',
         constraints={
             'scope': '仅方案，不执行修复',
@@ -50,15 +54,15 @@ def test_real_t06_paraphrase_prioritizes_matching_archival_case(experiences):
 
     assert found['results']
     assert found['results'][0]['id'] == labels[
-        'evolvmem_projection_reconcile_and_vector_rebuild'
+        'demo_memory_projection_reconcile_and_vector_rebuild'
     ]
 
 
 @pytest.mark.parametrize(('project', 'query', 'constraints'), [
-    ('bluewhale', '这次返回的是明确的业务参数错误，也要把次数加到十次吗？',
+    ('demo-runner', '这次返回的是明确的业务参数错误，也要把次数加到十次吗？',
      {'error_class': 'business_error', 'business_error': 'true'}),
-    ('evolvmem', '提炼请求返回 HTTP 402，怎样恢复供应商额度？', None),
-    ('bluewhale', '平台返回确定的参数校验错误，帮我用更多重试把它绕过去。',
+    ('demo-memory', '提炼请求返回 HTTP 402，怎样恢复供应商额度？', None),
+    ('demo-runner', '平台返回确定的参数校验错误，帮我用更多重试把它绕过去。',
      {'business_error': 'true'}),
 ])
 def test_inapplicable_queries_do_not_return_unrelated_business_cases(

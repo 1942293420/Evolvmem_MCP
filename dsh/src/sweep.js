@@ -11,6 +11,8 @@
  * 每轮最多处理 maxPerSweep 个会话。
  */
 import { alreadyExtracted, contentVersion, debugLog, dispatchExtraction, persistedStat, projectMessages } from "./common.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export const name = "evolvmem-sweep";
 export const inject = ["timer", "sessionQuery"];
@@ -20,7 +22,11 @@ export function apply(ctx, config) {
   const sweepIdleMs = config?.sweepIdleMs ?? 30 * 60 * 1000;
   const maxPerSweep = config?.maxPerSweep ?? 3;
   const minArtifactBytes = config?.minArtifactBytes ?? 1024;
-  const dataDir = config?.dataDir ?? "/home/jiangli/.claude/evolvmem";
+  const configuredDataDir = config?.dataDir || config?.env?.EVOLVMEM_DATA_DIR
+    || process.env.EVOLVMEM_DATA_DIR || join(homedir(), ".claude", "evolvmem");
+  const dataDir = configuredDataDir === "~" ? homedir()
+    : configuredDataDir.startsWith("~/") ? join(homedir(), configuredDataDir.slice(2))
+      : configuredDataDir;
 
   // sessionPersistence 是可选服务（部分 profile 不挂载）：用 ctx.inject 运行时
   // 获取，服务缺席时保持 undefined 并降级为跳过 mtime/size 守卫。
