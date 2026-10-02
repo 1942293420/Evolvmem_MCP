@@ -28,18 +28,26 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 from evolvmem.config import Config
-from evolvmem.context_models import ContextMode, ContextServiceError, parse_context_mode
+from evolvmem.context_models import (
+    ContextMode,
+    ContextServiceError,
+    ContextValidationError,
+    parse_context_mode,
+)
 from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
 from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.project_store import ProjectStore, ProjectStoreError
+from evolvmem.trust_views import TrustViews
 from evolvmem.web_auth import AuthSettings, WebAuth
 
 _STATIC_INDEX = Path(__file__).parent / "web_static" / "index.html"
 _STATIC_SIGNAL = _STATIC_INDEX.parent / "designs" / "signal.html"
 _STATIC_ARCH = Path(__file__).parent / "web_static" / "architecture.html"
+_STATIC_TRUST = _STATIC_INDEX.parent / "designs" / "trust.html"
 _INSIGHT_ASSETS = {'/insights.js': 'text/javascript', '/insights.css': 'text/css',
-                   '/auth.js': 'text/javascript'}
+                   '/auth.js': 'text/javascript', '/trust.js': 'text/javascript',
+                   '/trust.css': 'text/css'}
 _DESIGN_NAMES = ('orbit', 'atlas', 'halo', 'signal', 'nocturne')
 _DESIGN_ASSETS = {
     'index.html': 'text/html', 'common.css': 'text/css',
@@ -313,11 +321,15 @@ def api_resolutions(
 ) -> list[dict]:
     """List resolution review rows with a content preview for human triage.
 
-    params: state (pending|accepted|rejected|not_required|all; default
-    pending), limit (default 500, capped at 1000). Key/value come from the
-    mapped legacy projection row — the shape the console user recognises —
+    params: state (pending|accepted|rejected|not_required|all|unreviewed;
+    default pending), limit (default 500, capped at 1000). Key/value come from
+    the mapped legacy projection row — the shape the console user recognises —
     with the Context identity key and l0 layer as fallback for unmapped rows.
     Evidence is the resolver's bounded public projection only.
+
+    ``state=unreviewed`` lists workstream rows that have no resolution row at
+    all: without it those rows could never be reached by the review API the
+    ownership gate trusts.
     """
     state = params.get("state", "pending")
     try:
@@ -325,6 +337,9 @@ def api_resolutions(
     except (TypeError, ValueError):
         limit = 500
     limit = max(1, min(limit, 1000))
+
+    if state == "unreviewed":
+        return _unreviewed_resolution_payload(store, limit)
 
     where = "WHERE r.review_state=?" if state in _REVIEW_STATES else ""
     args: tuple = (state,) if state in _REVIEW_STATES else ()
@@ -394,47 +409,185 @@ def api_resolutions(
     return out
 
 
-def _parse_expected_revision(body: dict) -> int | None:
+def _unreviewed_resolution_payload(store: ContextStore, limit: int) -> list[dict]:
+    """Non-deleted project claims with no resolution row, shaped as review entries.
+
+    These are exactly the rows the ownership gate must treat as unverified until
+    a human reviews them, and the gate does not care about content type: every
+    project-owned row without a resolution is held. The standalone review API
+    therefore lists them all (not only workstream checkpoints) so it agrees with
+    the knowledge page's queue; the same payload shape keeps the console's
+    accept/reject controls usable. Nothing here writes or reclassifies a row.
+    """
+    rows = store._connection().execute(
+        "SELECT i.id AS item_id, i.identity_key, i.content_type, i.project,"
+        " i.status, i.created_at "
+        "FROM context_items i "
+        "LEFT JOIN context_project_resolutions r ON r.item_id = i.id "
+        "WHERE r.item_id IS NULL AND i.project != '' AND i.status != 'deleted' "
+        "ORDER BY i.id LIMIT ?",
+        (limit,),
+    ).fetchall()
+    if not rows:
+        return []
+    ids = [int(row["item_id"]) for row in rows]
+    marks = ",".join("?" for _ in ids)
+    l0_by_item: dict[int, str] = {}
+    for layer_row in store._connection().execute(
+        "SELECT item_id, content FROM context_layers "
+        f"WHERE layer='l0' AND item_id IN ({marks})",
+        tuple(ids),
+    ).fetchall():
+        l0_by_item[int(layer_row["item_id"])] = layer_row["content"]
+    return [
+        {
+            "item_id": int(row["item_id"]),
+            "legacy_id": None,
+            "legacy_available": False,
+            "key": row["identity_key"],
+            "value": l0_by_item.get(int(row["item_id"]), ""),
+            "item_status": row["status"],
+            "current_project": row["project"],
+            "content_type": row["content_type"],
+            "resolution_state": "none",
+            "review_state": "none",
+            "proposed_project": "",
+            "resolved_project": "",
+            "confidence": "none",
+            "method": "",
+            "evidence": [],
+            "revision": 0,
+            "reviewed_at": None,
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def _parse_expected_revision(body: dict, *, allow_zero: bool = False) -> int | None:
     expected = body.get("expected_revision")
-    if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
+    if isinstance(expected, bool) or not isinstance(expected, int):
         return None
-    return expected
+    if expected == 0:
+        return 0 if allow_zero else None
+    return expected if expected >= 1 else None
 
 
 def api_resolution_accept(
     service: ContextService, item_id: int, body: dict
 ) -> dict:
-    """Human-accept one pending resolution into a registered project (CAS)."""
+    """Human-accept one resolution into a registered project (exact CAS).
+
+    ``expected_revision`` is always honoured: ``0`` means "the unreviewed queue
+    says there is no resolution row yet" and creates exactly one row (a
+    concurrent review loses with ``revision_conflict``); a positive value is the
+    ordinary CAS against the existing row, so a duplicate or stale acceptance
+    fails closed instead of overwriting the first reviewer's decision.
+    """
     project = str(body.get("project", "")).strip()
-    expected = _parse_expected_revision(body)
+    expected = _parse_expected_revision(body, allow_zero=True)
     if not project:
         return {"ok": False, "error": "invalid_project"}
     if expected is None:
         return {"ok": False, "error": "invalid_revision"}
     try:
         with service.store.transaction():
-            _project_store(service).accept_resolution(
-                item_id, project, expected_revision=expected
-            )
+            store = _project_store(service)
+            if expected == 0:
+                store.review_item_project(
+                    item_id, project, expected_revision=0
+                )
+            else:
+                store.accept_resolution(
+                    item_id, project, expected_revision=expected
+                )
     except ProjectStoreError as exc:
-        return {"ok": False, "error": exc.code}
+        # Preserve the legacy error contract: a missing item was always
+        # reported as a missing resolution row.
+        code = "resolution_not_found" if exc.code == "item_not_found" else exc.code
+        return {"ok": False, "error": code}
     return {"ok": True, "item_id": item_id, "resolved_project": project}
+
+
+def api_decision_window_get(service: ContextService, item_id: int) -> dict:
+    """Read-only temporal window for one exact item; never writes.
+
+    The GET route must not accept window fields at all: a read that could
+    mutate data is a defect, so writes only exist on the POST helper below.
+    """
+    if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id < 1:
+        return {"ok": False, "error": "invalid_id"}
+    try:
+        payload = service.decision_window(item_id)
+    except ContextValidationError as exc:
+        return {"ok": False, "error": str(exc)}
+    except ContextServiceError as exc:
+        return {"ok": False, "error": exc.code}
+    if payload is None:
+        return {"ok": False, "error": "item_not_found"}
+    return {"ok": True, **payload}
+
+
+def api_decision_window(service: ContextService, body: dict) -> dict:
+    """Write (and read back) one item's temporal validity; partial updates.
+
+    Only the window fields actually present in ``body`` are touched, so a POST
+    that carries just ``effective_from`` preserves the stored ``effective_until``
+    and ``occurred_at``. Passing a field as ``null`` clears it. Values are
+    normalized to UTC by the service; project, status, and content are never
+    touched.
+    """
+    item_id = body.get("id")
+    if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id < 1:
+        return {"ok": False, "error": "invalid_id"}
+    field_names = ("effective_from", "effective_until", "occurred_at", "mentioned_at")
+    writes = {name: body[name] for name in field_names if name in body}
+    if not writes:
+        try:
+            payload = service.decision_window(item_id)
+        except ContextValidationError as exc:
+            return {"ok": False, "error": str(exc)}
+        except ContextServiceError as exc:
+            return {"ok": False, "error": exc.code}
+    else:
+        try:
+            payload = service.set_decision_window(item_id, **writes)
+        except ContextValidationError as exc:
+            return {"ok": False, "error": str(exc)}
+        except ContextServiceError as exc:
+            return {"ok": False, "error": exc.code}
+    if payload is None:
+        return {"ok": False, "error": "item_not_found"}
+    return {"ok": True, **payload}
 
 
 def api_resolution_reject(
     service: ContextService, item_id: int, body: dict
 ) -> dict:
-    """Human-reject one pending resolution; the item's project stays put."""
-    expected = _parse_expected_revision(body)
+    """Human-reject one resolution; the item's project stays put.
+
+    ``expected_revision`` is always honoured: ``0`` means the unreviewed queue
+    reports no resolution row yet, so exactly one rejected row is created (a
+    concurrent confirm/reject loses with ``revision_conflict``); a positive
+    value is the ordinary CAS against the existing row. Rejecting never moves
+    the item, its identity key, or its content, so a mislabeled historical row
+    can be refused in place.
+    """
+    expected = _parse_expected_revision(body, allow_zero=True)
     if expected is None:
         return {"ok": False, "error": "invalid_revision"}
     try:
         with service.store.transaction():
-            _project_store(service).reject_resolution(
-                item_id, expected_revision=expected
-            )
+            store = _project_store(service)
+            if expected == 0:
+                store.reject_item_project(item_id, expected_revision=0)
+            else:
+                store.reject_resolution(item_id, expected_revision=expected)
     except ProjectStoreError as exc:
-        return {"ok": False, "error": exc.code}
+        # Preserve the legacy error contract: a missing item was always
+        # reported as a missing resolution row.
+        code = "resolution_not_found" if exc.code == "item_not_found" else exc.code
+        return {"ok": False, "error": code}
     return {"ok": True, "item_id": item_id, "review_state": "rejected"}
 
 
@@ -1023,7 +1176,9 @@ def api_hard_delete(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
 # ---- HTTP layer ----
 
 _MEM_ACTION_RE = re.compile(r"^/api/memory/(\d+)/(update|archive|restore|delete|hard_delete)$")
-_RES_ACTION_RE = re.compile(r"^/api/resolution/(\d+)/(accept|reject)$")
+# Both the legacy singular route and the plural route the /trust UI uses are
+# served by the same handler, so existing callers keep working.
+_RES_ACTION_RE = re.compile(r"^/api/resolutions?/(\d+)/(accept|reject)$")
 _MEM_CONTEXT_RE = re.compile(r"^/api/memory/(\d+)/context$")
 
 _BODY_LIMIT = 64 * 1024
@@ -1034,6 +1189,7 @@ def make_handler(service: ContextService):
     facade = service.legacy_facade()
     store = service.store
     auth = WebAuth(AuthSettings.load(service.config.data_dir))
+    views = TrustViews(service)
 
     class MemoryWebHandler(BaseHTTPRequestHandler):
         server_version = "EvolvMemWeb/1.0"
@@ -1175,6 +1331,33 @@ def make_handler(service: ContextService):
                     self._send_json({"ok": False,
                                      "error": "architecture.html missing"}, 404)
                 return
+            if path in ("/trust", "/trust/"):
+                try:
+                    self._send_html(_STATIC_TRUST.read_text(encoding="utf-8"))
+                except FileNotFoundError:
+                    self._send_json({"ok": False, "error": "trust page missing"}, 404)
+                return
+            if path == "/api/sync-chain":
+                try:
+                    self._send_json(views.sync_chain())
+                except Exception as exc:  # bounded surface; read-only view
+                    self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
+                return
+            if path == "/api/trust/projects":
+                try:
+                    self._send_json({"ok": True, "projects": views.projects()})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
+                return
+            if path == "/api/knowledge":
+                params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                try:
+                    result = views.knowledge(params.get("project", ""))
+                except Exception as exc:  # bounded surface; read-only view
+                    self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
+                    return
+                self._send_json(result, 200 if result.get("ok") else 400)
+                return
             if path == "/api/stats":
                 self._send_json(api_stats(facade, store, service.config))
                 return
@@ -1190,6 +1373,28 @@ def make_handler(service: ContextService):
                 qs = parse_qs(parsed.query)
                 params = {k: v[0] for k, v in qs.items()}
                 self._send_json(api_resolutions(facade, store, params))
+                return
+            if path == "/api/decision-window":
+                qs = parse_qs(parsed.query)
+                params = {k: v[0] for k, v in qs.items()}
+                # GET is read-only: any window parameter is rejected instead of
+                # being interpreted as a write.
+                if set(params) - {"id"}:
+                    self._send_json(
+                        {"ok": False, "error": "read_only_endpoint"}, 400
+                    )
+                    return
+                if "id" not in params:
+                    self._send_json({"ok": False, "error": "invalid_id"}, 400)
+                    return
+                try:
+                    item_id = int(params["id"])
+                except ValueError:
+                    self._send_json(
+                        {"ok": False, "error": "invalid_id"}, 400
+                    )
+                    return
+                self._send_json(api_decision_window_get(service, item_id))
                 return
             m = _MEM_CONTEXT_RE.match(path)
             if m:
@@ -1214,6 +1419,7 @@ def make_handler(service: ContextService):
                 self._handle_resolution_action(int(m.group(1)), m.group(2))
                 return
             if path in ("/api/resolutions/batch_accept",
+                        "/api/decision-window",
                         "/api/projects/register",
                         "/api/projects/display_name",
                         "/api/projects/display_names",
@@ -1225,6 +1431,8 @@ def make_handler(service: ContextService):
                 try:
                     if path == "/api/resolutions/batch_accept":
                         result = api_resolutions_batch_accept(service, body)
+                    elif path == "/api/decision-window":
+                        result = api_decision_window(service, body)
                     elif path == "/api/projects/register":
                         result = api_project_register(service, body)
                     elif path == "/api/projects/display_name":

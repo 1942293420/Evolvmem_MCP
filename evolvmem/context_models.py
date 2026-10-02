@@ -4,6 +4,13 @@ from dataclasses import dataclass
 from enum import Enum
 import math
 
+from evolvmem.context_temporal import (
+    TemporalValidationError,
+    normalize_timestamp,
+    temporal_state,
+    validate_window,
+)
+
 
 class ContextValidationError(ValueError):
     """Raised when caller-provided context data violates its domain contract."""
@@ -134,6 +141,11 @@ class ContextItemDraft:
     confidence: float = 0.5
     expires_at: str | None = None
     supersedes: int | None = None
+    # 显式可选时间语义：缺省即 UNKNOWN，绝不从 created_at 推断。
+    effective_from: str | None = None
+    effective_until: str | None = None
+    occurred_at: str | None = None
+    mentioned_at: str | None = None
 
     def __post_init__(self) -> None:
         identity_key = _normalize_text(self.identity_key, "identity_key")
@@ -157,6 +169,21 @@ class ContextItemDraft:
         object.__setattr__(self, "tags", _normalize_tags(self.tags))
         _validate_number(self.importance, "importance", lower=1.0, upper=10.0)
         _validate_number(self.confidence, "confidence", lower=0.0, upper=1.0)
+        for field in (
+            "effective_from",
+            "effective_until",
+            "occurred_at",
+            "mentioned_at",
+        ):
+            try:
+                normalized = normalize_timestamp(getattr(self, field), field)
+            except TemporalValidationError as exc:
+                raise ContextValidationError(str(exc)) from None
+            object.__setattr__(self, field, normalized)
+        try:
+            validate_window(self.effective_from, self.effective_until)
+        except TemporalValidationError as exc:
+            raise ContextValidationError(str(exc)) from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +211,20 @@ class ContextItem:
     created_at: str
     updated_at: str
     layers: ContextLayers | None
+    # UNKNOWN stays None; a known value is always naive UTC.
+    effective_from: str | None = None
+    effective_until: str | None = None
+    occurred_at: str | None = None
+    mentioned_at: str | None = None
+
+    @property
+    def temporal_state(self) -> str:
+        return temporal_state(
+            self.effective_from,
+            self.effective_until,
+            self.occurred_at,
+            self.mentioned_at,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +299,9 @@ class ContextSearchRequest:
     top_k: int = 10
     content_types: tuple[ContextContentType, ...] = ()
     cross_project: bool = False
+    # 显式历史读取：UNKNOWN/None 表示“当前”；已知值按 UTC 归一化，
+    # 只有该时刻窗口内的 active/superseded 记录可读，候选/删除/低置信仍被拦截。
+    as_of: str | None = None
 
     def __post_init__(self) -> None:
         query = _normalize_text(self.query, "query")
@@ -274,6 +318,11 @@ class ContextSearchRequest:
         )
         if type(self.cross_project) is not bool:
             raise ContextValidationError("cross_project must be a boolean")
+        try:
+            normalized_as_of = normalize_timestamp(self.as_of, "as_of")
+        except TemporalValidationError as exc:
+            raise ContextValidationError(str(exc)) from None
+        object.__setattr__(self, "as_of", normalized_as_of)
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +342,19 @@ class ContextSearchResult:
     match_types: tuple[ContextMatchType, ...]
     match_layers: tuple[ContextLayer, ...]
     available_layers: tuple[ContextLayer, ...]
+    effective_from: str | None = None
+    effective_until: str | None = None
+    occurred_at: str | None = None
+    mentioned_at: str | None = None
+
+    @property
+    def temporal_state(self) -> str:
+        return temporal_state(
+            self.effective_from,
+            self.effective_until,
+            self.occurred_at,
+            self.mentioned_at,
+        )
 
     def __post_init__(self) -> None:
         _validate_positive_int(self.id, "id")
@@ -427,6 +489,19 @@ _SESSION_CONTINUATION_CODES = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
+class ContextOwnershipExclusion:
+    """One item withheld from a default surface because its ownership is unsure."""
+
+    item_id: int
+    reason: str
+
+    def __post_init__(self) -> None:
+        _validate_positive_int(self.item_id, "item_id")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ContextValidationError("reason must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class ContextSessionStartResult:
     block: str
     selected_ids: tuple[int, ...]
@@ -436,6 +511,10 @@ class ContextSessionStartResult:
     # 绝不含 L2 原文、绝对路径或工作区指纹；未触发续接分支时为 ""/None。
     continuation_code: str = ""
     continuation: dict | None = None
+    # 项目归属信任：被排除项的精确 id+稳定原因，以及仍被注入但归属未经
+    # 审核（历史无 resolution 记录）的 id；两者都有界，不含原文/路径。
+    ownership_exclusions: tuple[ContextOwnershipExclusion, ...] = ()
+    unverified_ownership_ids: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.block, str):
@@ -468,6 +547,28 @@ class ContextSessionStartResult:
             )
         if self.continuation is not None and not isinstance(self.continuation, dict):
             raise ContextValidationError("continuation must be a dict or None")
+        try:
+            ownership_exclusions = tuple(self.ownership_exclusions)
+            unverified_ids = tuple(self.unverified_ownership_ids)
+        except TypeError as exc:
+            raise ContextValidationError(
+                "ownership diagnostics must be iterables"
+            ) from exc
+        if any(
+            not isinstance(entry, ContextOwnershipExclusion)
+            for entry in ownership_exclusions
+        ):
+            raise ContextValidationError(
+                "ownership_exclusions must be ContextOwnershipExclusion entries"
+            )
+        for item_id in unverified_ids:
+            _validate_positive_int(item_id, "unverified_ownership_ids")
+        object.__setattr__(
+            self, "ownership_exclusions", ownership_exclusions
+        )
+        object.__setattr__(
+            self, "unverified_ownership_ids", tuple(dict.fromkeys(unverified_ids))
+        )
 
 
 @dataclass(frozen=True, slots=True)

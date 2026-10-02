@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "title": "EvolvMem 完整架构图册",
-  "reviewed_at": "2026-09-21",
+  "reviewed_at": "2026-10-02",
   "source_root": ".",
   "chapters": [
     {
@@ -734,8 +734,8 @@
       "id": "context-recall",
       "title": "Context 混合检索",
       "english": "CONTEXT HYBRID RETRIEVAL",
-      "subtitle": "词法查 L0/L1，向量查 L0；最终返回摘要和分数组成，正文按需要再取。",
-      "takeaway": "这里的排序有两层：先把文字分和向量分组成 relevance，再把 relevance 与项目、类型、可信度和证据等一起评分。它不是 RRF，也没有独立 Cross-Encoder / Reranker 模型。",
+      "subtitle": "词法查 L0/L1，向量查 L0；先过状态/归属/时间闸门，再审八因子排序后返回 L0。",
+      "takeaway": "这里的排序有两层：先把文字分和向量分组成 relevance，再把 relevance 与项目、类型、可信度和证据等一起评分。它不是 RRF，也没有独立 Cross-Encoder / Reranker 模型。默认召回排除已知窗口已过期或尚未生效的记录；同一身份上尚未生效的继任者不会抹掉当前生效的前任，而两条同时落在窗口内时只呈现最新可适用的一条。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -769,7 +769,7 @@
             "id": "scope",
             "type": "security",
             "label": "资格与候选预算",
-            "sublabel": "active · 未过期 · 置信度",
+            "sublabel": "状态 / 时间 / 置信度",
             "pos": [
               345,
               80
@@ -1064,6 +1064,14 @@
           "title": "显式项目提及",
           "paragraphs": [
             "context_project_recall 只按本用户登记名称和别名匹配，歧义不猜，最多两个项目。复用候选与L1渲染，但排除其他项目及通用置顶记录；不传workspace_path、不绑定目录、不切换continuity焦点。Windows和DSH逐轮入口共用该逻辑。"
+          ]
+        },
+        {
+          "title": "时间与身份优先级",
+          "paragraphs": [
+            "每条记录的有效性只来自显式 effective_from/effective_until/occurred_at；缺省即 UNKNOWN，绝不从 created_at 推断事件时间。effective_until 为排他边界。",
+            "继任边界：被取代记录若无显式 until，以继任者生效时刻作为隐式结束。继任者尚未到期时前任仍是当前记录（current_predecessor），到期后由继任者优先。",
+            "同身份优先：适用性按完整同身份 family（同 identity_key + project + scope）解析，与哪条文字命中查询或 top_k 无关。若两条记录同时落在各自窗口内（例如被取代决定的长显式 until 与已生效继任者），只返回最新可适用的一条；命中的过期历史不会因新记录文字不同而复现，此时返回空而不是旧行。被取代行及其显式结束时间仍保留在存储中供 as_of 历史读取。"
           ]
         }
       ],
@@ -2279,8 +2287,8 @@
       "id": "storage",
       "title": "存储、三层上下文与注入",
       "english": "STORAGE, LAYERS & CONTEXT",
-      "subtitle": "SQLite 保存条目、正文、出处和任务状态；FTS 与向量服务检索，原始聊天另行加密归档。",
-      "takeaway": "L0 是搜索预览，L1 是常用上下文，L2 是这条知识的完整表示。SessionStart 先选择候选，再在总预算内装入整条 L1；L2 需要时按精确 ID 获取。LAN 为 jiangli、kane 和 public 分别保存 SQLite namespace，public 内容来自显式发布，不能从 personal DB 推断。",
+      "subtitle": "SQLite 保存条目、正文、出处和任务状态；默认注入先过归属与时间闸门，项目知识页只读组合可信来源。",
+      "takeaway": "L0 是搜索预览，L1 是常用上下文，L2 是这条知识的完整表示。SessionStart 先选择候选，再在总预算内装入整条 L1；L2 需要时按精确 ID 获取。LAN 为 jiangli、kane 和 public 分别保存 SQLite namespace，public 内容来自显式发布。无归属 resolution 的项目条目会被扣留（project_ownership_unverified），需经评审确认；确认/拒绝只改评审行，不改写业务内容。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -2356,7 +2364,7 @@
             "id": "merge",
             "type": "backend",
             "label": "合并并筛选候选",
-            "sublabel": "状态 / scope / tier / confidence",
+            "sublabel": "状态 / 归属 / 时间 / 置信度",
             "pos": [
               975,
               275
@@ -2677,6 +2685,14 @@
           "paragraphs": [
             "会话启动额外装入同项目最新一条 project_summary 和三条 session_summary，再遵守有效状态、置信度、期限及预算筛选；不依赖问题必须命中摘要关键词。",
             "LAN 启动先恢复精确任务断点，再装入普通记忆及剩余预算内的 public 摘要。SQLite 变更计数供下一次提示词发现跨端更新；读访问计数不触发刷新。钩子回执只证明已获取并交付输出，宿主实际注入须另行核对。"
+          ]
+        },
+        {
+          "title": "信任视图读的是什么",
+          "paragraphs": [
+            "/trust 的项目知识页（GET /api/knowledge）在读取时组合既有 rollup 水位、来源闭包与当前工作流指针，不调用模型、不写库。",
+            "来源先过归属 resolution、最低置信度、窗口有效性与行状态；被扣留来源列入 held_sources 并标记 source_hold，不计入可信覆盖，也不会让摘要显示为新鲜可信。",
+            "摘要失败时保留上一次成功内容并标注 failed；覆盖之后出现新来源或已覆盖来源被修改（updated_at 超过水位）时标记 needs_refresh。"
           ]
         }
       ],
@@ -4068,6 +4084,13 @@
             "Linux 核心继续运行现有 LAN 进程及共享模型，Windows 无需安装 Python、向量模型或数据库。远程维护工具使用当前个人库；看板按每次请求的工作区身份及用户数据目录内的配置执行。",
             "安装器备份并合并 Codex config.toml、hooks.json 与全局 AGENTS 托管段落。无窗口用户任务每分钟及登录后采集补传；状态单独报告任务启用、运行回执与队列，不能把联网成功当作桌面验收通过。"
           ]
+        },
+        {
+          "title": "信任视图（/trust）",
+          "paragraphs": [
+            "首页导航新增只读“信任视图”：同一进程内复用既有飞书登录与 CSRF，只读接口为 GET /api/sync-chain、GET /api/knowledge?project=...、GET /api/trust/projects；归属确认/拒绝仍走既有评审 CAS。",
+            "该页面不新增遥测协议或后台服务，也不执行向量检索或模型调用；默认文案为简短中文，原始字段名与原因码放在折叠的技术细节中。"
+          ]
         }
       ],
       "sources": [
@@ -4138,11 +4161,278 @@
       ]
     },
     {
+      "id": "trust-views",
+      "title": "信任视图与项目知识",
+      "english": "TRUST VIEWS & PROJECT KNOWLEDGE",
+      "subtitle": "只读同步链 + 有来源的项目知识页；服务端只证明归档与提炼，本机采集/投递/模型采纳如实标为未知。",
+      "takeaway": "两个视图共用一条原则：只用已持久化的证据说话。同步链拼装 client_capture → upload_archive → extraction → recall → hook_delivery → model_adoption，只有归档与提炼来自服务端回执，其余阶段不可观测就标 unknown / unverified。项目知识页在读取时组合 rollup 水位、来源闭包、当前工作流指针与归属评审队列，不调用模型、不写库；被扣留的来源或摘要进入未决事项，而不是伪装成新鲜可信的结论。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 信任视图与项目知识",
+          "subtitle": "只读组合；证据不足即 unknown/unverified",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1270,
+            650
+          ]
+        },
+        "components": [
+          {
+            "id": "web",
+            "type": "frontend",
+            "label": "信任视图页面",
+            "sublabel": "/trust · 只读",
+            "pos": [
+              30,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "knowledge",
+            "type": "backend",
+            "label": "项目知识页组合",
+            "sublabel": "当前规则 / 最新进展 / 未决事项",
+            "pos": [
+              345,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "review",
+            "type": "security",
+            "label": "归属闸门与评审",
+            "sublabel": "resolution · CAS · 不跨项目移动",
+            "pos": [
+              660,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "store",
+            "type": "database",
+            "label": "条目与工作流指针",
+            "sublabel": "context_items · continuity_workstreams",
+            "pos": [
+              975,
+              80
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "sync",
+            "type": "backend",
+            "label": "同步链投影",
+            "sublabel": "sync_chain() 状态/时间/积压",
+            "pos": [
+              30,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "upload",
+            "type": "database",
+            "label": "上传/提炼回执",
+            "sublabel": "lan_session_uploads",
+            "pos": [
+              345,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "archives",
+            "type": "database",
+            "label": "加密归档",
+            "sublabel": "session_archives",
+            "pos": [
+              660,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "rollup",
+            "type": "database",
+            "label": "项目汇总与来源闭包",
+            "sublabel": "context_project_rollups · context_sources",
+            "pos": [
+              975,
+              275
+            ],
+            "size": [
+              245,
+              84
+            ]
+          },
+          {
+            "id": "unobservable",
+            "type": "external",
+            "label": "不可观测阶段",
+            "sublabel": "本机采集 · 钩子投递 · 模型采纳",
+            "pos": [
+              30,
+              470
+            ],
+            "size": [
+              245,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "id": "trust-edge-1",
+            "from": "web",
+            "to": "knowledge",
+            "variant": "emphasis"
+          },
+          {
+            "id": "trust-edge-2",
+            "from": "knowledge",
+            "to": "review",
+            "variant": "emphasis"
+          },
+          {
+            "id": "trust-edge-3",
+            "from": "review",
+            "to": "store",
+            "variant": "emphasis"
+          },
+          {
+            "id": "trust-edge-4",
+            "from": "web",
+            "to": "sync",
+            "variant": "emphasis"
+          },
+          {
+            "id": "trust-edge-5",
+            "from": "sync",
+            "to": "upload",
+            "variant": "emphasis"
+          },
+          {
+            "id": "trust-edge-6",
+            "from": "upload",
+            "to": "archives",
+            "variant": "emphasis"
+          },
+          {
+            "id": "trust-edge-7",
+            "from": "knowledge",
+            "to": "rollup",
+            "route": "orthogonal-v"
+          },
+          {
+            "id": "trust-edge-8",
+            "from": "sync",
+            "to": "unobservable",
+            "variant": "dashed"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "同步链：只报可证明的阶段",
+          "paragraphs": [
+            "upload_archive 读 lan_session_uploads 与 session_archives：归档回执完整时以归档创建时间作为完成证据，分片接收中则用最近上传回执时间并标注依据。",
+            "extraction 分别保留 extracted/queued/failed/not_requested/superseded 计数与 last_success_at/last_failure_at；混合状态不会用等待掩盖失败。",
+            "client_capture、recall（retrieved_for_hook）、hook_delivery 在服务端不可观测，固定 unknown；model_adoption 固定 unverified。"
+          ]
+        },
+        {
+          "title": "项目知识页：读时组合，不生成",
+          "paragraphs": [
+            "当前规则只列归属已确认、置信度达标、未过期且落在已知窗口内的决定/约束/策略；只有 DECISION 允许尚未到期的继任前任规则。",
+            "最新进展来自 rollup 指针指向的摘要行，并要求该行 active、同项目、未过期、在窗口内且归属未扣留，否则扣留内容并说明原因。",
+            "进行中任务断点直接读 continuity_workstreams.current_context_id 的精确指针，给出状态、当前步骤与下一步；成功测试不会被推断成已完成。"
+          ]
+        },
+        {
+          "title": "来源可信与刷新判定",
+          "paragraphs": [
+            "来源先过归属 resolution、最低置信度、窗口有效性与行状态；被扣留来源列入 held_sources 并标记 source_hold，不计入可信覆盖。",
+            "覆盖水位 covered_through 之后的新可信来源，或已覆盖来源被修改（updated_at 超过水位），都标记 needs_refresh；摘要失败保留旧内容并标注 failed。",
+            "未知日期在页面上显示为“未知”，不会从记录创建时间推断。当前规则与召回共用同一套 family 适用性解析：归属待确认的新记录被扣留时不会回退显示更旧的已确认行。"
+          ]
+        },
+        {
+          "title": "归属评审入口",
+          "paragraphs": [
+            "无 resolution 行的条目（revision 0）既可确认也可拒绝：确认会创建一条人工接受行，拒绝创建一条 rejected 行，都不移动内容；重复或过期的评审返回 revision_conflict。",
+            "确认时可选择实际已登记项目；已绑定到其他项目的工作流仍以 workstream_project_mismatch 拒绝跨项目移动。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "只读同步链与知识页组合",
+          "path": "evolvmem/trust_views.py"
+        },
+        {
+          "label": "Web 只读路由与页面",
+          "path": "evolvmem/web_server.py"
+        },
+        {
+          "label": "信任视图前端",
+          "path": "evolvmem/web_static/trust.js"
+        },
+        {
+          "label": "覆盖水位与来源闸门",
+          "path": "evolvmem/project_rollup.py"
+        },
+        {
+          "label": "上传/提炼回执与时间",
+          "path": "evolvmem/lan_capture.py"
+        },
+        {
+          "label": "归属评审 CAS 与拒绝路径",
+          "path": "evolvmem/project_store.py"
+        },
+        {
+          "label": "LAN 修订触发器",
+          "path": "evolvmem/lan_context.py"
+        },
+        {
+          "label": "验收 runner",
+          "path": "evolvmem/trust_acceptance.py"
+        }
+      ]
+    },
+    {
       "id": "windows-codex",
       "title": "Windows Codex 接入",
       "english": "WINDOWS CODEX MEMORY",
-      "subtitle": "同库读写与项目提及召回；每日摘要生成与桌面事件交付分别验收。",
-      "takeaway": "身份由 EvolvMem 凭据映射决定，与 Codex 登录账号分开。Windows 和 Linux 访问同一个个人库，无需复制 SQLite；源代码仍需各端自行同步。",
+      "subtitle": "同库读写与项目提及召回；每轮刷新按 LAN 修订号触发，交付状态只报可证明的回执。",
+      "takeaway": "身份由 EvolvMem 凭据映射决定，与 Codex 登录账号分开。Windows 和 Linux 访问同一个个人库，无需复制 SQLite；源代码仍需各端自行同步。归属评审行（context_project_resolutions）的插入/更新/删除也会推进 LAN memory revision，因此仅确认或拒绝一条归属、未改任何正文时，下一轮刷新仍会看到变更。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -4441,6 +4731,14 @@
             "已登记的中英混合名称兼容大小写与中英边界空白，例如 AI采购 与 AI 采购；规范化后指向多个项目时仍拒绝猜测，不做模糊归属。",
             "项目块先读取该项目当前任务断点的最近三条有界 L1，按断点记录时间排序，附原状态、ID 与 UTC 记录时间；它们是历史任务记录，不代表 Git 提交时间或线上即时状态。",
             "进展与知识池共享 4000 字符总预算，进展最多占单项目预算的六成且不超过 2000 字符；知识池保留原置信度和当前摘要预留规则。不改变 workspace 绑定、焦点或普通知识搜索对断点的隔离。"
+          ]
+        },
+        {
+          "title": "同步状态证据边界",
+          "paragraphs": [
+            "服务端只证明归档与提炼：/api/sync-chain 读 lan_session_uploads 与 session_archives，分别保留 extracted/queued/failed/not_requested/superseded 计数与 last_success_at/last_failure_at。",
+            "本机采集、钩子检索、钩子投递与桌面模型采纳在服务端不可观测，一律标为 unknown/unverified，绝不由连接、access_count、提炼成功或已配置钩子推断。",
+            "原生客户端 `-Action status` 的 sync_chain 只取本机既有 worker/upload 回执的计数、状态与时间，不含消息正文、路径、session ID 或令牌。worker_status=idle 不再单独证明采集成功：只有 captured_versions>0 且无采集/发现错误才报 success，零采集如实标 no_capture_receipt 的 unknown，采集/发现失败按其自身计数报 error。"
           ]
         }
       ],

@@ -23,6 +23,12 @@ from evolvmem.context_models import (
     ContextTier,
 )
 from evolvmem.context_store import ContextStore
+from evolvmem.context_temporal import (
+    applicability_preference,
+    successor_takes_precedence,
+    temporal_rank,
+    window_contains,
+)
 from evolvmem.embedding import EmbeddingEngine
 from evolvmem.vector_index import VectorIndex
 
@@ -106,13 +112,19 @@ class ContextRetriever:
     def search(self, request: ContextSearchRequest, *, eligible_ids=None) -> tuple[ContextSearchResult, ...]:
         """Return deterministic L0-only results without access-count side effects."""
         pool_size = request.top_k * _CANDIDATE_POOL_MULTIPLIER
+        moment = self._moment(request)
+        # Superseded rows are always candidate material: an explicit ``as_of``
+        # may read them, and a *default* current read must still see a
+        # predecessor whose known successor is only scheduled for the future.
+        # The metadata filter below decides which of them is actually eligible.
+        statuses = (ContextStatus.ACTIVE, ContextStatus.SUPERSEDED)
         fts_hits = self.store.search_fts(
             request.query,
             top_k=pool_size,
-            statuses=(ContextStatus.ACTIVE,),
+            statuses=statuses,
             layers=(ContextLayer.L0, ContextLayer.L1),
             project=None if request.cross_project else request.project,
-            now=self._now().strftime(_TIMESTAMP_FORMAT),
+            now=moment,
             content_types=request.content_types,
             min_confidence=self.config.context_min_confidence,
             applicable_global_types=None if request.cross_project else tuple(_APPLICABLE_GLOBAL_TYPES),
@@ -134,6 +146,12 @@ class ContextRetriever:
                 [candidate.item_id for candidate in candidates]
             )
         }
+        # Successor chain → implicit end for superseded records: a record whose
+        # successor became effective at T is not eligible at/after T unless it
+        # carries an explicit effective_until (which stays authoritative). The
+        # same map is needed for a default current read, where a successor whose
+        # boundary is still in the future must not erase the predecessor.
+        implicit_ends = self.store.successor_ranks(list(records))
         max_lexical_raw = max(
             (
                 candidate.lexical_raw
@@ -146,7 +164,12 @@ class ContextRetriever:
         scored: list[tuple[float, ContextSearchResult]] = []
         for candidate in candidates:
             record = records.get(candidate.item_id)
-            if record is None or not self._eligible(record.item, request, now):
+            if record is None or not self._eligible(
+                record.item,
+                request,
+                now,
+                implicit_end=implicit_ends.get(candidate.item_id),
+            ):
                 continue
             components = self._score_components(
                 record.item, candidate, request, now, max_lexical_raw
@@ -156,7 +179,80 @@ class ContextRetriever:
                 (score, self._build_result(record, candidate, components, score))
             )
         scored.sort(key=lambda entry: (-entry[0], entry[1].id))
-        return tuple(result for _, result in scored[: request.top_k])
+        ranked = self._latest_applicable_per_identity(
+            [result for _, result in scored], request, now
+        )
+        return tuple(ranked[: request.top_k])
+
+    def _latest_applicable_per_identity(
+        self,
+        results: list[ContextSearchResult],
+        request: ContextSearchRequest,
+        now: datetime,
+    ) -> list[ContextSearchResult]:
+        """Keep a hit only when it is the applicable winner of its whole family.
+
+        Supersession is a same-identity precedence rule, not a mere storage flag.
+        The winner is resolved over the *actual* family rows (same identity key,
+        project and scope) with the same eligibility gates as retrieval, so it
+        does not depend on which rows happened to match the query text or fit
+        ``top_k``. A matching row that is only stale history for its family is
+        dropped (never revived); a matching row that is the family winner is
+        returned. Eligibility keeps unknown superseded ranks and superseded
+        non-decisions out, and still lets a scheduled future successor leave the
+        current predecessor in place.
+        """
+        families: dict[tuple, list[ContextSearchResult]] = {}
+        order: list[tuple] = []
+        for result in results:
+            key = (result.identity_key, result.project, result.scope)
+            if key not in families:
+                families[key] = []
+                order.append(key)
+            families[key].append(result)
+        kept: list[ContextSearchResult] = []
+        for key in order:
+            winner_id = self._family_winner_id(key, request, now)
+            if winner_id is None:
+                continue
+            kept.extend(
+                result for result in families[key] if result.id == winner_id
+            )
+        return kept
+
+    def _family_winner_id(
+        self, key: tuple, request: ContextSearchRequest, now: datetime
+    ) -> int | None:
+        """Applicable winner id for one identity family, or None when none."""
+        identity_key, project, scope = key
+        family = self.store.get_by_identity(
+            identity_key, project=project, scope=scope, include_layers=False
+        )
+        if not family:
+            return None
+        implicit_ends = self.store.successor_ranks([item.id for item in family])
+        eligible = [
+            item
+            for item in family
+            if self._eligible(
+                item,
+                request,
+                now,
+                implicit_end=implicit_ends.get(item.id),
+            )
+        ]
+        if not eligible:
+            return None
+        winner = max(
+            eligible,
+            key=lambda item: applicability_preference(
+                active=item.status is ContextStatus.ACTIVE,
+                effective_from=item.effective_from,
+                occurred_at=item.occurred_at,
+                item_id=item.id,
+            ),
+        )
+        return winner.id
 
     # ---- candidate generation ----
 
@@ -240,14 +336,56 @@ class ContextRetriever:
     # ---- metadata filters ----
 
     def _eligible(
-        self, item: ContextItem, request: ContextSearchRequest, now: datetime
+        self,
+        item: ContextItem,
+        request: ContextSearchRequest,
+        now: datetime,
+        *,
+        implicit_end: str | None = None,
     ) -> bool:
-        if item.status is not ContextStatus.ACTIVE:
-            return False
+        moment = request.as_of or now.strftime(_TIMESTAMP_FORMAT)
+        if request.as_of is None:
+            if item.status is ContextStatus.ACTIVE:
+                pass
+            elif (
+                item.status is ContextStatus.SUPERSEDED
+                and item.content_type is ContextContentType.DECISION
+                and temporal_rank(item.effective_from, item.occurred_at) is not None
+                and not successor_takes_precedence(implicit_end, moment)
+                and implicit_end is not None
+            ):
+                # 继任者已排定但尚未生效：当前有效的仍是前任决定，默认读取
+                # 不能出现空档。继任者到期后（或继任者时间未知时）前任不再
+                # 算当前，未知日期与 superseded 非 decision 一律不进入默认面。
+                pass
+            else:
+                return False
+        else:
+            # Explicit historical read: a superseded *decision* is readable when
+            # it has a known rank; a superseded non-decision, or one whose dates
+            # are UNKNOWN, is honestly not retrievable at that instant.
+            if item.status is ContextStatus.ACTIVE:
+                pass
+            elif (
+                item.status is ContextStatus.SUPERSEDED
+                and item.content_type is ContextContentType.DECISION
+                and temporal_rank(item.effective_from, item.occurred_at) is not None
+            ):
+                pass
+            else:
+                return False
         if (
             item.expires_at is not None
-            and item.expires_at <= now.strftime(_TIMESTAMP_FORMAT)
+            and item.expires_at <= moment
         ):
+            return False
+        # 已知决策窗口：未来生效或已过期的记录默认不可召回；显式 as_of
+        # 只在窗口内部可读（until 为排他边界）。UNKNOWN 窗口不设限。
+        # 被取代的记录没有显式 until 时，以继任者生效时刻作为隐式结束。
+        end = item.effective_until
+        if end is None and item.status is ContextStatus.SUPERSEDED:
+            end = implicit_end
+        if not window_contains(item.effective_from, end, moment):
             return False
         if not self._scope_allows(item, request):
             return False
@@ -384,7 +522,17 @@ class ContextRetriever:
             match_types=match_types,
             match_layers=candidate.match_layers,
             available_layers=record.available_layers,
+            effective_from=item.effective_from,
+            effective_until=item.effective_until,
+            occurred_at=item.occurred_at,
+            mentioned_at=item.mentioned_at,
         )
+
+    def _moment(self, request: ContextSearchRequest) -> str:
+        """Eligibility instant: the explicit as_of, else the current UTC clock."""
+        if request.as_of is not None:
+            return request.as_of
+        return self._now().strftime(_TIMESTAMP_FORMAT)
 
     def _now(self) -> datetime:
         moment = self._clock()

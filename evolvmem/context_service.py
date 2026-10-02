@@ -55,10 +55,13 @@ from evolvmem.context_lifecycle import (
 from evolvmem.context_migration import LegacyMemoryMigrator
 from evolvmem.context_models import (
     ContextContentType,
+    ContextExclusionCount,
+    ContextItem,
     ContextItemDraft,
     ContextLayer,
     ContextMatchType,
     ContextMode,
+    ContextOwnershipExclusion,
     ContextReadRequest,
     ContextReadResult,
     ContextRetrievalRecord,
@@ -79,6 +82,12 @@ from evolvmem.context_playbook import PlaybookGenerator, PlaybookSkip
 from evolvmem.context_renderer import ContextRenderCandidate, ContextRenderer
 from evolvmem.context_retriever import ContextRetriever
 from evolvmem.context_store import ContextStore, _now_iso
+from evolvmem.context_temporal import (
+    TemporalValidationError,
+    normalize_timestamp,
+    validate_window,
+    window_contains,
+)
 from evolvmem.context_vector_sync import ContextVectorSynchronizer
 from evolvmem.continuation_intent import detect_continuation_intent
 from evolvmem.continuity_models import (
@@ -115,6 +124,7 @@ from evolvmem.project_models import (
     ProjectResolutionDecision,
     ProjectResolutionRequest,
 )
+from evolvmem.project_ownership import partition, unverified_ids
 from evolvmem.project_resolver import ProjectResolver, _CANONICAL_KEY_PATTERN
 from evolvmem.project_rollup import ProjectRollupGenerator, ProjectRollupReport
 from evolvmem.project_store import ProjectStore
@@ -212,6 +222,22 @@ def _truncate_extra(text: str, maximum: int) -> str:
     if len(text) <= maximum:
         return text
     return text[: maximum - 1].rstrip() + "…"
+
+
+_TEMPORAL_FIELDS = (
+    "effective_from",
+    "effective_until",
+    "occurred_at",
+    "mentioned_at",
+)
+
+
+def _count_reasons(reasons) -> dict[str, int]:
+    """Stable reason→count map for bounded exclusion diagnostics."""
+    counts: dict[str, int] = {}
+    for reason in reasons:
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
 
 
 def _extraction_content_type(item: LegacyExtractionItem) -> ContextContentType:
@@ -611,6 +637,77 @@ class ContextService:
             id=request.id, layer=request.layer, content="", error_code=code
         )
 
+    # ---- explicit temporal validity (decisions/events) ----
+
+    def decision_window(self, item_id: int) -> dict | None:
+        """Read one item's temporal validity as a bounded, content-free dict.
+
+        Returns ``None`` when the item does not exist. UNKNOWN fields stay
+        ``None`` and ``temporal_state`` reports ``unknown`` — the service never
+        derives an event time from ``created_at``.
+        """
+        _validate_positive_int(item_id, "item_id")
+        self._require_serving()
+        item = self.store.get_item(item_id, include_layers=False)
+        if item is None:
+            return None
+        return self._temporal_payload(item)
+
+    def set_decision_window(self, item_id: int, **updates: object) -> dict:
+        """Partially write the optional temporal fields on one existing item.
+
+        Only the keys actually passed are touched: an omitted field keeps its
+        stored value, so a caller cannot silently lose ``effective_until`` or
+        ``occurred_at`` metadata; passing a field explicitly as ``None`` (or
+        ``"unknown"``) clears it. Every supplied ISO 8601 value is normalized
+        to UTC, and an inverted or empty known window is rejected by the same
+        rule the write drafts use. This only edits the four temporal columns —
+        no project, status, or content is touched.
+        """
+        _validate_positive_int(item_id, "item_id")
+        unknown = set(updates) - set(_TEMPORAL_FIELDS)
+        if unknown:
+            raise ContextValidationError("invalid_arguments")
+        self._require_serving()
+        item = self.store.get_item(item_id, include_layers=False)
+        if item is None:
+            raise ContextValidationError("item_not_found")
+        if not updates:
+            return self._temporal_payload(item)
+        normalized = {
+            field: getattr(item, field) for field in _TEMPORAL_FIELDS
+        }
+        for field, value in updates.items():
+            try:
+                normalized[field] = normalize_timestamp(value, field)
+            except TemporalValidationError as exc:
+                raise ContextValidationError(str(exc)) from None
+        try:
+            validate_window(
+                normalized["effective_from"], normalized["effective_until"]
+            )
+        except TemporalValidationError as exc:
+            raise ContextValidationError(str(exc)) from None
+        with self.store.transaction():
+            written = self.store.set_item_temporal(item_id, **normalized)
+        if not written:
+            raise ContextValidationError("item_not_found")
+        item = self.store.get_item(item_id, include_layers=False)
+        if item is None:  # pragma: no cover - written implies the row exists
+            raise ContextValidationError("item_not_found")
+        return self._temporal_payload(item)
+
+    @staticmethod
+    def _temporal_payload(item: ContextItem) -> dict:
+        return {
+            "id": item.id,
+            "effective_from": item.effective_from,
+            "effective_until": item.effective_until,
+            "occurred_at": item.occurred_at,
+            "mentioned_at": item.mentioned_at,
+            "temporal_state": item.temporal_state,
+        }
+
     def search(
         self, request: ContextSearchRequest
     ) -> tuple[ContextSearchResult, ...]:
@@ -656,13 +753,16 @@ class ContextService:
         # 当前项目 ready rollup 的确切摘要：只标记这一个条目，让 renderer 为它
         # 预留名额与字符预算；标记不改变任何准入闸门，未通过闸门时等同未标记。
         reserved_id = self._ready_project_summary_context_id(project)
+        candidates_pool, ownership_exclusions, unverified = (
+            self._session_candidates(project, request.query)
+        )
         candidates = tuple(
             ContextRenderCandidate(
                 result=result,
                 l1=self.store.get_layer(result.id, ContextLayer.L1) or "",
                 reserved=reserved_id is not None and result.id == reserved_id,
             )
-            for result in self._session_candidates(project, request.query)
+            for result in candidates_pool
             if not project_only or result.project == project
         )
         rendered = self.renderer.render(
@@ -671,13 +771,22 @@ class ContextService:
         if rendered.selected_ids:
             # A renderer exception or an empty block never reaches this update.
             self._record_served_access(list(rendered.selected_ids))
+        excluded_counts = list(rendered.excluded_counts)
+        for reason, count in _count_reasons(
+            entry.reason for entry in ownership_exclusions
+        ).items():
+            excluded_counts.append(
+                ContextExclusionCount(reason=reason, count=count)
+            )
         return ContextSessionStartResult(
             block=rendered.block,
             selected_ids=rendered.selected_ids,
             used_chars=rendered.used_chars,
-            excluded_counts=rendered.excluded_counts,
+            excluded_counts=tuple(excluded_counts),
             continuation_code=continuation_code,
             continuation=continuation,
+            ownership_exclusions=ownership_exclusions,
+            unverified_ownership_ids=unverified,
         )
 
     # ---- continuation routing ----
@@ -910,11 +1019,25 @@ class ContextService:
 
     def _session_candidates(
         self, project: str, query: str
-    ) -> tuple[ContextSearchResult, ...]:
-        """Retriever hits plus eligible pinned-policy seeds, de-duplicated by ID."""
+    ) -> tuple[
+        tuple[ContextSearchResult, ...],
+        tuple[ContextOwnershipExclusion, ...],
+        tuple[int, ...],
+    ]:
+        """Retriever hits + eligible seeds, minus untrusted project ownership.
+
+        Ownership trust comes only from the existing resolution/review rows
+        (``project_ownership``); pending/conflicting/rejected ownership is
+        withheld from the default injection surface, while items with no
+        resolution record stay injectable and are reported as unverified.
+        Nothing here infers a project from text or rewrites a record.
+        """
         top_k = min(max(self.config.context_inject_max_items, 1), 20)
+        # Over-fetch before the trust gates so a high-scoring *excluded* record
+        # can never starve a trustworthy one out of the final top_k slice.
+        fetch_k = min(20, max(top_k, top_k * 4))
         results = self.retriever.search(
-            ContextSearchRequest(query=query, project=project, top_k=top_k)
+            ContextSearchRequest(query=query, project=project, top_k=fetch_k)
         )
         by_id = {result.id: result for result in results}
         seeds = self.store.list_pinned_policy_records(
@@ -929,7 +1052,46 @@ class ContextService:
             seed = replace(self._pinned_seed_result(record),
                            match_types=(ContextMatchType.PROJECT_CONTEXT,))
             by_id.setdefault(record.item.id, seed)
-        return tuple(by_id.values())
+        # Seed paths bypass the retriever, so the known-window gate is applied
+        # here too: a future-effective or expired pinned policy / summary must
+        # not re-enter the default injection surface through a seed.
+        moment = _now_iso()
+        by_id = {
+            item_id: result
+            for item_id, result in by_id.items()
+            if window_contains(
+                result.effective_from, result.effective_until, moment
+            )
+        }
+        # 只有真正声明了项目归属（store 中 project 非空）的条目才受归属闸门
+        # 约束；project 为空的未归属/全局条目没有可被怀疑的归属声明，闸门若
+        # 作用于它们就等于全局压制有效记忆。归属未知（无 resolution 行）的
+        # 项目条目被扣留，需经评审 API 确认后才回到默认注入面。
+        claims = self.store.project_claims(list(by_id))
+        gated_ids = [
+            item_id for item_id in by_id if claims.get(item_id, "")
+        ]
+        exempt_ids = {
+            item_id for item_id in by_id if not claims.get(item_id, "")
+        }
+        kept_ids, excluded = partition(self.store, gated_ids)
+        kept_order = [
+            item_id
+            for item_id in by_id
+            if item_id in set(kept_ids) or item_id in exempt_ids
+        ][:top_k]
+        exclusions = tuple(
+            ContextOwnershipExclusion(item_id=item_id, reason=reason)
+            for item_id, reason in excluded
+        )
+        unverified = tuple(
+            unverified_ids(self.store, kept_order)
+        )
+        return (
+            tuple(by_id[item_id] for item_id in kept_order),
+            exclusions,
+            unverified,
+        )
 
     @staticmethod
     def _pinned_seed_result(record: ContextRetrievalRecord) -> ContextSearchResult:
@@ -965,6 +1127,10 @@ class ContextService:
             match_types=(ContextMatchType.PINNED_POLICY,),
             match_layers=(),
             available_layers=record.available_layers,
+            effective_from=item.effective_from,
+            effective_until=item.effective_until,
+            occurred_at=item.occurred_at,
+            mentioned_at=item.mentioned_at,
         )
 
     def _normalize_project(self, project: str) -> str:

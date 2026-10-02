@@ -62,11 +62,14 @@ from evolvmem.context_models import (
     ContextValidationError,
 )
 from evolvmem.context_store import ContextStore, _now_iso
+from evolvmem.context_temporal import window_contains
 from evolvmem.extraction_policy import (
     contains_cjk,
     contains_sensitive_text,
     redact_messages,
 )
+from evolvmem.project_ownership import UNREVIEWED_FACT, load_ownership
+from evolvmem.project_store import ProjectStore
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +274,11 @@ class ProjectRollupGenerator:
         store = self._store
         with store.transaction():
             item = store.supersede_active(draft)
+            # Explicit provenance: the rollup target project is a typed call
+            # argument, so this summary is not "uncertain ownership".
+            ProjectStore(
+                store._connection(), store._require_transaction, generic_names=()
+            ).record_trusted_resolution(item.id, project)
             conn = store._connection()
             for source_id in source_ids:
                 conn.execute(
@@ -328,6 +336,143 @@ class ProjectRollupGenerator:
         return frozenset(ids)
 
     # ---- source set and current summary ----
+
+    def knowledge_snapshot(self, project: str) -> dict:
+        """Read-only coverage/freshness evidence for one project's knowledge page.
+
+        Reuses the same source *selection* rule as ``rollup_project`` (session
+        summaries always, atomic sources only when newer than
+        ``covered_through``) but never calls a model, never writes, and never
+        changes a rollup row. On top of selection it applies the trust gates the
+        default page needs: ownership resolution, minimum confidence, known
+        window validity, and an edit watermark (``updated_at``) so a modified
+        *covered* source also reports ``needs_refresh``. Held sources are
+        reported as ids+reason codes, never auto-confirmed, and never counted as
+        trusted coverage.
+        """
+        project = _normalize_project(project)
+        conn = self._store._connection()
+        row = conn.execute(
+            f"SELECT {_ROLLUP_ROW_COLUMNS}, updated_at FROM context_project_rollups"
+            " WHERE project=?",
+            (project,),
+        ).fetchone()
+        covered_through = row["covered_through"] if row is not None else None
+        fields = (
+            "id, content_type, created_at, updated_at, confidence, expires_at,"
+            " effective_from, effective_until"
+        )
+        summaries = conn.execute(
+            f"SELECT {fields} FROM context_items WHERE project=? AND status='active'"
+            " AND content_type=? ORDER BY created_at, id",
+            (project, ContextContentType.SESSION_SUMMARY.value),
+        ).fetchall()
+        atomic_sql = (
+            f"SELECT {fields} FROM context_items WHERE project=? AND status='active'"
+            " AND content_type IN (?, ?, ?)"
+        )
+        params: tuple = (project, *_ATOMIC_SOURCE_TYPES)
+        if covered_through is not None:
+            atomic_sql += " AND created_at > ?"
+            params = (*params, covered_through)
+        atomic_sql += " ORDER BY created_at, id"
+        atomic = conn.execute(atomic_sql, params).fetchall()
+        eligible = [dict(entry) for entry in (*summaries, *atomic)]
+        covered: set[int] = set()
+        current_context_id = None
+        if row is not None and row["current_context_id"] is not None:
+            current_context_id = int(row["current_context_id"])
+            for source in self._store.list_item_sources(current_context_id):
+                if source["source_kind"] != "context_reference":
+                    continue
+                try:
+                    covered.add(int(source["source_ref"]))
+                except (TypeError, ValueError):
+                    continue
+        now = _now_iso()
+        min_confidence = self._config.context_min_confidence
+        facts = load_ownership(self._store, [entry["id"] for entry in eligible])
+        trusted_ids: list[int] = []
+        unverified_ids: list[int] = []
+        held: list[dict] = []
+        held_ids: set[int] = set()
+        for entry in eligible:
+            item_id = int(entry["id"])
+            reasons: list[str] = []
+            fact = facts.get(item_id, UNREVIEWED_FACT)
+            if fact.excluded:
+                reasons.append(fact.reason)
+            elif fact.state == "unverified":
+                unverified_ids.append(item_id)
+            if float(entry["confidence"] or 0.0) < min_confidence:
+                reasons.append("low_confidence")
+            if entry["expires_at"] is not None and entry["expires_at"] <= now:
+                reasons.append("expired")
+            if not window_contains(
+                entry["effective_from"], entry["effective_until"], now
+            ):
+                reasons.append("out_of_window")
+            if reasons:
+                held_ids.add(item_id)
+                held.append({"id": item_id, "reasons": reasons})
+            else:
+                trusted_ids.append(item_id)
+        new_ids = [int(entry["id"]) for entry in eligible
+                   if int(entry["id"]) not in covered]
+        new_trusted_ids = [item_id for item_id in new_ids if item_id in set(trusted_ids)]
+        new_held_ids = [item_id for item_id in new_ids if item_id in held_ids]
+        modified_covered = self._modified_covered_sources(covered, covered_through)
+        newest_eligible = max(
+            (str(entry["created_at"] or "") for entry in eligible), default=None
+        )
+        status = str(row["status"]) if row is not None else "missing"
+        # needs_refresh is about *coverage*: a new or edited source past the
+        # watermark forces a refresh, a failed/pending row needs a retry, and a
+        # failed row is never reported as fresh. Held sources are surfaced
+        # separately as a review issue.
+        needs_refresh = (
+            bool(new_trusted_ids)
+            or bool(modified_covered)
+            or status == _STATUS_FAILED
+            or (status in ("pending", "missing") and bool(trusted_ids))
+        )
+        return {
+            "project": project,
+            "status": status,
+            "current_context_id": current_context_id,
+            "covered_through": covered_through,
+            "generator_version": row["generator_version"] if row is not None else "",
+            "rollup_updated_at": row["updated_at"] if row is not None else None,
+            "source_set_hash": row["source_set_hash"] if row is not None else "",
+            "eligible_source_ids": [int(entry["id"]) for entry in eligible],
+            "trusted_source_ids": trusted_ids,
+            "unverified_source_ids": unverified_ids,
+            "held_sources": held,
+            "held_source_ids": sorted(held_ids),
+            "covered_source_ids": sorted(covered),
+            "new_eligible_source_ids": new_ids,
+            "new_trusted_source_ids": new_trusted_ids,
+            "new_held_source_ids": new_held_ids,
+            "modified_covered_source_ids": modified_covered,
+            "newest_eligible_source_at": newest_eligible,
+            "source_hold": bool(held),
+            "needs_refresh": needs_refresh,
+        }
+
+    def _modified_covered_sources(self, covered: set[int], covered_through) -> list[int]:
+        """Covered source ids whose row was edited after the rollup watermark."""
+        if not covered or covered_through is None:
+            return []
+        marks = ",".join("?" for _ in covered)
+        rows = self._store._connection().execute(
+            f"SELECT id, updated_at FROM context_items WHERE id IN ({marks})",
+            tuple(sorted(covered)),
+        ).fetchall()
+        return sorted(
+            int(row["id"])
+            for row in rows
+            if str(row["updated_at"] or "") > covered_through
+        )
 
     def _collect_sources(
         self, project: str, covered_through: str | None

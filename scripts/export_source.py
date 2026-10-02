@@ -21,6 +21,8 @@ PUBLIC_DOCS = (
     "windows-codex.md",
     "evolvmem-workflow.json", "feishu-login.md",
     "evolvmem-atlas.json", "evolvmem-atlas-template.html", "evolvmem-atlas-receipt.json",
+    # The single public design/plan file for the 2026-10-02 memory-trust update.
+    "2026-10-02-memory-trust.md",
 )
 EXCLUDED_DIRECTORIES = {
     ".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache",

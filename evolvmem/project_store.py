@@ -376,6 +376,7 @@ class ProjectStore:
         """Human-accept a resolution and set the item's project atomically."""
         self._require_owner_transaction("project_store.accept_resolution")
         self._require_project(project)
+        self._require_movable_item(item_id, project)
         now = _now_iso()
         cursor = self._conn.execute(
             "UPDATE context_project_resolutions "
@@ -391,10 +392,7 @@ class ProjectStore:
                 (item_id,),
                 missing="resolution_not_found",
             )
-        self._conn.execute(
-            "UPDATE context_items SET project=?, updated_at=? WHERE id=?",
-            (project, now, item_id),
-        )
+        self._move_item_project(item_id, project, now)
 
     def reject_resolution(self, item_id: int, *, expected_revision: int) -> None:
         """Human-reject a resolution; the item's project stays untouched."""
@@ -413,6 +411,183 @@ class ProjectStore:
                 (item_id,),
                 missing="resolution_not_found",
             )
+
+    def reject_item_project(self, item_id: int, *, expected_revision: int) -> None:
+        """Human rejection of a possibly absent resolution row; never moves data.
+
+        ``expected_revision == 0`` means "the unreviewed queue says there is no
+        resolution row yet": exactly one rejected row is created, so a concurrent
+        confirm/reject loses with ``revision_conflict``. A positive revision is
+        the ordinary CAS against an existing row. Unlike the accept path this
+        never touches ``context_items.project``, its identity key, or any
+        content — a mislabeled historical row can be refused in place.
+        """
+        self._require_owner_transaction("project_store.reject_item_project")
+        item = self._conn.execute(
+            "SELECT project FROM context_items WHERE id=?", (item_id,)
+        ).fetchone()
+        if item is None:
+            raise ProjectStoreError("item_not_found")
+        now = _now_iso()
+        row = self._conn.execute(
+            "SELECT revision FROM context_project_resolutions WHERE item_id=?",
+            (item_id,),
+        ).fetchone()
+        if row is None:
+            if expected_revision != 0:
+                raise ProjectStoreError("resolution_not_found")
+            try:
+                self._conn.execute(
+                    "INSERT INTO context_project_resolutions"
+                    "(item_id, resolution_state, decision_source, review_state,"
+                    " proposed_project, resolved_project, confidence, method,"
+                    " evidence_json, resolver_version, revision, reviewed_at,"
+                    " created_at, updated_at) "
+                    "VALUES (?, 'unresolved', 'human', 'rejected', '', '', 'none',"
+                    " 'human', '[]', 'human_review', 1, ?, ?, ?)",
+                    (item_id, now, now, now),
+                )
+            except sqlite3.IntegrityError:
+                raise ProjectStoreError("revision_conflict") from None
+        else:
+            if expected_revision == 0 or int(row["revision"]) != expected_revision:
+                raise ProjectStoreError("revision_conflict")
+            cursor = self._conn.execute(
+                "UPDATE context_project_resolutions "
+                "SET resolution_state='unresolved', decision_source='human', "
+                "review_state='rejected', reviewed_at=?, revision=revision+1, "
+                "updated_at=? WHERE item_id=? AND revision=?",
+                (now, now, item_id, expected_revision),
+            )
+            if cursor.rowcount != 1:
+                raise ProjectStoreError("revision_conflict")
+
+    def record_trusted_resolution(
+        self,
+        item_id: int,
+        project: str,
+        *,
+        method: str = "explicit_project",
+        resolver_version: str = "trusted-write.v1",
+    ) -> None:
+        """Record explicit write-time provenance for a typed service write.
+
+        The caller already holds an explicit project (a typed request field, a
+        bound workspace, or a declared rollup/experience project), so no text
+        inference happens here. This is what keeps *valid new typed continuity*
+        out of the unverified hold; it does not touch the item row.
+        """
+        self._require_owner_transaction("project_store.record_trusted_resolution")
+        self.record_resolution(
+            item_id,
+            ProjectResolutionDecision.resolved(
+                project, method, resolver_version, ()
+            ),
+        )
+
+    def review_item_project(
+        self, item_id: int, project: str, *, expected_revision: int
+    ) -> None:
+        """Human ownership correction with exact CAS on a possibly absent row.
+
+        ``expected_revision == 0`` means "there is no resolution row yet" (the
+        ``unreviewed`` queue): the row is created once, and a concurrent review
+        that already created it fails with ``revision_conflict`` instead of
+        being silently overwritten. A positive revision is the ordinary CAS
+        against an existing row. The item must exist, and a project move is
+        refused when it would strand a continuity workstream
+        (``workstream_project_mismatch``) or collide with the one-active-identity
+        index (``identity_conflict``) — no half-moved state is left behind.
+        """
+        self._require_owner_transaction("project_store.review_item_project")
+        self._require_project(project)
+        item = self._conn.execute(
+            "SELECT project, identity_key FROM context_items WHERE id=?",
+            (item_id,),
+        ).fetchone()
+        if item is None:
+            raise ProjectStoreError("item_not_found")
+        self._require_movable_item(item_id, project)
+        now = _now_iso()
+        row = self._conn.execute(
+            "SELECT revision FROM context_project_resolutions WHERE item_id=?",
+            (item_id,),
+        ).fetchone()
+        if row is None:
+            if expected_revision != 0:
+                raise ProjectStoreError("resolution_not_found")
+            try:
+                self._conn.execute(
+                    "INSERT INTO context_project_resolutions"
+                    "(item_id, resolution_state, decision_source, review_state,"
+                    " proposed_project, resolved_project, confidence, method,"
+                    " evidence_json, resolver_version, revision, reviewed_at,"
+                    " created_at, updated_at) "
+                    "VALUES (?, 'resolved', 'human', 'accepted', '', ?, 'high',"
+                    " 'human', '[]', 'human_review', 1, ?, ?, ?)",
+                    (item_id, project, now, now, now),
+                )
+            except sqlite3.IntegrityError:
+                raise ProjectStoreError("revision_conflict") from None
+        else:
+            if expected_revision == 0 or int(row["revision"]) != expected_revision:
+                raise ProjectStoreError("revision_conflict")
+            cursor = self._conn.execute(
+                "UPDATE context_project_resolutions "
+                "SET resolution_state='resolved', decision_source='human', "
+                "review_state='accepted', proposed_project='', "
+                "resolved_project=?, confidence='high', method='human', "
+                "reviewed_at=?, revision=revision+1, updated_at=? "
+                "WHERE item_id=? AND revision=?",
+                (project, now, now, item_id, expected_revision),
+            )
+            if cursor.rowcount != 1:
+                raise ProjectStoreError("revision_conflict")
+        self._move_item_project(item_id, project, now)
+
+    def _require_movable_item(self, item_id: int, project: str) -> None:
+        """Refuse a project move that would strand continuity or its identity.
+
+        A continuity workstream owns its current checkpoint row: moving only
+        ``context_items.project`` would leave ``continuity_workstreams.project``,
+        the checkpoint identity key, and the authoritative layers disagreeing,
+        so the move is refused with a stable code. Same-project confirmation is
+        still allowed — that is the safe way to hold a wrong record.
+        """
+        row = self._conn.execute(
+            "SELECT project FROM continuity_workstreams "
+            "WHERE current_context_id=?",
+            (item_id,),
+        ).fetchone()
+        if row is not None and str(row["project"]) != project:
+            raise ProjectStoreError("workstream_project_mismatch")
+        item = self._conn.execute(
+            "SELECT project, identity_key FROM context_items WHERE id=?",
+            (item_id,),
+        ).fetchone()
+        if item is None:
+            return
+        marker = f"project:{item['project']}:workstream:"
+        if (
+            str(item["project"]) != project
+            and str(item["identity_key"]).startswith(marker)
+        ):
+            # Historical checkpoint rows are not referenced by the workstream
+            # pointer any more, but their identity key still names the old
+            # project: moving them would strand the workstream history.
+            raise ProjectStoreError("workstream_project_mismatch")
+
+    def _move_item_project(self, item_id: int, project: str, now: str) -> None:
+        """Set an item's project, surfacing an identity collision as a code."""
+        try:
+            self._conn.execute(
+                "UPDATE context_items SET project=?, updated_at=? WHERE id=?",
+                (project, now, item_id),
+            )
+        except sqlite3.IntegrityError:
+            # The one-active-identity index already holds this identity in the
+            # target project: never bypass it, never leave a half move.
+            raise ProjectStoreError("identity_conflict") from None
 
     # ---- seeding ----
 

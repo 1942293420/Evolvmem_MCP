@@ -1435,6 +1435,15 @@ class ContinuityService:
             tier=ContextTier.NORMAL,
         )
         item = self._store.supersede_active(draft)
+        # Explicit trusted provenance: the checkpoint's project comes from the
+        # typed request plus the workspace binding, never from content. Without
+        # it a valid new typed continuity checkpoint would be treated as
+        # uncertain ownership and held out of the default injection surface.
+        ProjectStore(
+            self._store._connection(),
+            self._store._require_transaction,
+            generic_names=(),
+        ).record_trusted_resolution(item.id, project)
         conn = self._store._connection()
         for source_id in source_context_ids:
             conn.execute(

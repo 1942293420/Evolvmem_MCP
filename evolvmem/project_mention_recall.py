@@ -22,10 +22,11 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from evolvmem.context_models import ContextSessionStartRequest
 from evolvmem.project_models import ProjectRegistrySnapshot
+from evolvmem.project_ownership import MAX_DIAGNOSTIC_ITEMS, excluded_diagnostics
 from evolvmem.project_progress_recall import read_recent_project_progress
 
 DEFAULT_MAX_CHARS = 4000
@@ -54,12 +55,26 @@ class ProjectMention:
 
 @dataclass(frozen=True, slots=True)
 class ProjectRecallResult:
-    """有界召回结果；``matched_projects`` 在无内容时仍反映提及事实。"""
+    """有界召回结果；``matched_projects`` 在无内容时仍反映提及事实。
+
+    ``diagnostics`` 是有界结构：命中表面、歧义表面、每项目被选中的 id、
+    被排除的 id+稳定原因（归属待审/冲突/被拒）与 unverified id；只含
+    registry 名称、id 与稳定码，绝不回显原始 query、L0 文本或路径。
+    """
 
     block: str = ""
     selected_ids: tuple[int, ...] = ()
     matched_projects: tuple[str, ...] = ()
     used_chars: int = 0
+    diagnostics: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class MentionAnalysis:
+    """Deterministic mention analysis: accepted mentions + dropped surfaces."""
+
+    mentions: tuple[ProjectMention, ...] = ()
+    ambiguous_surfaces: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -79,8 +94,26 @@ def detect_mentioned_projects(
     Ambiguous surfaces (one surface owned by more than one project) are
     dropped entirely: the caller must never see a guessed project.
     """
+    return analyze_mentioned_projects(
+        text, projects=projects, aliases=aliases, generic_names=generic_names
+    ).mentions
+
+
+def analyze_mentioned_projects(
+    text: str,
+    *,
+    projects: tuple[str, ...] | list[str] = (),
+    aliases: tuple[tuple[str, str], ...] | list[tuple[str, str]] = (),
+    generic_names: tuple[str, ...] | list[str] = (),
+) -> MentionAnalysis:
+    """As :func:`detect_mentioned_projects`, plus the dropped ambiguous keys.
+
+    Ambiguous surfaces are reported by their *normalized* key (derived from
+    registered names only), so diagnostics can explain a non-match without
+    echoing the caller's raw query text.
+    """
     if not isinstance(text, str) or not text:
-        return ()
+        return MentionAnalysis()
 
     active: dict[str, str] = {}
     for project in projects:
@@ -94,7 +127,7 @@ def detect_mentioned_projects(
             continue
         active.setdefault(name.casefold(), name)
     if not active:
-        return ()
+        return MentionAnalysis()
 
     generic = {
         _normalize_surface(name.strip())
@@ -130,14 +163,19 @@ def detect_mentioned_projects(
         owners.setdefault(folded, set()).add(canonical)
 
     matches: list[ProjectMention] = []
+    ambiguous: list[str] = []
     for folded, candidates in owners.items():
         # >1 owner：经空白归一化后同一表面归两个项目，拒绝猜测
         if len(candidates) != 1:
+            ambiguous.append(folded)
             continue
         matches.extend(_find_mentions(text, folded, next(iter(candidates))))
     if not matches:
-        return ()
-    return _select_mentions(matches)
+        return MentionAnalysis(ambiguous_surfaces=tuple(sorted(ambiguous)))
+    return MentionAnalysis(
+        mentions=_select_mentions(matches),
+        ambiguous_surfaces=tuple(sorted(ambiguous)),
+    )
 
 
 def _is_ascii_word(char: str) -> bool:
@@ -298,23 +336,40 @@ def recall_mentioned_projects(
     snapshot = _read_snapshot(service)
     if snapshot is None:
         return empty
-    matches = detect_mentioned_projects(
+    analysis = analyze_mentioned_projects(
         query,
         projects=snapshot.projects,
         aliases=snapshot.aliases,
         generic_names=snapshot.generic_names,
     )
-    matched_projects = tuple(match.project for match in matches)
-    if not matches:
-        return empty
+    surfaces = [
+        {"project": match.project, "surface": match.surface}
+        for match in analysis.mentions
+    ]
+    matched_projects = tuple(match.project for match in analysis.mentions)
+    diagnostics: dict = {
+        "matched_projects": list(matched_projects),
+        "query_surfaces": surfaces,
+        "ambiguous_surfaces": list(analysis.ambiguous_surfaces),
+        "selected_ids": [],
+        "unverified_ids": [],
+        "excluded": [],
+        "projects": [],
+    }
+    if not analysis.mentions:
+        return ProjectRecallResult(diagnostics=diagnostics)
     budgets = _plan_budgets(max_chars, matched_projects)
     if budgets is None:
         # 信封都放不下：不发起查询，但仍如实报告提及事实
-        return ProjectRecallResult(matched_projects=matched_projects)
+        return ProjectRecallResult(
+            matched_projects=matched_projects, diagnostics=diagnostics
+        )
 
     body: list[str] = []
     selected_ids: list[int] = []
-    for match, budget in zip(matches, budgets):
+    excluded: list[tuple[int, str]] = []
+    unverified: list[int] = []
+    for match, budget in zip(analysis.mentions, budgets):
         # Current workstream checkpoints are deliberately excluded from the
         # knowledge pool. Read their dated progress separately, without
         # changing confidence gates, focus, or the overall project budget.
@@ -333,13 +388,52 @@ def recall_mentioned_projects(
         )
         content = str(getattr(result, "block", "") or "").strip()
         parts = [part for part in (progress.text, content) if part]
+        project_selected: list[int] = []
+        project_unverified: list[int] = []
+        project_excluded: list[tuple[int, str]] = []
         if parts:
             body.append(_project_header(match.project))
             body.append("\n".join(parts))
-            selected_ids.extend(progress.selected_ids)
-            selected_ids.extend(getattr(result, "selected_ids", ()) or ())
+            progressed = list(progress.selected_ids)
+            knowledge = list(getattr(result, "selected_ids", ()) or ())
+            project_selected = progressed + knowledge
+            selected_ids.extend(project_selected)
+            project_unverified = list(progress.diagnostics.get("unverified_ids", []))
+            project_unverified.extend(
+                getattr(result, "unverified_ownership_ids", ()) or ()
+            )
+            unverified.extend(project_unverified)
+            project_excluded = [
+                (row["id"], row["reason"])
+                for row in progress.diagnostics.get("excluded", [])
+            ]
+            project_excluded.extend(
+                (entry.item_id, entry.reason)
+                for entry in getattr(result, "ownership_exclusions", ()) or ()
+            )
+            excluded.extend(project_excluded)
+        diagnostics["projects"].append(
+            {
+                "project": match.project,
+                "selected_ids": project_selected[:MAX_DIAGNOSTIC_ITEMS],
+                "unverified_ids": project_unverified[:MAX_DIAGNOSTIC_ITEMS],
+                "ownership_detail": progress.diagnostics.get(
+                    "ownership_detail", {}
+                ),
+                "excluded": excluded_diagnostics(
+                    project_excluded, limit=MAX_DIAGNOSTIC_ITEMS
+                ),
+            }
+        )
+    diagnostics["selected_ids"] = selected_ids[:MAX_DIAGNOSTIC_ITEMS]
+    diagnostics["unverified_ids"] = list(
+        dict.fromkeys(unverified)
+    )[:MAX_DIAGNOSTIC_ITEMS]
+    diagnostics["excluded"] = excluded_diagnostics(excluded)
     if not body:
-        return ProjectRecallResult(matched_projects=matched_projects)
+        return ProjectRecallResult(
+            matched_projects=matched_projects, diagnostics=diagnostics
+        )
 
     block = "\n".join([_BEGIN, _NOTE, *body, _END])
     return ProjectRecallResult(
@@ -347,6 +441,7 @@ def recall_mentioned_projects(
         selected_ids=tuple(selected_ids),
         matched_projects=matched_projects,
         used_chars=len(block),
+        diagnostics=diagnostics,
     )
 
 

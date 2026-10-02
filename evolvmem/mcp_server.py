@@ -328,6 +328,7 @@ class MemoryMCPServer:
             "context_session_start": self._context_session_start,
             "context_search": self._context_search,
             "context_project_recall": self._context_project_recall,
+            "context_decision_window": self._context_decision_window,
             "experience_recall": self._experience_recall,
             "experience_record": self._experience_record,
             "context_read": self._context_read,
@@ -773,6 +774,7 @@ class MemoryMCPServer:
                 project=args.get("project", ""),
                 top_k=args.get("top_k", 10),
                 content_types=content_types,
+                as_of=args.get("as_of"),
             )
         except (ContextValidationError, ValueError, TypeError):
             return self._context_error("invalid_arguments")
@@ -804,10 +806,16 @@ class MemoryMCPServer:
                     "available_layers": [
                         layer.value for layer in r.available_layers
                     ],
+                    "effective_from": r.effective_from,
+                    "effective_until": r.effective_until,
+                    "occurred_at": r.occurred_at,
+                    "mentioned_at": r.mentioned_at,
+                    "temporal_state": r.temporal_state,
                 }
                 for r in results
             ],
             "count": len(results),
+            "as_of": request.as_of,
         }
 
     def _context_project_recall(self, args: dict) -> dict:
@@ -842,7 +850,51 @@ class MemoryMCPServer:
             "selected_ids": list(result.selected_ids),
             "matched_projects": list(result.matched_projects),
             "used_chars": result.used_chars,
+            "unverified_ids": list(result.diagnostics.get("unverified_ids", [])),
+            "excluded": list(result.diagnostics.get("excluded", [])),
+            "diagnostics": result.diagnostics,
         }
+
+    def _context_decision_window(self, args: dict) -> dict:
+        """读写单个条目的显式时间有效性；缺省字段保持 UNKNOWN。"""
+        allowed = {
+            "id",
+            "effective_from",
+            "effective_until",
+            "occurred_at",
+            "mentioned_at",
+        }
+        if not isinstance(args, dict) or set(args) - allowed:
+            return self._context_error("invalid_arguments")
+        item_id = args.get("id")
+        if type(item_id) is not int or item_id <= 0:
+            return self._context_error("invalid_arguments")
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        writes = {
+            name: args[name]
+            for name in (
+                "effective_from",
+                "effective_until",
+                "occurred_at",
+                "mentioned_at",
+            )
+            if name in args
+        }
+        try:
+            if writes:
+                return self.context_service.set_decision_window(item_id, **writes)
+            payload = self.context_service.decision_window(item_id)
+        except (ContextValidationError, ValueError, TypeError):
+            return self._context_error("invalid_arguments")
+        except ContextServiceError as exc:
+            return self._context_error(exc.code)
+        except Exception:
+            return self._context_error("context_unavailable")
+        if payload is None:
+            return self._context_error("not_found")
+        return payload
 
     def _context_read(self, args: dict) -> dict:
         try:

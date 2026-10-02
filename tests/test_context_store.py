@@ -69,6 +69,8 @@ EXPECTED_COLUMNS = {
         "source_count", "success_count", "failure_count", "access_count",
         "last_accessed", "last_verified_at", "expires_at", "supersedes",
         "superseded_by", "created_at", "updated_at", "experience_payload",
+        # 2026-10-02 additive temporal validity columns; UNKNOWN stays NULL.
+        "effective_from", "effective_until", "occurred_at", "mentioned_at",
     },
     "context_layers": {
         "id", "item_id", "layer", "content", "content_hash", "generator",

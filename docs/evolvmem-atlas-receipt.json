@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-09-21",
+  "reviewed_at": "2026-10-02",
   "source": {
-    "sha256": "dbbe00050ee6bdeafd8423de3f8b84c96ccd0b5b89f9e778af91cb9a3f5d8096",
-    "bytes": 159511
+    "sha256": "526fc33fa829a76b4a6b70d95fad0d2ad0e445bcacca05d621b9e802ae539271",
+    "bytes": 172398
   },
   "chapters": [
     {
@@ -50,12 +50,12 @@
       "chapter": "context-recall",
       "type": "architecture",
       "specification": {
-        "sha256": "c4edf33b611bb17e7045b05df0d272af08128d431880f2c1d61e983ef5206ef8",
-        "bytes": 4428
+        "sha256": "cb892db0ea0abe118276e38cad19c66f3fcbbb898dd87e0b94ab2a8158e059e3",
+        "bytes": 4423
       },
       "artifact": {
-        "sha256": "07e8ee8949e1bc819161a19a50215f9aa3d75b59fbc38efb4b934bdd0ddd8ba1",
-        "bytes": 609240
+        "sha256": "3a0dc29dc915d9d6186396b8d458b1db6806dd16329e7b5bc64c055c8064d1ad",
+        "bytes": 609220
       },
       "validation": {
         "checksPassed": 9,
@@ -130,12 +130,12 @@
       "chapter": "storage",
       "type": "architecture",
       "specification": {
-        "sha256": "8ba5fe24e5140272fb1e291300cecb77692a4184075b8cdf309dbb61d35a7cc2",
-        "bytes": 4655
+        "sha256": "226180270a2f6cc83e22f082f583ab430ae42b4a6be0e0a41a1bfc893e1a074e",
+        "bytes": 4657
       },
       "artifact": {
-        "sha256": "14268e4b9293b4d7d4fa3fea65b725ce1edebb8f2992784ffc5458d7131ffc99",
-        "bytes": 610038
+        "sha256": "34b299b9a1f0dbbf29bc57e94259415f69f0761ef5e2a6ffee8cf9078ebce0eb",
+        "bytes": 610046
       },
       "validation": {
         "checksPassed": 9,
@@ -207,6 +207,26 @@
       }
     },
     {
+      "chapter": "trust-views",
+      "type": "architecture",
+      "specification": {
+        "sha256": "f382787456ee653c23e080b054ffd9309044bdfc5fd8d26ccd3c0baee916b893",
+        "bytes": 3562
+      },
+      "artifact": {
+        "sha256": "64889be5b0863fed723757359bd8d2be287777c46deb2f95bf4394092c1f856f",
+        "bytes": 606881
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
       "chapter": "windows-codex",
       "type": "architecture",
       "specification": {
@@ -228,8 +248,24 @@
     }
   ],
   "atlas": {
-    "sha256": "e7fcff7abe80e51e00ffdba5a4c7fa846cb5fd6f4a4227b7b1fa042845e2c21f",
-    "bytes": 1693325
+    "sha256": "b479ee7bea56ceeb2dab7edbc36e4f692949007a2f346f6b23c44e32622d364f",
+    "bytes": 1844861
   },
-  "visual_review": "Pending browser inspection; diagram validation does not substitute for visual review."
+  "visual_review": "passed",
+  "visual_review_scope": {
+    "browser": "Chrome 154 headless, rendered screenshots inspected",
+    "chapters": [
+      "context-recall",
+      "storage",
+      "trust-views",
+      "windows-codex"
+    ],
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "product_page": "/trust desktop/mobile and real review/time-window actions inspected",
+    "runtime_errors": 0
+  },
+  "correction_rounds": 1
 }

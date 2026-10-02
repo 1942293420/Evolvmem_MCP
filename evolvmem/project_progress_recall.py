@@ -24,10 +24,21 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from evolvmem.project_ownership import (
+    CONFIRMED,
+    UNREVIEWED_FACT,
+    excluded_diagnostics,
+    load_ownership,
+)
 
 DEFAULT_MAX_CHARS = 1200
 MAX_CHECKPOINTS = 3
+# Over-fetch candidates so an excluded (untrusted-ownership) row never
+# consumes one of the three visible slots.
+_CANDIDATE_FETCH = 12
+_MAX_DIAGNOSTIC_EXCLUSIONS = 8
 
 # 一条记录至少要有头部 + 一段正文才值得占用预算；不足则整块返回空。
 _MIN_BODY_CHARS = 60
@@ -63,24 +74,37 @@ LIMIT ?
 
 @dataclass(frozen=True, slots=True)
 class ProjectProgressResult:
-    """有界进展文本；``selected_ids`` 只列被完整包含的断点 id。"""
+    """有界进展文本；``selected_ids`` 只列被完整包含的断点 id。
+
+    ``diagnostics`` 是有界结构：项目名、被选中的 id、每个 id 的归属状态
+    （confirmed/unverified）与被排除的 id+稳定原因；不含正文、路径或原始
+    查询，因此调用方可以解释“为什么这条没有出现”。
+    """
 
     text: str = ""
     selected_ids: tuple[int, ...] = ()
     used_chars: int = 0
+    diagnostics: dict = field(default_factory=dict)
 
 
 def read_recent_project_progress(
     service, project: str, max_chars: int = DEFAULT_MAX_CHARS
 ) -> ProjectProgressResult:
-    """Read the project's newest workstream checkpoints as bounded plain text.
+    """Read the project's newest trustworthy workstream checkpoints as text.
 
     ``service`` is the caller's own read boundary (duck-typed, e.g.
     ``ContextService``): only ``service.store`` is queried, with one SELECT
-    join. The function never writes, never routes continuation, and never
-    touches the project registry, workspace binding, or continuity focus.
-    An unavailable store or a database without the continuity schema fails
-    open to an empty result so auxiliary recall never blocks the caller.
+    join plus one ownership lookup. The function never writes, never routes
+    continuation, and never touches the project registry, workspace binding,
+    or continuity focus.
+
+    Ownership: checkpoints whose project resolution is pending/conflicting/
+    rejected are withheld (they are not evidence of this project). Checkpoints
+    with no resolution row at all stay visible — suppressing a user's real
+    continuity task would be worse — and are labelled ``unverified`` instead
+    of being presented as confirmed. An unavailable store or a database
+    without the continuity schema fails open to an empty result so auxiliary
+    recall never blocks the caller.
     """
     _require_positive_budget(max_chars)
     if not isinstance(project, str) or not project.strip():
@@ -91,12 +115,55 @@ def read_recent_project_progress(
     name = project.strip()
     try:
         rows = connection.execute(
-            _SELECT_SQL, (name, name, MAX_CHECKPOINTS)
+            _SELECT_SQL, (name, name, _CANDIDATE_FETCH)
         ).fetchall()
     except sqlite3.DatabaseError:
         # 旧库没有 continuity schema，或库不可读：辅助读返回空，不阻断召回
         return ProjectProgressResult()
-    return _render(rows, max_chars)
+    if not rows:
+        return ProjectProgressResult()
+    facts = load_ownership(service.store, [int(row["context_id"]) for row in rows])
+    kept = []
+    excluded: list[tuple[int, str]] = []
+    for row in rows:
+        fact = facts.get(int(row["context_id"]), UNREVIEWED_FACT)
+        if fact.excluded:
+            excluded.append((int(row["context_id"]), fact.reason))
+        else:
+            kept.append(row)
+    diagnostics = {
+        "project": name,
+        "selected_ids": [],
+        "ownership": {},
+        "ownership_detail": {},
+        "unverified_ids": [],
+        "excluded": excluded_diagnostics(
+            excluded, limit=_MAX_DIAGNOSTIC_EXCLUSIONS
+        ),
+    }
+    rendered = _render(kept[:MAX_CHECKPOINTS], max_chars, facts)
+    diagnostics["selected_ids"] = list(rendered.selected_ids)
+    diagnostics["ownership"] = {
+        str(item_id): facts.get(item_id, UNREVIEWED_FACT).state
+        for item_id in rendered.selected_ids
+    }
+    # 归属来源证据只投影既有 resolution 行的状态/方法代码（无正文、无路径、
+    # 无 evidence_json 内容），让调用方能解释“凭什么说是已确认”。
+    diagnostics["ownership_detail"] = {
+        str(item_id): facts.get(item_id, UNREVIEWED_FACT).public()
+        for item_id in rendered.selected_ids
+    }
+    diagnostics["unverified_ids"] = [
+        item_id
+        for item_id in rendered.selected_ids
+        if facts.get(item_id, UNREVIEWED_FACT).state != CONFIRMED
+    ]
+    return ProjectProgressResult(
+        text=rendered.text,
+        selected_ids=rendered.selected_ids,
+        used_chars=rendered.used_chars,
+        diagnostics=diagnostics,
+    )
 
 
 def _store_connection(service):
@@ -108,14 +175,14 @@ def _store_connection(service):
         return None
 
 
-def _render(rows, max_chars: int) -> ProjectProgressResult:
+def _render(rows, max_chars: int, facts=None) -> ProjectProgressResult:
     """把候选行渲染成总额不超过 ``max_chars`` 的文本。"""
     # text = "\n".join([note, *entries])：note 之后每条 entry 都带一个换行
     remaining = max_chars - len(_NOTE)
     entries: list[str] = []
     selected: list[int] = []
     for row in rows:
-        header = _header(row)
+        header = _header(row, facts)
         body_budget = remaining - 1 - len(header) - 1
         if body_budget < _MIN_BODY_CHARS:
             break
@@ -141,12 +208,18 @@ def _render(rows, max_chars: int) -> ProjectProgressResult:
     )
 
 
-def _header(row) -> str:
-    """完整头部：日期（数据库 UTC）、断点 id、workstream 原状态。"""
+def _header(row, facts=None) -> str:
+    """完整头部：日期（数据库 UTC）、断点 id、workstream 原状态、归属信任。
+
+    ``ownership=confirmed`` 只给有 resolved 决议或人工接受记录的条目；
+    历史无 resolution 记录的行必须如实标成 ``unverified``，绝不冒充已确认。
+    """
+    fact = (facts or {}).get(int(row["context_id"]), UNREVIEWED_FACT)
     return (
         f"### 历史任务记录 id={int(row['context_id'])}"
         f" status={row['workstream_status']}"
         f" created_at(UTC)={row['created_at']}"
+        f" ownership={fact.state}"
     )
 
 

@@ -81,6 +81,10 @@ class LanCapture:
             columns = {column[1] for column in self.conn.execute('PRAGMA table_info(lan_session_uploads)')}
             if 'source_order' not in columns:
                 self.conn.execute('ALTER TABLE lan_session_uploads ADD COLUMN source_order INTEGER')
+            if 'extracted_at' not in columns:
+                # Observed completion time for extraction, so the read-only sync
+                # view can state *when* extraction finished instead of guessing.
+                self.conn.execute('ALTER TABLE lan_session_uploads ADD COLUMN extracted_at TEXT')
 
     @property
     def conn(self):
@@ -283,9 +287,10 @@ class LanCapture:
     def finish_extraction(self, row, *, result=None, error='', superseded=False):
         status = 'superseded' if superseded else ('failed' if error else 'extracted')
         with self.store.transaction():
-            self.conn.execute('''UPDATE lan_session_uploads SET extraction_status=?, extraction_result=?, error=?
-                WHERE device_id=? AND session_id=? AND sha256=?''',
+            self.conn.execute('''UPDATE lan_session_uploads SET extraction_status=?, extraction_result=?, error=?,
+                extracted_at=? WHERE device_id=? AND session_id=? AND sha256=?''',
                 (status, json.dumps(result or {}), error,
+                 time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
                  row['device_id'], row['session_id'], row['sha256']))
 
     def upload(self, args):

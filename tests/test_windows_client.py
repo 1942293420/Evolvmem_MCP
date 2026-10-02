@@ -1570,6 +1570,83 @@ def run_portable_worker(home: Path):
     )
 
 
+def run_local_sync_chain(home: Path):
+    # Dot-source the real client and read only the sanitized local chain; no MCP
+    # traffic and no DPAPI are involved.
+    command = f". '{CLIENT}' -Action snapshot; Write-OutputJson (Get-LocalSyncChain (Get-Config))"
+    env = os.environ.copy()
+    env.update(EVOLVMEM_CLIENT_HOME=str(home), EVOLVMEM_TEST_TOKEN="top-secret-token")
+    return subprocess.run(
+        [str(PWSH), "-NoLogo", "-NoProfile", "-Command", command],
+        input="", text=True, capture_output=True, env=env, timeout=20,
+    )
+
+
+def write_worker_status(home: Path, **fields):
+    payload = {
+        "worker_status": "idle",
+        "last_started_utc": "2026-10-02T00:00:00.0000000Z",
+        "last_finished_utc": "2026-10-02T00:00:01.0000000Z",
+        "discovered_sessions": 0,
+        "discovery_errors": 0,
+        "capture_errors": 0,
+        "captured_versions": 0,
+        "acknowledged_versions": 0,
+        "pending_versions": 0,
+    }
+    payload.update(fields)
+    (home / "worker-status.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def local_capture_stage(home: Path):
+    result = run_local_sync_chain(home)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout.splitlines()[-1])
+    return payload, next(
+        stage for stage in payload["stages"] if stage["stage"] == "client_capture"
+    )
+
+
+def test_status_sync_chain_capture_requires_observed_receipt(client_home):
+    for name in ("queue", "archive-status", "sessions"):
+        (client_home / name).mkdir(exist_ok=True)
+    write_config(client_home, "http://127.0.0.1:1/mcp")
+
+    # An idle worker that captured nothing is not capture proof and has no
+    # invented success timestamp.
+    write_worker_status(client_home)
+    payload, stage = local_capture_stage(client_home)
+    assert stage["state"] == "unknown"
+    assert stage["reason"] == "no_capture_receipt"
+    assert stage["evidence_at"] == ""
+    assert stage["evidence"]["captured_versions"] == 0
+
+    # Capture/discovery failures are their own error count, kept separate from
+    # the upload queue's pending count, and raw failure bodies are not projected.
+    write_worker_status(
+        client_home, worker_status="retry_pending", capture_errors=2,
+        discovery_errors=1, pending_versions=5,
+        capture_failures=[{"session_id": "secret-session-id", "error_type": "X"}],
+    )
+    payload, stage = local_capture_stage(client_home)
+    assert stage["state"] == "error"
+    assert stage["reason"] == "local_capture_failed"
+    assert stage["backlog"] == 3
+    assert stage["evidence"]["capture_errors"] == 2
+    assert stage["evidence"]["discovery_errors"] == 1
+    assert "secret-session-id" not in json.dumps(payload)
+
+    # Only an observed captured receipt reports success and its own timestamp.
+    write_worker_status(
+        client_home, captured_versions=3,
+        last_finished_utc="2026-10-02T01:02:03.0000000Z",
+    )
+    _, stage = local_capture_stage(client_home)
+    assert stage["state"] == "success"
+    assert stage["reason"] == "local_capture_receipt"
+    assert stage["evidence_at"] == "2026-10-02T01:02:03.0000000Z"
+
+
 def test_worker_reports_capture_failure_without_exposing_transcript(client_home):
     write_config(client_home, "http://127.0.0.1:1/mcp")
     directory = client_home / "sessions"

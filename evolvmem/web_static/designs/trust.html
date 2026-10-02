@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f1f2f4">
+  <title>信任视图 · 同步链与项目知识 — EvolvMem</title>
+  <link rel="stylesheet" href="/designs/common.css">
+  <link rel="stylesheet" href="/designs/signal.css">
+  <link rel="stylesheet" href="/trust.css">
+</head>
+<body data-design="trust">
+  <header class="signal-masthead">
+    <a href="/" class="signal-brand" aria-label="EvolvMem 星图研究室首页"><span class="signal-brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="11" stroke="currentColor" stroke-width="1.4"/><path d="M20 3v34M3 20h34M8 8l24 24M8 32 32 8" stroke="currentColor" stroke-width="1.1"/><circle cx="20" cy="20" r="4" fill="currentColor"/></svg></span><span>EvolvMem<span class="signal-brand-sub">TRUST / 信任视图</span></span></a>
+    <nav class="signal-nav" aria-label="主导航"><a href="/#home"><span>01</span>总览</a><a href="/#memories"><span>02</span>记忆库</a><a href="/#progress"><span>04</span>项目进展</a><a href="/trust" aria-current="page"><span>05</span>信任视图</a></nav>
+    <a class="signal-back" href="/architecture">系统架构 <span>↗</span></a>
+    <div class="auth-status" data-auth-status hidden aria-label="当前账号"></div>
+  </header>
+  <div class="signal-utility"><span>只读信任视图 · 证据优先</span><span class="signal-utility-center">EVIDENCE BEFORE ASSUMPTION.</span><span class="signal-edition">TRUST / LIGHT</span></div>
+  <main class="trust-main">
+    <div class="trust-intro">
+      <div>
+        <span class="trust-eyebrow">OBSERVED EVIDENCE ONLY</span>
+        <h1>同步链与项目知识</h1>
+        <p>这里只呈现服务端能证明的事实：归档与提炼回执、项目汇总覆盖范围、当前有效规则与待确认归属。本机采集、钩子投递与桌面模型采纳在服务端不可观测，会如实标为未知或未验证，而不是从连接数或配置推断。</p>
+        <p class="trust-note">本页所有时间均为 <strong>UTC</strong>（不带时区偏移），不是北京时间；读取时请按 UTC 理解。</p>
+      </div>
+      <div class="trust-status" id="trust-generated" role="status" aria-live="polite">正在读取…</div>
+    </div>
+
+    <section class="trust-block" aria-labelledby="trust-knowledge-title">
+      <header>
+        <div><h2 id="trust-knowledge-title">项目知识</h2><span class="trust-en">CURRENT RULES / LATEST PROGRESS / OPEN ISSUES</span></div>
+        <div class="trust-toolbar">
+          <label>项目<select class="trust-select" id="trust-project" aria-label="选择已登记项目"></select></label>
+          <button class="trust-button primary" id="trust-refresh" type="button">刷新</button>
+        </div>
+      </header>
+      <div id="trust-rollup"></div>
+      <div class="trust-grid">
+        <article class="trust-card" aria-labelledby="trust-rules-title">
+          <header><h3 id="trust-rules-title">当前规则</h3><span class="trust-en">CURRENT RULES</span></header>
+          <div id="trust-rules"></div>
+        </article>
+        <article class="trust-card" aria-labelledby="trust-progress-title">
+          <header><h3 id="trust-progress-title">最新进展</h3><span class="trust-en">LATEST PROGRESS</span></header>
+          <div id="trust-progress"></div>
+        </article>
+        <article class="trust-card" aria-labelledby="trust-issues-title">
+          <header><h3 id="trust-issues-title">未决事项</h3><span class="trust-en">OPEN ISSUES</span></header>
+          <div id="trust-issues"></div>
+        </article>
+      </div>
+      <details class="trust-details" id="trust-sources-details">
+        <summary>来源与归属证据</summary>
+        <div id="trust-sources"></div>
+      </details>
+      <div id="trust-tech"></div>
+    </section>
+
+    <section class="trust-block" aria-labelledby="trust-sync-title">
+      <header>
+        <div><h2 id="trust-sync-title">同步状态</h2><span class="trust-en">CAPTURE → UPLOAD → EXTRACTION → RECALL → HOOK → ADOPTION</span></div>
+        <span class="trust-status" id="trust-sync-asof"></span>
+      </header>
+      <div id="trust-sync"></div>
+      <p class="trust-note" id="trust-sync-notes"></p>
+    </section>
+
+    <section class="trust-block" aria-labelledby="trust-backlog-title">
+      <header>
+        <div><h2 id="trust-backlog-title">归属评审</h2><span class="trust-en">OWNERSHIP REVIEW BACKLOG</span></div>
+        <span class="trust-status" id="trust-backlog-count"></span>
+      </header>
+      <div id="trust-backlog"></div>
+      <p class="trust-note">确认或拒绝只写归属评审决定，不移动内容。已绑定到其他项目的工作流仍会被拒绝跨项目移动，不会产生半移动。</p>
+    </section>
+
+    <section class="trust-block" aria-labelledby="trust-window-title">
+      <header>
+        <div><h2 id="trust-window-title">决策生效时间</h2><span class="trust-en">DECISION TEMPORAL WINDOW</span></div>
+      </header>
+      <div class="trust-split">
+        <div>
+          <p class="trust-note">按精确记录编号读取。时间统一以 <strong>UTC</strong> 保存和显示（不是北京时间）；输入可带时区偏移，例如 <code>2026-01-01T08:00:00+08:00</code> 或 <code>2026-01-01T00:00:00Z</code>，保存时换算为 UTC。留空表示未知，结束时间为排他边界（到该时刻即不再生效）。</p>
+          <div class="trust-toolbar">
+            <label>记录编号<input class="trust-input small" id="trust-window-id" type="number" min="1" inputmode="numeric" placeholder="例如 12"></label>
+            <button class="trust-button ghost" id="trust-window-load" type="button">读取</button>
+          </div>
+          <div class="trust-window-form" id="trust-window-form" hidden>
+            <label>生效开始（UTC）<input class="trust-input" id="trust-wf-from" placeholder="2026-01-01 00:00:00 或 2026-01-01T08:00:00+08:00"></label>
+            <label>生效结束（UTC）<input class="trust-input" id="trust-wf-until" placeholder="留空=未知"></label>
+            <label>发生时间（UTC）<input class="trust-input" id="trust-wf-occurred" placeholder="留空=未知"></label>
+            <label>提及时间（UTC）<input class="trust-input" id="trust-wf-mentioned" placeholder="留空=未知"></label>
+          </div>
+          <div class="trust-toolbar" id="trust-window-actions" hidden>
+            <button class="trust-button primary" id="trust-window-save" type="button">保存时间窗口</button>
+          </div>
+        </div>
+        <div id="trust-window-readout"><div class="trust-empty">输入记录编号读取当前时间元数据。</div></div>
+      </div>
+    </section>
+
+    <footer class="signal-footer"><span class="signal-footer-brand">EvolvMem <span> / TRUST</span></span><span data-data-status role="status" aria-live="polite">只读证据视图</span><a href="/">返回首页 ↗</a></footer>
+  </main>
+  <script src="/auth.js"></script>
+  <script src="/trust.js"></script>
+</body>
+</html>

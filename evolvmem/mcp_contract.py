@@ -327,6 +327,10 @@ _CONTEXT_SEARCH_SPEC = McpToolSpec(
                 },
                 "description": "Optional content-type filter",
             },
+            "as_of": {
+                "type": "string",
+                "description": "Optional explicit historical read: ISO 8601 instant normalized to UTC. Returns decisions/events whose known validity window contains that instant (effective_until exclusive), including superseded ones; candidate/deleted/low-confidence items and project boundaries still apply. Omit for current recall, which excludes future and expired known windows.",
+            },
         },
         "required": ["query"],
     },
@@ -335,7 +339,7 @@ _CONTEXT_SEARCH_SPEC = McpToolSpec(
 
 _CONTEXT_PROJECT_RECALL_SPEC = McpToolSpec(
     name="context_project_recall",
-    description="Read-only recall of bounded project history and recent current-workstream progress for projects explicitly mentioned in the query text. Matches only this user's registered active names and aliases (whole-word ASCII; case-insensitive mixed-script names with optional ASCII/Chinese boundary whitespace), ignores short, generic, and ambiguous surfaces, and returns at most two projects in first-mention order. Progress dates are UTC record times, not verified Git/deployment times. Returns an empty block when nothing is mentioned; never changes workspace bindings or continuity focus.",
+    description="Read-only recall of bounded project history and recent current-workstream progress for projects explicitly mentioned in the query text. Matches only this user's registered active names and aliases (whole-word ASCII; case-insensitive mixed-script names with optional ASCII/Chinese boundary whitespace), ignores short, generic, and ambiguous surfaces, and returns at most two projects in first-mention order. Ownership-trust diagnostics are returned in diagnostics plus excluded/unverified_ids: items whose project resolution is pending, conflicting, rejected, or missing (project_ownership_unverified) are held out of the default surface with a stable reason. Progress dates are UTC record times, not verified Git/deployment times. Returns an empty block when nothing is mentioned; never changes workspace bindings or continuity focus.",
     input_schema={
         "type": "object",
         "properties": {
@@ -354,6 +358,40 @@ _CONTEXT_PROJECT_RECALL_SPEC = McpToolSpec(
         "additionalProperties": False,
     },
     annotations=_READ_ONLY,
+)
+
+_CONTEXT_DECISION_WINDOW_SPEC = McpToolSpec(
+    name="context_decision_window",
+    description="Read or write one item's optional temporal validity (effective_from/effective_until, occurred_at, mentioned_at). Absent fields stay UNKNOWN and are never derived from created_at; all ISO 8601 values are normalized to UTC and effective_until is exclusive. Writes only these columns: project, status, and content are untouched. Default recall excludes future/expired known windows; context_search as_of reads an explicit historical instant.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Exact context ID",
+            },
+            "effective_from": {
+                "type": "string",
+                "description": "Optional ISO 8601 instant this record starts being valid (UTC)",
+            },
+            "effective_until": {
+                "type": "string",
+                "description": "Optional ISO 8601 instant this record stops being valid (exclusive, UTC)",
+            },
+            "occurred_at": {
+                "type": "string",
+                "description": "Optional ISO 8601 instant the event happened (UTC); use for late-recorded events",
+            },
+            "mentioned_at": {
+                "type": "string",
+                "description": "Optional ISO 8601 instant the event was first mentioned (UTC)",
+            },
+        },
+        "required": ["id"],
+        "additionalProperties": False,
+    },
+    annotations=_WRITE_TOOL_ANNOTATIONS,
 )
 
 _CONTEXT_READ_SPEC = McpToolSpec(
@@ -504,6 +542,7 @@ _CONTEXT_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     _CONTEXT_SESSION_START_SPEC,
     _CONTEXT_SEARCH_SPEC,
     _CONTEXT_PROJECT_RECALL_SPEC,
+    _CONTEXT_DECISION_WINDOW_SPEC,
     _CONTEXT_READ_SPEC,
     _CONTEXT_STATUS_SPEC,
     _CONTEXT_CONFIRM_SPEC,

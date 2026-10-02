@@ -49,6 +49,7 @@ from evolvmem.legacy_models import (
     LegacyRemoveRequest,
 )
 from evolvmem.memory_store import MemoryStore
+from evolvmem.project_store import ProjectStore
 from evolvmem.session_archive import SessionArchiver, SessionPurgeReport
 
 
@@ -253,8 +254,21 @@ def make_draft(
     )
 
 
-def add_item(store, identity_key: str, **overrides):
-    return store.create_item(make_draft(identity_key, **overrides))
+def add_item(store, identity_key: str, *, trusted: bool = True, **overrides):
+    """Create a fixture item; project-scoped items carry trusted provenance.
+
+    The default injection surface holds project items whose ownership has no
+    resolution row (2026-10-02 trust gate), so a fixture that means "this
+    user's own project item" records an explicit trusted resolution unless the
+    test deliberately asks for an unreviewed row (``trusted=False``).
+    """
+    item = store.create_item(make_draft(identity_key, **overrides))
+    if trusted and item.project:
+        with store.transaction():
+            ProjectStore(
+                store._connection(), store._require_transaction, generic_names=()
+            ).record_trusted_resolution(item.id, item.project)
+    return item
 
 
 def make_service(config, store, *, mode=ContextMode.SHADOW, **dependencies):

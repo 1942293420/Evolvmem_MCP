@@ -830,6 +830,119 @@ function Get-WorkerTaskStatus {
     return $result
 }
 
+function Get-LocalSyncChain($Config) {
+    # Sanitized stage evidence from the client's own existing receipts only:
+    # counts, states and timestamps. No transcript text, no paths, no tokens.
+    $queueDir = [IO.Path]::Combine($script:ClientHome, 'queue')
+    $archiveDir = [IO.Path]::Combine($script:ClientHome, 'archive-status')
+    $sessionDir = [IO.Path]::Combine($script:ClientHome, 'sessions')
+    $pendingVersions = @([IO.Directory]::GetFiles($queueDir, '*.json')).Count
+    $registeredSessions = @([IO.Directory]::GetFiles($sessionDir, '*.json')).Count
+    $archived = 0; $extractPending = 0; $extractOk = 0; $extractFailed = 0
+    $lastAcknowledged = ''
+    foreach ($path in @([IO.Directory]::GetFiles($archiveDir, '*.json'))) {
+        try { $receipt = Read-JsonFile $path } catch { continue }
+        if ([string](Get-Value $receipt 'archive_status' '') -in @('archived', 'stale')) {
+            $archived += 1
+            $ack = [string](Get-Value $receipt 'acknowledged_utc' '')
+            if ($ack -and $ack -gt $lastAcknowledged) { $lastAcknowledged = $ack }
+        }
+        $state = [string](Get-Value $receipt 'extraction_status' '')
+        if ($state -in @('pending', 'queued', 'processing')) { $extractPending += 1 }
+        elseif ($state -in @('completed', 'extracted')) { $extractOk += 1 }
+        elseif ($state -eq 'failed') { $extractFailed += 1 }
+    }
+    $worker = $null
+    try { $worker = Read-JsonFile ([IO.Path]::Combine($script:ClientHome, 'worker-status.json')) }
+    catch { $worker = $null }
+    $capture = [ordered]@{
+        stage = 'client_capture'; state = 'unknown'; evidence_at = ''
+        reason = 'worker_status_unavailable'; backlog = $null
+        evidence = [ordered]@{
+            captured_versions = $null; capture_errors = $null
+            discovery_errors = $null; discovered_sessions = $null
+        }
+    }
+    if ($null -ne $worker) {
+        # Worker health is not capture proof: an idle scan may have captured
+        # nothing. Only an observed captured_versions count with no capture or
+        # discovery errors is evidence of a capture receipt, and the time is
+        # reported only for that receipt.
+        $workerState = [string](Get-Value $worker 'worker_status' '')
+        $captured = [int](Get-Value $worker 'captured_versions' 0)
+        $captureErrors = [int](Get-Value $worker 'capture_errors' 0)
+        $discoveryErrors = [int](Get-Value $worker 'discovery_errors' 0)
+        $failedCount = $captureErrors + $discoveryErrors
+        $capture.evidence = [ordered]@{
+            captured_versions = $captured; capture_errors = $captureErrors
+            discovery_errors = $discoveryErrors
+            discovered_sessions = [int](Get-Value $worker 'discovered_sessions' 0)
+            worker_status = $workerState
+        }
+        if ($failedCount -gt 0) {
+            # Capture failures are their own error count; the upload queue's
+            # pending_versions is reported by the upload stage below instead.
+            $capture.state = 'error'; $capture.reason = 'local_capture_failed'
+            $capture.backlog = $failedCount
+        }
+        elseif ($captured -gt 0) {
+            $capture.state = 'success'; $capture.reason = 'local_capture_receipt'
+            $capture.evidence_at = [string](Get-Value $worker 'last_finished_utc' '')
+            $capture.backlog = 0
+        }
+        else {
+            $capture.state = 'unknown'; $capture.reason = 'no_capture_receipt'
+        }
+    }
+    $upload = [ordered]@{
+        stage = 'upload_archive'; state = 'unknown'; evidence_at = ''
+        reason = 'no_local_archive_receipt'; backlog = $null
+        evidence = [ordered]@{ archived = $archived; pending_versions = $pendingVersions }
+    }
+    if ($archived -gt 0 -or $pendingVersions -gt 0) {
+        $upload.evidence_at = $lastAcknowledged
+        $upload.backlog = $pendingVersions
+        if ($pendingVersions -gt 0) { $upload.state = 'pending'; $upload.reason = 'local_queue_not_acknowledged' }
+        elseif ($archived -gt 0) { $upload.state = 'success'; $upload.reason = 'local_archive_receipts_complete' }
+    }
+    $extraction = [ordered]@{
+        stage = 'extraction'; state = 'unknown'; evidence_at = ''
+        reason = 'no_local_extraction_receipt'; backlog = $null
+        evidence = [ordered]@{
+            extracted = $extractOk; pending = $extractPending; failed = $extractFailed
+        }
+    }
+    if ($extractFailed -gt 0) {
+        $extraction.state = 'error'; $extraction.reason = 'local_extraction_failed'; $extraction.backlog = $extractFailed
+    }
+    elseif ($extractPending -gt 0) {
+        $extraction.state = 'pending'; $extraction.reason = 'local_extraction_pending'; $extraction.backlog = $extractPending
+    }
+    elseif ($extractOk -gt 0) {
+        $extraction.state = 'success'; $extraction.reason = 'local_extraction_complete'; $extraction.backlog = 0
+    }
+    return [ordered]@{
+        as_of = [DateTime]::UtcNow.ToString('o')
+        stages = @(
+            $capture
+            $upload
+            $extraction
+            [ordered]@{ stage = 'recall'; state = 'unknown'; evidence_at = ''
+                reason = 'hook_retrieval_not_receipted'; backlog = $null }
+            [ordered]@{ stage = 'hook_delivery'; state = 'unknown'; evidence_at = ''
+                reason = 'hook_delivery_not_receipted'; backlog = $null }
+            [ordered]@{ stage = 'model_adoption'; state = 'unverified'; evidence_at = ''
+                reason = 'no_live_desktop_test'; backlog = $null }
+        )
+        registered_sessions = $registeredSessions
+        model_adoption = 'UNVERIFIED'
+        notes = @(
+            'Stages come from local worker/upload receipts only; counts and times, never content.'
+            'Hook retrieval, hook delivery and desktop model adoption are not receipted here.'
+        )
+    }
+}
+
 function Get-LocalStatus($Config) {
     $queueDir = [IO.Path]::Combine($script:ClientHome, 'queue')
     $archiveDir = [IO.Path]::Combine($script:ClientHome, 'archive-status')
@@ -848,6 +961,7 @@ function Get-LocalStatus($Config) {
         pending_archive_versions = $pending; acknowledged_archive_versions = $archived
         pending_extractions = $pendingExtraction; completed_extractions = $extracted
         registered_sessions = @([IO.Directory]::GetFiles($sessionDir, '*.json')).Count
+        sync_chain = Get-LocalSyncChain $Config
     }
     $taskStatus = Get-WorkerTaskStatus
     foreach ($key in $taskStatus.Keys) { $result[$key] = $taskStatus[$key] }

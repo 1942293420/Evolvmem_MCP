@@ -49,6 +49,7 @@ from evolvmem.context_models import (
 )
 from evolvmem.context_store import ContextStore
 from evolvmem.extraction_policy import contains_cjk, contains_sensitive_text
+from evolvmem.project_store import ProjectStore
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +280,11 @@ class PlaybookGenerator:
                 return PlaybookSkip(item_ids=member_ids,reason=_SKIP_LAYER_TOO_LONG)
         with store.transaction():
             item = store.create_item(draft)
+            # Explicit provenance: this playbook was generated for one typed
+            # project, so it is not "uncertain ownership" once confirmed.
+            ProjectStore(
+                store._connection(), store._require_transaction, generic_names=()
+            ).record_trusted_resolution(item.id, draft.project)
             if payload is not None:
                 store._connection().execute(
                     'UPDATE context_items SET experience_payload=? WHERE id=?', (payload,item.id))

@@ -9,6 +9,7 @@ import re
 import sqlite3
 
 from evolvmem.config import Config
+from evolvmem.context_temporal import temporal_rank
 from evolvmem.context_layers import validate_layers
 from evolvmem.context_models import (
     ContextContentType,
@@ -466,9 +467,16 @@ class ContextStore:
                 "ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"
             )
 
-        # Experience metadata stays with Core; outcome revisions preserve evidence.
+        # 项目归属与决策时间（2026-10-02）：既有库增量列，老记录保持可读，
+        # UNKNOWN 一律 NULL，绝不从 created_at 推断事件时间。
         additions = {
-            "context_items": {"experience_payload": "TEXT NOT NULL DEFAULT ''"},
+            "context_items": {
+                "experience_payload": "TEXT NOT NULL DEFAULT ''",
+                "effective_from": "TEXT",
+                "effective_until": "TEXT",
+                "occurred_at": "TEXT",
+                "mentioned_at": "TEXT",
+            },
             "context_evidence": {
                 "event_key": "TEXT NOT NULL DEFAULT ''",
                 "task_id": "TEXT NOT NULL DEFAULT ''",
@@ -529,8 +537,10 @@ class ContextStore:
         cursor = conn.execute(
             "INSERT INTO context_items ("
             "identity_key, content_type, project, scope, status, tier, tags, "
-            "importance, confidence, expires_at, supersedes, created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "importance, confidence, expires_at, supersedes, "
+            "effective_from, effective_until, occurred_at, mentioned_at, "
+            "created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 draft.identity_key,
                 draft.content_type.value,
@@ -543,6 +553,10 @@ class ContextStore:
                 draft.confidence,
                 draft.expires_at,
                 predecessor,
+                draft.effective_from,
+                draft.effective_until,
+                draft.occurred_at,
+                draft.mentioned_at,
                 now,
                 now,
             ),
@@ -598,6 +612,19 @@ class ContextStore:
 
         old_id = int(old["id"])
         now = _now_iso()
+        if self._is_late_record(draft, old_id):
+            # 迟到的旧事件：不得顶掉同一身份上更晚生效的当前记录。新记录
+            # 以 superseded 历史行保留（可经 as_of 读取），现有 active 行
+            # 原样不动 —— 不做任何业务数据改写。
+            historical = self._create_item_no_commit(
+                draft, status=ContextStatus.SUPERSEDED
+            )
+            conn.execute(
+                "UPDATE context_items SET superseded_by=?, updated_at=? WHERE id=?",
+                (old_id, now, historical.id),
+            )
+            return self.get_item(historical.id) or historical
+
         conn.execute(
             "UPDATE context_items SET status='superseded', updated_at=? WHERE id=?",
             (now, old_id),
@@ -612,6 +639,54 @@ class ContextStore:
             (successor.id, now, old_id),
         )
         return successor
+
+    def _is_late_record(self, draft: ContextItemDraft, old_id: int) -> bool:
+        """True when the draft's known rank is older than the active row's.
+
+        Both ranks must be known; an UNKNOWN rank never wins or loses a
+        precedence comparison, so old-style writes keep their behaviour.
+        """
+        new_rank = temporal_rank(draft.effective_from, draft.occurred_at)
+        if new_rank is None:
+            return False
+        row = self._connection().execute(
+            "SELECT effective_from, occurred_at FROM context_items WHERE id=?",
+            (old_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        old_rank = temporal_rank(row["effective_from"], row["occurred_at"])
+        return old_rank is not None and new_rank < old_rank
+
+    def set_item_temporal(
+        self,
+        item_id: int,
+        *,
+        effective_from: str | None,
+        effective_until: str | None,
+        occurred_at: str | None,
+        mentioned_at: str | None,
+    ) -> bool:
+        """Write the four optional temporal fields on one existing item.
+
+        Values must already be normalized upstream; this store method never
+        derives a timestamp and never touches any other column but
+        ``updated_at``. Returns False when the item does not exist.
+        """
+        self._require_transaction("set_item_temporal")
+        cursor = self._connection().execute(
+            "UPDATE context_items SET effective_from=?, effective_until=?, "
+            "occurred_at=?, mentioned_at=?, updated_at=? WHERE id=?",
+            (
+                effective_from,
+                effective_until,
+                occurred_at,
+                mentioned_at,
+                _now_iso(),
+                item_id,
+            ),
+        )
+        return cursor.rowcount == 1
 
     def update_access(self, item_ids: list[int]) -> None:
         """Increment access telemetry for a batch without changing updated_at."""
@@ -1316,6 +1391,7 @@ class ContextStore:
         *,
         project: str = "",
         scope: ContextScope = ContextScope.PROJECT,
+        include_layers: bool = True,
     ) -> list[ContextItem]:
         rows = self._connection().execute(
             "SELECT * FROM context_items "
@@ -1323,7 +1399,12 @@ class ContextStore:
             "ORDER BY updated_at DESC, id DESC",
             (identity_key, project, scope.value),
         ).fetchall()
-        return [self._row_to_item(row, self._load_layers(row["id"])) for row in rows]
+        return [
+            self._row_to_item(
+                row, self._load_layers(row["id"]) if include_layers else None
+            )
+            for row in rows
+        ]
 
     def list_vector_documents(self) -> list[ContextVectorDocument]:
         """Return semantic-index documents; exact-pointer checkpoints stay out."""
@@ -1385,6 +1466,55 @@ class ContextStore:
                 )
             )
         return tuple(records)
+
+    def project_claims(self, item_ids) -> dict[int, str]:
+        """Map id → stored project claim ("" = no project attribution).
+
+        One narrow read used by the default injection ownership gate: an item
+        only makes an ownership claim when its stored ``project`` is non-empty.
+        Fail-open to ``{}`` — never a reason to suppress anything.
+        """
+        unique = [int(item_id) for item_id in dict.fromkeys(item_ids)]
+        if not unique:
+            return {}
+        marks = ",".join("?" for _ in unique)
+        try:
+            rows = self._connection().execute(
+                f"SELECT id, project FROM context_items WHERE id IN ({marks})",
+                tuple(unique),
+            ).fetchall()
+        except sqlite3.DatabaseError:
+            return {}
+        return {int(row["id"]): str(row["project"] or "") for row in rows}
+
+    def successor_ranks(self, item_ids) -> dict[int, str | None]:
+        """Map superseded id → the temporal rank of its successor.
+
+        A successor chain gives a superseded record an implicit end: the
+        instant its successor became effective. ``None`` means the successor
+        has no known rank (or there is no successor row), so the caller must
+        fall back to the record's own explicit window.
+        """
+        unique = [int(item_id) for item_id in dict.fromkeys(item_ids)]
+        if not unique:
+            return {}
+        marks = ",".join("?" for _ in unique)
+        try:
+            rows = self._connection().execute(
+                "SELECT old.id AS item_id, new.effective_from, new.occurred_at "
+                "FROM context_items old "
+                "JOIN context_items new ON new.id = old.superseded_by "
+                f"WHERE old.id IN ({marks})",
+                tuple(unique),
+            ).fetchall()
+        except sqlite3.DatabaseError:
+            return {}
+        return {
+            int(row["item_id"]): temporal_rank(
+                row["effective_from"], row["occurred_at"]
+            )
+            for row in rows
+        }
 
     def get_layer(self, item_id: int, layer: ContextLayer) -> str | None:
         """Return the exact stored content of one layer, or None when absent."""
@@ -1475,6 +1605,10 @@ class ContextStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             layers=layers,
+            effective_from=row["effective_from"],
+            effective_until=row["effective_until"],
+            occurred_at=row["occurred_at"],
+            mentioned_at=row["mentioned_at"],
         )
 
     @staticmethod

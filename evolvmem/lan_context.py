@@ -59,15 +59,22 @@ def prepare_bindings(server):
 
 
 def prepare_memory_revision(server):
-    """A durable change counter also observes writes made by native clients."""
+    """A durable change counter also observes writes made by native clients.
+
+    Trigger definitions are refreshed idempotently (DROP + CREATE) so a store
+    created by an earlier revision picks up newly tracked columns — including
+    the 2026-10-02 temporal validity columns, whose changes must move the LAN
+    revision even when no content text changed.
+    """
     with server.context_service.store.transaction():
         conn = server.context_service.store._connection()
         conn.execute('CREATE TABLE IF NOT EXISTS lan_memory_revision(id INTEGER PRIMARY KEY, revision INTEGER NOT NULL)')
         conn.execute('INSERT OR IGNORE INTO lan_memory_revision VALUES(1,0)')
         tracked = {
-            'context_items': 'status,tier,project,importance,confidence,source_state,success_count,failure_count,expires_at',
+            'context_items': 'status,tier,project,importance,confidence,source_state,success_count,failure_count,expires_at,effective_from,effective_until,occurred_at,mentioned_at',
             'context_layers': 'content_hash',
             'context_project_registry': 'revision',
+            'context_project_resolutions': 'resolution_state,decision_source,review_state,resolved_project,revision',
             'continuity_workstreams': 'checkpoint_revision,state_version',
             'continuity_focus': 'revision',
         }
@@ -75,7 +82,9 @@ def prepare_memory_revision(server):
             for action in ('INSERT', 'DELETE', 'UPDATE OF ' + columns):
                 suffix = action.split()[0].lower()
                 condition = (' WHEN ' + ' OR '.join(f'NEW.{c} IS NOT OLD.{c}' for c in columns.split(','))) if suffix == 'update' else ''
-                conn.execute(f'CREATE TRIGGER IF NOT EXISTS lan_revision_{table}_{suffix} AFTER {action} ON {table}{condition} '
+                name = f'lan_revision_{table}_{suffix}'
+                conn.execute(f'DROP TRIGGER IF EXISTS {name}')
+                conn.execute(f'CREATE TRIGGER {name} AFTER {action} ON {table}{condition} '
                              'BEGIN UPDATE lan_memory_revision SET revision=revision+1 WHERE id=1; END')
 
 

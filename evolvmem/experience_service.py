@@ -17,6 +17,7 @@ from evolvmem.context_models import (
     ContextMatchType,
 )
 from evolvmem.experience_sources import ExperienceSourceResolver
+from evolvmem.project_store import ProjectStore
 from evolvmem.extraction_policy import contains_sensitive_text
 
 OUTCOMES = {'success', 'failure', 'confirmed', 'contradicted', 'inapplicable', 'unknown', 'used'}
@@ -157,6 +158,12 @@ class ExperienceService:
                 item_id = item.id
                 self._conn().execute('UPDATE context_items SET experience_payload=? WHERE id=?',
                                      (layers.l2,item_id))
+                # Explicit provenance: the experience payload carries its own
+                # typed project; recorded so the confirmed case is not held as
+                # uncertain ownership on the default injection surface.
+                ProjectStore(self._conn(), self.store._require_transaction,
+                             generic_names=()).record_trusted_resolution(
+                    item_id, payload['project'])
             if evidence is not None:
                 self._write_outcome(item_id, evidence)
         self._sync(item_id)
