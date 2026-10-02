@@ -1,6 +1,6 @@
 # Windows 原生 Codex：EvolvMem 完整功能对齐计划
 
-状态：用户已批准并实施；已通过授权 SSH 完成 Windows 原生核心注入、PowerShell 5.1 加密、计划任务补传及服务端提取验证。用户已确认桌面会话读到项目摘要与任务断点，并以真实仓库完成跨端任务绑定；完整桌面生命周期仍待验收。
+状态：用户已批准并实施；已通过授权 SSH 完成 Windows 原生核心注入、PowerShell 5.1 加密、计划任务补传及服务端提取验证。用户已确认桌面会话读到项目摘要与任务断点，并以真实仓库完成跨端任务绑定；完整桌面生命周期仍待验收。2026-10-03 已把 Windows 客户端升级到 main 版本并完成多端验收（见文末），期间修复了分叉转写被判 `session_id_mismatch` 的服务端缺陷（待重启生效）。
 
 ## 目标、验收与边界
 
@@ -132,6 +132,8 @@ Windows 接入包 → 一个远程 EvolvMem MCP → 现有 Linux 记忆核心。
 官方依据：[AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)、[Codex Hooks](https://learn.chatgpt.com/docs/hooks)、[Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
 官方明确转写格式不是稳定接口，因此记录实际支持的桌面版范围，升级后用代表性会话复验。
 
+2026-10-03 更新：桌面升级到 `0.155.0-alpha.9.2` 后分叉转写新增父线程谱系 `session_meta`，客户端因此被拒；根因、main 客户端升级结果、逐项验收证据、被阻塞的提炼环节与待用户实测项见文末「2026-10-03 Windows 客户端升级与多端验收」。该轮修复已提交但**尚未重启 `evolvmem-lan-mcp.service`**，Windows 待传队列在重启前不会归零。
+
 ## 2026-09-21 同步修复验证
 
 2026-09-21 修复已部署：服务端相关回归 158 项通过；Windows PowerShell 5.1 四套测试通过，版本套件含 11 类场景。真实待传归零，误标父会话的重复副本已有正确子会话归档并保留在本机恢复目录。服务与两套向量恢复正常；DeepSeek 官方接口与新凭据已验证可用；用户已明确授权真实记忆提炼和每日摘要更新；归档572已成功提炼，Windows/Linux读回新摘要的ID与内容哈希一致。
@@ -166,3 +168,40 @@ Windows 接入包 → 一个远程 EvolvMem MCP → 现有 Linux 记忆核心。
 `continuity_begin` 对显式已登记别名复用唯一有效项目，避免中文别名另建项目；归属冲突仍拒绝猜测。历史重复项目须按证据单独修复，不自动按显示名合并。
 
 本轮部署与验证：418 项相关回归通过；项目身份修复先在备份副本演练，保留正文、原日期与来源。部署仅加载 LAN 服务，2.85 秒恢复 ready，projection_lag=0、两套索引非 dirty。原始问题服务端连续两次返回相同记录；Windows 已安装逐轮 hook 输出含较新任务记录和日期说明，无 warning。此证据限于实际脚本输出，桌面模型最终采用仍由用户新对话复测，不据此宣布完整生命周期验收。
+
+## 2026-10-03 Windows 客户端升级与多端验收
+
+### session_id_mismatch 根因与修复
+
+Codex Desktop `0.155.0-alpha.9.2` 的分叉/子代理 rollout 在首行写本会话的 `session_meta` 后，会再写一条**被分叉线程**（`forked_from_id`/`parent_thread_id`）的 `session_meta` 作为谱系记录。服务端 `evolvmem/codex_transcript.py` 原先要求**每一条** `session_meta` 的 `id` 都等于登记会话，于是整份转写被拒；这与第四节「登记前核对转写**首条** session_meta 的会话 ID，拒绝父会话误用子会话文件」的规则不一致。现改为只校验首条 `session_meta`；父会话登记子会话文件仍因首条 id 不匹配而被拒。
+
+实测依据：
+
+- 本机 rollout `…01a0c362-6c1e-79b1-8ec6-90382859354f.jsonl` 首两行 meta id 依次为本会话 `01a0c362-…`（`source` 为 subagent）与父线程 `01a0c1c7-b32e-79f2-a140-bd18509b780d`，两行 `originator` 均为 Codex Desktop、`cli_version` 均为 `0.155.0-alpha.9.2`。
+- 15 个滞留版本经 DPAPI 解密逐一核对：明文长度与 SHA-256 均与队列清单一致，每条都恰好含 2 条 `session_meta`，首条等于 `session_id`、次条等于父线程 id。
+- 服务端 `session_uploads` 中这 15 个版本的分片暂存全部存在，字节数 262144 / 524288 / 1048576 / 1310720 与客户端 `next_offset` 逐一对应，重启后可从断点续传，无需重传全部内容。
+- 新增回归 `tests/test_lan_capture.py::test_forked_rollout_lineage_meta_is_not_a_session_mismatch` 与 `::test_forked_rollout_archives_and_a_parent_still_cannot_claim_it`：旧逻辑下复现 `{'error': 'session_id_mismatch'}`，新逻辑下正常归档，且父会话登记子文件仍被拒。相关回归 227 项通过、57 项跳过。
+- **修复需重启 `evolvmem-lan-mcp.service` 才生效。本轮按要求未重启**，因此 `worker-status.json` 仍显示 `pending_versions=15`、`pending_failed_versions=15`、`pending_error_codes=["session_id_mismatch"]`；重启后应归零。归档状态曾报 `current_snapshot_unavailable`，原因是首个分片上传时插入了 `sha256` 为空的 head 锚点行，属预期中间态，不影响修复后的推进。
+
+### 客户端升级（main）
+
+`scripts/windows/evolvmem-codex.ps1` 已用 main 版本覆盖安装：SHA-256 `23deefac25c107d5d8786831e200e65222c15a3fab3a9ecc10f94049ef5f8c93`、89607 字节，与仓库一致；launcher 由仓库 `evolvmem-sync.cs` 重新编译（`3734e8bdb8cf6ebd7595bae1a552434fb7cfcef8bdd875502ab5fafe7eccb677`）。
+
+升级前后对照：仅 `01a0c362-…` 一个会话锚点未确认，其余 189 个会话锚点均已确认；升级后队列仍为 15 个版本、会话登记 190 个、archive-status 1647 条，均未变动。`config.json` 保留 `device_id`、`projects` 与 `capture_since_utc`（`2026-09-17T04:48:27Z`）；`hooks.json` 与 `.codex/AGENTS.md` 字节未变（哈希一致），hook 信任无须重新审阅（`[hooks.state]` 六个 `trusted_hash` 不变）；计划任务「EvolvMem Codex Sync」重新注册后已启用、每 1 分钟触发；自检 `healthy=true`、`remote_connected=true`、`authenticated_user=jiangli`、`tool_count=33`。升级只改客户端自身目录、配置与计划任务，安装器备份齐备，未手工删除任何文件。
+
+### 本轮通过的验收项
+
+- **身份**：自检与 hook 回执都返回 `authenticated_user=jiangli`，与 `expected_user` 一致；两端读写同一用户库（`memory_status`：1134 条活跃记忆、`context_ready=true`）。
+- **hook 输出**：直接运行已安装脚本 `-Action session-start`（真实会话 + `D:\Evolvmem`），输出含项目摘要与任务断点（首行 `[任务断点：历史参考…]`，正文含目标、已确认方案、已完成项），`selected_count=11`、`memory_revision=14285.0`、`delivery_status=retrieved_for_hook`。
+- **跨端一致性**：同一 `query`/`workspace_path`/`device_id`/`repo_snapshot`/`max_chars` 在 Windows（hook 脚本直接调用）与 Linux（同端点同凭据直连）返回的记忆块 SHA-256 同为 `6aef3ade05c59cc8af2958f13ee2b3b9daca00373fabb0d3d98755a36843bf36`（2514 字符、11 条记忆、同一 revision），逐字节一致。
+- **采集 → 上传 → 加密归档**：受控验收采集（独立 device `win-acceptance-20261003` 与同名测试项目，未触碰真实项目与真实设备）`discovered_sessions=1`、`captured_versions=1`、`acknowledged_versions=1`、`pending_versions=0`、`capture_errors=0`；服务端 `archive_id=1751`、`current=true`、`payload_state=available`；磁盘载荷非 UTF-8 密文、不含明文标记、文件 SHA-256 等于登记的 `payload_sha256`。该测试归档位于独立项目下，`expires_at=2026-11-01` 到期自动清理，如需提前删除用 `context_archive_project`。
+- **断网补传与不重复覆盖**：同一受控版本在端点不可达时保持 `pending_versions=1`、`pending_failed_versions=1`、`last_error_stage=upload`（`WebException`），队列清单与 DPAPI 载荷持久化且不假报成功；端点恢复后 `acknowledged_versions=1`、`pending_versions=0`，并复用同一 `archive_id=1751` 而未新增归档；再次运行不产生重复版本。
+- **Windows 客户端回归**：PowerShell 5.1 六套全部通过 —— dpapi（2 个加密版本、UTF-8 往返、残缺末行排除）、errors（5 项）、version-order（11 项）、project-mention（37 项）、background-sync（独立发现、DPAPI、残缺末行等待、重启重试、字节一致、历史续传）、sync-launcher（中文空格路径）。
+
+### 本轮被阻塞的验收项
+
+**提炼与摘要生成未通过，且不是本轮代码缺陷。** 服务端 `LanCapture.process_pending` 自 2026-09-21 04:25 起，对 35 个已归属头版本全部记为 `extraction_failed`（最后一个成功的头版本停留在 2026-09-20 17:36）。用 `kimi_hooks._load_llm_config` + `_call_llm_with_retry` 直连诊断：`provider=deepseek`、`model=deepseek-v4-flash`、`api.deepseek.com` 返回 **HTTP 401 `credentials/quota unavailable`**，服务日志亦大量 `project rollup failed: llm_no_response`；`RetryableExtractionError` 属 `RuntimeError` 而非 `LanError`，因此在状态里只落成通用的 `extraction_failed`。本轮未读取、未替换任何密钥文件，需由用户更新 DeepSeek 凭据后重跑。受其影响，受控归档 1751 的 `extraction_status` 同样为 `failed`，只验证到加密归档一步。
+
+### 待用户实测（不得视为已验收）
+
+桌面模型是否实际采用注入全文；恢复、清空、手动与自动压缩后的重新加载；真实断网重启后的补传；多项目与未绑定目录归属；完整桌面生命周期与工具逐项调用。本轮跨端一致性在 Windows hook 与 Linux 直连两侧取数，桌面端实际交付仍以用户新会话复测为准，不据此宣布完整生命周期验收。
