@@ -22,7 +22,15 @@ if ($WorkerProbe) {
         $bytes = [Convert]::FromBase64String($Arguments.content_b64)
         if ($Arguments.offset -ne 0 -or $Arguments.total_bytes -ne $bytes.Length) { throw 'Unexpected small-test chunk.' }
         [IO.File]::WriteAllBytes((Join-Path $TestRoot ($Arguments.sha256 + '.received')), $bytes)
-        return [pscustomobject]@{ status='archived'; next_offset=$bytes.Length; source_sha256=$Arguments.sha256; archive_id='isolated'; extraction_status='pending' }
+        # Contract-shaped receipt: echo the version's order and report current
+        # only for the snapshot the client explicitly declares as its current.
+        $order = if ($Arguments.Contains('source_order')) { [int64]$Arguments.source_order } else { $null }
+        $declared = $Arguments.Contains('current_sha256') -and
+            ([string]$Arguments.current_sha256 -ceq [string]$Arguments.sha256)
+        return [pscustomobject]@{
+            status='archived'; next_offset=$bytes.Length; source_sha256=$Arguments.sha256
+            source_order=$order; current=$declared; archive_id='isolated'; extraction_status='pending'
+        }
     }
     Invoke-Worker (Get-Config)
     exit 0

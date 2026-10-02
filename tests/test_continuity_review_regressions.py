@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import sqlite3
 import uuid
 
 import pytest
@@ -33,7 +34,7 @@ from evolvmem.continuity_models import (
     ContinuityResumeRequest,
 )
 from evolvmem.continuity_service import ContinuityService
-from evolvmem.project_store import ProjectStoreError
+from evolvmem.project_store import ProjectStore, ProjectStoreError
 from evolvmem.workspace_identity import WorkspaceIdentityProvider
 
 
@@ -141,6 +142,58 @@ def env(tmp_path, monkeypatch):
             tmp_path, workspace, sessions, tmp_path / "backfill-state.json",
             store, provider, ContinuityService(config, store, provider),
         )
+
+
+def _project_store(env) -> ProjectStore:
+    return ProjectStore(
+        env.store._connection(), env.store._require_transaction, generic_names=()
+    )
+
+
+def _merge_to_canonical(env, source, canonical, alias):
+    """Replay the coordinator's evidence-backed merge shape on temp data.
+
+    Data setup, not a begin call: the source registry row stays as an archived
+    audit record, while the alias, the workstreams, the focus row and the
+    workspace binding all point at the canonical project.
+    """
+    conn = env.store._connection()
+    with env.store.transaction():
+        projects = _project_store(env)
+        projects.register_project(canonical)
+        projects.add_alias(alias, canonical)
+        for table in (
+            "continuity_workstreams",
+            "continuity_focus",
+            "context_project_workspace_bindings",
+        ):
+            conn.execute(
+                f"UPDATE {table} SET project=? WHERE project=?",
+                (canonical, source),
+            )
+        row = conn.execute(
+            "SELECT revision FROM context_project_registry WHERE project=?",
+            (source,),
+        ).fetchone()
+        projects.archive_project(source, expected_revision=int(row["revision"]))
+
+
+def _registry(env):
+    return {
+        row["project"]: row["status"]
+        for row in env.store._connection().execute(
+            "SELECT project, status FROM context_project_registry"
+        )
+    }
+
+
+def _bindings(env):
+    return [
+        (row["project"], row["state"])
+        for row in env.store._connection().execute(
+            "SELECT project, state FROM context_project_workspace_bindings"
+        )
+    ]
 
 
 def user(text):
@@ -264,6 +317,196 @@ def test_case_variant_registration_preserves_project_identity(env):
     )]
     assert len(projects) == 1, f"Case variant created conflicting projects: {projects}"
     assert env.resume("Alpha").workstream_id == original.workstream_id
+
+
+def test_begin_resolves_archived_alias_to_active_canonical(env):
+    original = env.begin(
+        "实现AI采购审批", project="AI采购",
+        completed_steps=("梳理采购审批字段",), next_action="接通审批流",
+    )
+    _merge_to_canonical(env, source="AI采购", canonical="ai_purchase", alias="AI采购")
+
+    replayed = env.begin("实现AI采购审批", project="AI采购")
+
+    assert replayed.project == "ai_purchase"
+    assert replayed.workstream_id == original.workstream_id
+    assert replayed.created is False
+    assert replayed.registered is False
+    assert replayed.alias_added is False
+    assert replayed.checkpoint_revision == original.checkpoint_revision
+    assert replayed.focus_revision == original.focus_revision
+    assert env.payload(original.workstream_id)["objective"] == "实现AI采购审批"
+    # 旧登记行只作为 archived 审计记录保留，不得再生出同名 active 项目
+    assert _registry(env) == {"AI采购": "archived", "ai_purchase": "active"}
+    # 原有绑定迁移后即复用，begin 不新增绑定
+    assert _bindings(env) == [("ai_purchase", "active")]
+    rows = env.rows()
+    assert len(rows) == 1, "begin recreated a workstream instead of reusing it"
+    assert rows[0]["id"] == original.workstream_id
+    assert rows[0]["project"] == "ai_purchase"
+    assert rows[0]["workspace_fingerprint"] == env.provider.resolve(
+        str(env.workspace)
+    ).fingerprint
+
+    # 同一声明再带上原中文别名：该别名本就属于这个 canonical，不冲突不新增
+    replayed_with_alias = env.begin(
+        "实现AI采购审批", project="AI采购", alias="AI采购"
+    )
+    assert replayed_with_alias.project == "ai_purchase"
+    assert replayed_with_alias.workstream_id == original.workstream_id
+    assert replayed_with_alias.alias_added is False
+    assert _registry(env) == {"AI采购": "archived", "ai_purchase": "active"}
+    assert _bindings(env) == [("ai_purchase", "active")]
+
+
+def test_begin_via_resolved_alias_registers_new_alias_on_canonical(env):
+    env.begin("实现AI采购审批", project="AI采购")
+    _merge_to_canonical(env, source="AI采购", canonical="ai_purchase", alias="AI采购")
+
+    result = env.begin("实现AI采购审批", project="AI采购", alias="采购")
+
+    assert result.project == "ai_purchase"
+    assert result.alias_added is True, "新别名必须挂在 canonical 上而非声明名上"
+    aliases = {
+        row["alias"]: row["project"]
+        for row in env.store._connection().execute(
+            "SELECT alias, project FROM context_project_aliases"
+        )
+    }
+    assert aliases == {"AI采购": "ai_purchase", "采购": "ai_purchase"}
+
+
+def test_begin_resolves_registered_english_alias_to_canonical(env):
+    original = env.begin("Implement approvals", project="alpha", alias="approval")
+
+    replayed = env.begin("Implement approvals", project="approval")
+
+    assert replayed.project == "alpha"
+    assert replayed.workstream_id == original.workstream_id
+    assert replayed.created is False
+    assert replayed.registered is False
+    assert _registry(env) == {"alpha": "active"}
+    assert len(env.rows()) == 1
+
+
+def test_begin_rejects_alias_conflicting_with_same_named_active_canonical(env):
+    env.begin("Alpha task", project="AI采购")
+    env.begin("Purchase task", project="ai_purchase")
+    with env.store.transaction():
+        _project_store(env).add_alias("AI采购", "ai_purchase")
+
+    with pytest.raises(ContinuityError) as failure:
+        env.begin("Third task", project="AI采购")
+
+    assert failure.value.code == "alias_conflict", (
+        "同名 active canonical 与指向他处的 alias 是冲突，必须报错而不是猜"
+    )
+    assert _registry(env) == {"AI采购": "active", "ai_purchase": "active"}
+    assert len(env.rows()) == 2, "被拒绝的 begin 不得留下半登记状态"
+
+
+def test_begin_rejects_alias_to_archived_target(env):
+    env.begin("Purchase task", project="ai_purchase")
+    conn = env.store._connection()
+    with env.store.transaction():
+        projects = _project_store(env)
+        projects.add_alias("AI采购", "ai_purchase")
+        row = conn.execute(
+            "SELECT revision FROM context_project_registry WHERE project='ai_purchase'"
+        ).fetchone()
+        projects.archive_project("ai_purchase", expected_revision=int(row["revision"]))
+
+    with pytest.raises(ContinuityError) as failure:
+        env.begin("New task", project="AI采购")
+
+    assert failure.value.code == "project_archived"
+    assert _registry(env) == {"ai_purchase": "archived"}, "别名不得回退注册同名项目"
+    assert len(env.rows()) == 1
+
+
+def test_begin_rejects_alias_with_missing_target(env):
+    env.begin("Purchase task", project="ai_purchase")
+    with env.store.transaction():
+        _project_store(env).add_alias("AI采购", "ai_purchase")
+    # 模拟离线维护清掉了目标登记行：别名悬空时绝不能回退注册
+    raw = sqlite3.connect(str(env.store.config.db_path))
+    try:
+        raw.execute("PRAGMA foreign_keys=OFF")
+        raw.execute("DELETE FROM context_project_registry WHERE project='ai_purchase'")
+        raw.commit()
+    finally:
+        raw.close()
+
+    with pytest.raises(ContinuityError) as failure:
+        env.begin("New task", project="AI采购")
+
+    assert failure.value.code == "alias_conflict"
+    assert _registry(env) == {}, "悬空别名不得回退注册同名项目"
+    assert len(env.rows()) == 1
+
+
+def test_begin_via_alias_with_new_objective_creates_task_in_canonical(env):
+    original = env.begin("实现AI采购审批", project="AI采购")
+    _merge_to_canonical(env, source="AI采购", canonical="ai_purchase", alias="AI采购")
+
+    created = env.begin("实现AI采购对账", project="AI采购")
+
+    assert created.project == "ai_purchase"
+    assert created.workstream_id != original.workstream_id
+    assert created.created is True
+    assert _registry(env) == {"AI采购": "archived", "ai_purchase": "active"}
+    assert _bindings(env) == [("ai_purchase", "active")]
+    assert {row["project"] for row in env.rows()} == {"ai_purchase"}
+    assert env.payload(created.workstream_id)["objective"] == "实现AI采购对账"
+    assert env.payload(original.workstream_id)["objective"] == "实现AI采购审批"
+
+
+def test_begin_without_alias_keeps_existing_registration_behavior(env):
+    created = env.begin("中文任务", project="中文项目")
+
+    assert created.project == "中文项目"
+    assert created.registered is True
+    assert _registry(env) == {"中文项目": "active"}
+
+    conn = env.store._connection()
+    with env.store.transaction():
+        row = conn.execute(
+            "SELECT revision FROM context_project_registry WHERE project='中文项目'"
+        ).fetchone()
+        _project_store(env).archive_project(
+            "中文项目", expected_revision=int(row["revision"])
+        )
+
+    with pytest.raises(ContinuityError) as failure:
+        env.begin("中文任务", project="中文项目")
+
+    assert failure.value.code == "project_archived", "无别名时 archived 同名项目照旧拒绝"
+
+
+def test_begin_never_fuzzy_matches_a_merged_alias(env):
+    env.begin("实现AI采购审批", project="AI采购")
+    _merge_to_canonical(env, source="AI采购", canonical="ai_purchase", alias="AI采购")
+
+    unrelated = env.begin("无关任务", project="AI采购部")
+
+    assert unrelated.project == "AI采购部"
+    assert unrelated.registered is True
+    assert _registry(env) == {
+        "AI采购": "archived",
+        "ai_purchase": "active",
+        "AI采购部": "active",
+    }
+
+
+def test_begin_request_alias_cannot_steal_another_projects_alias(env):
+    env.begin("Alpha task", project="alpha", alias="approval")
+
+    with pytest.raises(ContinuityError) as failure:
+        env.begin("Beta task", project="beta", alias="approval")
+
+    assert failure.value.code == "alias_conflict"
+    assert _registry(env) == {"alpha": "active"}, "被拒绝的 begin 不得半登记 beta"
+    assert len(env.rows()) == 1
 
 
 @pytest.mark.parametrize("action,status", [("complete", "completed"), ("cancel", "cancelled")])

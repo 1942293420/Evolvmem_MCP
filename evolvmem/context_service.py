@@ -754,7 +754,9 @@ class ContextService:
         # 预留名额与字符预算；标记不改变任何准入闸门，未通过闸门时等同未标记。
         reserved_id = self._ready_project_summary_context_id(project)
         candidates_pool, ownership_exclusions, unverified = (
-            self._session_candidates(project, request.query)
+            self._session_candidates(
+                project, request.query, reserved_id=reserved_id
+            )
         )
         candidates = tuple(
             ContextRenderCandidate(
@@ -1018,7 +1020,7 @@ class ContextService:
         return min(configured, max_chars)
 
     def _session_candidates(
-        self, project: str, query: str
+        self, project: str, query: str, *, reserved_id: int | None = None
     ) -> tuple[
         tuple[ContextSearchResult, ...],
         tuple[ContextOwnershipExclusion, ...],
@@ -1031,6 +1033,10 @@ class ContextService:
         withheld from the default injection surface, while items with no
         resolution record stay injectable and are reported as unverified.
         Nothing here infers a project from text or rewrites a record.
+
+        ``reserved_id`` is the caller's ready-rollup summary id. It only keeps
+        that surviving id inside the ``top_k`` cap; the ownership gate still has
+        the final say, so a withheld summary stays withheld.
         """
         top_k = min(max(self.config.context_inject_max_items, 1), 20)
         # Over-fetch before the trust gates so a high-scoring *excluded* record
@@ -1079,7 +1085,18 @@ class ContextService:
             item_id
             for item_id in by_id
             if item_id in set(kept_ids) or item_id in exempt_ids
-        ][:top_k]
+        ]
+        # The renderer reserves a slot and a character budget for the project's
+        # ready summary, so the candidate cap must never truncate that exact id
+        # away: a full top_k of pinned policies would otherwise make the
+        # reservation unreachable and silently drop the summary from recall.
+        # The surviving id is appended *on top of* the cap rather than replacing
+        # one of the top_k, so the renderer still sees the overflow and can
+        # report it as an over_budget exclusion instead of losing it uncounted.
+        if reserved_id is not None and reserved_id in kept_order[top_k:]:
+            kept_order = kept_order[:top_k] + [reserved_id]
+        else:
+            kept_order = kept_order[:top_k]
         exclusions = tuple(
             ContextOwnershipExclusion(item_id=item_id, reason=reason)
             for item_id, reason in excluded

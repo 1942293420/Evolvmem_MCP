@@ -82,9 +82,21 @@ def _result(**overrides):
     return ContextSearchResult(**values)
 
 
-def _candidate(context_id, l1, **overrides):
+def _candidate(context_id, l1, *, reserved=False, **overrides):
     overrides["id"] = context_id
-    return ContextRenderCandidate(result=_result(**overrides), l1=l1)
+    return ContextRenderCandidate(
+        result=_result(**overrides), l1=l1, reserved=reserved
+    )
+
+
+def _rollup_summary(context_id, l1, **overrides):
+    """The exact current ready project-rollup summary, reserved by the caller."""
+    overrides.setdefault("content_type", ContextContentType.PROJECT_SUMMARY)
+    overrides.setdefault("match_types", (ContextMatchType.PROJECT_CONTEXT,))
+    overrides.setdefault(
+        "identity_key", "project:proj:knowledge:current"
+    )
+    return _candidate(context_id, l1, reserved=True, **overrides)
 
 
 def _pinned(context_id, l1, **overrides):
@@ -257,6 +269,90 @@ def test_total_item_cap_is_never_exceeded(test_config):
         ContextExclusionCount(reason="over_budget", count=8),
     )
     assert result.used_chars == len(result.block)
+
+
+def test_reserved_current_rollup_summary_keeps_one_slot_when_the_cap_is_full(
+    test_config,
+):
+    """足够预算下，12 个 pinned 占满条目上限仍必须注入确切当前摘要。"""
+    renderer = ContextRenderer(test_config)
+    pinned = tuple(_pinned(i, "p") for i in range(1, 13))
+    summary = _rollup_summary(99, "current ready rollup summary")
+
+    result = renderer.render(pinned + (summary,), project="proj")
+
+    assert 99 in result.selected_ids
+    assert len(result.selected_ids) <= test_config.context_inject_max_items
+    assert result.used_chars <= test_config.context_inject_max_chars
+    # The reservation holds exactly one of the 12 slots back from pinned.
+    assert len(result.selected_ids) == test_config.context_inject_max_items
+    assert result.selection_reasons[-1] is ContextSelectionReason.PROJECT_CONTEXT
+    assert result.block.index("current ready rollup summary") > 0
+    assert _excluded_dict(result) == {"over_budget": 1}
+
+
+def test_reserved_summary_never_raises_the_one_item_cap(test_config):
+    """max_items=1 时预留只占该唯一名额，绝不超发。"""
+    test_config.context_inject_max_items = 1
+    renderer = ContextRenderer(test_config)
+    pinned = tuple(_pinned(i, "p") for i in range(1, 4))
+    summary = _rollup_summary(99, "current ready rollup summary")
+
+    result = renderer.render(pinned + (summary,), project="proj")
+
+    assert result.selected_ids == (99,)
+    assert len(result.selected_ids) <= test_config.context_inject_max_items
+    assert _excluded_dict(result) == {"over_budget": 3}
+
+
+def test_reserved_summary_never_outranks_the_eligibility_gates(test_config):
+    """预留只解决预算竞争；confidence 等闸门仍先于预留生效。"""
+    renderer = ContextRenderer(test_config)
+    pinned = tuple(_pinned(i, "p") for i in range(1, 13))
+    summary = _rollup_summary(99, "current ready rollup summary", confidence=0.1)
+
+    result = renderer.render(pinned + (summary,), project="proj")
+
+    assert 99 not in result.selected_ids
+    assert len(result.selected_ids) == test_config.context_inject_max_items
+    assert _excluded_dict(result) == {"below_confidence": 1}
+
+
+def test_reserved_summary_that_alone_overflows_the_budget_stays_excluded(
+    test_config,
+):
+    """预留不得突破全局 max_chars：单条超预算时仍按 over_budget 排除。"""
+    renderer = ContextRenderer(test_config)
+    l1 = "s" * 300
+    summary = _rollup_summary(99, l1)
+    test_config.context_inject_max_chars = (
+        _WRAPPER_CHARS + _item_chars(99, "project_summary", "project_context", l1) - 1
+    )
+
+    result = renderer.render((summary,), project="proj")
+
+    assert result.block == ""
+    assert result.selected_ids == ()
+    assert result.used_chars == 0
+    assert _excluded_dict(result) == {"over_budget": 1}
+
+
+def test_unreserved_summary_is_still_squeezed_out_by_a_full_cap(test_config):
+    """无预留标记时保持原有竞争行为：pinned 占满则普通摘要被挤出。"""
+    renderer = ContextRenderer(test_config)
+    pinned = tuple(_pinned(i, "p") for i in range(1, 13))
+    summary = _candidate(
+        99,
+        "ordinary summary",
+        content_type=ContextContentType.PROJECT_SUMMARY,
+        match_types=(ContextMatchType.PROJECT_CONTEXT,),
+    )
+
+    result = renderer.render(pinned + (summary,), project="proj")
+
+    assert result.selected_ids == tuple(range(1, 13))
+    assert 99 not in result.selected_ids
+    assert _excluded_dict(result) == {"over_budget": 1}
 
 
 def test_total_char_cap_is_never_exceeded(test_config):
@@ -607,6 +703,10 @@ def test_candidate_and_result_contracts_are_typed_and_immutable():
         ContextRenderCandidate(result="result", l1="body")  # type: ignore[arg-type]
     with pytest.raises(ContextValidationError, match="l1"):
         ContextRenderCandidate(result=_result(), l1=1)  # type: ignore[arg-type]
+    with pytest.raises(ContextValidationError, match="reserved"):
+        ContextRenderCandidate(  # type: ignore[arg-type]
+            result=_result(), l1="body", reserved=1
+        )
 
     result = ContextRenderResult(
         block="",

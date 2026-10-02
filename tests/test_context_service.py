@@ -5,6 +5,7 @@ from dataclasses import fields
 from datetime import datetime, timezone
 import fcntl
 import json
+import logging
 import os
 from pathlib import Path
 import sqlite3
@@ -277,6 +278,22 @@ def make_service(config, store, *, mode=ContextMode.SHADOW, **dependencies):
     return instance
 
 
+def mark_rollup(store, project: str, context_id: int, *, status: str = "ready"):
+    """Point the project's rollup row at an existing summary item."""
+    with store.transaction():
+        store._connection().execute(
+            "INSERT INTO context_project_rollups (project, current_context_id,"
+            " source_set_hash, covered_through, generator_version, status,"
+            " revision, updated_at) VALUES (?, ?, '', '', 'test-suite', ?, 1, ?)",
+            (
+                project,
+                context_id,
+                status,
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+
+
 def test_health_refreshes_fts_snapshot_after_another_client_write(service, store, test_config):
     item = add_item(store, 'project:proj:fact:other-client')
     assert service._quick_check_diagnostics() == ()
@@ -292,6 +309,41 @@ def test_health_snapshot_refresh_still_detects_corrupt_fts(service, store, test_
     with sqlite3.connect(test_config.db_path) as other:
         other.execute("UPDATE context_layers_fts_content SET c0='corrupted index content'")
     assert service._quick_check_diagnostics() == ('quick_check_failed',)
+
+
+def test_health_committed_check_is_independent_of_resident_fts_cache(service, store, monkeypatch):
+    """A stale resident FTS handle must not turn a valid committed DB unhealthy."""
+    add_item(store, 'project:proj:fact:resident-cache')
+    real = store._connection()
+
+    class StaleResident:
+        in_transaction = False
+
+        def execute(self, sql, *args):
+            if sql == 'PRAGMA quick_check':
+                class Rows:
+                    def fetchall(self):
+                        return [('fts5: checksum mismatch for table "context_layers_fts"',)]
+                return Rows()
+            return real.execute(sql, *args)
+
+    monkeypatch.setattr(store, '_connection', lambda: StaleResident())
+    assert service._quick_check_diagnostics() == ()
+
+
+def test_health_inside_transaction_checks_uncommitted_damage(service, store):
+    """Fresh committed snapshots must not hide invalid writes in our transaction."""
+    add_item(store, 'project:proj:fact:transaction-integrity')
+    class RollBackProbe(Exception):
+        pass
+    with pytest.raises(RollBackProbe):
+        with store.transaction():
+            store._connection().execute(
+                "UPDATE context_layers_fts_content SET c0='corrupted uncommitted index'"
+            )
+            assert service._quick_check_diagnostics() == ('quick_check_failed',)
+            raise RollBackProbe()
+    assert service._quick_check_diagnostics() == ()
 
 
 def _search_request(**overrides):
@@ -764,6 +816,128 @@ def test_primary_mode_degrades_on_any_config_diagnostic(test_config, store):
     service.close()
 
 
+# ---- primary health transition logging ----
+
+
+def _health_warnings(caplog):
+    return [
+        record
+        for record in caplog.records
+        if record.name == "evolvmem.context_service"
+        and record.levelno >= logging.WARNING
+    ]
+
+
+def test_primary_health_failure_logs_once_and_does_not_repeat(
+    test_config, store, caplog
+):
+    add_item(store, "alpha")
+    vector = FakeVectorIndex(test_config, count=1)
+    service = make_service(
+        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector
+    )
+    with caplog.at_level(logging.WARNING, logger="evolvmem.context_service"):
+        service._refresh_health()  # steady healthy state: silent
+        assert _health_warnings(caplog) == []
+
+        vector._dirty = True
+        service._refresh_health()
+        service._refresh_health()  # identical failure: no second line
+
+    warnings = _health_warnings(caplog)
+    assert [record.getMessage() for record in warnings] == [
+        "context health degraded_legacy: context_vector_dirty"
+    ]
+    assert warnings[0].levelno == logging.WARNING
+    assert service.status().ready is False
+    service.close()
+
+
+def test_primary_health_failure_code_change_logs_new_state(
+    test_config, store, caplog
+):
+    add_item(store, "alpha")
+    vector = FakeVectorIndex(test_config, count=1, dirty=True)
+    service = make_service(
+        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector
+    )
+    with caplog.at_level(logging.WARNING, logger="evolvmem.context_service"):
+        service._refresh_health()  # startup failure, same code: silent
+        vector._dirty = False
+        vector._count = 5
+        service._refresh_health()
+        service._refresh_health()  # same new failure: silent
+
+    assert [record.getMessage() for record in _health_warnings(caplog)] == [
+        "context health degraded_legacy: context_vector_dirty",
+        "context health degraded_legacy: context_vector_count_mismatch",
+    ]
+    service.close()
+
+
+def test_primary_health_recovery_logs_once(test_config, store, caplog):
+    add_item(store, "alpha")
+    vector = FakeVectorIndex(test_config, count=1, dirty=True)
+    service = make_service(
+        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector
+    )
+    with caplog.at_level(logging.WARNING, logger="evolvmem.context_service"):
+        vector._dirty = False
+        service._refresh_health()
+        service._refresh_health()  # steady recovery: no second line
+
+    assert [record.getMessage() for record in _health_warnings(caplog)] == [
+        "context health degraded_legacy: context_vector_dirty",
+        "context health recovered: ready",
+    ]
+    assert service.status().ready is True
+    assert service.status().reason_codes == ()
+    service.close()
+
+
+def test_primary_health_transition_logs_whitelisted_codes_only(
+    test_config, store, monkeypatch, caplog
+):
+    add_item(store, "alpha")
+    vector = FakeVectorIndex(test_config, count=1)
+    service = make_service(
+        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector
+    )
+    unsafe = "embedding_model_filename unusable at /home/alice/secret-model.onnx"
+
+    def _unsafe_runtime(*_args, **_kwargs):
+        return (unsafe,)
+
+    monkeypatch.setattr(test_config, "validate_runtime", _unsafe_runtime)
+    with caplog.at_level(logging.WARNING, logger="evolvmem.context_service"):
+        service._refresh_health()
+        service._refresh_health()  # identical unknown state: silent
+
+    assert [record.getMessage() for record in _health_warnings(caplog)] == [
+        "context health degraded_legacy: unknown_diagnostic"
+    ]
+    assert "secret-model" not in caplog.text
+    assert "/home/alice" not in caplog.text
+    # the health computation itself still reports the raw config diagnostic
+    assert unsafe in service.status().diagnostics
+    service.close()
+
+
+def test_primary_health_steady_state_logs_nothing(test_config, store, caplog):
+    add_item(store, "alpha")
+    with caplog.at_level(logging.WARNING, logger="evolvmem.context_service"):
+        service = make_service(
+            test_config, store, mode=ContextMode.PRIMARY,
+            vector_index=FakeVectorIndex(test_config, count=1),
+        )
+        service._refresh_health()
+        service._refresh_health()
+        assert service.status().ready is True
+
+    assert _health_warnings(caplog) == []
+    service.close()
+
+
 # ---- status privacy ----
 
 
@@ -958,6 +1132,132 @@ def test_session_start_dedupes_retriever_hits_and_pinned_seeds_by_id(
     assert project == "proj"
     assert max_chars is None
     assert store.pinned_seed_calls == [("proj", test_config.context_min_confidence)]
+    service.close()
+
+
+def test_session_start_reserves_the_exact_current_ready_rollup_summary(
+    test_config, store
+):
+    """12 pinned 占满条目上限时，确切当前 ready 项目摘要仍被注入且不超限。"""
+    test_config.context_min_confidence = 0.5
+    for index in range(12):
+        add_item(
+            store,
+            f"policy-{index}",
+            content_type=ContextContentType.WORKFLOW_POLICY,
+            tier=ContextTier.PINNED,
+            l1="p",
+        )
+    summary = add_item(
+        store,
+        "project:proj:knowledge:current",
+        content_type=ContextContentType.PROJECT_SUMMARY,
+        confidence=0.5,
+        importance=9.0,
+        l0="EvolvMem 修复 USearch 崩溃并推进每日摘要。",
+        l1="1. 已固定 usearch 2.26.2。\n2. 每日摘要注入待验证。",
+    )
+    mark_rollup(store, "proj", summary.id)
+    service = make_service(
+        test_config, store, retriever=FakeRetriever(results=())
+    )
+
+    result = service.session_start(_session_request())
+
+    assert summary.id in result.selected_ids
+    assert len(result.selected_ids) == test_config.context_inject_max_items
+    assert result.used_chars <= test_config.context_inject_max_chars
+    assert {entry.reason: entry.count for entry in result.excluded_counts} == {
+        "over_budget": 1
+    }
+    assert store.update_access_calls == [list(result.selected_ids)]
+    service.close()
+
+
+def test_session_start_project_only_keeps_the_reservation_and_isolation(
+    test_config, store
+):
+    """项目提及召回路径（project_only）同样注入当前摘要且不混入其他项目。"""
+    test_config.context_min_confidence = 0.5
+    for index in range(12):
+        add_item(
+            store,
+            f"policy-{index}",
+            content_type=ContextContentType.WORKFLOW_POLICY,
+            tier=ContextTier.PINNED,
+            l1="p",
+        )
+    summary = add_item(
+        store,
+        "project:proj:knowledge:current",
+        content_type=ContextContentType.PROJECT_SUMMARY,
+        confidence=0.5,
+        l1="current project rollup detail",
+    )
+    other = add_item(
+        store,
+        "project:other:knowledge:current",
+        content_type=ContextContentType.PROJECT_SUMMARY,
+        confidence=0.5,
+        project="other",
+        l1="other project detail",
+    )
+    mark_rollup(store, "proj", summary.id)
+    mark_rollup(store, "other", other.id)
+    retriever = FakeRetriever(
+        results=(
+            _result(
+                id=other.id,
+                project="other",
+                content_type=ContextContentType.PROJECT_SUMMARY,
+                match_types=(ContextMatchType.PROJECT_CONTEXT,),
+            ),
+        )
+    )
+    service = make_service(test_config, store, retriever=retriever)
+
+    result = service.session_start(_session_request(), project_only=True)
+
+    assert summary.id in result.selected_ids
+    assert other.id not in result.selected_ids
+    assert (other.id, ContextLayer.L1) not in store.get_layer_calls
+    assert len(result.selected_ids) == test_config.context_inject_max_items
+    service.close()
+
+
+def test_session_start_without_a_ready_rollup_keeps_the_old_competition(
+    test_config, store
+):
+    """无 ready rollup 指针时不做预留：12 pinned 照旧占满，行为不变。"""
+    test_config.context_min_confidence = 0.5
+    for index in range(12):
+        add_item(
+            store,
+            f"policy-{index}",
+            content_type=ContextContentType.WORKFLOW_POLICY,
+            tier=ContextTier.PINNED,
+            l1="p",
+        )
+    summary = add_item(
+        store,
+        "project:proj:knowledge:current",
+        content_type=ContextContentType.PROJECT_SUMMARY,
+        confidence=0.5,
+        l1="current project rollup detail",
+    )
+    service = make_service(
+        test_config, store, retriever=FakeRetriever(results=())
+    )
+
+    no_row = service.session_start(_session_request())
+    assert summary.id not in no_row.selected_ids
+    assert len(no_row.selected_ids) == test_config.context_inject_max_items
+
+    # A failed attempt keeps the old pointer but must not reserve either.
+    mark_rollup(store, "proj", summary.id, status="failed")
+    failed_row = service.session_start(_session_request())
+    assert summary.id not in failed_row.selected_ids
+    assert len(failed_row.selected_ids) == test_config.context_inject_max_items
     service.close()
 
 
