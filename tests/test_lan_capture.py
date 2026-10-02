@@ -328,3 +328,59 @@ def test_unbound_archive_backfill_stays_candidate(lan):
         'device_id': 'windows-main', 'session_id': 'session-1'})
     assert status['backfill']['code'] == 'candidate'
     assert status['backfill']['reason'] == 'workspace_unbound'
+
+
+def forked_transcript(session_id='child-1', parent_id='parent-1',
+                      text='子代理继承父会话历史后继续归档。'):
+    """Real Codex Desktop 0.155 fork/subagent shape.
+
+    The rollout leads with the child's own ``session_meta`` (carrying
+    ``forked_from_id``/``parent_thread_id`` plus a ``subagent`` source) and then
+    repeats the parent thread's ``session_meta`` as lineage metadata.
+    """
+    rows = [
+        {'type': 'session_meta', 'payload': {
+            'id': session_id, 'session_id': session_id, 'forked_from_id': parent_id,
+            'parent_thread_id': parent_id, 'cwd': r'C:\work\demo',
+            'originator': 'Codex Desktop', 'cli_version': '0.155.0-alpha.9.2',
+            'source': {'subagent': {'other': 'review'}}}},
+        {'type': 'session_meta', 'payload': {
+            'id': parent_id, 'session_id': parent_id, 'cwd': r'C:\work\demo',
+            'originator': 'Codex Desktop', 'cli_version': '0.155.0-alpha.9.2',
+            'source': 'cli'}},
+        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+         'content': [{'type': 'input_text', 'text': text}]}},
+    ]
+    return ('\n'.join(json.dumps(row, ensure_ascii=False) for row in rows) + '\n').encode()
+
+
+def test_forked_rollout_lineage_meta_is_not_a_session_mismatch(lan):
+    from evolvmem.codex_transcript import parse_transcript, workspace_details
+
+    raw = forked_transcript()
+    rows, messages = parse_transcript(raw, 'child-1')
+    assert messages == [{'role': 'user', 'content': '子代理继承父会话历史后继续归档。'}]
+    details = workspace_details(rows)
+    assert details['cwd'] == r'C:\work\demo'
+    assert details['parent_session_id'] == 'parent-1'
+    assert details['subagent'] is True
+    assert details['attribution_reason'] == ''
+
+
+def test_forked_rollout_archives_and_a_parent_still_cannot_claim_it(lan):
+    runtime, adapter = lan
+    raw = forked_transcript()
+
+    saved = upload(adapter, raw, session='child-1')
+
+    assert saved.get('status') == 'archived', saved
+    assert saved['source_sha256'] == hashlib.sha256(raw).hexdigest()
+    assert saved['total_bytes'] == len(raw)
+    archiver = SessionArchiver(runtime.server_for('jiangli').config,
+                               runtime.server_for('jiangli').context_service.store)
+    assert json.loads(archiver.read_payload(saved['archive_id']))['transcript'] == raw.decode()
+    # The documented rule is unchanged: a parent may never register the child's
+    # file, because that file's first session_meta carries the child's id.
+    assert upload(adapter, raw, session='parent-1')['error'] == 'session_id_mismatch'
+    assert runtime.server_for('jiangli').context_service.store._connection().execute(
+        'SELECT COUNT(*) FROM session_archives').fetchone()[0] == 1

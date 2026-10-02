@@ -54,8 +54,14 @@ def parse_transcript(raw: bytes, session_id: str) -> tuple[list[dict], list[dict
         raise LanError('invalid_transcript') from None
     if not rows or any(not isinstance(row, dict) for row in rows):
         raise LanError('invalid_transcript')
+    # Only the first session_meta identifies the transcript. Codex Desktop
+    # fork/subagent rollouts start with the session's own meta and then repeat
+    # the thread it was forked from (`forked_from_id`/`parent_thread_id`) as
+    # lineage metadata, so requiring every meta to match would reject every
+    # fork. A parent token registering its child's file still fails here
+    # because that file leads with the child's id.
     metadata = [row.get('payload') for row in rows if row.get('type') == 'session_meta']
-    if not metadata or any(not isinstance(p, dict) or p.get('id') != session_id for p in metadata):
+    if not metadata or not isinstance(metadata[0], dict) or metadata[0].get('id') != session_id:
         raise LanError('session_id_mismatch')
     messages = []
     previous = None
