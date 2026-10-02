@@ -23,6 +23,7 @@ from evolvmem.context_models import (
     ContextStatus,
     ContextTier,
     ContextVectorDocument,
+    SupersedeOutcome,
 )
 from evolvmem.legacy_projection import (
     LegacyProjectionRepository,
@@ -1216,11 +1217,19 @@ class ContextStore:
 
     def supersede_item(
         self, predecessor_id: int, draft: ContextItemDraft
-    ) -> ContextItem:
+    ) -> SupersedeOutcome:
         """Supersede the exact mapped predecessor and create its active successor.
 
         The predecessor is addressed by ID alone — never by identity — and
         both link directions are updated inside the caller's transaction.
+        The predecessor may already be superseded: a legacy projection can
+        hold several active rows for one key while Core keeps exactly one
+        active item per identity, so the row a caller is replacing can be a
+        historical anchor whose identity is currently owned by a *different*
+        active item. That occupant must be superseded in the same chain —
+        never left active (the partial unique index would reject the
+        successor) and never dropped (its evidence stays readable through the
+        supersession links).
         """
         self._require_transaction("supersede_item")
         validate_layers(draft.layers, self.config)
@@ -1237,6 +1246,21 @@ class ContextStore:
             "UPDATE context_items SET status='superseded', updated_at=? WHERE id=?",
             (now, predecessor_id),
         )
+        absorbed: list[int] = []
+        occupant_rows = conn.execute(
+            "SELECT id FROM context_items "
+            "WHERE identity_key=? AND project=? AND scope=? AND status='active' "
+            "AND id != ? ORDER BY id",
+            (draft.identity_key, draft.project, draft.scope.value, predecessor_id),
+        ).fetchall()
+        for row in occupant_rows:
+            occupant_id = int(row["id"])
+            absorbed.append(occupant_id)
+            conn.execute(
+                "UPDATE context_items SET status='superseded', superseded_by=?, "
+                "updated_at=? WHERE id=?",
+                (predecessor_id, now, occupant_id),
+            )
         successor = self._create_item_no_commit(
             draft, status=ContextStatus.ACTIVE, supersedes=predecessor_id
         )
@@ -1244,7 +1268,7 @@ class ContextStore:
             "UPDATE context_items SET superseded_by=?, updated_at=? WHERE id=?",
             (successor.id, now, predecessor_id),
         )
-        return successor
+        return SupersedeOutcome(successor=successor, absorbed=tuple(absorbed))
 
     def set_item_status(self, item_id: int, status: ContextStatus) -> bool:
         """Set one item's status; returns False when the id does not exist."""

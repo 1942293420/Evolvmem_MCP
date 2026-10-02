@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import sqlite3
 import pytest
 
 from tests.test_lan_sharing import lan
@@ -247,6 +248,33 @@ def test_extraction_provider_failure_is_distinct_from_archive_success(lan):
     assert status['status'] == 'archived'
     assert status['extraction_status'] == 'failed'
     assert status['processing_error'] == 'extraction_provider_unavailable'
+
+
+def test_unexpected_extraction_error_records_its_type_without_content(lan, monkeypatch):
+    """A non-LanError failure must stay diagnosable without leaking its message."""
+    from evolvmem import session_extraction
+
+    runtime, adapter = lan
+    credentials = runtime.settings.owner_data_dir / 'llm_credentials.json'
+    credentials.parent.mkdir(parents=True, exist_ok=True)
+    credentials.write_text(json.dumps({'provider': 'deepseek', 'api_key': 'fixture-only'}))
+    secret = '客户确认保留完整会话归档和任务断点。'
+    saved = upload(adapter, transcript(text=secret), extract=True)
+    assert saved['extraction_status'] == 'pending'
+
+    def exploding_prepare(*_args, **_kwargs):
+        raise sqlite3.IntegrityError(
+            'UNIQUE constraint failed: context_items.identity_key, '
+            'context_items.project, context_items.scope | ' + secret
+        )
+
+    monkeypatch.setattr(session_extraction, 'prepare_extraction', exploding_prepare)
+    assert adapter.process_pending() == 1
+    status = adapter.call_tool('jiangli', 'session_archive_status', {
+        'device_id': 'windows-main', 'session_id': 'session-1'})
+    assert status['extraction_status'] == 'failed'
+    assert status['processing_error'] == 'extraction_failed:IntegrityError'
+    assert secret not in json.dumps(status, ensure_ascii=False)
 
 
 def test_memory_revision_changes_on_native_write_but_not_repeated_reads(lan):

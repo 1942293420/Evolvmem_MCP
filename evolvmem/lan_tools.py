@@ -170,7 +170,12 @@ class LanTools:
                     receipt['project_summary_reason'] = 'project_summary_failed'
                 capture.finish_extraction(row, result=receipt)
         except Exception as exc:
-            reason = str(exc) if isinstance(exc, LanError) else 'extraction_failed'
+            if isinstance(exc, LanError):
+                reason = str(exc)
+            else:
+                # 类型名可诊断、正文不外泄：异常消息可能带上会话内容或本地路径，
+                # 而消费方（Windows 客户端与 trust_views）只需要区分故障类别。
+                reason = 'extraction_failed:' + type(exc).__name__
             with self.lock:
                 capture.finish_extraction(row, error=reason)
         return 1

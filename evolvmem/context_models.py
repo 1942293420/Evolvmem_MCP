@@ -228,6 +228,20 @@ class ContextItem:
 
 
 @dataclass(frozen=True, slots=True)
+class SupersedeOutcome:
+    """One exact-predecessor supersession plus any absorbed active occupant.
+
+    ``successor`` is the new active item. ``absorbed`` holds the ids of the
+    *other* items this write had to flip to ``superseded`` because they were
+    still active on the successor's exact identity triple; the predecessor is
+    not repeated there. An empty ``absorbed`` is the ordinary single-link case.
+    """
+
+    successor: ContextItem
+    absorbed: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ContextSearchHit:
     item_id: int
     score: float

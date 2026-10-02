@@ -48,3 +48,6 @@ live/
 .idea/
 .vscode/
 web_auth.json
+
+# Local diagnosis scratch: database copies, reproduced payloads, SQL traces
+.diag/

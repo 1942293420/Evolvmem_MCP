@@ -8,7 +8,9 @@ import pytest
 
 from evolvmem.context_models import (
     ContextContentType,
+    ContextItemDraft,
     ContextLayer,
+    ContextLayers,
     ContextMode,
     ContextScope,
     ContextServiceError,
@@ -564,6 +566,88 @@ def test_replace_supersedes_the_exact_mapped_predecessor_on_both_sides(test_conf
 
     assert store.resolve_legacy_mapping(result.legacy_id) == result.context_id
     assert store.resolve_legacy_mapping(old_legacy_id) == old_context_id
+    service.close()
+
+
+def test_replace_absorbs_the_active_occupant_of_a_superseded_predecessor(
+    test_config, store
+):
+    """A replace must not collide with another active item of the same identity.
+
+    Archive-1412 shape: the legacy projection holds more than one active row
+    for one key, so the row being replaced maps to a Context item that already
+    left active status while a *different* active item owns the successor's
+    identity triple. The partial unique index rejected that insert and the
+    whole extraction batch rolled back; the occupant now joins the
+    predecessor's supersession chain, and the active-only Context vector cache
+    drops it exactly like the ordinary predecessor.
+    """
+    _create_legacy_schema(test_config)
+    service = _make_service(test_config, store)
+    old_legacy_id, old_context_id = _seed_pair(
+        service, key="decision:language", value="Use Chinese.", attribute="decision"
+    )
+    predecessor_item = store.get_item(old_context_id)
+    # The row the replace will target is a historical anchor: its legacy row is
+    # still active, but its Context item already left active status.
+    with store.transaction():
+        store.set_item_status(old_context_id, ContextStatus.SUPERSEDED)
+    # A different item owns the identity in the meantime (the shape produced by
+    # 生产库里的手工候选确认：同一个 legacy key 的多条 active 行映射到同一个身份).
+    active_occupant = store.create_item(
+        ContextItemDraft(
+            identity_key=predecessor_item.identity_key,
+            content_type=predecessor_item.content_type,
+            layers=ContextLayers(
+                l0="Use Chinese for every reply.",
+                l1="A different active item owns the same identity.",
+                l2="Occupant evidence for the identity-collision regression.",
+                generator="test-suite",
+            ),
+            project=predecessor_item.project,
+            scope=predecessor_item.scope,
+            status=ContextStatus.ACTIVE,
+            tier=predecessor_item.tier,
+            tags=predecessor_item.tags,
+            importance=predecessor_item.importance,
+            confidence=predecessor_item.confidence,
+        )
+    )
+    assert store.resolve_legacy_mapping(old_legacy_id) == old_context_id
+
+    result = service.legacy_replace(
+        LegacyReplaceRequest(key="decision:language", new_value="Use Chinese only.")
+    )
+
+    assert result.changed is True
+    assert result.old_context_id == old_context_id
+    predecessor = store.get_item(old_context_id)
+    successor = store.get_item(result.context_id)
+    occupant = store.get_item(active_occupant.id)
+    assert successor.status is ContextStatus.ACTIVE
+    assert successor.supersedes == old_context_id
+    assert predecessor.status is ContextStatus.SUPERSEDED
+    assert predecessor.superseded_by == result.context_id
+    # The occupant is folded into the chain, never dropped and never left
+    # active next to the successor.
+    assert occupant.status is ContextStatus.SUPERSEDED
+    assert occupant.superseded_by == old_context_id
+    active_holders = store._connection().execute(
+        "SELECT id FROM context_items WHERE identity_key=? AND project=? "
+        "AND scope=? AND status='active'",
+        (successor.identity_key, successor.project, successor.scope.value),
+    ).fetchall()
+    assert [int(row["id"]) for row in active_holders] == [result.context_id]
+    # Both the ordinary predecessor and the absorbed occupant leave the
+    # active-only Context cache; the successor's L0 upsert is attempted (it
+    # degrades to the durable dirty marker without a loaded engine).
+    assert ("context", "remove", old_context_id) in service._test_context_index.calls
+    assert (
+        "context",
+        "remove",
+        active_occupant.id,
+    ) in service._test_context_index.calls
+    assert ("context", "mark_dirty") in service._test_context_index.calls
     service.close()
 
 

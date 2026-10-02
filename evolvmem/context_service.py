@@ -1610,6 +1610,7 @@ class ContextService:
             new_row, confidence=request.confidence, decision=decision
         )
         old_context_id = None
+        absorbed_context_ids: tuple[int, ...] = ()
         if old_legacy_id is None:
             item = self.store._create_legacy_item(draft)
         else:
@@ -1620,7 +1621,13 @@ class ContextService:
                 old_context_id = self._legacy_migrator().migrate_projection_row(
                     repository.get_by_id(old_legacy_id)
                 )
-            item = self.store.supersede_item(old_context_id, draft)
+            outcome = self.store.supersede_item(old_context_id, draft)
+            item = outcome.successor
+            # Core keeps exactly one active item per identity while the legacy
+            # projection can keep several active rows for one key; the mapped
+            # predecessor's identity may therefore be owned by another active
+            # item, which supersede_item folds into the same chain.
+            absorbed_context_ids = outcome.absorbed
         self.store.record_legacy_mapping(new_id, item.id)
         self._record_write_resolution(item.id, decision)
         new_l0 = item.layers.l0 if item.layers is not None else ""
@@ -1638,12 +1645,14 @@ class ContextService:
             # in the memories table, so its vector must stay too. Dropping it
             # would leave the reopened index one key short of all_ids and make
             # every startup count check rebuild the whole index. The context
-            # cache is active-only, so it still drops the predecessor.
+            # cache is active-only, so it still drops the predecessor and every
+            # absorbed occupant that just lost its active status.
             _VectorAftermath(
                 legacy_upserts=((new_id, request.new_value),),
                 context_upserts=((item.id, new_l0),),
                 context_removals=(
-                    (old_context_id,) if old_context_id is not None else ()
+                    ((old_context_id,) if old_context_id is not None else ())
+                    + absorbed_context_ids
                 ),
             ),
         )

@@ -975,11 +975,13 @@ def test_supersede_item_uses_the_exact_mapped_predecessor(store, draft_factory):
     )
 
     with store.transaction():
-        successor = store.supersede_item(
+        outcome = store.supersede_item(
             predecessor.id,
             draft_factory("project:test:fact:new-identity"),
         )
 
+    successor = outcome.successor
+    assert outcome.absorbed == ()
     old = store.get_item(predecessor.id)
     assert old.status is ContextStatus.SUPERSEDED
     assert old.superseded_by == successor.id
@@ -989,6 +991,73 @@ def test_supersede_item_uses_the_exact_mapped_predecessor(store, draft_factory):
     assert untouched.status is ContextStatus.CANDIDATE
     assert untouched.supersedes is None
     assert untouched.superseded_by is None
+
+
+def test_supersede_item_absorbs_the_active_occupant_of_the_successor_identity(
+    store, draft_factory
+):
+    """A superseded predecessor must not block its own identity's successor.
+
+    Reproduces the archive-1412 shape: the legacy projection replaced a row
+    whose mapped Context item was already superseded, while a *different*
+    active item held the successor's identity triple. The old behaviour let
+    the partial unique index reject the whole batch; the occupant now joins
+    the predecessor's supersession branch instead of being dropped or left
+    active next to the successor.
+    """
+    occupant = store.create_item(
+        draft_factory("project:test:fact:shared", status=ContextStatus.ACTIVE)
+    )
+    predecessor = store.create_item(
+        draft_factory("project:test:fact:shared", status=ContextStatus.CANDIDATE)
+    )
+    # The realistic shape: the active slot belongs to another row and the row
+    # the caller is replacing has already left active status.
+    with store.transaction():
+        store.set_item_status(predecessor.id, ContextStatus.SUPERSEDED)
+
+    with store.transaction():
+        outcome = store.supersede_item(
+            predecessor.id, draft_factory("project:test:fact:shared")
+        )
+
+    successor = outcome.successor
+    assert outcome.absorbed == (occupant.id,)
+    assert successor.status is ContextStatus.ACTIVE
+    assert successor.supersedes == predecessor.id
+    assert successor.identity_key == "project:test:fact:shared"
+    folded = store.get_item(occupant.id)
+    assert folded.status is ContextStatus.SUPERSEDED
+    assert folded.superseded_by == predecessor.id
+    old = store.get_item(predecessor.id)
+    assert old.status is ContextStatus.SUPERSEDED
+    assert old.superseded_by == successor.id
+    active = store._connection().execute(
+        "SELECT id FROM context_items WHERE identity_key=? AND project=? "
+        "AND scope=? AND status='active'",
+        ("project:test:fact:shared", "test", ContextScope.PROJECT.value),
+    ).fetchall()
+    assert [int(row["id"]) for row in active] == [successor.id]
+
+
+def test_supersede_item_keeps_the_single_link_when_the_predecessor_was_active(
+    store, draft_factory
+):
+    """An active predecessor with a free identity keeps one successor link."""
+    predecessor = store.create_item(
+        draft_factory("project:test:fact:chain", status=ContextStatus.ACTIVE)
+    )
+
+    with store.transaction():
+        outcome = store.supersede_item(
+            predecessor.id, draft_factory("project:test:fact:chain")
+        )
+
+    assert outcome.absorbed == ()
+    old = store.get_item(predecessor.id)
+    assert old.status is ContextStatus.SUPERSEDED
+    assert old.superseded_by == outcome.successor.id
+    assert outcome.successor.supersedes == predecessor.id
 
 
 def test_supersede_item_requires_a_transaction_and_an_existing_predecessor(

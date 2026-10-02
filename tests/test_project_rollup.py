@@ -29,7 +29,11 @@ from evolvmem.context_models import (
 )
 from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
-from evolvmem.legacy_models import LegacyExtractionItem, LegacyExtractionRequest
+from evolvmem.legacy_models import (
+    LegacyExtractionItem,
+    LegacyExtractionRequest,
+    LegacyReplaceRequest,
+)
 from evolvmem.memory_store import MemoryStore
 from evolvmem.project_rollup import ProjectRollupGenerator, ProjectRollupReport
 from evolvmem.project_store import ProjectStore
@@ -789,6 +793,93 @@ def test_persist_extraction_rolls_up_resolved_summary_project(test_config, dual_
         assert summary_item.project == "eva"
         gen = ProjectRollupGenerator(test_config, dual_store)
         assert gen.covered_source_ids("eva") == frozenset({summary_item.id})
+    finally:
+        service.close()
+
+
+def test_persist_extraction_replaces_over_another_active_identity_holder(
+    test_config, dual_store
+):
+    """A persisted candidate must not collide with an unmapped active holder.
+
+    Same batch shape as the LAN backlog failure: the legacy projection keeps
+    several active rows for one key, so the row a candidate replaces maps to a
+    Context item that already left active status while another active item
+    owns the candidate's identity triple. The write now folds that holder into
+    the supersession chain instead of letting the partial unique index abort
+    the whole batch.
+    """
+    _register(dual_store, "eva")
+    with MemoryStore(test_config) as legacy:
+        legacy.add(
+            key="decision:storage", value="Use SQLite first.", attribute="decision"
+        )
+    service = ContextService(test_config, store=dual_store)
+    service.initialize(mode=ContextMode.SHADOW, adapter="kimi")
+    try:
+        first = service.legacy_replace(
+            LegacyReplaceRequest(key="decision:storage", new_value="Use SQLite.")
+        )
+        predecessor_id = first.context_id
+        predecessor = dual_store.get_item(predecessor_id)
+        with dual_store.transaction():
+            dual_store.set_item_status(predecessor_id, ContextStatus.SUPERSEDED)
+        holder = dual_store.create_item(
+            ContextItemDraft(
+                identity_key=predecessor.identity_key,
+                content_type=predecessor.content_type,
+                layers=ContextLayers(
+                    l0="Use PostgreSQL instead.",
+                    l1="A different active item owns the identity.",
+                    l2="Holder evidence for the batch-level regression.",
+                    generator="test-suite",
+                ),
+                project=predecessor.project,
+                scope=predecessor.scope,
+                status=ContextStatus.ACTIVE,
+                tier=predecessor.tier,
+                tags=predecessor.tags,
+                importance=predecessor.importance,
+                confidence=predecessor.confidence,
+            )
+        )
+        assert dual_store.resolve_legacy_mapping(first.legacy_id) == predecessor_id
+
+        result = service.persist_legacy_extraction(
+            LegacyExtractionRequest(
+                summary=LegacyExtractionItem(
+                    key="project:eva:progress:log:wp3",
+                    value="本次完成提炼冲突修复并补齐回归验证。",
+                    attribute="fact",
+                    tags=("日志", "分类:eva"),
+                    confidence=1.0,
+                ),
+                candidates=(
+                    LegacyExtractionItem(
+                        key="decision:storage",
+                        value="Use PostgreSQL with a documented migration.",
+                        attribute="decision",
+                        confidence=0.9,
+                    ),
+                ),
+                max_writes=8,
+                source_session="session-wp3",
+            )
+        )
+
+        assert result.persisted == 2
+        successor = dual_store.get_item(result.candidates[0].context_id)
+        assert successor.status is ContextStatus.ACTIVE
+        assert successor.identity_key == predecessor.identity_key
+        assert successor.supersedes == predecessor_id
+        assert dual_store.get_item(holder.id).status is ContextStatus.SUPERSEDED
+        assert dual_store.get_item(holder.id).superseded_by == predecessor_id
+        active_holders = dual_store._connection().execute(
+            "SELECT id FROM context_items WHERE identity_key=? AND project=? "
+            "AND scope=? AND status='active'",
+            (successor.identity_key, successor.project, successor.scope.value),
+        ).fetchall()
+        assert [int(row["id"]) for row in active_holders] == [successor.id]
     finally:
         service.close()
 
