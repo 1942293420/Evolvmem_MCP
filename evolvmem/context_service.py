@@ -1628,6 +1628,12 @@ class ContextService:
             # predecessor's identity may therefore be owned by another active
             # item, which supersede_item folds into the same chain.
             absorbed_context_ids = outcome.absorbed
+            if absorbed_context_ids:
+                self._mirror_absorbed_holders(
+                    repository,
+                    absorbed_context_ids,
+                    predecessor_legacy_id=old_legacy_id,
+                )
         self.store.record_legacy_mapping(new_id, item.id)
         self._record_write_resolution(item.id, decision)
         new_l0 = item.layers.l0 if item.layers is not None else ""
@@ -1656,6 +1662,31 @@ class ContextService:
                 ),
             ),
         )
+
+    def _mirror_absorbed_holders(
+        self,
+        repository,
+        absorbed_context_ids: tuple[int, ...],
+        *,
+        predecessor_legacy_id: int,
+    ) -> None:
+        """Mirror one absorb onto the legacy projection inside the same transaction.
+
+        An absorbed item is a legacy row that Core had to supersede because it
+        owned the successor's identity triple. Leaving that legacy row active
+        would break the Core↔legacy invariant the projection checker enforces
+        (status and both supersession links must agree through the mapping), so
+        the row takes exactly the shape a normal dual-write replace gives its
+        superseded predecessor: ``superseded`` with ``superseded_by`` pointing
+        at the legacy row whose Context item absorbed it. Absorbed items
+        without a projection row (isolated candidates) have nothing to mirror.
+        """
+        for legacy_id in self.store.legacy_ids_mapped_to_items(
+            list(absorbed_context_ids)
+        ):
+            repository.mirror_superseded(
+                legacy_id, superseded_by=predecessor_legacy_id
+            )
 
     def legacy_remove(self, request: LegacyRemoveRequest) -> LegacyMutationResult:
         """Soft-delete the projection row and its mapped ContextItem."""

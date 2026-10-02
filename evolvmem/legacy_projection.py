@@ -262,6 +262,24 @@ class LegacyProjectionRepository:
         """Mark one row deleted; a nonexistent id is a compatible no-op."""
         return self.set_status(legacy_id, "deleted")
 
+    def mirror_superseded(self, legacy_id: int, *, superseded_by: int) -> bool:
+        """Mark one legacy row superseded with its successor's legacy id.
+
+        Used when a Core-side absorb supersedes a legacy row that the
+        projection itself never replaced: the row leaves active status and
+        mirrors the successor link so the Core↔legacy supersession chains stay
+        identical through the mapping. Returns False when the id is unknown;
+        an existing row is always rewritten, because the absorb chain is
+        newer evidence than whatever link the row carried before.
+        """
+        self._require_owner_transaction("mirror_superseded")
+        cursor = self._conn.execute(
+            "UPDATE memories SET status='superseded', superseded_by=?, "
+            "updated_at=? WHERE id=?",
+            (superseded_by, _now_iso(), legacy_id),
+        )
+        return cursor.rowcount > 0
+
     def set_status(self, legacy_id: int, status: str) -> bool:
         """Set one row's status; returns False when the id does not exist."""
         self._require_owner_transaction("set_status")

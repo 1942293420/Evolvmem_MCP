@@ -27,13 +27,16 @@ from evolvmem.context_models import (
     ContextStatus,
     ContextValidationError,
 )
+from evolvmem.context_migration import LegacyMemoryMigrator
 from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
+from evolvmem.cutover_checks import check_projection_lag
 from evolvmem.legacy_models import (
     LegacyExtractionItem,
     LegacyExtractionRequest,
     LegacyReplaceRequest,
 )
+from evolvmem.legacy_projection import LegacyProjectionInsert
 from evolvmem.memory_store import MemoryStore
 from evolvmem.project_rollup import ProjectRollupGenerator, ProjectRollupReport
 from evolvmem.project_store import ProjectStore
@@ -824,25 +827,24 @@ def test_persist_extraction_replaces_over_another_active_identity_holder(
         predecessor = dual_store.get_item(predecessor_id)
         with dual_store.transaction():
             dual_store.set_item_status(predecessor_id, ContextStatus.SUPERSEDED)
+        # The holder carries its own legacy row, exactly like the production
+        # fork; the mirror is what keeps the projection consistent.
+        with dual_store.transaction():
+            holder_legacy_id = dual_store.legacy_projection().insert(
+                LegacyProjectionInsert(
+                    key="decision:storage",
+                    value="Use PostgreSQL instead.",
+                    attribute="decision",
+                )
+            )
         holder = dual_store.create_item(
-            ContextItemDraft(
-                identity_key=predecessor.identity_key,
-                content_type=predecessor.content_type,
-                layers=ContextLayers(
-                    l0="Use PostgreSQL instead.",
-                    l1="A different active item owns the identity.",
-                    l2="Holder evidence for the batch-level regression.",
-                    generator="test-suite",
-                ),
-                project=predecessor.project,
-                scope=predecessor.scope,
+            LegacyMemoryMigrator(dual_store, test_config).draft_from_projection_row(
+                dual_store.legacy_projection().get_by_id(holder_legacy_id),
                 status=ContextStatus.ACTIVE,
-                tier=predecessor.tier,
-                tags=predecessor.tags,
-                importance=predecessor.importance,
-                confidence=predecessor.confidence,
             )
         )
+        with dual_store.transaction():
+            dual_store.record_legacy_mapping(holder_legacy_id, holder.id)
         assert dual_store.resolve_legacy_mapping(first.legacy_id) == predecessor_id
 
         result = service.persist_legacy_extraction(
@@ -874,6 +876,14 @@ def test_persist_extraction_replaces_over_another_active_identity_holder(
         assert successor.supersedes == predecessor_id
         assert dual_store.get_item(holder.id).status is ContextStatus.SUPERSEDED
         assert dual_store.get_item(holder.id).superseded_by == predecessor_id
+        holder_legacy = dual_store.legacy_projection().get_by_id(holder_legacy_id)
+        assert holder_legacy["status"] == "superseded"
+        assert holder_legacy["superseded_by"] == first.legacy_id
+        assert (
+            dual_store.legacy_projection().get_by_id(first.legacy_id)["superseded_by"]
+            == result.candidates[0].legacy_id
+        )
+        assert check_projection_lag(test_config, dual_store).projection_lag == 0
         active_holders = dual_store._connection().execute(
             "SELECT id FROM context_items WHERE identity_key=? AND project=? "
             "AND scope=? AND status='active'",

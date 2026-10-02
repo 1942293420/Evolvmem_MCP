@@ -8,9 +8,7 @@ import pytest
 
 from evolvmem.context_models import (
     ContextContentType,
-    ContextItemDraft,
     ContextLayer,
-    ContextLayers,
     ContextMode,
     ContextScope,
     ContextServiceError,
@@ -20,6 +18,8 @@ from evolvmem.context_models import (
 )
 from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
+from evolvmem.context_migration import LegacyMemoryMigrator
+from evolvmem.cutover_checks import check_projection_lag
 from evolvmem.legacy_models import (
     LegacyAccessRequest,
     LegacyAccessResult,
@@ -32,6 +32,7 @@ from evolvmem.legacy_models import (
     LegacyUpdateRequest,
 )
 from evolvmem.memory_store import MemoryStore
+from evolvmem.legacy_projection import LegacyProjectionInsert
 from evolvmem.vector_index import VectorIndex
 
 
@@ -587,33 +588,31 @@ def test_replace_absorbs_the_active_occupant_of_a_superseded_predecessor(
     old_legacy_id, old_context_id = _seed_pair(
         service, key="decision:language", value="Use Chinese.", attribute="decision"
     )
-    predecessor_item = store.get_item(old_context_id)
     # The row the replace will target is a historical anchor: its legacy row is
     # still active, but its Context item already left active status.
     with store.transaction():
         store.set_item_status(old_context_id, ContextStatus.SUPERSEDED)
-    # A different item owns the identity in the meantime (the shape produced by
-    # 生产库里的手工候选确认：同一个 legacy key 的多条 active 行映射到同一个身份).
+    # A second legacy row for the same key stays active and owns the identity
+    # in the meantime (生产库里的手工候选确认：同一个 legacy key 的多条 active
+    # 行映射到同一个身份).
+    with store.transaction():
+        holder_legacy_id = store.legacy_projection().insert(
+            LegacyProjectionInsert(
+                key="decision:language",
+                value="Use Chinese for every reply.",
+                attribute="decision",
+            )
+        )
     active_occupant = store.create_item(
-        ContextItemDraft(
-            identity_key=predecessor_item.identity_key,
-            content_type=predecessor_item.content_type,
-            layers=ContextLayers(
-                l0="Use Chinese for every reply.",
-                l1="A different active item owns the same identity.",
-                l2="Occupant evidence for the identity-collision regression.",
-                generator="test-suite",
-            ),
-            project=predecessor_item.project,
-            scope=predecessor_item.scope,
+        LegacyMemoryMigrator(store, test_config).draft_from_projection_row(
+            store.legacy_projection().get_by_id(holder_legacy_id),
             status=ContextStatus.ACTIVE,
-            tier=predecessor_item.tier,
-            tags=predecessor_item.tags,
-            importance=predecessor_item.importance,
-            confidence=predecessor_item.confidence,
         )
     )
+    with store.transaction():
+        store.record_legacy_mapping(holder_legacy_id, active_occupant.id)
     assert store.resolve_legacy_mapping(old_legacy_id) == old_context_id
+    assert _legacy_row(test_config, holder_legacy_id)["status"] == "active"
 
     result = service.legacy_replace(
         LegacyReplaceRequest(key="decision:language", new_value="Use Chinese only.")
@@ -632,6 +631,14 @@ def test_replace_absorbs_the_active_occupant_of_a_superseded_predecessor(
     # active next to the successor.
     assert occupant.status is ContextStatus.SUPERSEDED
     assert occupant.superseded_by == old_context_id
+    # Its own legacy row mirrors that in the same transaction: without the
+    # mirror the projection forks (status and link) and the service degrades.
+    holder_legacy = _legacy_row(test_config, holder_legacy_id)
+    assert holder_legacy["status"] == "superseded"
+    assert holder_legacy["superseded_by"] == old_legacy_id
+    assert holder_legacy["supersedes"] is None
+    assert _legacy_row(test_config, old_legacy_id)["superseded_by"] == result.legacy_id
+    assert check_projection_lag(test_config, store).projection_lag == 0
     active_holders = store._connection().execute(
         "SELECT id FROM context_items WHERE identity_key=? AND project=? "
         "AND scope=? AND status='active'",

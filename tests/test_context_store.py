@@ -19,6 +19,7 @@ from evolvmem.context_models import (
     ContextValidationError,
 )
 from evolvmem.context_store import ContextStore
+from evolvmem.cutover_checks import check_projection_lag
 from evolvmem.legacy_projection import (
     LegacyProjectionInsert,
     LegacyProjectionUpdate,
@@ -1038,6 +1039,64 @@ def test_supersede_item_absorbs_the_active_occupant_of_the_successor_identity(
         ("project:test:fact:shared", "test", ContextScope.PROJECT.value),
     ).fetchall()
     assert [int(row["id"]) for row in active] == [successor.id]
+
+
+def test_supersede_item_absorb_defers_the_projection_to_the_legacy_replace(
+    store, draft_factory
+):
+    """A mapped absorb is only half a chain until the legacy side mirrors it.
+
+    The store primitive never rewrites the projection: the legacy row behind
+    the absorbed holder keeps its status until ``_replace_dual_in_transaction``
+    mirrors it, which is what keeps the Core↔legacy supersession chains equal
+    through the mapping instead of silently forking the projection.
+    """
+    config = store.config
+    with MemoryStore(config):
+        pass  # legacy projection schema, mirroring a pre-cutover database
+    with store.transaction():
+        legacy_id = store.legacy_projection().insert(
+            LegacyProjectionInsert(key="dup:shared", value="Legacy holder value.")
+        )
+    holder = store.create_item(
+        draft_factory(
+            "dup:shared",
+            status=ContextStatus.ACTIVE,
+            project="",
+            scope=ContextScope.GLOBAL,
+        )
+    )
+    with store.transaction():
+        store.record_legacy_mapping(legacy_id, holder.id)
+    predecessor = store.create_item(
+        draft_factory(
+            "dup:shared",
+            status=ContextStatus.CANDIDATE,
+            project="",
+            scope=ContextScope.GLOBAL,
+        )
+    )
+
+    baseline = check_projection_lag(config, store)
+    with store.transaction():
+        outcome = store.supersede_item(
+            predecessor.id,
+            draft_factory(
+                "dup:shared", project="", scope=ContextScope.GLOBAL
+            ),
+        )
+
+    assert outcome.absorbed == (holder.id,)
+    assert (
+        store.legacy_projection().get_by_id(legacy_id)["status"] == "active"
+    )
+    after = check_projection_lag(config, store)
+    # Two divergences, not one: the holder left active status and gained a
+    # successor link, both of which the still-active legacy row contradicts
+    # until the replace transaction mirrors it.
+    assert after.projection_lag == baseline.projection_lag + 2
+    assert after.status_mismatch == baseline.status_mismatch + 1
+    assert after.supersession_mismatch == baseline.supersession_mismatch + 1
 
 
 def test_supersede_item_keeps_the_single_link_when_the_predecessor_was_active(
