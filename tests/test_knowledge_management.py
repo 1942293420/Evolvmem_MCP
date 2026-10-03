@@ -232,3 +232,14 @@ def test_knowledge_title_is_available_to_ai_search_and_archive_removes_it(servic
     assert row['id'] in {r.id for r in service.search(query)}
     kb.transition(row['id'],{'expected_revision':row['revision'],'action':'archive'})
     assert row['id'] not in {r.id for r in service.search(query)}
+
+
+def test_historical_unreviewed_project_claim_alone_cannot_auto_confirm(service):
+    row=service.store.create_item(ContextItemDraft(identity_key='project:eva:old:claim',content_type=ContextContentType.FACT,
+        layers=ContextLayers('采购业务约定','核对采购单和付款金额后，再决定是否继续处理。','核对采购单和付款金额后，再决定是否继续处理。','test'),project='eva',status=ContextStatus.ACTIVE,confidence=.95))
+    with service.store.transaction():
+        service.store._connection().execute("INSERT INTO context_sources(item_id,source_kind,source_ref,extraction_version,created_at) VALUES(?,'manual','old-note','test','2026-01-01')",(row.id,))
+    result=manager(service).organize({'ids':[row.id],'apply':True})
+    assert result['applied']==0
+    assert result['items'][0]['action']=='review'
+    assert manager(service).detail(row.id)['ownership']['state']=='excluded'

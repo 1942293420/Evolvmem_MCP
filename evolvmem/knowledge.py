@@ -373,7 +373,13 @@ class KnowledgeBase:
             elif row['resolution'] and row['resolution']['decision_source'] == 'human':
                 decision = {'action': 'review', 'project': row['project'], 'reason': '保留人工决定，可手动确认入库', 'rule_revision': self.rules.read()['revision']}
             else:
-                decision = self.preview({**row, 'key': row['identity_key'], 'source': bool(row['sources'])})
+                sample = {**row, 'key': row['identity_key'], 'source': bool(row['sources'])}
+                if row['ownership']['state'] == 'excluded':
+                    # An old project column/key is the claim under review,
+                    # not independent evidence that can confirm itself.
+                    sample['project'] = ''
+                    sample['key'] = ''
+                decision = self.preview(sample)
             proposal = {'id': cid, 'title': row['title'], 'expected_revision': row['revision'], **decision, 'applied': False}
             if body.get('apply') and decision['action'] in ('auto', 'ignore'):
                 # Each item is an atomic unit; revisions protect changes between
