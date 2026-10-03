@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "title": "EvolvMem 完整架构图册",
-  "reviewed_at": "2026-10-02",
+  "reviewed_at": "2026-10-03",
   "source_root": ".",
   "chapters": [
     {
       "id": "overview",
       "title": "系统总览",
       "english": "SYSTEM OVERVIEW",
-      "subtitle": "11 个专题覆盖本机与 Windows 接入、模型、召回、写入、存储、经验演化与精确续接。",
-      "takeaway": "EvolvMem 由客户端调用；Windows 原生 Codex 通过用户级 hooks、加密队列与一个 LAN MCP 接入同一 Linux 核心。凭据映射决定个人身份，SQLite 保存索引、记忆与断点，原始会话保存在加密文件。ContextService 协调记忆，ContinuityService 管理项目与任务；public 共享仍须显式发布。",
+      "subtitle": "13 个专题覆盖客户端接入、模型、召回、写入、存储、项目知识库、经验演化与精确续接。",
+      "takeaway": "EvolvMem 由客户端调用；Windows 原生 Codex 通过用户级 hooks、加密队列与一个 LAN MCP 接入同一 Linux 核心。凭据映射决定个人身份，SQLite 保存索引、记忆与断点，原始会话保存在加密文件。ContextService 协调记忆，ContinuityService 管理项目与任务；public 共享仍须显式发布。 项目知识库管理入口统一维护资料归属与入库，并开放管理 Skill 和入库规则。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
@@ -2225,6 +2225,12 @@
           "paragraphs": [
             "Windows 结束 hooks 采集已持久化完整 JSONL；无窗口任务每分钟独立发现并补扫新建与恢复会话。DPAPI CurrentUser 保护待传正文，每块最多 256 KiB，经同一个 MCP 校验后加密归档。",
             "同一设备、会话与版本幂等；旧归档版本保留用于证据。归档成功与提炼成功分别报告，服务端 worker 复用现有提炼器与项目滚动摘要；提炼失败可显式重试。未绑定或混合工作区保持待归属。"
+          ]
+        },
+        {
+          "title": "知识库入库规则",
+          "paragraphs": [
+            "启用托管规则后，提炼提示词读取当前 SKILL.md；真正写入时再次核对项目、来源与质量门槛。明确资料 active，疑难资料 candidate，忽略项 archived；不能仅依赖模型输出直接入库。"
           ]
         }
       ],
@@ -4802,6 +4808,226 @@
         {
           "label": "带日期的当前任务进展",
           "path": "evolvmem/project_progress_recall.py"
+        }
+      ]
+    },
+    {
+      "id": "knowledge",
+      "title": "知识库管理",
+      "english": "KNOWLEDGE MANAGEMENT",
+      "subtitle": "按项目查资料、改归属、管入库；管理 Skill 与规则共用一个来源。",
+      "takeaway": "首页以项目知识库替代记忆表。明确资料自动入库，疑难资料进入待确认；规则表单、Skill 编辑页和 AI 提炼读取同一份受控 SKILL.md。已有人工确认优先于历史 unresolved/conflict，恢复其真实召回资格。",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "architecture",
+        "meta": {
+          "title": "EvolvMem · 知识库管理",
+          "subtitle": "一份规则驱动提炼与整理，资料归属和入库状态可管理",
+          "quality_profile": "showcase",
+          "visual_preset": "blueprint",
+          "animation": "none",
+          "viewBox": [
+            1060,
+            780
+          ]
+        },
+        "components": [
+          {
+            "id": "kb-web",
+            "type": "frontend",
+            "label": "项目知识库",
+            "sublabel": "资料 · 归属 · 入库 · 规则",
+            "pos": [
+              40,
+              320
+            ],
+            "size": [
+              260,
+              84
+            ]
+          },
+          {
+            "id": "kb-core",
+            "type": "backend",
+            "label": "统一资料管理",
+            "sublabel": "Context 记录与兼容投影",
+            "pos": [
+              390,
+              320
+            ],
+            "size": [
+              260,
+              84
+            ]
+          },
+          {
+            "id": "kb-db",
+            "type": "database",
+            "label": "SQLite 知识资料",
+            "sublabel": "正文 · 来源 · 版本 · 决议",
+            "pos": [
+              740,
+              320
+            ],
+            "size": [
+              260,
+              84
+            ]
+          },
+          {
+            "id": "kb-policy",
+            "type": "backend",
+            "label": "KnowledgeRules",
+            "sublabel": "明确自动 · 疑难确认",
+            "pos": [
+              390,
+              120
+            ],
+            "size": [
+              260,
+              84
+            ]
+          },
+          {
+            "id": "kb-skill",
+            "type": "database",
+            "label": "可编辑 SKILL.md",
+            "sublabel": "执行条件 + AI 整理说明",
+            "pos": [
+              40,
+              120
+            ],
+            "size": [
+              260,
+              84
+            ]
+          },
+          {
+            "id": "kb-review",
+            "type": "frontend",
+            "label": "待确认队列",
+            "sublabel": "原因 · 来源 · 人工决定",
+            "pos": [
+              390,
+              530
+            ],
+            "size": [
+              260,
+              84
+            ]
+          },
+          {
+            "id": "kb-recall",
+            "type": "backend",
+            "label": "项目召回",
+            "sublabel": "人工确认优先于旧决议",
+            "pos": [
+              740,
+              530
+            ],
+            "size": [
+              260,
+              84
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "from": "kb-web",
+            "to": "kb-core"
+          },
+          {
+            "from": "kb-core",
+            "to": "kb-db"
+          },
+          {
+            "from": "kb-skill",
+            "to": "kb-policy"
+          },
+          {
+            "from": "kb-policy",
+            "to": "kb-core"
+          },
+          {
+            "from": "kb-core",
+            "to": "kb-review"
+          },
+          {
+            "from": "kb-db",
+            "to": "kb-recall"
+          }
+        ],
+        "cards": [
+          {
+            "dot": "violet",
+            "title": "自动处理",
+            "items": [
+              "唯一项目线索、来源充分且达到阈值才自动入库",
+              "阈值、忽略词与项目覆盖逐次读取"
+            ]
+          },
+          {
+            "dot": "amber",
+            "title": "人工管理",
+            "items": [
+              "不确定资料保留并解释原因",
+              "任务迁移同时更新焦点与历史断点"
+            ]
+          }
+        ]
+      },
+      "sections": [
+        {
+          "title": "资料管理与入库",
+          "paragraphs": [
+            "统一读取 Context 全部类型，包括没有兼容旧表映射的候选、任务断点与项目摘要。支持搜索、文本/Markdown 新增、编辑、单条/批量归属、确认入库、归档、恢复和软删除。",
+            "内容与状态修改同时更新兼容投影和检索。系统生成摘要、断点及结构化经验通过补充资料记录更正；任务改归属同事务迁移全部历史断点与焦点，关联父子任务保留待处理。"
+          ]
+        },
+        {
+          "title": "同源规则与 AI 使用",
+          "paragraphs": [
+            "默认条件：最低置信度 0.8，正文 10–20000 字，要求来源；项目专属条件可覆盖全局条件。正文、项目名、别名和规范 key 提供归属线索，冲突保持待确认。",
+            "保存规则后每次提炼与整理读取最新版本。JSON 条件决定入库门槛，自然语言说明进入 AI 提炼提示词。经验仍受证据规则约束，入库不等于验证成功。",
+            "Web 首次启动保存默认规则以启用托管入库。管理 Skill 与 CLI 入口共享核心操作；版本冲突拒绝覆盖，新条件默认只影响后续处理，历史记录需先预览整理。"
+          ]
+        },
+        {
+          "title": "变更与可核对性",
+          "paragraphs": [
+            "人工确认归属被优先视为可信，不再受旧 unresolved/conflict 限制。疑难队列保留不确定原因与来源，不以减少队列数量为由猜测项目。",
+            "规则预览不写库；整理只应用明确自动判定。批量管理逐条返回成功或错误，任何单条写入保持完整事务。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "资料管理核心",
+          "path": "evolvmem/knowledge.py"
+        },
+        {
+          "label": "入库规则与 Skill",
+          "path": "evolvmem/knowledge_rules.py"
+        },
+        {
+          "label": "管理页面",
+          "path": "evolvmem/web_static/knowledge.js"
+        },
+        {
+          "label": "本地 AI 操作入口",
+          "path": "evolvmem/knowledge_cli.py"
+        },
+        {
+          "label": "提炼写入",
+          "path": "evolvmem/context_service.py"
+        },
+        {
+          "label": "人工确认召回修复",
+          "path": "evolvmem/project_ownership.py"
+        },
+        {
+          "label": "业务回归",
+          "path": "tests/test_knowledge_management.py"
         }
       ]
     }

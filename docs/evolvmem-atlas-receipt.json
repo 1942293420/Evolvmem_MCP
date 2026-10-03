@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-10-02",
+  "reviewed_at": "2026-10-03",
   "source": {
-    "sha256": "526fc33fa829a76b4a6b70d95fad0d2ad0e445bcacca05d621b9e802ae539271",
-    "bytes": 172398
+    "sha256": "a4f6789f25aaced86ac102546c64fda751178d5c4e574bacb4073bb9dcc3b286",
+    "bytes": 179885
   },
   "chapters": [
     {
@@ -245,27 +245,31 @@
         "errors": 0,
         "warnings": 0
       }
+    },
+    {
+      "chapter": "knowledge",
+      "type": "architecture",
+      "specification": {
+        "sha256": "2d660d249c8594b68d2ee0eac5255aa1c547cffed765db8017a0ad027c6f2d57",
+        "bytes": 2927
+      },
+      "artifact": {
+        "sha256": "2fb3b9a6c7b0a9feae3859016c24c3043c44e29cc20a1451a36408a38476d42c",
+        "bytes": 603406
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
     }
   ],
   "atlas": {
-    "sha256": "b479ee7bea56ceeb2dab7edbc36e4f692949007a2f346f6b23c44e32622d364f",
-    "bytes": 1844861
+    "sha256": "79f3ce67787535e31a410abd0c51357012128c3d7d36326bffbaa13399d7a1f4",
+    "bytes": 1993005
   },
-  "visual_review": "passed",
-  "visual_review_scope": {
-    "browser": "Chrome 154 headless, rendered screenshots inspected",
-    "chapters": [
-      "context-recall",
-      "storage",
-      "trust-views",
-      "windows-codex"
-    ],
-    "themes": [
-      "light",
-      "dark"
-    ],
-    "product_page": "/trust desktop/mobile and real review/time-window actions inspected",
-    "runtime_errors": 0
-  },
-  "correction_rounds": 1
+  "visual_review": "2026-10-03: Chromium 1440×1100 inspected /workflow#knowledge and its embedded SVG. All 13 chapters passed 9/9 showcase checks; no browser errors in the knowledge chapter."
 }

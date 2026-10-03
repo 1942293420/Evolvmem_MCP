@@ -1331,6 +1331,11 @@ class ContextService:
         from evolvmem.context_insights import ContextInsights
         return ContextInsights(self)
 
+    def knowledge(self):
+        """Unified project knowledge management and editable ingestion policy."""
+        from evolvmem.knowledge import KnowledgeBase
+        return KnowledgeBase(self)
+
     def confirm(self, item_id: int) -> EvidenceReport:
         """Promote one candidate to active through the lifecycle state machine.
 
@@ -2112,7 +2117,24 @@ class ContextService:
                         insert_rollup_pending_hold(
                             self.store, source_archive_id, summary_result.context_id
                         )
+                knowledge = self.knowledge()
+                governed_ids = []
+                if knowledge.rules.path.exists():
+                    from dataclasses import replace
+                    def govern(mutation):
+                        if mutation is None or mutation.context_id is None:
+                            return mutation
+                        status = knowledge.apply_ingestion(mutation.context_id, source=source_session)
+                        governed_ids.append(mutation.context_id)
+                        return replace(mutation, context_status=status)
+                    summary_result = govern(summary_result)
+                    candidate_results = tuple(govern(m) for m in candidate_results)
+                    # Preserve removals of superseded rows; current rows use the
+                    # final policy status, so doubtful data never enters vectors.
+                    aftermath = replace(aftermath, context_upserts=(), legacy_upserts=())
         self._apply_vector_aftermath(aftermath)
+        if governed_ids:
+            knowledge._sync(governed_ids)
         result = LegacyExtractionResult(
             summary=summary_result,
             candidates=candidate_results,

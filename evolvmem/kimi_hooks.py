@@ -486,7 +486,8 @@ def _keep_latest_summary(candidates: list) -> list:
 
 def _extract_candidates(messages: list[dict[str, str]],
                         llm_config: LLMConfig,
-                        fallback_chunk_chars: int = _FALLBACK_CHUNK_CHARS
+                        fallback_chunk_chars: int = _FALLBACK_CHUNK_CHARS,
+                        config=None
                         ) -> list:
     """Extract the full conversation once; chunk only on context overflow."""
     from evolvmem.auto_extractor import AutoExtractor
@@ -496,6 +497,8 @@ def _extract_candidates(messages: list[dict[str, str]],
 
     def extract(batch: list[dict[str, str]]) -> list:
         prompt = extractor.build_extraction_prompt(batch)
+        from evolvmem.knowledge_rules import KnowledgeRules
+        prompt += KnowledgeRules((config or Config.from_file()).data_dir).prompt()
         candidates = extractor.parse_response(
             _call_llm_with_retry(prompt, llm_config, deadline=deadline)
         )

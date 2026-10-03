@@ -23,6 +23,7 @@ PUBLIC_DOCS = (
     "evolvmem-atlas.json", "evolvmem-atlas-template.html", "evolvmem-atlas-receipt.json",
     # The single public design/plan file for the 2026-10-02 memory-trust update.
     "2026-10-02-memory-trust.md",
+    "2026-10-03-knowledge-management.md",
 )
 EXCLUDED_DIRECTORIES = {
     ".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache",

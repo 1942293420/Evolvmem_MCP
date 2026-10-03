@@ -367,3 +367,28 @@ def test_provider_failure_logs_stage_and_code_without_credentials(monkeypatch, c
         auth._identity(private, private)
     assert "stage=token" in caplog.text and "api_code=20049" in caplog.text
     assert private not in caplog.text
+
+
+def test_knowledge_rules_and_writes_keep_existing_access_checks(protected_web):
+    base, _, _, _, _ = protected_web
+    anonymous = Browser(base)
+    assert anonymous.request('/api/knowledge/rules')[0] == 401
+    assert anonymous.request('/api/knowledge/items','POST',{})[0] == 401
+    viewer = Browser(base)
+    me = viewer.login('viewer')
+    assert viewer.request('/api/knowledge/projects')[0] == 200
+    assert viewer.request('/api/knowledge/rules','POST',{}, {'X-CSRF-Token':me['csrf_token']})[0] == 403
+    owner = Browser(base)
+    me = owner.login()
+    headers = {'X-CSRF-Token':me['csrf_token']}
+    assert owner.request('/api/knowledge/projects','POST',{'project':'kbtest','display_name':'测试知识项目'},headers)[0] == 200
+    status, _, data = owner.request('/api/knowledge/items','POST',{'title':'规则说明','body':'明确资料入库前应核对原始来源。','project':'kbtest','action':'publish'},headers)
+    assert status == 200
+    item=json.loads(data)
+    status, _, data = owner.request(f"/api/knowledge/items/{item['id']}/assign",'POST',{'expected_revision':item['revision'],'project':''},headers)
+    assert status == 200 and json.loads(data)['scope'] == 'global'
+    assert owner.request(f"/api/knowledge/items/{item['id']}/update",'POST',{'expected_revision':item['revision'],'title':'旧版本'},headers)[0] == 409
+    status, _, data = owner.request('/api/knowledge/rules')
+    rules=json.loads(data)
+    rules['settings']['auto_min_confidence']=.95
+    assert owner.request('/api/knowledge/rules','POST',{'expected_revision':rules['revision'],'settings':rules['settings']},headers)[0] == 200

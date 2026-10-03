@@ -97,6 +97,10 @@ def classify(
     state = resolution_state or "none"
     review = review_state or "none"
     source = decision_source or "none"
+    # A human acceptance is the final ownership decision, including older
+    # rows which retain the original automatic unresolved/conflict state.
+    if review == "accepted" and source == "human":
+        return OwnershipFact(CONFIRMED, REASON_NONE, state, review, source, method or "")
     if review == "rejected":
         return OwnershipFact(
             EXCLUDED, REASON_REJECTED, state, review, source, method or ""

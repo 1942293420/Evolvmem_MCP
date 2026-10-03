@@ -1181,7 +1181,7 @@ _MEM_ACTION_RE = re.compile(r"^/api/memory/(\d+)/(update|archive|restore|delete|
 _RES_ACTION_RE = re.compile(r"^/api/resolutions?/(\d+)/(accept|reject)$")
 _MEM_CONTEXT_RE = re.compile(r"^/api/memory/(\d+)/context$")
 
-_BODY_LIMIT = 64 * 1024
+_BODY_LIMIT = 512 * 1024
 
 
 def make_handler(service: ContextService):
@@ -1246,6 +1246,19 @@ def make_handler(service: ContextService):
             path = parsed.path
             if auth.handle_get(self, parsed):
                 return
+            if path.startswith('/api/knowledge/'):
+                self._knowledge('GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()})
+                return
+            if path in ('/knowledge.css', '/knowledge.js'):
+                asset = _STATIC_INDEX.parent / path.lstrip('/')
+                data = asset.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/css; charset=utf-8' if path.endswith('.css') else 'application/javascript; charset=utf-8')
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if path in ('/designs', '/designs/') or path.startswith('/designs/'):
                 name = 'index.html' if path in ('/designs', '/designs/') else path[len('/designs/'):]
                 asset = _STATIC_INDEX.parent / 'designs' / name
@@ -1304,13 +1317,15 @@ def make_handler(service: ContextService):
                 return
             if path in ("/organize", "/organize/"):
                 self.send_response(302)
-                self.send_header('Location', '/#memories')
+                self.send_header('Location', '/knowledge?view=intake')
                 self.send_header('Cache-Control', 'no-store')
                 self.send_header('Content-Length', '0')
                 self.end_headers()
                 return
             pages = {
-                '/': _STATIC_SIGNAL,
+                '/': _STATIC_INDEX.parent / 'knowledge.html',
+                '/knowledge': _STATIC_INDEX.parent / 'knowledge.html',
+                '/legacy': _STATIC_SIGNAL,
                 '/workflow': _STATIC_INDEX.parent / 'workflow.html',
                 '/workflow/': _STATIC_INDEX.parent / 'workflow.html',
                 '/workflow-diagram': _STATIC_INDEX.parent / 'workflow-diagram.html',
@@ -1410,6 +1425,11 @@ def make_handler(service: ContextService):
                 return
             if not auth.require_write(self):
                 return
+            if path.startswith('/api/knowledge/'):
+                body, failed = self._read_body()
+                if not failed:
+                    self._knowledge('POST', path, body)
+                return
             m = _MEM_ACTION_RE.match(path)
             if m:
                 self._handle_memory_action(int(m.group(1)), m.group(2))
@@ -1484,6 +1504,19 @@ def make_handler(service: ContextService):
             self._send_json(result,
                             200 if result.get("ok") else 400)
 
+        def _knowledge(self, method, path, body):
+            from evolvmem.knowledge_api import dispatch
+            from evolvmem.project_store import ProjectStoreError
+            try:
+                self._send_json(dispatch(service, method, path, body))
+            except LookupError:
+                self._send_json({'ok': False, 'error': 'not_found'}, 404)
+            except (ValueError, ProjectStoreError) as error:
+                message = str(error)
+                self._send_json({'ok': False, 'error': message}, 409 if 'conflict' in message else 400)
+            except Exception as error:
+                self._send_json({'ok': False, 'error': _bounded_error(error)}, 500)
+
         def _handle_resolution_action(self, item_id: int, action: str):
             body, failed = self._read_body()
             if failed:
@@ -1514,6 +1547,9 @@ def run(port: int = 9377, data_dir: str | None = None,
     service = ContextService(config)
     service.initialize(mode=_context_mode(config), adapter=config.adapter or "web")
     service._legacy_backend()
+    rules = service.knowledge().rules
+    if not rules.path.exists():
+        rules.save({'expected_revision': rules.read()['revision']})
     # 单线程服务：sqlite 连接不支持跨线程使用；本地单用户控制台无需并发
     server = HTTPServer((host, port), make_handler(service))
     print(f"EvolvMem web console: http://{host}:{port} "

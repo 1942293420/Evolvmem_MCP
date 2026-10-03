@@ -381,6 +381,7 @@ class ProjectStore:
         cursor = self._conn.execute(
             "UPDATE context_project_resolutions "
             "SET review_state='accepted', decision_source='human', "
+            "resolution_state='resolved', confidence='high', method='human', "
             "resolved_project=?, reviewed_at=?, "
             "revision=revision+1, updated_at=? "
             "WHERE item_id=? AND revision=?",

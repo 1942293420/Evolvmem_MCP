@@ -38,7 +38,7 @@ class AutoExtractor:
 所有 value 必须使用中文；说明性 tags 也使用中文。稳定 key、代码标识符、产品名和必要缩写可以保留英文。
 
 ## 稳定 key 格式
-使用格式：`{{project}}:{{domain}}:{{type}}:{{topic}}`
+项目资料使用格式：`project:{{已登记项目名}}:{{领域}}:{{主题}}`，必须保留字面量 project: 前缀。用户偏好使用 user: 前缀。不要将通用主目录名称作为业务项目。
 示例：
 - `project:shop:decision:after_sales` — 售后决策
 - `user:preference:communication:language` — 语言偏好

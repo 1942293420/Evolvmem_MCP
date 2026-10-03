@@ -7,24 +7,26 @@ import pytest
 from tests.test_web_server import http_server
 
 
-def test_selected_signal_is_the_default_homepage(http_server):
+def test_knowledge_workspace_is_the_default_homepage(http_server):
     base, _, _ = http_server
     with urllib.request.urlopen(base + '/') as response:
         html = response.read().decode('utf-8')
-    assert 'data-design="signal"' in html
+    assert '项目知识库' in html
+    assert 'href="#intake"' in html
     assert 'href="/organize"' not in html
     assert 'href="/workflow"' in html
-    assert 'src="/designs/organizer.js"' in html
+    assert 'src="/knowledge.js"' in html
+    assert 'href="/legacy"' in html
     assert '设计预览' not in html
 
 
 @pytest.mark.parametrize('path', ['/organize', '/organize/'])
-def test_organizer_bookmarks_open_the_integrated_signal_page(http_server, path):
+def test_organizer_bookmarks_open_knowledge_intake(http_server, path):
     base, _, _ = http_server
     with urllib.request.urlopen(base + path) as response:
         html = response.read().decode('utf-8')
-    assert response.geturl().endswith('/#memories')
-    assert 'data-design="signal"' in html
+    assert response.geturl().endswith('/knowledge?view=intake')
+    assert '项目知识库' in html
     assert 'id="view-archive"' not in html
 
 

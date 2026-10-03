@@ -40,6 +40,11 @@ def _now_iso() -> str:
 # statement, executed in order; arbitrary SQL is never split on semicolons, so
 # the whole schema can join one outer transaction without an implicit commit.
 _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS knowledge_metadata (
+        item_id INTEGER PRIMARY KEY REFERENCES context_items(id) ON DELETE CASCADE,
+        title TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 1,
+        ingestion_reason TEXT NOT NULL DEFAULT '', rule_revision TEXT NOT NULL DEFAULT ''
+    )""",
     """
     CREATE TABLE IF NOT EXISTS context_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
