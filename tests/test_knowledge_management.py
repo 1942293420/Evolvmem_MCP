@@ -243,3 +243,19 @@ def test_historical_unreviewed_project_claim_alone_cannot_auto_confirm(service):
     assert result['applied']==0
     assert result['items'][0]['action']=='review'
     assert manager(service).detail(row.id)['ownership']['state']=='excluded'
+
+
+def test_runtime_paths_and_generic_project_labels_are_not_business_ownership(service):
+    kb=manager(service)
+    kb.save_project({'project':'hermes','display_name':'Hermes'})
+    kb.save_project({'project':'design','display_name':'设计'})
+    sample={'title':'升级工具','body':'将 deepseek harness 升级并安装至 ~/.hermes/node，重启服务后验证。','confidence':.99,'source':'会话'}
+    assert kb.preview(sample)['action']=='review'
+    sample['body']='讨论审批表单设计，核对角色权限与资料来源。'
+    assert kb.preview(sample)['action']=='review'
+    sample['body']='Hermes 项目的会话资料需要核对来源和项目名称。'
+    assert kb.preview(sample)['project']=='hermes'
+    sample['body']='采购规则的运行目录为 .hermes，实际业务归属仍需核对。'
+    assert kb.preview(sample)['action']=='review'
+    sample['body']='续接飞书审批项目，另回答了 EVA 客服版本更新内容。'
+    assert kb.preview(sample)['action']=='review'

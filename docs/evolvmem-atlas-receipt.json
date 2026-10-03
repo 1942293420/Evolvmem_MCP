@@ -2,8 +2,8 @@
   "schema_version": 1,
   "reviewed_at": "2026-10-03",
   "source": {
-    "sha256": "a4f6789f25aaced86ac102546c64fda751178d5c4e574bacb4073bb9dcc3b286",
-    "bytes": 179885
+    "sha256": "a790b12d13d1f818e46816d69016a4aa477289b92b8a3500d304bd734d3eb914",
+    "bytes": 180001
   },
   "chapters": [
     {
@@ -268,8 +268,8 @@
     }
   ],
   "atlas": {
-    "sha256": "79f3ce67787535e31a410abd0c51357012128c3d7d36326bffbaa13399d7a1f4",
-    "bytes": 1993005
+    "sha256": "46c453d74ab08affa7b240987ae2dda3fda8b17f83df567ccbe6af35e90e5764",
+    "bytes": 1993141
   },
   "visual_review": "2026-10-03: Chromium 1440×1100 inspected /workflow#knowledge and its embedded SVG. All 13 chapters passed 9/9 showcase checks; no browser errors in the knowledge chapter."
 }

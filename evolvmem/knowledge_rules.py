@@ -14,6 +14,7 @@ DEFAULT_SETTINGS = {
     'min_chars': 10,
     'max_chars': 20000,
     'ignore_keywords': [],
+    'ambiguous_project_names': ['设计', 'design', '测试', 'test', '项目', 'project', '系统', 'system', '平台', 'platform', '开发', 'development', '文档', 'docs', '采购'],
     'project_overrides': {},
 }
 DEFAULT_INSTRUCTIONS = """# 知识库入库与整理
@@ -23,6 +24,7 @@ DEFAULT_INSTRUCTIONS = """# 知识库入库与整理
 ## 项目归属
 - 从资料正文、来源会话、项目名称和别名核对业务项目。
 - 主目录名、运行程序目录不代表业务项目；不要将 jiangli、home、general 当作项目。
+- 路径中的程序目录和“设计、测试、平台”等通用词不独立构成业务归属；不确定时待确认。
 - 优先尊重用户已确认的归属。资料同时涉及多个项目、线索冲突或仅有含糊指代时进入待确认。
 - 知识 key 使用 project:<已登记项目>:<领域>:<主题>；全局用户偏好用 user: 前缀。
 
@@ -72,8 +74,9 @@ def validate_settings(value):
         raise ValueError('invalid_require_source')
     if any(type(settings[k]) is not int for k in ('min_chars', 'max_chars')) or not 1 <= settings['min_chars'] <= settings['max_chars'] <= 100000:
         raise ValueError('invalid_content_limits')
-    if not isinstance(settings['ignore_keywords'], list) or any(not isinstance(x, str) or not x.strip() or len(x) > 200 for x in settings['ignore_keywords']):
-        raise ValueError('invalid_ignore_keywords')
+    for name in ('ignore_keywords', 'ambiguous_project_names'):
+        if not isinstance(settings[name], list) or any(not isinstance(x, str) or not x.strip() or len(x) > 200 for x in settings[name]):
+            raise ValueError('invalid_' + name)
     if not isinstance(settings['project_overrides'], dict):
         raise ValueError('invalid_project_overrides')
     for project, overrides in settings['project_overrides'].items():
@@ -146,18 +149,24 @@ class KnowledgeRules:
     def evaluate(self, sample, registry):
         policy = self.read()
         text = str(sample.get('title', '')) + '\n' + str(sample.get('body', ''))
+        # Runtime paths and URLs often mention an unrelated hosting project.
+        # Keep the original content for quality checks, exclude paths only
+        # from project-name matching.
+        project_text = re.sub(r'(?:https?://|(?:~|[A-Za-z]:)?[/\\]|[A-Za-z0-9_.~-]+[/\\])[^\s`，。；、）)]+', ' ', text)
+        project_text = re.sub(r'(?<![\w])[.][A-Za-z][A-Za-z0-9_-]*', ' ', project_text)
+        ambiguous = {name.casefold() for name in policy['settings']['ambiguous_project_names']}
         canonical = {r['project'] for r in registry}
         names = {}
         for row in registry:
             for name in (row['project'], row.get('display_name', ''), *row.get('aliases', [])):
-                if len(name.strip()) >= 2:
+                if len(name.strip()) >= 2 and name.casefold() not in ambiguous:
                     names.setdefault(name.casefold(), set()).add(row['project'])
         matches = set()
         for name, projects in names.items():
             pattern = re.escape(name)
             if name.isascii():
                 pattern = r'(?<![a-z0-9_-])' + pattern + r'(?![a-z0-9_-])'
-            if re.search(pattern, text, re.I):
+            if re.search(pattern, project_text, re.I):
                 matches.update(projects)
         explicit = str(sample.get('project') or '')
         key = str(sample.get('key') or '')
@@ -181,6 +190,8 @@ class KnowledgeRules:
             action, reason = 'ignore', '匹配忽略关键词'
         elif not settings['min_chars'] <= len(str(sample.get('body', ''))) <= settings['max_chars']:
             action, reason = 'review', '内容长度不符合入库条件'
+        elif any(marker in text for marker in ('另回答', '另讨论', '跨项目', '多个项目', '同时涉及')):
+            action, reason = 'review', '资料包含多个话题或项目，需要拆分或确认'
         elif not global_scope and len(matches) > 1:
             action, reason = 'review', '存在多个项目线索，需要确认归属'
         elif not global_scope and not project:
