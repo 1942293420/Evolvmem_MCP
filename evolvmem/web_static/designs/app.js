@@ -73,24 +73,26 @@
   function progressCard(row, kind) {
     return `<button class="ui-card" data-detail="${kind}" data-id="${esc(row.id ?? '')}" ${row.id==null?'disabled':''}><span class="ui-card-head">${badge(label(row.status),['ready','completed'].includes(row.status))}<span>${esc(shortDate(row.updated_at))}</span></span><h3 class="ui-card-title">${esc(kind==='summary'?name(row.project):row.summary)}</h3><p class="ui-card-copy">${esc(kind==='summary'?row.summary:name(row.project))}</p><span class="ui-card-foot"><span>${kind==='summary'?'项目的最近记录':'保存的任务断点'}</span><span>查看详情 ↗</span></span></button>`;
   }
-  function navigate(page, project, query) {
+  function navigate(page, project, query, knowledgeView, replace=false) {
     if(!state.ready) return;
     if(!['home','memories','experiences','progress'].includes(page)) return;
     const current=[...browsers.values()].find(c=>c.kind===state.page);
     if(current?.canLeave&&!current.canLeave()) {
-      if(location.hash!==`#${state.page}`)history.replaceState(null,'',`#${state.page}`);
+      history.replaceState(null,'',current.hash?.()||`#${state.page}`);
       return;
     }
     state.page=page;
     document.body.dataset.activePage=page;
     $$('[data-page-panel]').forEach(el=>el.hidden=el.dataset.pagePanel!==page);
     $$('[data-page-link]').forEach(el=>{const current=el.dataset.pageLink===page;el.classList.toggle('active',current);el.setAttribute('aria-current',current?'page':'false');});
-    history.replaceState(null,'',`#${page}`);
+    let targetHash=`#${page}`;
     const mount=$(`[data-slot="${{memories:'memory-browser',experiences:'experience-browser',progress:'progress-browser'}[page]}"]`);
     if(mount) {
       let controller=browsers.get(mount);
       if(!controller) {
-        if(page==='memories'&&document.body.dataset.design==='signal'&&window.EvolvOrganizer&&window.EvolvAuth.canWrite) {
+        if(page==='memories'&&window.EvolvKnowledge) {
+          controller=window.EvolvKnowledge.create(mount,{navigate:(view,project)=>navigate('memories',project,undefined,view),changed:()=>boot(false)});
+        } else if(page==='memories'&&document.body.dataset.design==='signal'&&window.EvolvOrganizer&&window.EvolvAuth.canWrite) {
           controller=window.EvolvOrganizer.create(mount,{
             get,esc,label,projectName:name,projects:()=>state.projects,
             onRows:rows=>rows.forEach(row=>memoryCache.set(String(row.id),row)),
@@ -105,8 +107,11 @@
         if(page==='memories') {controller.query='';controller.status='active';}
       }
       if(query!==undefined) controller.query=query;
+      if(knowledgeView!==undefined)controller.view=knowledgeView;
+      targetHash=controller.hash?.()||targetHash;
       controller.page=1;controller.draw();controller.load();
     }
+    if(location.hash!==targetHash)history[replace?'replaceState':'pushState'](null,'',targetHash);
     window.scrollTo({top:0,behavior:'instant'});
     if(page==='home') requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));
   }
@@ -240,7 +245,8 @@
     }catch(error){if(token===state.dialog&&dialog.open){$('.ui-detail-body',dialog).innerHTML=`${text(error.message)}<button class="ui-button" data-retry-detail>重试</button>`;$('[data-retry-detail]',dialog).onclick=()=>openDetail(kind,id);}}
   }
   document.addEventListener('click',event=>{
-    const nav=event.target.closest('[data-page-link]');if(nav){event.preventDefault();navigate(nav.dataset.pageLink);return;}
+    if(event.target.closest('.knowledge-workspace'))return;
+    const nav=event.target.closest('[data-page-link]');if(nav){event.preventDefault();navigate(nav.dataset.pageLink,undefined,undefined,nav.dataset.knowledgeView);return;}
     const detail=event.target.closest('[data-detail]');if(detail&&!detail.disabled){openDetail(detail.dataset.detail,detail.dataset.id);return;}
     const project=event.target.closest('[data-project]');if(project){navigate('memories',project.dataset.project);return;}
     const current=[...browsers.values()].find(c=>c.kind===state.page);
@@ -253,10 +259,16 @@
   });
   document.addEventListener('evolvmem:project',event=>navigate('memories',event.detail));
   $$('[data-ui-search]').forEach(el=>el.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();navigate('memories','',el.value);}}));
-  window.addEventListener('hashchange',()=>{const page=location.hash.slice(1);if(page!==state.page)navigate(page);});
+  function navigateFromLocation() {
+    const [page,view]=location.hash.slice(1).split('/');
+    if(window.EvolvKnowledge&&['knowledge','projects','library','intake','rules','skill','memories'].includes(page)) {
+      navigate('memories',undefined,undefined,page==='knowledge'?(view||'projects'):page==='memories'?'projects':page,true);
+    } else navigate(['memories','experiences','progress'].includes(page)?page:'home',undefined,undefined,undefined,true);
+  }
+  window.addEventListener('hashchange',navigateFromLocation);
   window.EvolvAuth.ready.then(()=>{
     state.ready=true;
-    const startPage=location.hash.slice(1);if(['memories','experiences','progress'].includes(startPage))navigate(startPage);else navigate('home');
+    navigateFromLocation();
     boot(![...browsers.values()].some(c=>c.integrated));
   }).catch(error=>{
     $$('[data-data-status]').forEach(el=>{el.textContent=error.message;el.classList.add('ui-status-error');});

@@ -7,16 +7,21 @@ import pytest
 from tests.test_web_server import http_server
 
 
-def test_knowledge_workspace_is_the_default_homepage(http_server):
+def test_knowledge_management_shares_the_main_workbench(http_server):
     base, _, _ = http_server
     with urllib.request.urlopen(base + '/') as response:
         html = response.read().decode('utf-8')
-    assert '项目知识库' in html
-    assert 'href="#intake"' in html
+    assert 'data-page-panel="home"' in html
+    assert 'data-page-panel="memories"' in html
+    assert 'data-page-panel="experiences"' in html
+    assert 'data-page-panel="progress"' in html
+    assert '>知识库</a>' in html
     assert 'href="/organize"' not in html
     assert 'href="/workflow"' in html
     assert 'src="/knowledge.js"' in html
-    assert 'href="/legacy"' in html
+    assert 'href="/knowledge"' not in html
+    assert 'href="/legacy"' not in html
+    assert 'src="/designs/app.js"' in html
     assert '设计预览' not in html
 
 
@@ -25,9 +30,23 @@ def test_organizer_bookmarks_open_knowledge_intake(http_server, path):
     base, _, _ = http_server
     with urllib.request.urlopen(base + path) as response:
         html = response.read().decode('utf-8')
-    assert response.geturl().endswith('/knowledge?view=intake')
-    assert '项目知识库' in html
+    assert response.geturl().endswith('/#knowledge/intake')
+    assert 'data-page-panel="memories"' in html
     assert 'id="view-archive"' not in html
+
+
+@pytest.mark.parametrize('path,target', [
+    ('/knowledge', '/#knowledge/projects'),
+    ('/knowledge?view=rules', '/#knowledge/rules'),
+    ('/knowledge?view=skill', '/#knowledge/skill'),
+    ('/knowledge?view=invalid', '/#knowledge/projects'),
+    ('/legacy', '/'),
+])
+def test_previous_workbench_links_use_the_unified_home(http_server, path, target):
+    base, _, _ = http_server
+    with urllib.request.urlopen(base + path) as response:
+        assert response.geturl() == base + target
+        assert 'data-slot="memory-browser"' in response.read().decode('utf-8')
 
 
 @pytest.mark.parametrize('path', ['/workflow', '/workflow/', '/workflow-diagram'])

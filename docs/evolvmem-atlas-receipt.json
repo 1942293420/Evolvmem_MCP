@@ -2,8 +2,8 @@
   "schema_version": 1,
   "reviewed_at": "2026-10-03",
   "source": {
-    "sha256": "a790b12d13d1f818e46816d69016a4aa477289b92b8a3500d304bd734d3eb914",
-    "bytes": 180001
+    "sha256": "83eaa5667bbffef921ab66e1f7f7baac7ad0366f263e31c0016b97215c9038e2",
+    "bytes": 180498
   },
   "chapters": [
     {
@@ -250,12 +250,12 @@
       "chapter": "knowledge",
       "type": "architecture",
       "specification": {
-        "sha256": "2d660d249c8594b68d2ee0eac5255aa1c547cffed765db8017a0ad027c6f2d57",
-        "bytes": 2927
+        "sha256": "0a672fe3cb4e6c24c2ea9d9cd32ce48c91c1b26ddafa39ffe896df7b0ef1d16b",
+        "bytes": 2930
       },
       "artifact": {
-        "sha256": "2fb3b9a6c7b0a9feae3859016c24c3043c44e29cc20a1451a36408a38476d42c",
-        "bytes": 603406
+        "sha256": "b42e4ceb3d54fd7cec438d20152f1eebf3cce2197927a727cc613354e3b2f6ec",
+        "bytes": 603430
       },
       "validation": {
         "checksPassed": 9,
@@ -268,8 +268,8 @@
     }
   ],
   "atlas": {
-    "sha256": "46c453d74ab08affa7b240987ae2dda3fda8b17f83df567ccbe6af35e90e5764",
-    "bytes": 1993141
+    "sha256": "6481f18a595ad384f06d427131a37805966dcf7dcd13ab96a349e22c7978ba6c",
+    "bytes": 1993393
   },
-  "visual_review": "2026-10-03: Chromium 1440×1100 inspected /workflow#knowledge and its embedded SVG. All 13 chapters passed 9/9 showcase checks; no browser errors in the knowledge chapter."
+  "visual_review": "Chromium 1440×1100: unified workbench knowledge chapter heading and embedded SVG rendered; no browser errors. Knowledge workbench desktop 1440×1050 and mobile 390×844 inspected; main navigation, inline tabs, forms and dialogs verified."
 }

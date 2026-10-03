@@ -14,3 +14,10 @@
 /* Match the shared detail shell and existing card action marker. */
 .ui-dialog{padding:0}.ui-dialog-shell{padding:30px 35px}.ui-detail-section p,.ui-detail-section li{font-size:12px;line-height:1.95}.ui-detail-section h3{font-size:12px}.signal-featured-list .ui-card:after{display:none}.signal-featured-list .ui-card-head{padding-right:0}.signal-featured-list .ui-card-head>span:last-child{font-size:18px;color:#7a96ba}.ui-card-foot{font-size:9px;color:#8f9eab}.signal-featured-list .ui-card-foot{padding-top:17px}.galaxy-controls{font-size:8px;color:#8998a7}.galaxy-controls select{font-size:9px;border-color:#c5d0dd;color:#637a94;background:#f6f8fc;border-radius:0}
 @media(max-width:650px){.ui-dialog-shell{padding:24px 20px}.ui-detail-section p,.ui-detail-section li{font-size:11px}.ui-card-foot{font-size:8px}.signal-featured-list .ui-card-head>span:last-child{font-size:16px}.galaxy-controls{font-size:7px;gap:7px}.galaxy-controls select{font-size:8px;padding:4px 6px;max-width:127px}}
+
+/* Keep all five workbench destinations on one readable mobile navigation row. */
+@media(max-width:650px){
+  .signal-nav{grid-template-columns:repeat(5,minmax(0,1fr));}
+  .signal-nav>a,.signal-nav>a:last-child,.signal-nav>a:nth-child(2),.signal-nav>a:nth-child(3){justify-content:center;font-size:12px;gap:0;min-height:44px;}
+  .signal-nav>a>span{display:none;}
+}

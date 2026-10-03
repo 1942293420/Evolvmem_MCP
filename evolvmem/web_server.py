@@ -1315,17 +1315,21 @@ def make_handler(service: ContextService):
                 except Exception as exc:
                     self._send_json({'ok': False, 'error': _bounded_error(exc)}, 500)
                 return
-            if path in ("/organize", "/organize/"):
+            if path in ("/organize", "/organize/", "/knowledge", "/knowledge/", "/legacy", "/legacy/"):
+                view = parse_qs(parsed.query).get('view', ['projects'])[0]
+                if view not in ('projects', 'library', 'intake', 'rules', 'skill'):
+                    view = 'projects'
+                target = ('/' if path.rstrip('/') == '/legacy' else
+                          '/#knowledge/intake' if path.rstrip('/') == '/organize' else
+                          '/#knowledge/' + view)
                 self.send_response(302)
-                self.send_header('Location', '/knowledge?view=intake')
+                self.send_header('Location', target)
                 self.send_header('Cache-Control', 'no-store')
                 self.send_header('Content-Length', '0')
                 self.end_headers()
                 return
             pages = {
-                '/': _STATIC_INDEX.parent / 'knowledge.html',
-                '/knowledge': _STATIC_INDEX.parent / 'knowledge.html',
-                '/legacy': _STATIC_SIGNAL,
+                '/': _STATIC_SIGNAL,
                 '/workflow': _STATIC_INDEX.parent / 'workflow.html',
                 '/workflow/': _STATIC_INDEX.parent / 'workflow.html',
                 '/workflow-diagram': _STATIC_INDEX.parent / 'workflow-diagram.html',

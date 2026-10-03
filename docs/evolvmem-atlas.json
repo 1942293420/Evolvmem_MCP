@@ -4815,14 +4815,14 @@
       "id": "knowledge",
       "title": "知识库管理",
       "english": "KNOWLEDGE MANAGEMENT",
-      "subtitle": "按项目查资料、改归属、管入库；管理 Skill 与规则共用一个来源。",
-      "takeaway": "首页以项目知识库替代记忆表。明确资料自动入库，疑难资料进入待确认；规则表单、Skill 编辑页和 AI 提炼读取同一份受控 SKILL.md。已有人工确认优先于历史 unresolved/conflict，恢复其真实召回资格。",
+      "subtitle": "同一工作台按项目查资料、改归属、管入库；Skill 与规则就地编辑。",
+      "takeaway": "知识库管理融入现有主工作台，与总览、经验案例和项目进展共用导航。项目资料、待确认、规则和 Skill 在知识库内切换。明确资料自动入库，疑难资料进入待确认；规则表单、Skill 编辑与 AI 提炼读取同一份受控 SKILL.md。已有人工确认优先于历史 unresolved/conflict。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
         "meta": {
           "title": "EvolvMem · 知识库管理",
-          "subtitle": "一份规则驱动提炼与整理，资料归属和入库状态可管理",
+          "subtitle": "管理融入主工作台，一份规则驱动资料提炼与整理",
           "quality_profile": "showcase",
           "visual_preset": "blueprint",
           "animation": "none",
@@ -4835,8 +4835,8 @@
           {
             "id": "kb-web",
             "type": "frontend",
-            "label": "项目知识库",
-            "sublabel": "资料 · 归属 · 入库 · 规则",
+            "label": "主工作台 · 知识库",
+            "sublabel": "项目资料 · 待确认 · 规则",
             "pos": [
               40,
               320
@@ -4980,6 +4980,7 @@
         {
           "title": "资料管理与入库",
           "paragraphs": [
+            "前端共用总览、知识库、经验案例、项目进展导航；管理能力作为知识库内的功能呈现，详情原位编辑，规则和 Skill 未保存时切换会提示。旧独立入口统一跳转，资料写入刷新总览统计。",
             "统一读取 Context 全部类型，包括没有兼容旧表映射的候选、任务断点与项目摘要。支持搜索、文本/Markdown 新增、编辑、单条/批量归属、确认入库、归档、恢复和软删除。",
             "内容与状态修改同时更新兼容投影和检索。系统生成摘要、断点及结构化经验通过补充资料记录更正；任务改归属同事务迁移全部历史断点与焦点，关联父子任务保留待处理。"
           ]
@@ -5010,7 +5011,7 @@
           "path": "evolvmem/knowledge_rules.py"
         },
         {
-          "label": "管理页面",
+          "label": "主工作台内的知识库",
           "path": "evolvmem/web_static/knowledge.js"
         },
         {
@@ -5028,6 +5029,10 @@
         {
           "label": "业务回归",
           "path": "tests/test_knowledge_management.py"
+        },
+        {
+          "label": "统一导航与书签兼容",
+          "path": "evolvmem/web_static/designs/app.js"
         }
       ]
     }
