@@ -380,13 +380,23 @@ class KnowledgeBase:
                     sample['project'] = ''
                     sample['key'] = ''
                 decision = self.preview(sample)
+            if decision['action'] == 'auto' and self.conn.execute(
+                "SELECT 1 FROM context_items WHERE identity_key=? AND project=? AND scope=? AND status='active' AND id!=?",
+                (row['identity_key'], decision['project'], decision['scope'], cid),
+            ).fetchone():
+                decision = {**decision, 'action': 'review', 'reason': '目标项目已存在相同标识的资料，请先核对或归档重复资料'}
             proposal = {'id': cid, 'title': row['title'], 'expected_revision': row['revision'], **decision, 'applied': False}
             if body.get('apply') and decision['action'] in ('auto', 'ignore'):
                 # Each item is an atomic unit; revisions protect changes between
                 # suggestion generation and acceptance. No guessed task moves.
-                with self.service._cutover_lock.shared(), self.store.transaction():
-                    self._check(cid, {'expected_revision': row['revision']})
-                    self._apply_decision(row, decision)
+                try:
+                    with self.service._cutover_lock.shared(), self.store.transaction():
+                        self._check(cid, {'expected_revision': row['revision']})
+                        self._apply_decision(row, decision)
+                except (ValueError, sqlite3.IntegrityError):
+                    proposal.update(action='review', reason='资料已变化或存在重复标识，请重新核对后处理')
+                    proposals.append(proposal)
+                    continue
                 self._sync([cid])
                 applied += decision['action'] == 'auto'
                 ignored += decision['action'] == 'ignore'

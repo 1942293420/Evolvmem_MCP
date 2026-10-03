@@ -259,3 +259,18 @@ def test_runtime_paths_and_generic_project_labels_are_not_business_ownership(ser
     assert kb.preview(sample)['action']=='review'
     sample['body']='续接飞书审批项目，另回答了 EVA 客服版本更新内容。'
     assert kb.preview(sample)['action']=='review'
+
+
+def test_organize_duplicate_target_stays_pending_and_other_records_continue(service):
+    kb=manager(service)
+    layers=ContextLayers('EVA 退款约定','EVA 客服退款核对原始订单与付款金额。','EVA 客服退款核对原始订单与付款金额。','test')
+    duplicate=service.store.create_item(ContextItemDraft(identity_key='shared:refund',content_type=ContextContentType.FACT,layers=layers,status=ContextStatus.ACTIVE,confidence=.95))
+    service.store.create_item(ContextItemDraft(identity_key='shared:refund',content_type=ContextContentType.FACT,layers=layers,project='eva',status=ContextStatus.ACTIVE,confidence=.95))
+    with service.store.transaction():
+        service.store._connection().execute("INSERT INTO context_sources(item_id,source_kind,source_ref,extraction_version,created_at) VALUES(?,'manual','old-source','test','2026-01-01')",(duplicate.id,))
+    clear=kb.create({'title':'EVA 物流约定','body':'EVA 客服发货时应核对收货地址与运费。'})
+    result=kb.organize({'ids':[duplicate.id,clear['id']],'apply':True})
+    assert result['applied']==1 and result['pending']==1
+    assert kb.detail(duplicate.id)['project']==''
+    assert kb.detail(clear['id'])['project']=='eva'
+    assert result['items'][0]['action']=='review'
