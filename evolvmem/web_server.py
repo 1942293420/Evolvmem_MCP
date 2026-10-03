@@ -1249,7 +1249,7 @@ def make_handler(service: ContextService):
             if path.startswith('/api/knowledge/'):
                 self._knowledge('GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()})
                 return
-            if path in ('/knowledge.css', '/knowledge.js'):
+            if path in ('/knowledge.css', '/knowledge.js', '/learning.js'):
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 data = asset.read_bytes()
                 self.send_response(200)

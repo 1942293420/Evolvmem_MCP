@@ -458,7 +458,8 @@ class ContextStore:
         """
         self._require_transaction("create_schema_in_transaction")
         conn = self._connection()
-        for statement in _SCHEMA_TABLE_STATEMENTS:
+        from evolvmem.learning_schema import SCHEMA as learning_schema
+        for statement in (*_SCHEMA_TABLE_STATEMENTS, *learning_schema):
             conn.execute(statement)
 
         # 既有库增量列：项目中文显示名（2026-09-02）。新库已由上面的

@@ -146,7 +146,7 @@ class LanTools:
                 if not capture.is_current(row):
                     capture.finish_extraction(row, superseded=True, error='version_superseded')
                     return 1
-                result = capture.server.context_service.persist_legacy_extraction(prepared, source_archive_id=row['archive_id'])
+                result = capture.server.context_service.persist_legacy_extraction(prepared, source_archive_id=row['archive_id'], source_messages=messages)
                 summary_id = result.summary.context_id if result.summary else None
                 receipt = {'summary_context_id': summary_id, 'persisted': result.persisted,
                            'project_summary_status': 'pending'}
@@ -160,6 +160,13 @@ class LanTools:
                         self.lock.acquire()
                     # Do not generate a rollup using a source snapshot invalidated during the call.
                     return response if self._memory_revision(user) == version else None
+                try:
+                    learning = capture.server.context_service.learning()
+                    family = next((r['family'] for r in learning.families() if r['project']==row['project']), '')
+                    learned = learning.analyze({'project':row['project'], 'family':family, 'automatic':True}, llm=unlocked_llm)
+                    receipt['learning_status'] = learned['status']
+                except Exception:
+                    receipt['learning_status'] = 'failed'
                 try:
                     rolled = capture.server.context_service.rollup_project(row['project'], llm=unlocked_llm)
                     receipt['project_summary_status'] = rolled.status

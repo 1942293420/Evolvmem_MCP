@@ -43,6 +43,7 @@ def prepare_extraction(config, project, source_session, messages, llm_config):
         items.append(LegacyExtractionItem(
             key=key, value=candidate.value.strip(), attribute=candidate.attribute,
             tags=tuple(candidate.tags), confidence=candidate.confidence,
-            importance=candidate.importance, tier=candidate.tier, experience_case=case))
+            importance=candidate.importance, tier=candidate.tier, experience_case=case,
+            learning=candidate.learning))
     return LegacyExtractionRequest(summary=summary_item, candidates=tuple(items),
                                    max_writes=8, source_session=source_session)

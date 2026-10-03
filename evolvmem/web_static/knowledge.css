@@ -1,4 +1,16 @@
 /* Knowledge management lives inside the Signal workbench; styles stay local. */
+.knowledge-workspace .learning-rule {margin-bottom:16px;}
+.knowledge-workspace .learning-rule textarea {width:100%;min-height:85px;box-sizing:border-box;}
+.knowledge-workspace .learning-rule details {margin:16px 0;}
+.knowledge-workspace .learning-rule p {line-height:1.8;overflow-wrap:anywhere;}
+.knowledge-workspace .learning-source {border-top:1px solid var(--line);padding:14px 0;}
+.knowledge-workspace blockquote {margin:12px 0;padding:12px 18px;border-left:3px solid var(--accent);background:var(--pale);white-space:pre-wrap;overflow-wrap:anywhere;}
+.knowledge-workspace .learning-framework {margin:28px 0;}
+.knowledge-workspace #learning-framework {width:100%;min-height:430px;box-sizing:border-box;margin:12px 0;}
+.knowledge-workspace #learning-preview {white-space:pre-wrap;overflow-wrap:anywhere;background:var(--pale);padding:20px;}
+.knowledge-workspace .learning-controls {margin-bottom:26px;}
+.knowledge-workspace .learning-controls .toolbar {flex-wrap:wrap;}
+.knowledge-workspace .learning-controls .toolbar>* {min-width:0;}
 .knowledge-workspace {--purple:var(--accent);--pale:#eaf0ff;--green:#23876d;--amber:#a36824;font-size:14px;min-width:0;}
 .knowledge-workspace button,.knowledge-workspace input,.knowledge-workspace select,.knowledge-workspace textarea {font:inherit;}
 .knowledge-workspace button {cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:9px 14px;background:white;color:var(--ink);font-weight:500;}

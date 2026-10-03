@@ -18,6 +18,7 @@ class CandidateMemory:
     importance: float = 5.0
     tier: str = "normal"
     experience_case: dict | None = None
+    learning: dict | None = None
 
 
 class AutoExtractor:
@@ -63,6 +64,12 @@ class AutoExtractor:
 - key：字面量 `SESSION_SUMMARY`（调用方会重写）
 - value：最多 200 个字符，叙述会话涉及的项目、完成的事项和当前状态。
 - attribute："fact"；importance：5-6；tier："normal"；tags：["日志", "分类:<project>"]
+
+## 记忆学习元数据
+原子记忆可增加 learning 对象：category 为 habit（长期习惯）、project_convention（项目约定）、task_requirement（任务要求）、environment（环境事实）、decision（决策依据）、experience（技术经验）或 reference（参考资料）；basis 为 explicit（用户明确）或 inferred（推断）。
+learning.quote 必须逐字引用本次会话的一段原话；trigger 写适用时机，rationale 保留纠正或选择的原因；可复用的协作要求加 instruction 与稳定 topic（例如 requirements、testing、communication、delivery）。
+用户直接表达的协作要求，instruction 保留原话、条件和范围；推断或归纳明确标为 inferred，不能把助手建议写成用户要求。用户纠正时保留被纠正的理解及原因。单一项目约定仍用 project: key；只有明确长期通用要求才用 user: key。
+task_requirement 不进入长期协作规则；一次性任务进展由摘要和任务断点保留。不要为填满字段臆造规则。SESSION_SUMMARY 不需要 learning。
 
 ## 会话内容
 {conversation}
@@ -143,6 +150,7 @@ class AutoExtractor:
                 tier=tier,
                 experience_case=(item.get("case") if item.get("attribute") == "experience"
                                  and isinstance(item.get("case"), dict) else None),
+                learning=item.get('learning') if isinstance(item.get('learning'), dict) else None,
             ))
         return candidates
 

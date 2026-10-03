@@ -261,7 +261,7 @@
   $$('[data-ui-search]').forEach(el=>el.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();navigate('memories','',el.value);}}));
   function navigateFromLocation() {
     const [page,view]=location.hash.slice(1).split('/');
-    if(window.EvolvKnowledge&&['knowledge','projects','library','intake','rules','skill','memories'].includes(page)) {
+    if(window.EvolvKnowledge&&['knowledge','projects','library','intake','rules','skill','learning','memories'].includes(page)) {
       navigate('memories',undefined,undefined,page==='knowledge'?(view||'projects'):page==='memories'?'projects':page,true);
     } else navigate(['memories','experiences','progress'].includes(page)?page:'home',undefined,undefined,undefined,true);
   }

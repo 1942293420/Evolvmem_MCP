@@ -326,6 +326,7 @@ class MemoryMCPServer:
             "memory_remove": self._memory_remove,
             "memory_consolidate": self._memory_consolidate,
             "context_session_start": self._context_session_start,
+            "collaboration_recall": self._collaboration_recall,
             "context_search": self._context_search,
             "context_project_recall": self._context_project_recall,
             "context_decision_window": self._context_decision_window,
@@ -762,6 +763,15 @@ class MemoryMCPServer:
         if result.continuation is not None:
             payload["continuation"] = result.continuation
         return payload
+
+    def _collaboration_recall(self, args: dict) -> dict:
+        gate_error = self._context_gate_error()
+        if gate_error is not None:
+            return gate_error
+        project = args.get('project', '')
+        if not isinstance(project, str):
+            return self._context_error('invalid_arguments')
+        return self.context_service.learning().skill(project)
 
     def _context_search(self, args: dict) -> dict:
         try:

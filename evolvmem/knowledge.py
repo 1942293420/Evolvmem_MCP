@@ -85,13 +85,14 @@ class KnowledgeBase:
         # Retrieval updates usage counters without editing knowledge. Such
         # reads must not invalidate a user's open editor.
         revision_row = {k: v for k, v in row.items() if k not in ('access_count', 'last_accessed')}
-        revision_data = [revision_row, layers, dict(meta) if meta else None, dict(resolution) if resolution else None]
+        learning = self.service.learning().metadata(item_id, row)
+        revision_data = [revision_row, layers, dict(meta) if meta else None, dict(resolution) if resolution else None, learning]
         revision = hashlib.sha256(json.dumps(revision_data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         sources = [dict(r) for r in self.conn.execute(
             'SELECT s.source_kind,s.source_ref,s.archive_id,s.created_at,a.adapter,a.project AS source_project,a.state AS source_state '
             'FROM context_sources s LEFT JOIN session_archives a ON a.id=s.archive_id WHERE s.item_id=? ORDER BY s.id', (item_id,))]
         workstream = re.search(r':workstream:(ws_[a-z0-9]+):checkpoint$', row['identity_key'])
-        return {**row, 'title': title, 'body': body, 'summary': layers.get('l0', ''), 'revision': revision,
+        return {**row, 'title': title, 'body': body, 'summary': layers.get('l0', ''), 'revision': revision, 'learning': learning,
                 'tags': json.loads(row['tags'] or '[]'), 'ownership': facts.get(item_id, UNREVIEWED_FACT).public(),
                 'resolution': dict(resolution) if resolution else None, 'sources': sources,
                 'ingestion_reason': meta['ingestion_reason'] if meta else '',
@@ -120,6 +121,8 @@ class KnowledgeBase:
             where.append('(i.identity_key LIKE ? OR EXISTS(SELECT 1 FROM context_layers l WHERE l.item_id=i.id AND l.content LIKE ?) OR EXISTS(SELECT 1 FROM knowledge_metadata k WHERE k.item_id=i.id AND k.title LIKE ?))')
             args.extend(['%' + str(p['q']) + '%'] * 3)
         rows = self.conn.execute('SELECT i.id,i.status FROM context_items i WHERE ' + ' AND '.join(where) + ' ORDER BY i.updated_at DESC,i.id DESC', args).fetchall()
+        if p.get('category'):
+            rows = [r for r in rows if self.service.learning().metadata(r['id'])['category'] == p['category']]
         if p.get('queue'):
             facts = load_ownership(self.store, [r['id'] for r in rows])
             queue = p['queue']

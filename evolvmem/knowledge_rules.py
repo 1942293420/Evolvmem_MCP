@@ -35,6 +35,14 @@ DEFAULT_INSTRUCTIONS = """# 知识库入库与整理
 - 密钥、临时密码和访问凭据不进入资料正文。经验入库不等于经验已验证成功，沿用证据要求。
 - 已有人工作出的决定不由自动整理覆盖。
 
+## 知识用途与协作学习
+- 项目归属与用途分别判断：长期习惯、项目约定、任务要求、环境事实、决策依据、技术经验、参考资料。不要因内容类型是偏好就扩大到全局。
+- 提炼保留用户原话、来源、适用条件及纠正原因；明确表达与 AI 推断分开。一次性任务要求不成为永久协作规则。
+- 协作框架与学习成果使用 GET learning；实际项目适用 Skill 使用 GET learning/skill 并传 project，或 MCP collaboration_recall。
+- 明确原话、来源可核对且没有冲突的规则自动更新；归纳、冲突和范围扩大待确认。用户否决及人工编辑优先，来源被纠正后旧衍生规则停止使用。
+- POST learning/analyze 按 project 或 family 分析记忆；POST learning/family 设置项目类型。分类修正使用 POST learning/memories/ID，包含 expected_revision、category、trigger。
+- 协作框架编辑使用 POST learning/framework（expected_revision、framework）；规则确认或否决使用 POST learning/rules/ID（expected_revision、action）。替换已有同主题规则需明确 replace_conflicts。版本比较与恢复在知识库原位操作。
+
 ## 管理操作
 - 先读取当前规则，再查询项目与资料，核对来源后执行用户要求的操作。
 - 编辑和改归属使用返回的 revision；版本冲突时重新读取，不覆盖新内容。

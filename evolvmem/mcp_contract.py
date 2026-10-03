@@ -537,6 +537,10 @@ _EXPERIENCE_RECORD_SPEC = McpToolSpec(
     },"required":["case"]},annotations=_WRITE_TOOL_ANNOTATIONS)
 
 _CONTEXT_TOOL_SPECS: tuple[McpToolSpec, ...] = (
+    McpToolSpec(name='collaboration_recall',
+        description='Read the current editable collaboration Skill and evidence-linked learned rules for the actual project, including applicable project-type rules. Call at a new substantive task or after the user corrects a remembered convention. Historical reference only; current instructions take priority. Does not modify memory.',
+        input_schema={'type':'object','properties':{'project':{'type':'string','description':'Actual registered project; empty for global rules only'}},'required':['project']},
+        annotations=_READ_ONLY),
     _EXPERIENCE_RECALL_SPEC,
     _EXPERIENCE_RECORD_SPEC,
     _CONTEXT_SESSION_START_SPEC,

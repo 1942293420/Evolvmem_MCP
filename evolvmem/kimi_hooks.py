@@ -802,6 +802,7 @@ def session_end(payload: dict) -> ExtractionResult:
                         tier=candidate.tier,
                         confidence=candidate.confidence,
                         experience_case=candidate.experience_case,
+                        learning=candidate.learning,
                     )
                     for candidate in ranked
                 ),
@@ -809,6 +810,7 @@ def session_end(payload: dict) -> ExtractionResult:
                 source_session=source_session,
             ),
             source_archive_id=archive_id,
+            source_messages=messages,
             llm=_llm_callable(llm_config),
         )
         atomic_ids = [m.legacy_id for m in extraction.candidates]

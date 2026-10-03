@@ -8,6 +8,25 @@ def dispatch(service, method, path, body=None):
     if not isinstance(body, dict):
         raise ValueError('invalid_request')
     route = path.removeprefix('/api/knowledge').strip('/')
+    if route.startswith('learning'):
+        learning = service.learning()
+        if method == 'GET':
+            if route == 'learning':
+                return learning.overview()
+            if route == 'learning/skill':
+                return learning.skill(str(body.get('project') or ''))
+            if route == 'learning/versions':
+                return learning.overview()['versions']
+            if re.fullmatch(r'learning/versions/\d+', route):
+                return learning.version(int(route.split('/')[-1]))
+        if method == 'POST':
+            commands = {'learning/analyze': learning.analyze, 'learning/framework': learning.save_framework,
+                        'learning/restore': learning.restore, 'learning/family': learning.set_family}
+            if route in commands:
+                return commands[route](body)
+            match = re.fullmatch(r'learning/(rules|memories)/(\d+)', route)
+            if match:
+                return (learning.review if match[1]=='rules' else learning.classify)(int(match[2]), body)
     if method == 'GET':
         if route == 'projects':
             return kb.projects()

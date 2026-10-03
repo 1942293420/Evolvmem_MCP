@@ -82,6 +82,21 @@ python -m evolvmem.web_server
 脚本在源码目录创建 `.venv`、检查运行环境、安装基础依赖，并在不存在时生成 `config.json`。
 默认不下载模型，不安装可选 `llama-cpp-python`，也不覆盖已有配置或模型文件。
 打开 http://127.0.0.1:9377 即可使用 Signal 工作台；终端按 Ctrl+C 停止服务。
+
+知识库内的「学习与协作 Skill」展示 AI 学到的规则、来源原话及适用范围，支持纠正、确认、编辑框架、版本比较和恢复。资料可按长期习惯、项目约定、任务要求、环境事实、决策、经验及参考用途筛选。
+
+新对话在现有提炼中保留学习元数据。明确且无冲突的原话规则自动更新；归纳、冲突和范围扩大待确认。设置项目类型后，可分析同类项目的记忆。后台累计三份新记忆后综合分析，也可在页面主动分析已有资料；使用现有提炼模型配置。
+
+会话开始提供有界的适用规则；任务切换或纠正后，AI 可通过 `collaboration_recall(project=实际项目)` 读取当前协作 Skill。知识库与命令行共用核心：
+
+```bash
+python -m evolvmem.knowledge_cli GET learning
+python -m evolvmem.knowledge_cli GET learning/skill --json '{"project":"demo"}'
+python -m evolvmem.knowledge_cli POST learning/analyze --json '{"project":"demo"}'
+```
+
+框架编辑保存在数据库，并导出到数据目录的 `collaboration/SKILL.md`，可链接到客户端的 skills 目录。用户修正、过期或归档的来源不再支持旧规则；恢复版本也不会使失效来源重新生效。初始框架提供协作组织方式，具体习惯通过后续对话逐步积累。
+
 MCP 由客户端另起进程，使用 MCP 不要求 Web 同时运行。
 
 需要选择 Python 或虚拟环境目录时：

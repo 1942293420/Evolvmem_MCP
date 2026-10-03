@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-10-03",
+  "reviewed_at": "2026-10-04",
   "source": {
-    "sha256": "83eaa5667bbffef921ab66e1f7f7baac7ad0366f263e31c0016b97215c9038e2",
-    "bytes": 180498
+    "sha256": "a1cdb0118cb7ce2e2b00eac653628a897bf464bc6b0ee7bb4fe8e559d364a94d",
+    "bytes": 188159
   },
   "chapters": [
     {
@@ -265,11 +265,31 @@
         "errors": 0,
         "warnings": 0
       }
+    },
+    {
+      "chapter": "learning",
+      "type": "architecture",
+      "specification": {
+        "sha256": "476f4649eb566fa55a76be33928f91f55407518de8cf064d0ceaa2c77df09ba0",
+        "bytes": 3123
+      },
+      "artifact": {
+        "sha256": "e63dfdf048a6107a8d1d3d54abfec12b75f4b112f1c01eccd172bf33891d54a7",
+        "bytes": 603786
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
     }
   ],
   "atlas": {
-    "sha256": "6481f18a595ad384f06d427131a37805966dcf7dcd13ab96a349e22c7978ba6c",
-    "bytes": 1993393
+    "sha256": "8c6a50c856c3ca9931c64abef3d637d493a771eafaf279b32a1e6a6293f80969",
+    "bytes": 2141549
   },
-  "visual_review": "Chromium 1440×1100: unified workbench knowledge chapter heading and embedded SVG rendered; no browser errors. Knowledge workbench desktop 1440×1050 and mobile 390×844 inspected; main navigation, inline tabs, forms and dialogs verified."
+  "visual_review": "Passed: browser rendered all learning nodes and connections; desktop learning chapter and integrated desktop/mobile knowledge workbench visually inspected on 2026-10-04."
 }

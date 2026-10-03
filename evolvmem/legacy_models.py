@@ -367,6 +367,7 @@ class LegacyExtractionItem:
     workspace_path: str = ""
     project_hint: str = ""
     experience_case: dict | None = None
+    learning: dict | None = None
 
     def __post_init__(self) -> None:
         _normalize_write_payload(self)

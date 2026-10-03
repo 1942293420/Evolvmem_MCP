@@ -13,7 +13,8 @@ EvolvMem 保存长期偏好、项目决策、故障经验和任务断点，供�
 - 用关键词查中文记忆；装好本地 embedding 后，再补充语义相近的结果。
 - 按条件检索经验，查看适用范围、方法、原始依据与后续反馈。
 - 保存项目摘要和工作断点，让“继续上次任务”有明确的恢复位置。
-- 在 Web 中浏览、筛选、整理项目归属，查看经验来源和未完成工作。
+- 在 Web 项目知识库中浏览全部资料、编辑正文、批量改归属、管理入库与归档，查看来源。
+- 明确资料自动入库，疑难资料待确认；页面可编辑入库条件和 AI 管理 Skill，并用样例预览。
 - 可选接入 Kimi / DSH 会话提取，把有长期价值的信息整理成候选记忆。
 - Windows 原生 Codex 可安装会话 hooks 和后台采集脚本，经一个 LAN MCP 共用 Linux 的记忆、项目与任务断点。
 
@@ -21,9 +22,26 @@ EvolvMem 保存长期偏好、项目决策、故障经验和任务断点，供�
 自动调用依赖客户端遵循 MCP instructions 或运行 hooks，不保证每个 Agent 都主动查历史。
 历史内容始终只是参考，不能覆盖当前用户要求或实际代码、测试结果。
 
-图片：Signal 中文记忆工作台预览 (evolvmem/web_static/designs/signal.png)
+图片：项目知识库预览 (evolvmem/web_static/designs/knowledge.png)
 
 界面预览使用演示数据。实际打开后显示自己的本地数据；新目录为空是正常状态。
+
+项目知识库管理
+
+Web 使用统一工作台：顶部保留总览、知识库、经验案例和项目进展；“知识库”内部切换项目资料、全部资料、待确认、入库规则与管理 Skill，详情在当前界面编辑。无需进入单独的管理站点。旧 /knowledge、/organize 和 /legacy 链接自动进入统一界面，工作原理仍在 /workflow。
+
+支持粘贴或导入文本 / Markdown、搜索全文、维护项目别名、编辑内容、单条与批量改归属、确认入库、归档、恢复和软删除。系统生成的摘要、任务断点和结构化经验可新增补充资料记录更正；任务改归属会整组迁移历史断点与焦点，带父子关联的任务暂保留待处理。
+
+首次启动 Web 后，在数据目录的 knowledge-management/SKILL.md 保存默认规则。默认最低置信度 0.8、正文 10–20000 字且需来源；唯一项目线索的普通资料自动入库，其余进入待确认。规则 JSON 条件由程序执行，说明文字进入 AI 提炼提示词；保存后每次处理读取最新内容。经验入库仍不等于已验证成功。历史资料通过整理预览后应用新规则，已有人工决定不会被自动覆盖。
+
+本地 AI 与页面使用同一个管理核心。使用项目 Python 环境：
+
+python -m evolvmem.knowledge_cli GET rules
+python -m evolvmem.knowledge_cli GET projects
+python -m evolvmem.knowledge_cli GET items --json '{"project":"evolvmem"}'
+python -m evolvmem.knowledge_cli POST items/123/assign --file request.json
+
+写入请求带详情返回的 expected_revision；改归属文件例如 {"project":"eva","expected_revision":"读取到的版本"}。可将数据目录中的 knowledge-management 链接到本机技能目录；AI 发现和 Web 编辑共用同一份 SKILL.md。当前已打开的聊天需主动读取新规则，新会话按客户端机制发现技能。
 
 运行环境
 
@@ -56,6 +74,19 @@ python -m evolvmem.web_server
 脚本在源码目录创建 .venv、检查运行环境、安装基础依赖，并在不存在时生成 config.json。
 默认不下载模型，不安装可选 llama-cpp-python，也不覆盖已有配置或模型文件。
 打开 http://127.0.0.1:9377 即可使用 Signal 工作台；终端按 Ctrl+C 停止服务。
+
+知识库内的「学习与协作 Skill」展示 AI 学到的规则、来源原话及适用范围，支持纠正、确认、编辑框架、版本比较和恢复。资料可按长期习惯、项目约定、任务要求、环境事实、决策、经验及参考用途筛选。
+
+新对话在现有提炼中保留学习元数据。明确且无冲突的原话规则自动更新；归纳、冲突和范围扩大待确认。设置项目类型后，可分析同类项目的记忆。后台累计三份新记忆后综合分析，也可在页面主动分析已有资料；使用现有提炼模型配置。
+
+会话开始提供有界的适用规则；任务切换或纠正后，AI 可通过 collaboration_recall(project=实际项目) 读取当前协作 Skill。知识库与命令行共用核心：
+
+python -m evolvmem.knowledge_cli GET learning
+python -m evolvmem.knowledge_cli GET learning/skill --json '{"project":"demo"}'
+python -m evolvmem.knowledge_cli POST learning/analyze --json '{"project":"demo"}'
+
+框架编辑保存在数据库，并导出到数据目录的 collaboration/SKILL.md，可链接到客户端的 skills 目录。用户修正、过期或归档的来源不再支持旧规则；恢复版本也不会使失效来源重新生效。初始框架提供协作组织方式，具体习惯通过后续对话逐步积累。
+
 MCP 由客户端另起进程，使用 MCP 不要求 Web 同时运行。
 
 需要选择 Python 或虚拟环境目录时：

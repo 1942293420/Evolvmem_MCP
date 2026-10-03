@@ -767,8 +767,10 @@ class ContextService:
             for result in candidates_pool
             if not project_only or result.project == project
         )
+        budget = min(request.max_chars or self.config.context_inject_max_chars, self.config.context_inject_max_chars)
+        collaboration = self.learning().context(project, min(1800, max(0, budget // 3)))
         rendered = self.renderer.render(
-            candidates, project=project, max_chars=request.max_chars
+            candidates, project=project, max_chars=max(1,budget-len(collaboration)) if collaboration else request.max_chars
         )
         if rendered.selected_ids:
             # A renderer exception or an empty block never reaches this update.
@@ -781,9 +783,9 @@ class ContextService:
                 ContextExclusionCount(reason=reason, count=count)
             )
         return ContextSessionStartResult(
-            block=rendered.block,
+            block=collaboration + rendered.block,
             selected_ids=rendered.selected_ids,
-            used_chars=rendered.used_chars,
+            used_chars=len(collaboration) + rendered.used_chars,
             excluded_counts=tuple(excluded_counts),
             continuation_code=continuation_code,
             continuation=continuation,
@@ -1335,6 +1337,10 @@ class ContextService:
         """Unified project knowledge management and editable ingestion policy."""
         from evolvmem.knowledge import KnowledgeBase
         return KnowledgeBase(self)
+
+    def learning(self):
+        from evolvmem.memory_learning import MemoryLearning
+        return MemoryLearning(self)
 
     def confirm(self, item_id: int) -> EvidenceReport:
         """Promote one candidate to active through the lifecycle state machine.
@@ -1981,7 +1987,7 @@ class ContextService:
 
     def persist_legacy_extraction(
         self, request: LegacyExtractionRequest, *, source_archive_id: int | None = None,
-        llm=None,
+        llm=None, source_messages=(),
     ) -> LegacyExtractionResult:
         """Persist one extraction batch as all-or-nothing under the cutover lock.
 
@@ -2026,6 +2032,7 @@ class ContextService:
             engine_ready=engine_ready,
             source_archive_id=source_archive_id,
             llm=llm,
+            source_messages=source_messages,
         )
 
     def _persist_extraction_dual(
@@ -2034,7 +2041,7 @@ class ContextService:
         *,
         engine_ready: bool,
         source_archive_id: int | None,
-        llm=None,
+        llm=None, source_messages=(),
     ) -> LegacyExtractionResult:
         source_session = request.source_session
 
@@ -2118,6 +2125,15 @@ class ContextService:
                             self.store, source_archive_id, summary_result.context_id
                         )
                 knowledge = self.knowledge()
+                # Scope comes from the claimed project, independently of content type.
+                # Do this before ingestion: preference's legacy global default would
+                # otherwise discard the project even for project:... keys.
+                learning_candidates = {i.key.casefold(): i for i in request.candidates if i.learning}
+                for mutation in candidate_results:
+                    if mutation.context_id:
+                        candidate_row = knowledge._row(mutation.context_id)
+                        if candidate_row['identity_key'].casefold() in learning_candidates and candidate_row['identity_key'].startswith('project:'):
+                            self.store._connection().execute("UPDATE context_items SET scope='project' WHERE id=?", (mutation.context_id,))
                 governed_ids = []
                 if knowledge.rules.path.exists():
                     from dataclasses import replace
@@ -2132,6 +2148,17 @@ class ContextService:
                     # Preserve removals of superseded rows; current rows use the
                     # final policy status, so doubtful data never enters vectors.
                     aftermath = replace(aftermath, context_upserts=(), legacy_upserts=())
+                # Preserve claim-level user evidence alongside the existing archive link.
+                by_key = {i.key.casefold(): i for i in request.candidates if i.learning}
+                learning = self.learning()
+                for mutation in candidate_results:
+                    if mutation.context_id is None:
+                        continue
+                    row = knowledge._row(mutation.context_id)
+                    candidate = by_key.get(row['identity_key'].casefold())
+                    if candidate:
+                        learning.capture(mutation.context_id, candidate.learning,
+                            messages=source_messages, source_session=source_session, archive_id=source_archive_id)
         self._apply_vector_aftermath(aftermath)
         if governed_ids:
             knowledge._sync(governed_ids)
@@ -2142,6 +2169,13 @@ class ContextService:
             + len(candidate_results),
         )
         self._maybe_rollup_project(summary_result, llm=llm)
+        if llm is not None and summary_result is not None and summary_result.context_id:
+            try:
+                project = knowledge._row(summary_result.context_id)['project']
+                family = next((r['family'] for r in learning.families() if r['project']==project), '')
+                learning.analyze({'project':project,'family':family,'automatic':True}, llm=llm)
+            except Exception:
+                logger.warning('Learning analysis deferred after extraction', exc_info=False)
         return result
 
     # ---- rolling project summary trigger ----
