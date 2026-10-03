@@ -2,8 +2,8 @@
   "schema_version": 1,
   "reviewed_at": "2026-10-04",
   "source": {
-    "sha256": "a1cdb0118cb7ce2e2b00eac653628a897bf464bc6b0ee7bb4fe8e559d364a94d",
-    "bytes": 188159
+    "sha256": "c5de8eaa8b5bf38c18b67dc4dbd022deeb0b0a6a3573e5191c5910e8cfc80261",
+    "bytes": 188303
   },
   "chapters": [
     {
@@ -288,8 +288,8 @@
     }
   ],
   "atlas": {
-    "sha256": "8c6a50c856c3ca9931c64abef3d637d493a771eafaf279b32a1e6a6293f80969",
-    "bytes": 2141549
+    "sha256": "7c41c6728b6586a29e6acf4641cfbbab6ba0a631c507638a869c862701a96840",
+    "bytes": 2141685
   },
-  "visual_review": "Passed: browser rendered all learning nodes and connections; desktop learning chapter and integrated desktop/mobile knowledge workbench visually inspected on 2026-10-04."
+  "visual_review": "Passed: learning diagram unchanged from browser inspection; only analysis filtering explanation updated, rendered in final browser check on 2026-10-04."
 }

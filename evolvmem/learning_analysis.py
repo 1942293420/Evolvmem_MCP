@@ -5,6 +5,18 @@ from evolvmem.context_store import _now_iso
 from evolvmem.memory_learning import encoded
 
 
+def excluded_proposal_reason(learning, proposed, scope, target):
+    """Avoid sending existing claims and short-lived plans back to the review queue."""
+    if re.search(r'下一步优先|本轮优先|本次优先|本阶段优先', str(proposed.get('instruction') or '')):
+        return '阶段性计划保留在任务记忆，不作为长期协作规则'
+    sources = set(proposed.get('source_ids') or [])
+    for saved in learning.conn.execute("SELECT id FROM learning_rules WHERE status='active' AND scope=? AND target=?", (scope,target)):
+        rule = learning.rule(saved['id'])
+        if rule['effective'] and sources and sources.issubset({s['id'] for s in rule['sources']}):
+            return '相同来源已被本范围生效规则覆盖，不重复生成改写建议'
+    return ''
+
+
 def analyze(learning, params, *, llm=None):
     project, family = str(params.get('project') or ''), str(params.get('family') or '')
     scope, target = ('family', family) if family else ('project', project) if project else ('global', '')
@@ -42,6 +54,7 @@ def analyze(learning, params, *, llm=None):
             '仅总结有来源、可复用的沟通或开发协作规律；保留原因、条件和例外，不把临时任务扩大为长期规则。'
             '不要把助手自称成功当成验证，不从某项目的特有业务规则推断所有项目都适用。'
             '本次只分析指定范围，同类项目归纳是待确认建议。规则与已有规则相同则不重复输出，冲突需说明。'
+            '已有生效规则覆盖的原来源不要换一种说法再次输出；下一步优先级和阶段计划属于任务要求，不是长期协作规则。'
             '只返回 JSON {"rules":[{"topic":"稳定主题", "instruction":"规则", "trigger":"适用时机",'
             '"rationale":"归纳理由", "exceptions":"例外", "source_ids":[实际输入记忆ID]}]}。最多8条；没有证据则返回空数组。\n'
             + '范围：' + encoded({'scope':scope,'target':target}) + '\n框架：' + learning.settings()['framework'][:6000]
@@ -61,6 +74,8 @@ def analyze(learning, params, *, llm=None):
                 continue
             # Sources may have been corrected while the model ran.
             if any(learning._fingerprint(kb.detail(i)) != learning._fingerprint(next(r for r in rows if r['id']==i)) for i in sources):
+                continue
+            if excluded_proposal_reason(learning, proposed, scope, target):
                 continue
             try:
                 rule = learning.propose({**proposed,'scope':scope,'target':target}, origin='analysis')

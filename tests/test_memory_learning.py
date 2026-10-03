@@ -163,3 +163,18 @@ def test_invalid_analysis_shape_is_reported_as_failed(service):
     result = service.learning().analyze({'project':'evo'}, llm=lambda _: '[]')
     assert result['status'] == 'failed'
     assert service.learning().overview()['runs'][0]['status'] == 'failed'
+
+
+def test_analysis_does_not_rephrase_sources_already_covered_by_active_rules(service):
+    row = memory(service)
+    result = service.learning().analyze({'project':'evo'}, llm=lambda _: json.dumps({'rules':[
+        {'instruction':'讨论方案之前，需要先说明目标和实际取舍。','source_ids':[row['id']]}]}))
+    assert result['rules'] == []
+    assert len(service.learning().overview()['rules']) == 1
+
+
+def test_analysis_does_not_turn_a_stage_plan_into_a_long_term_rule(service):
+    row = memory(service, basis='inferred', category='decision')
+    result = service.learning().analyze({'project':'evo'}, llm=lambda _: json.dumps({'rules':[
+        {'instruction':'Evo 下一步优先做 P0 和 P1，然后安排 P2。','source_ids':[row['id']]}]}))
+    assert result['rules'] == []
