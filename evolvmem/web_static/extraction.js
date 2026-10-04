@@ -9,9 +9,10 @@ window.EvolvExtraction = {
   process(learning, esc) {
     const names={goal:'用户目标',understanding:'AI 的理解',correction:'用户纠正',decision:'明确决定',verification:'验证陈述'};
     const entries=Object.entries(learning?.process||{});
-    if(!entries.length)return '';
+    const n=learning?.normalization;const normalized=n?`<section class="requirement-expression"><h4>整理后的需求表达</h4><p>${esc(n.requirement)}</p>${(learning.evidence||[]).map(e=>`<blockquote>${esc(e.quote)}</blockquote>`).join('')}${n.acceptance?.length?`<p>用户明确的验收要求：${n.acceptance.map(esc).join('；')}</p>`:''}${n.questions?.length?`<p class="reason">待确认：${n.questions.map(esc).join('；')}</p>`:''}${learning.normalization_errors?.length?`<p class="reason">${learning.normalization_errors.map(esc).join('；')}</p>`:''}<small>这是引用原话整理的需求，不改写历史对话。</small></section>`:'';
+    if(!entries.length)return normalized;
     const relation=learning.relation;
-    return `<details class="extraction-process"><summary>查看协作过程${relation?.target_id?' · 关联资料 #'+Number(relation.target_id):''}</summary>${entries.map(([stage,e])=>`<div><strong>${esc(names[stage]||stage)}</strong><blockquote>${esc(e.quote)}</blockquote><small>${esc(({user:'用户',assistant:'助手',tool:'工具'})[e.role]||e.role)} · 消息 ${Number(e.message_index)+1}${stage==='verification'?' · 原始陈述，不直接计作成功':''}</small></div>`).join('')}${learning.process_errors?.length?'<p class="hint">部分过程无法核对，已留待确认。</p>':''}</details>`;
+    return normalized+`<details class="extraction-process"><summary>查看协作过程${relation?.target_id?' · 关联资料 #'+Number(relation.target_id):''}</summary>${entries.map(([stage,e])=>`<div><strong>${esc(names[stage]||stage)}</strong><blockquote>${esc(e.quote)}</blockquote><small>${esc(({user:'用户',assistant:'助手',tool:'工具'})[e.role]||e.role)} · 消息 ${Number(e.message_index)+1}${stage==='verification'?' · 原始陈述，不直接计作成功':''}</small></div>`).join('')}${learning.process_errors?.length?'<p class="hint">部分过程无法核对，已留待确认。</p>':''}</details>`;
   },
   mount({editor,preview,output,api,esc,projects,policy,getDraft,onDirty,onBusy}) {
     const active=projects.filter(p=>p.status==='active');

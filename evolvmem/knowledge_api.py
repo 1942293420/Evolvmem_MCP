@@ -8,6 +8,9 @@ def dispatch(service, method, path, body=None):
     if not isinstance(body, dict):
         raise ValueError('invalid_request')
     route = path.removeprefix('/api/knowledge').strip('/')
+    if route == 'skills' or route.startswith('skills/'):
+        from evolvmem.pipeline_skills import dispatch as skills_dispatch
+        return skills_dispatch(service, method, route, body)
     from evolvmem import qa_memory, history_memory, memory_recall
     if method == 'GET' and route == 'recall':
         return memory_recall.recall(service, body)

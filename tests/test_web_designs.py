@@ -16,10 +16,11 @@ def test_knowledge_management_shares_the_main_workbench(http_server):
     assert 'data-page-panel="experiences"' in html
     assert 'data-page-panel="progress"' in html
     assert '>项目历史</a>' in html
-    assert '>经验问答</a>' in html
-    assert '>整理与规则</a>' in html
+    assert '>经验知识</a>' in html
+    assert '>资料整理</a>' in html
     assert 'href="/organize"' not in html
-    assert 'href="/workflow"' in html
+    assert 'href="#principles"' in html
+    assert 'data-page-panel="principles"' in html
     assert 'src="/knowledge.js"' in html
     assert 'href="/knowledge"' not in html
     assert 'href="/legacy"' not in html
@@ -52,15 +53,14 @@ def test_previous_workbench_links_use_the_unified_home(http_server, path, target
 
 
 @pytest.mark.parametrize('path', ['/workflow', '/workflow/', '/workflow-diagram'])
-def test_working_principle_is_a_separate_page(http_server, path):
+def test_working_principle_uses_the_main_workbench(http_server, path):
     base, _, _ = http_server
     with urllib.request.urlopen(base + path) as response:
         html = response.read().decode('utf-8')
     assert response.headers.get_content_type() == 'text/html'
     assert 'EvolvMem' in html
-    if path != '/workflow-diagram':
-        assert 'src="/workflow-diagram?theme=light&amp;present=1"' in html
-        assert 'href="/"' in html
+    assert response.geturl().endswith('/#principles')
+    assert 'data-page-panel="principles"' in html
 
 
 @pytest.mark.parametrize('path,mime', [

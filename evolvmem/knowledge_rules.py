@@ -17,6 +17,11 @@ goal/decision/correction 来自用户；understanding 来自助手；verificatio
 双类记忆：历史只生成 SESSION_SUMMARY，正文由系统清洗保存。原子知识以 learning.question / learning.answer 表达，answer 与 value 一致；一个问题一条短答案，分类与适用条件独立保留。明确无冲突自动入库，推断或不同答案待确认。'''
 
 DEFAULT_SETTINGS = {
+    'ownership_instructions': '先核对用户确认的项目、目录绑定、项目名称与别名。项目目录可与项目名不同；通用目录、多个项目或线索冲突不得硬猜，留待确认。',
+    'cleaning_instructions': '保留用户与助手的真实对话，去除工具记录与系统注入。将口语整理为明确的需求表达，保留范围、否定、条件与纠正；不替用户补造功能、原因或验收要求。原话不改写，整理后的需求独立保存并引用用户原话。疑问和多种可能理解写入待确认问题。',
+    'project_alias_matching': True,
+    'cleaning_drop_lines': [],
+    'cleaning_collapse_duplicates': False,
     'auto_min_confidence': 0.8,
     'require_source': True,
     'min_chars': 10,
@@ -84,6 +89,15 @@ DEFAULT_INSTRUCTIONS = """# 知识库入库与整理
 - 保存规则：POST rules，字段 expected_revision 和 skill（完整文件），或 settings 与 instructions；先获取版本，再保存。
 - 所有写入仅限用户当前授权。经验确认入库不构成成功证据，不得据此记录验证成功。
 """
+PIPELINE_GUIDE = """## 分环节处理 Skill
+- 主界面 Skill 规则提供项目归属、数据清洗与需求表达、摘要问答提炼、入库判断、协作学习五项编辑器；先读取当前环节再处理资料。
+- CLI/Web 共用 GET skills 和 GET skills/ID；ID 为 ownership、cleaning、extraction、ingestion、collaboration。POST skills/ID 带 expected_revision、instructions 和本环节 settings；版本冲突先重读。
+- 自然语言说明供 AI 归属、清洗表达和提炼参考；名称匹配、噪声提示行、重复合并和入库阈值由程序执行。不能仅修改说明就宣称已改变固定算法。
+- 历史正文保留清洗后的真实对话；口语整理为需求时独立保存 learning.normalization={requirement, acceptance, questions}。需求与答案一致，quote 引用用户原话；验收要求必须逐字有据，问题未明确则待确认，不能补造范围或长期习惯。
+- 本地去噪试运行 POST skills/cleaning/preview 不调用模型；POST extraction/preview 才将明确选中的样例发送给配置模型。保存影响后续处理，历史资料不静默改写。
+- 项目摘要在项目历史查看，任务断点只负责进度与续接；经验知识共用项目登记，创建项目不构成新增记忆或验证成功。
+"""
+DEFAULT_INSTRUCTIONS += '\n' + PIPELINE_GUIDE
 _FRONT = '---\nname: evolvmem-knowledge-manager\ndescription: 管理 EvolvMem 项目知识库、资料归属和入库；编辑知识资料时先读取当前入库规则。\n---\n\n'
 _SETTINGS = re.compile(r'```json\s*\n(.*?)\n```', re.S)
 
@@ -96,6 +110,12 @@ def validate_settings(value):
     if not isinstance(value, dict) or set(value) - set(DEFAULT_SETTINGS):
         raise ValueError('invalid_rule_settings')
     settings = {**DEFAULT_SETTINGS, **value}
+    for name in ('ownership_instructions', 'cleaning_instructions'):
+        if not isinstance(settings[name], str) or not 1 <= len(settings[name].strip()) <= 12000:
+            raise ValueError('invalid_' + name)
+    for name in ('project_alias_matching', 'cleaning_collapse_duplicates'):
+        if type(settings[name]) is not bool:
+            raise ValueError('invalid_' + name)
     if type(settings['auto_min_confidence']) not in (float, int) or not 0 <= settings['auto_min_confidence'] <= 1:
         raise ValueError('invalid_confidence')
     if type(settings['require_source']) is not bool:
@@ -106,7 +126,7 @@ def validate_settings(value):
         raise ValueError('invalid_extraction_instructions')
     if any(type(settings[k]) is not int for k in ('min_chars', 'max_chars')) or not 1 <= settings['min_chars'] <= settings['max_chars'] <= 100000:
         raise ValueError('invalid_content_limits')
-    for name in ('ignore_keywords', 'ambiguous_project_names', 'related_memory_projects'):
+    for name in ('ignore_keywords', 'ambiguous_project_names', 'related_memory_projects', 'cleaning_drop_lines'):
         if not isinstance(settings[name], list) or any(not isinstance(x, str) or not x.strip() or len(x) > 200 for x in settings[name]):
             raise ValueError('invalid_' + name)
     if not isinstance(settings['project_overrides'], dict):
@@ -157,6 +177,8 @@ class KnowledgeRules:
             if not isinstance(instructions, str) or not instructions.strip() or len(instructions) > 50000:
                 raise ValueError('invalid_instructions')
             skill = render_skill(settings, instructions)
+        if len(skill) > 60000:
+            raise ValueError('invalid_skill_format')
         match = _SETTINGS.search(skill)
         instructions = _SETTINGS.sub('', skill.split('---', 2)[-1]).replace('## 可执行入库条件', '').strip()
         return {'skill': skill, 'settings': validate_settings(json.loads(match.group(1))),
@@ -205,6 +227,8 @@ class KnowledgeRules:
                     names.setdefault(name.casefold(), set()).add(row['project'])
         matches = set()
         for name, projects in names.items():
+            if not policy['settings']['project_alias_matching']:
+                break
             pattern = re.escape(name)
             if name.isascii():
                 pattern = r'(?<![a-z0-9_-])' + pattern + r'(?![a-z0-9_-])'

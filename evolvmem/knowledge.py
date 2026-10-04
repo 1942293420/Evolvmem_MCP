@@ -350,7 +350,8 @@ class KnowledgeBase:
         return self.detail(item_id)
 
     def preview(self, body):
-        return self.rules.evaluate(body, [r for r in self.registry() if r['status'] == 'active'])
+        policy = self.rules.prepare(body['rules']) if body.get('rules') else None
+        return self.rules.evaluate(body, [r for r in self.registry() if r['status'] == 'active'], policy=policy)
 
     def apply_ingestion(self, item_id, *, source=None):
         """Apply the current policy inside the caller's atomic write transaction."""

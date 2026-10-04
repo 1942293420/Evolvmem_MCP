@@ -167,7 +167,8 @@ class SessionArchiver:
                     recorded_at=_format_ts(moment),
                 )
                 from evolvmem.history_memory import save_clean
-                save_clean(self.store, archive_id, payload)
+                from evolvmem.knowledge_rules import KnowledgeRules
+                save_clean(self.store, archive_id, payload, policy=KnowledgeRules(self.config.data_dir).read())
         except Exception:
             target.unlink(missing_ok=True)
             raise

@@ -10,10 +10,10 @@ from evolvmem.extraction_policy import redact_messages
 from evolvmem.project_ownership import load_ownership, UNREVIEWED_FACT
 
 
-def save_clean(store, archive_id, payload):
+def save_clean(store, archive_id, payload, *, policy=None):
     """Called in the archive transaction. Unknown technical payloads stay technical."""
     try:
-        messages, _ = redact_messages(from_payload(payload))
+        messages, _ = redact_messages(from_payload(payload, policy=policy))
     except (ValueError, KeyError, TypeError):
         return False
     body = render(messages)
@@ -39,7 +39,7 @@ def read(service, project, archive_id):
     payload = SessionArchiver(service.config, service.store).read_payload(archive_id)
     if payload is not None:
         try:
-            messages, _ = redact_messages(from_payload(payload))
+            messages, _ = redact_messages(from_payload(payload, policy=service.knowledge().rules.read()))
             return {'archive_id': archive_id, 'project': project, 'available': True,
                     'messages': messages, 'text': render(messages), 'storage': 'legacy_clean_view'}
         except (ValueError, KeyError, TypeError):
@@ -74,7 +74,7 @@ def migrate(service, options):
             result['unavailable'].append(row['id'])
             continue
         with service.store.transaction():
-            saved = save_clean(service.store, row['id'], payload)
+            saved = save_clean(service.store, row['id'], payload, policy=service.knowledge().rules.read())
         if saved:
             result['migrated'] += 1
         else:

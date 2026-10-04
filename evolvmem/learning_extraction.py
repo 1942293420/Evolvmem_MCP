@@ -44,6 +44,34 @@ def process_evidence(raw, messages):
     return process, errors
 
 
+def normalization(data, messages, value):
+    """Derived requirement never replaces the original quote or invents acceptance."""
+    raw = data.get('normalization')
+    if raw is None:
+        return None, []
+    if not isinstance(raw, dict):
+        return None, ['需求表达格式不完整']
+    errors = []
+    requirement = raw.get('requirement')
+    if (not isinstance(requirement, str) or requirement != value
+            or not evidence(data.get('quote'), messages, ('user',))):
+        errors.append('需求表达必须与答案一致且有用户原话依据')
+    result = {'requirement':value, 'acceptance':[], 'questions':[]}
+    for key in ('acceptance', 'questions'):
+        items = raw.get(key, [])
+        if not isinstance(items, list) or len(items)>10:
+            errors.append(key + ' 格式不完整')
+            continue
+        for text in items:
+            if not isinstance(text, str) or not 1 <= len(text) <= 500 or contains_sensitive_text(text):
+                errors.append(key + ' 包含不可用内容')
+            elif key == 'acceptance' and not evidence(text, messages, ('user',)):
+                errors.append('验收要求无法在用户原话中核对')
+            else:
+                result[key].append(text)
+    return result, errors
+
+
 def related(service, project, messages, *, max_chars=8000):
     """Bounded same-project facts; no vector writes, usage counts or provider call."""
     ids = service.store._connection().execute(
@@ -154,6 +182,9 @@ def plan(service, item, messages, *, policy=None):
                 reason = '同一问题和条件已有不同答案，待确认'
         except ValueError:
             reason = '请提供完整且简洁的问答'
+    normalized, normalization_errors = normalization(data, messages, item.value)
+    if normalization_errors or (normalized and normalized['questions']):
+        reason = '需求表达存在待确认问题或缺少依据：' + '；'.join(normalization_errors or normalized['questions'])
     if reason:
         decision.update(action='review', reason=reason)
     status = {'auto': 'active', 'review': 'candidate', 'ignore': 'archived'}[decision['action']]
@@ -161,6 +192,7 @@ def plan(service, item, messages, *, policy=None):
             'status': status, 'reason': decision['reason'], 'decision': decision,
             'target_id': target['id'] if target else None, 'relation': relation, 'process': process,
             'process_errors': errors, 'rule_revision': policy['revision'], 'body': item.value,
+            'normalization': normalized, 'normalization_errors': normalization_errors,
             'auto_explicit_rules': policy['settings']['project_overrides'].get(project, {}).get(
                 'auto_explicit_rules', policy['settings']['auto_explicit_rules'])}
 

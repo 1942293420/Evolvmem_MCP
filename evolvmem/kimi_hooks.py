@@ -493,12 +493,12 @@ def _extract_candidates(messages: list[dict[str, str]],
     from evolvmem.auto_extractor import AutoExtractor
 
     from evolvmem.conversation import clean_messages
-    messages = clean_messages(messages)
     extractor = AutoExtractor()
     from evolvmem.knowledge_rules import KnowledgeRules
     from evolvmem.learning_extraction import load_related
     config = config or Config.from_file()
     policy = policy or KnowledgeRules(config.data_dir).read()
+    messages = clean_messages(messages, policy=policy)
     if related_context is None:
         related_context = load_related(config, project, messages) if project in policy['settings']['related_memory_projects'] else []
     deadline = time.monotonic() + _EXTRACTION_BUDGET_S

@@ -71,6 +71,11 @@ def document(service, project, *, include_sessions=True):
     result['qa_count'] = qa_memory.list_items(service, {'project': project, 'state': 'active'})['total']
     if include_sessions:
         result['sessions'] = history_memory.sessions(service, project)
+        # Product history owns rollups. Keep old derived prose out of current
+        # recall; show it explicitly as a dated historical snapshot in the UI.
+        rollups = service.insights().summaries({'project': project})['rows']
+        result['project_summary'] = (service.insights().summary(rollups[0]['id'])
+                                     if rollups and rollups[0]['id'] is not None else None)
     return result
 
 

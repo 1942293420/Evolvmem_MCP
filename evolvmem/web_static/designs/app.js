@@ -75,7 +75,7 @@
   }
   function navigate(page, project, query, knowledgeView, replace=false) {
     if(!state.ready) return;
-    if(!['home','memories','experiences','progress'].includes(page)) return;
+    if(!['home','memories','experiences','progress','principles'].includes(page)) return;
     const current=[...browsers.values()].find(c=>c.kind===state.page);
     if(current?.canLeave&&!current.canLeave()) {
       history.replaceState(null,'',current.hash?.()||`#${state.page}`);
@@ -84,7 +84,8 @@
     state.page=page;
     document.body.dataset.activePage=page;
     $$('[data-page-panel]').forEach(el=>el.hidden=el.dataset.pagePanel!==page);
-    $$('[data-page-link]').forEach(el=>{const current=el.dataset.pageLink===page&&(page!=='memories'||(el.dataset.knowledgeView==='projects'?['projects','library'].includes(knowledgeView||'projects'):el.dataset.knowledgeView==='intake'?['intake','rules','skill','learning'].includes(knowledgeView):el.dataset.knowledgeView===knowledgeView));el.classList.toggle('active',current);el.setAttribute('aria-current',current?'page':'false');});
+    $$('[data-page-link]').forEach(el=>{const current=el.dataset.pageLink===page&&(page!=='memories'||(el.dataset.knowledgeView==='projects'?['projects','library'].includes(knowledgeView||'projects'):el.dataset.knowledgeView==='intake'?['intake','library'].includes(knowledgeView):el.dataset.knowledgeView==='skill'?['rules','skill','learning'].includes(knowledgeView):el.dataset.knowledgeView===knowledgeView))||(page==='experiences'&&el.dataset.knowledgeView==='qa');el.classList.toggle('active',current);el.setAttribute('aria-current',current?'page':'false');});
+    if(page==='principles')EvolvPrinciples.render(document.querySelector('[data-slot=principles]'));
     let targetHash=`#${page}`;
     const mount=$(`[data-slot="${{memories:'memory-browser',experiences:'experience-browser',progress:'progress-browser'}[page]}"]`);
     if(mount) {
@@ -160,20 +161,21 @@
   dialog.addEventListener('close',()=>++state.dialog);
 
   function makeBrowser(mount,kind) {
-    const c={kind,page:1,query:'',project:'',status:kind==='experiences'?'verified':'all',mode:'summary',request:0,timer:null};
+    const c={kind,page:1,query:'',project:'',status:kind==='experiences'?'verified':'all',mode:'workstream',request:0,timer:null};
     const statuses=()=>kind==='memories'?[['active','活跃记忆'],['archived','已归档'],['all','全部状态']]
       :kind==='experiences'?[['verified','已验证'],['candidate','待验证'],['inactive','已归档 / 已失效'],['all','全部经验']]
       :c.mode==='summary'?[['all','全部状态'],['ready','已生成'],['failed','更新失败'],['pending','等待生成'],['vector_dirty','索引待同步']]
       :[['all','全部任务'],['unfinished','未完成'],['open','进行中'],['blocked','有阻塞'],['paused','已暂停'],['completed','已完成'],['cancelled','已取消']];
     if(kind==='memories')c.status='active';
     c.draw=()=>{
-      mount.innerHTML=`${kind==='progress'?`<nav class="ui-subnav" aria-label="进展类型"><button data-progress-mode="summary" aria-pressed="${c.mode==='summary'}">项目摘要</button><button data-progress-mode="workstream" aria-pressed="${c.mode==='workstream'}">任务断点</button></nav>`:''}
+      mount.innerHTML=`${kind==='experiences'&&EvolvAuth.canWrite&&window.EvolvProjects?'<div class="section-head"><p>案例与问答共用项目登记。</p><button class="ui-button write" data-case-project-new>＋ 新增项目</button></div>':''}
       <div class="ui-toolbar"><label class="ui-filter-label">搜索<input class="ui-search" data-filter="query" type="search" maxlength="500" placeholder="${kind==='experiences'?'搜索问题、步骤或条件':'搜索记录内容'}" value="${esc(c.query)}"></label><label class="ui-filter-label">项目<select class="ui-select" data-filter="project">${projectOptions(c.project)}</select></label><label class="ui-filter-label">状态<select class="ui-select" data-filter="status">${options(statuses(),c.status)}</select></label></div>
       <div class="ui-result-info"><span data-results-info role="status">正在读取…</span><span>${kind==='experiences'?'成功 / 失败为独立结果记录数':'点击内容查看详情'}</span></div><div data-results aria-busy="true"></div><div class="ui-pager" data-pager></div>`;
       $$('[data-filter]',mount).forEach(el=>{
         const run=()=>{c[el.dataset.filter]=el.value;c.page=1;c.load();};
         if(el.dataset.filter==='query')el.oninput=()=>{++c.request;clearTimeout(c.timer);c.timer=setTimeout(run,220);};else el.onchange=run;
       });
+      const createProject=$('[data-case-project-new]',mount);if(createProject)createProject.onclick=()=>EvolvProjects.create({esc,api:async(route,body)=>{const r=await EvolvAuth.fetch('/api/knowledge/'+route,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});const result=await r.json();if(!r.ok)throw Error(result.error||'创建失败');return result;},onSaved:async project=>{await boot(false);c.project=project;c.page=1;c.draw();await c.load();}});
       $$('[data-progress-mode]',mount).forEach(el=>el.onclick=()=>{clearTimeout(c.timer);c.mode=el.dataset.progressMode;c.status='all';c.page=1;c.draw();c.load();});
     };
     c.load=async()=>{
@@ -264,7 +266,7 @@
     const [route,search='']=location.hash.slice(1).split('?');const [page,view]=route.split('/');const params=new URLSearchParams(search);
     if(window.EvolvKnowledge&&['knowledge','projects','library','intake','rules','skill','learning','memories'].includes(page)) {
       navigate('memories',params.get('project')||'__all__',params.get('q')||undefined,page==='knowledge'?(view||'projects'):page==='memories'?'projects':page,true);
-    } else navigate(['memories','experiences','progress'].includes(page)?page:'home',undefined,undefined,undefined,true);
+    } else navigate(['memories','experiences','progress','principles'].includes(page)?page:'home',undefined,undefined,undefined,true);
   }
   window.addEventListener('hashchange',navigateFromLocation);
   window.EvolvAuth.ready.then(()=>{

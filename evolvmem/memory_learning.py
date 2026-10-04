@@ -116,6 +116,11 @@ class MemoryLearning:
         from evolvmem.learning_extraction import process_evidence
         payload['process'], errors = process_evidence(metadata.get('process'), messages)
         payload['process_errors'] = metadata.get('process_errors', errors)
+        from evolvmem.learning_extraction import normalization
+        normalized, normalization_errors = normalization(metadata, messages, row['body'])
+        if normalized is not None or normalization_errors:
+            payload['normalization'] = normalized
+            payload['normalization_errors'] = normalization_errors
         for field in ('relation', 'intake', 'rule_revision'):
             if field in metadata:
                 payload[field] = metadata[field]

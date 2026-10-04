@@ -1249,7 +1249,7 @@ def make_handler(service: ContextService):
             if path.startswith('/api/knowledge/'):
                 self._knowledge('GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()})
                 return
-            if path in ('/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js'):
+            if path in ('/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js'):
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 data = asset.read_bytes()
                 self.send_response(200)
@@ -1328,12 +1328,14 @@ def make_handler(service: ContextService):
                 self.send_header('Content-Length', '0')
                 self.end_headers()
                 return
-            pages = {
-                '/': _STATIC_SIGNAL,
-                '/workflow': _STATIC_INDEX.parent / 'workflow.html',
-                '/workflow/': _STATIC_INDEX.parent / 'workflow.html',
-                '/workflow-diagram': _STATIC_INDEX.parent / 'workflow-diagram.html',
-            }
+            if path in ('/workflow', '/workflow/', '/workflow-diagram', '/architecture', '/architecture.html'):
+                self.send_response(302)
+                self.send_header('Location', '/#principles')
+                self.send_header('Content-Length', '0')
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                return
+            pages = {'/': _STATIC_SIGNAL}
             if path in pages:
                 page = pages[path]
                 try:
@@ -1341,14 +1343,6 @@ def make_handler(service: ContextService):
                 except FileNotFoundError:
                     self._send_json({"ok": False,
                                      "error": "page missing"}, 404)
-                return
-            if path in ("/architecture", "/architecture.html"):
-                try:
-                    self._send_html(
-                        _STATIC_ARCH.read_text(encoding="utf-8"))
-                except FileNotFoundError:
-                    self._send_json({"ok": False,
-                                     "error": "architecture.html missing"}, 404)
                 return
             if path in ("/trust", "/trust/"):
                 try:

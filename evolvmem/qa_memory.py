@@ -47,7 +47,7 @@ def detail(service, item_id):
         status, reason = 'candidate', '来源尚未生效、已失效或归属待确认'
     revision = hashlib.sha256(json.dumps([row['revision'], dict(saved) if saved else None], sort_keys=True).encode()).hexdigest()
     return {'id': item_id, 'question': saved['question'] if saved else '', 'answer': saved['answer'] if saved else '',
-            'category': row['learning']['category'], 'trigger': row['learning'].get('trigger', ''),
+            'category': row['learning']['category'], 'trigger': row['learning'].get('trigger', ''), 'learning':row['learning'],
             'project': row['project'], 'scope': row['scope'], 'status': status, 'effective': effective,
             'reason': reason, 'origin': saved['origin'] if saved else 'legacy',
             'managed_content': row['managed_content'], 'source_body': row['body'], 'source_title': row['title'], 'sources': row['sources'],

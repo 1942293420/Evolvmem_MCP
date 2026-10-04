@@ -25,6 +25,13 @@ s.persist_legacy_extraction(LegacyExtractionRequest(summary=LegacyExtractionItem
 s.knowledge().create({'title':'管理约定','body':'项目管理保留在原知识库，不另建页面。','project':'evo','action':'publish','content_type':'reference'})
 from tests.test_history_qa_memory import extracted_qa
 extracted_qa(s)
+from evolvmem.context_models import ContextItemDraft, ContextContentType, ContextLayers, ContextStatus
+with s.store.transaction():
+    rollup=s.store.create_item(ContextItemDraft(identity_key='project:evo:knowledge:current',
+        content_type=ContextContentType.PROJECT_SUMMARY,
+        layers=ContextLayers('知识库阶段汇总','项目摘要应归入项目历史。','保留会话来源和需求依据。','fixture'),
+        project='evo',status=ContextStatus.ACTIVE))
+    s.store._connection().execute("INSERT INTO context_project_rollups(project,current_context_id,status,covered_through,updated_at) VALUES ('evo',?,'ready','2026-10-04 00:00:00','2026-10-05 00:00:00')",(rollup.id,))
 # Exercise real legacy migration from an encrypted archive.
 with s.store.transaction():
     s.store._connection().execute('DELETE FROM conversation_history WHERE archive_id=?', (archive.id,))
@@ -35,6 +42,13 @@ s.learning().propose({'topic':'acceptance','instruction':'界面改动后核对�
 def model(prompt, *a, **kw):
     if '"rules"' in prompt:
         return json.dumps({'rules':[]})
+    if '[user]: 我想在经验里直接加项目，不要让我到处找。' in prompt:
+        answer='在经验问答中提供项目创建入口，创建后自动选中。'
+        return json.dumps({'memories':[{'key':'SESSION_SUMMARY','value':'用户要求在经验问答中新增项目。'},
+            {'key':'project:evo:constraint:inline-project','value':answer,'confidence':.95,'attribute':'constraint',
+             'learning':{'category':'task_requirement','basis':'explicit','quote':'我想在经验里直接加项目，不要让我到处找。',
+                         'question':'如何在经验问答中新增项目？','answer':answer,
+                         'normalization':{'requirement':answer,'acceptance':[],'questions':[]}}}]},ensure_ascii=False)
     text='以后，修改界面时先明确操作目标和验收条件。'
     return json.dumps({'memories':[{'key':'SESSION_SUMMARY','value':'Evo 正在完善界面调整时的协作流程。'},
         {'key':'project:evo:constraint:ui','value':text,'attribute':'constraint','confidence':.9,

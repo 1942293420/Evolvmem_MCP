@@ -18,11 +18,11 @@ def preview(service, body, *, llm=None):
     if not project:
         raise ValueError('project_required')
     from evolvmem.conversation import clean_messages
-    cleaned = clean_messages(messages)
-    safe, redacted = redact_messages(cleaned)
     rules = service.knowledge().rules
     current = rules.read()
     draft = rules.prepare(body['rules']) if body.get('rules') else current
+    cleaned = clean_messages(messages, policy=current)
+    safe, redacted = redact_messages(cleaned)
     old = related(service, project, safe) if body.get('include_related') is True else []
     extractor = AutoExtractor()
     if llm is None:
@@ -33,6 +33,7 @@ def preview(service, body, *, llm=None):
         llm = lambda prompt: _call_llm_with_retry(prompt, config)
 
     def run(policy):
+        safe, _ = redact_messages(clean_messages(messages, policy=policy))
         prompt = extractor.build_extraction_prompt(safe, policy=policy, related=old)
         candidates = extractor.parse_response(llm(prompt))
         if not any(c.key.strip().upper() == 'SESSION_SUMMARY' for c in candidates):
@@ -58,6 +59,9 @@ def preview(service, body, *, llm=None):
             result['question'] = (item.learning or {}).get('question', '')
             result['answer'] = (item.learning or {}).get('answer', '')
             result['category'] = (item.learning or {}).get('category', '')
+            from evolvmem.learning_extraction import evidence
+            quote = evidence((item.learning or {}).get('quote'), safe, ('user',))
+            result['evidence'] = [quote] if quote else []
             signature = (item.key.startswith('user:'), item.value, result['category'], (item.learning or {}).get('trigger', ''))
             if signature in seen:
                 result.update(action='skip', reason='同一批次已有同范围相同内容与条件')
@@ -69,7 +73,7 @@ def preview(service, body, *, llm=None):
                     seen.add(signature)
             results.append(result)
         return {'rule_revision': policy['revision'], 'skill': policy['skill'], 'prompt': prompt,
-                'candidates': results, 'related_ids': [r['id'] for r in old]}
+                'candidates': results, 'related_ids': [r['id'] for r in old], 'cleaned_messages':safe}
 
     before = run(current)
     after = run(draft) if draft['revision'] != current['revision'] else before

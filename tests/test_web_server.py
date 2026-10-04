@@ -528,13 +528,14 @@ def test_http_index_served(http_server):
 
 
 def test_http_architecture_served(http_server):
-    """架构图静态页：/architecture 与 /architecture.html 均返回 200 + HTML。"""
+    """旧架构入口跳到主工作台内的产品说明。"""
     base, _, _ = http_server
     for route in ("/architecture", "/architecture.html"):
         with urllib.request.urlopen(base + route) as resp:
             html = resp.read().decode("utf-8")
         assert resp.headers.get_content_type() == "text/html"
-        assert "evolvmem 记忆系统流程框架" in html
+        assert 'data-page-panel="principles"' in html
+        assert resp.geturl().endswith("/#principles")
 
 
 def test_http_context_failure_500_bounded_no_partial_state(test_config):

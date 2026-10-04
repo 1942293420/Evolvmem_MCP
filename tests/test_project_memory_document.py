@@ -119,3 +119,18 @@ def test_session_start_receives_whole_project_overview_within_budget(service):
     result = service.session_start(ContextSessionStartRequest(project='evo', query='本项目', max_chars=1400))
     assert '项目总记忆' in result.block and '商店项目' not in result.block
     assert len(result.block) == result.used_chars <= 1400
+
+
+def test_rollup_moves_to_project_history_without_becoming_current_recall(service):
+    from evolvmem.context_models import ContextItemDraft, ContextContentType, ContextLayers, ContextStatus
+    from evolvmem.project_memory import document, recall_summary
+    with service.store.transaction():
+        item=service.store.create_item(ContextItemDraft(identity_key='project:evo:knowledge:current',
+            content_type=ContextContentType.PROJECT_SUMMARY,
+            layers=ContextLayers('以前的汇总','历史 AI 摘要，不能覆盖现在的纠正。','详细历史','test'),
+            project='evo',status=ContextStatus.ACTIVE))
+        service.store._connection().execute("INSERT INTO context_project_rollups(project,current_context_id,status,updated_at) VALUES ('evo',?,'ready','2026-10-05 00:00:00')",(item.id,))
+    book=document(service,'evo')
+    assert book['project_summary']['l1']=='历史 AI 摘要，不能覆盖现在的纠正。'
+    assert '以前的汇总' not in book['body']
+    assert not recall_summary(service,'evo',1000)[0]
