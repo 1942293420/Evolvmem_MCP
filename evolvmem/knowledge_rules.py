@@ -8,6 +8,13 @@ from pathlib import Path
 import re
 import tempfile
 
+EXTRACTION_INSTRUCTIONS = '''为每条原子记忆提供 learning：category、basis、quote、trigger、rationale、instruction、topic。
+过程 process 可包含 goal、understanding、correction、decision、verification，每项为 {"quote":"逐字原话"}；只填确实出现的阶段，不补造缺失阶段。
+goal/decision/correction 来自用户；understanding 来自助手；verification 保留消息角色，助手自称完成不算验证成功。
+对照相关旧知识，action 选择 add（新增）、supplement（补充条件）、replace（明确纠正）、skip（相同内容）。
+关联旧资料时填写 target_id 与原样 target_revision。补充不删除旧条件；只有用户原话明确把旧内容改为新内容才可 replace；冲突或推断待确认。
+明确引用用户长期要求，保留范围和例外；临时要求为 task_requirement，不能变成永久习惯。'''
+
 DEFAULT_SETTINGS = {
     'auto_min_confidence': 0.8,
     'require_source': True,
@@ -16,6 +23,9 @@ DEFAULT_SETTINGS = {
     'ignore_keywords': [],
     'ambiguous_project_names': ['设计', 'design', '测试', 'test', '项目', 'project', '系统', 'system', '平台', 'platform', '开发', 'development', '文档', 'docs', '采购'],
     'project_overrides': {},
+    'auto_explicit_rules': True,
+    'extraction_instructions': EXTRACTION_INSTRUCTIONS,
+    'related_memory_projects': [],
 }
 DEFAULT_INSTRUCTIONS = """# 知识库入库与整理
 
@@ -38,6 +48,8 @@ DEFAULT_INSTRUCTIONS = """# 知识库入库与整理
 ## 知识用途与协作学习
 - 项目归属与用途分别判断：长期习惯、项目约定、任务要求、环境事实、决策依据、技术经验、参考资料。不要因内容类型是偏好就扩大到全局。
 - 提炼保留用户原话、来源、适用条件及纠正原因；明确表达与 AI 推断分开。一次性任务要求不成为永久协作规则。
+- 提炼先对照同项目相关旧知识，保留目标、理解、纠正、决定和实际验证；未知阶段留空。新增、补充、替代、跳过须有原话及版本依据。
+- 在入库规则页编辑提炼说明并用样例对比已保存规则与草稿。POST extraction/preview 仅预览，不写入资料；保存后正式提炼读取同一规则版本。
 - 协作框架与学习成果使用 GET learning；实际项目适用 Skill 使用 GET learning/skill 并传 project，或 MCP collaboration_recall。
 - 明确原话、来源可核对且没有冲突的规则自动更新；归纳、冲突和范围扩大待确认。用户否决及人工编辑优先，来源被纠正后旧衍生规则停止使用。
 - POST learning/analyze 按 project 或 family 分析记忆；POST learning/family 设置项目类型。分类修正使用 POST learning/memories/ID，包含 expected_revision、category、trigger。
@@ -80,9 +92,13 @@ def validate_settings(value):
         raise ValueError('invalid_confidence')
     if type(settings['require_source']) is not bool:
         raise ValueError('invalid_require_source')
+    if type(settings['auto_explicit_rules']) is not bool:
+        raise ValueError('invalid_auto_explicit_rules')
+    if not isinstance(settings['extraction_instructions'], str) or not 1 <= len(settings['extraction_instructions'].strip()) <= 12000:
+        raise ValueError('invalid_extraction_instructions')
     if any(type(settings[k]) is not int for k in ('min_chars', 'max_chars')) or not 1 <= settings['min_chars'] <= settings['max_chars'] <= 100000:
         raise ValueError('invalid_content_limits')
-    for name in ('ignore_keywords', 'ambiguous_project_names'):
+    for name in ('ignore_keywords', 'ambiguous_project_names', 'related_memory_projects'):
         if not isinstance(settings[name], list) or any(not isinstance(x, str) or not x.strip() or len(x) > 200 for x in settings[name]):
             raise ValueError('invalid_' + name)
     if not isinstance(settings['project_overrides'], dict):
@@ -109,7 +125,8 @@ class KnowledgeRules:
         return {'skill': skill, 'settings': settings, 'instructions': instructions,
                 'revision': hashlib.sha256(skill.encode()).hexdigest(), 'saved': self.path.exists()}
 
-    def save(self, body):
+    def prepare(self, body):
+        """Validate an unsaved editor draft with exactly the same rules as save."""
         current = self.read()
         if body.get('expected_revision') != current['revision']:
             raise ValueError('revision_conflict')
@@ -132,6 +149,15 @@ class KnowledgeRules:
             if not isinstance(instructions, str) or not instructions.strip() or len(instructions) > 50000:
                 raise ValueError('invalid_instructions')
             skill = render_skill(settings, instructions)
+        match = _SETTINGS.search(skill)
+        instructions = _SETTINGS.sub('', skill.split('---', 2)[-1]).replace('## 可执行入库条件', '').strip()
+        return {'skill': skill, 'settings': validate_settings(json.loads(match.group(1))),
+                'instructions': instructions, 'revision': hashlib.sha256(skill.encode()).hexdigest(), 'saved': False}
+
+    def save(self, body):
+        current = self.read()
+        prepared = self.prepare(body)
+        skill = prepared['skill']
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # Same lock as writers in the application; this file is the only source,
         # so updating prose and executable conditions cannot partially succeed.
@@ -154,8 +180,8 @@ class KnowledgeRules:
     def prompt(self):
         return '\n\n当前用户维护的知识库入库规则（适用于本次资料提炼与归属）：\n' + self.read()['skill']
 
-    def evaluate(self, sample, registry):
-        policy = self.read()
+    def evaluate(self, sample, registry, *, policy=None):
+        policy = policy or self.read()
         text = str(sample.get('title', '')) + '\n' + str(sample.get('body', ''))
         # Runtime paths and URLs often mention an unrelated hosting project.
         # Keep the original content for quality checks, exclude paths only

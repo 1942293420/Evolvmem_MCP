@@ -487,21 +487,29 @@ def _keep_latest_summary(candidates: list) -> list:
 def _extract_candidates(messages: list[dict[str, str]],
                         llm_config: LLMConfig,
                         fallback_chunk_chars: int = _FALLBACK_CHUNK_CHARS,
-                        config=None
+                        config=None, project='', policy=None, related_context=None
                         ) -> list:
     """Extract the full conversation once; chunk only on context overflow."""
     from evolvmem.auto_extractor import AutoExtractor
 
     extractor = AutoExtractor()
+    from evolvmem.knowledge_rules import KnowledgeRules
+    from evolvmem.learning_extraction import load_related
+    config = config or Config.from_file()
+    policy = policy or KnowledgeRules(config.data_dir).read()
+    if related_context is None:
+        related_context = load_related(config, project, messages) if project in policy['settings']['related_memory_projects'] else []
     deadline = time.monotonic() + _EXTRACTION_BUDGET_S
 
     def extract(batch: list[dict[str, str]]) -> list:
-        prompt = extractor.build_extraction_prompt(batch)
-        from evolvmem.knowledge_rules import KnowledgeRules
-        prompt += KnowledgeRules((config or Config.from_file()).data_dir).prompt()
+        prompt = extractor.build_extraction_prompt(batch, policy=policy, related=related_context)
         candidates = extractor.parse_response(
             _call_llm_with_retry(prompt, llm_config, deadline=deadline)
         )
+        for candidate in candidates:
+            if candidate.key.strip().upper() != 'SESSION_SUMMARY':
+                candidate.learning = candidate.learning or {}
+                candidate.learning['rule_revision'] = policy['revision']
         if not any(
             c.key.strip().upper() == _SESSION_SUMMARY_KEY
             for c in candidates
@@ -650,7 +658,9 @@ def session_end(payload: dict) -> ExtractionResult:
         return ExtractionResult("retry", reason="redaction failed")
 
     try:
-        candidates = _extract_candidates(model_messages, llm_config)
+        config = Config.from_file()
+        project = _project_from_wire(wire, config.inject_project_aliases)
+        candidates = _extract_candidates(model_messages, llm_config, config=config, project=project)
     except RetryableExtractionError as e:
         _log(f"extraction deferred: {e}")
         return ExtractionResult(
@@ -738,6 +748,7 @@ def session_end(payload: dict) -> ExtractionResult:
                 importance=candidate.importance,
                 tier=candidate.tier,
                 experience_case=candidate.experience_case,
+                learning=candidate.learning,
             )
             for candidate in ranked
         ]

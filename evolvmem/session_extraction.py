@@ -14,7 +14,7 @@ def prepare_extraction(config, project, source_session, messages, llm_config):
     """Only provider calls happen here; persistence uses the shared core later."""
     safe_messages, _ = redact_messages(messages)
     summary, candidates = kimi_hooks._split_summary_candidate(
-        kimi_hooks._extract_candidates(safe_messages, llm_config, config=config))
+        kimi_hooks._extract_candidates(safe_messages, llm_config, config=config, project=project))
     if summary is None:
         raise LanError('extraction_summary_missing')
     value, _ = sanitize_summary(summary.value)

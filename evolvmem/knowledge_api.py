@@ -8,6 +8,9 @@ def dispatch(service, method, path, body=None):
     if not isinstance(body, dict):
         raise ValueError('invalid_request')
     route = path.removeprefix('/api/knowledge').strip('/')
+    if method == 'POST' and route == 'extraction/preview':
+        from evolvmem.extraction_preview import preview
+        return preview(service, body)
     if route.startswith('learning'):
         learning = service.learning()
         if method == 'GET':

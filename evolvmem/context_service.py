@@ -2044,6 +2044,7 @@ class ContextService:
         llm=None, source_messages=(),
     ) -> LegacyExtractionResult:
         source_session = request.source_session
+        from evolvmem.learning_extraction import persist as persist_learning
 
         def write_add(
             item: LegacyExtractionItem,
@@ -2104,6 +2105,7 @@ class ContextService:
                             if source_archive_id is not None or any(i.experience_case for i in request.candidates)
                             else None
                         ),
+                        learning_writer=lambda item: persist_learning(self, item, source_messages, source_session, source_archive_id),
                     )
                 )
                 if source_archive_id is not None:
@@ -2139,6 +2141,9 @@ class ContextService:
                     from dataclasses import replace
                     def govern(mutation):
                         if mutation is None or mutation.context_id is None:
+                            return mutation
+                        if knowledge.detail(mutation.context_id)['learning'].get('intake'):
+                            governed_ids.append(mutation.context_id)
                             return mutation
                         status = knowledge.apply_ingestion(mutation.context_id, source=source_session)
                         governed_ids.append(mutation.context_id)
@@ -2351,6 +2356,7 @@ class ContextService:
         write_add,
         write_replace,
         isolated_writer=None,
+        learning_writer=None,
     ) -> tuple[
         LegacyMutationResult | None, tuple[LegacyMutationResult, ...], _VectorAftermath
     ]:
@@ -2377,6 +2383,12 @@ class ContextService:
         for item in request.candidates:
             if len(candidate_results) >= request.max_writes:
                 break
+            if learning_writer is not None and item.learning and _extraction_content_type(item) not in _ISOLATED_CONTENT_TYPES:
+                result, aftermath = learning_writer(item)
+                if result is not None:
+                    candidate_results.append(result)
+                    aftermaths.append(aftermath)
+                continue
             if (
                 isolated_writer is not None
                 and _extraction_content_type(item) in _ISOLATED_CONTENT_TYPES

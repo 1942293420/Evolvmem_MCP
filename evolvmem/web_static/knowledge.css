@@ -150,3 +150,17 @@
   .knowledge-shortcuts {align-items:flex-start;flex-direction:column;gap:10px;font-size:11px;}
   .knowledge-shortcuts>div {gap:18px;}
 }
+/* Conversation extraction stays in the existing rules workspace. */
+.extraction-panel { margin-top: 24px; }
+.extraction-panel > label { display:block; margin-top:16px; }
+.extraction-panel textarea { width:100%; min-height:180px; margin:8px 0; }
+.extraction-choice { display:flex !important; align-items:center; gap:8px; margin:12px 0; }
+.extraction-choice input { width:auto; flex:none; }
+.extraction-projects { display:flex; flex-wrap:wrap; gap:8px 24px; }
+.extraction-comparison { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:16px; }
+.extraction-comparison > section { min-width:0; }
+.extraction-comparison pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:350px; overflow:auto; }
+.extraction-candidate { padding:16px 0; border-bottom:1px solid var(--border); }
+.extraction-process { margin:12px 0; }
+.extraction-process blockquote { white-space:pre-wrap; }
+@media(max-width:760px) { .extraction-comparison { grid-template-columns:1fr; } }

@@ -87,3 +87,8 @@ def test_design_routes_do_not_expose_arbitrary_files(http_server, path):
     with pytest.raises(urllib.error.HTTPError) as error:
         urllib.request.urlopen(base + path)
     assert error.value.code == 404
+def test_extraction_preview_asset_is_served(http_server):
+    base, _, _ = http_server
+    with urllib.request.urlopen(base + '/extraction.js') as response:
+        assert response.status == 200
+        assert 'javascript' in response.headers['Content-Type']

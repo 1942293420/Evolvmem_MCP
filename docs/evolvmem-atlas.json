@@ -5045,14 +5045,14 @@
       "id": "learning",
       "title": "记忆学习与协作体系",
       "english": "MEMORY LEARNING",
-      "subtitle": "对话留下依据，记忆完善规则，用户可以查看、纠正与恢复。",
-      "takeaway": "先建立可编辑协作框架，再由对话逐步积累。明确且无冲突的原话规则自动生效，推断、冲突及同类项目归纳待确认；来源变化后旧规则停止调用。",
+      "subtitle": "对话过程与旧知识对照，原位编辑提炼规则，预览与正式入库共用判断。",
+      "takeaway": "目标、理解、纠正、决定与验证保留原话和消息角色；明确替代须核对旧版本及用户纠正，疑难不会覆盖旧知识。入库规则草稿可先预览，保存后用于后续提炼。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
         "meta": {
           "title": "EvolvMem · 记忆学习与协作体系",
-          "subtitle": "来源 → 分类 → 分析 → 协作 Skill → 后续任务",
+          "subtitle": "对话与旧知识 → 有据提炼 → 规则分流 → 后续协作",
           "quality_profile": "showcase",
           "visual_preset": "blueprint",
           "animation": "none",
@@ -5065,8 +5065,8 @@
           {
             "id": "learn-source",
             "type": "backend",
-            "label": "对话与来源",
-            "sublabel": "Codex / Kimi 提炼",
+            "label": "对话与相关旧知识",
+            "sublabel": "同项目 · 原话 · 版本",
             "pos": [
               40,
               120
@@ -5079,8 +5079,8 @@
           {
             "id": "learn-memory",
             "type": "database",
-            "label": "分类记忆",
-            "sublabel": "原话 · 条件 · 原因",
+            "label": "过程与分类记忆",
+            "sublabel": "新增 · 补充 · 替代 · 跳过",
             "pos": [
               390,
               120
@@ -5149,8 +5149,8 @@
           {
             "id": "learn-edit",
             "type": "frontend",
-            "label": "用户检查与纠正",
-            "sublabel": "修改 · 停用 · 比较 · 恢复",
+            "label": "规则编辑与预览",
+            "sublabel": "原位对比 · 同源版本",
             "pos": [
               390,
               530
@@ -5196,21 +5196,30 @@
             "dot": "violet",
             "title": "学习边界",
             "items": [
-              "用户原话 + 可信范围 + 无冲突才自动更新",
-              "归纳与推广等待确认，不把推断当成用户要求"
+              "明确替代核对旧资料版本和用户纠正原话",
+              "推断、冲突、无法核对的关系保留待确认"
             ]
           },
           {
             "dot": "amber",
             "title": "可见与可纠正",
             "items": [
-              "查看来源、修改记忆及框架、比较与恢复版本",
-              "来源过期、归档、纠正后停止调用旧规则"
+              "原页面编辑说明并比较已保存规则与草稿",
+              "来源变化立即停用旧规则，历史版本可追溯"
             ]
           }
         ]
       },
       "sections": [
+        {
+          "title": "P1：完整过程与旧知识对照",
+          "paragraphs": [
+            "提炼保存目标、AI 理解、用户纠正、明确决定、验证陈述及各自来源；只保存真实出现的阶段。助手自称完成不计作成功证据。Kimi 和 Codex 的真实写入链保留 learning 元数据。",
+            "新增、补充、替代和跳过共用确定性判断：同范围、同内容、同条件不重复保存；补充保留旧条件。自动替代必须引用当前版本及用户同时指明旧内容和新要求的原话；其他变化进入候选。整个提炼批次按事务提交，规则版本变化时回退重试。",
+            "入库规则页面可编辑提炼说明、明确规则自动生效开关及旧知识对照项目。模型预览只处理用户填入的样例及明确勾选的相关资料；已保存规则和草稿最多调用两次，资料写入数为零。保存后正式提炼读取同一版本。",
+            "常态旧知识对照默认未开启；在规则页选择项目并保存后，每次最多提供 20 条相关且有效的旧知识，总计不超过 8,000 字。未开启的项目不附加旧知识；不自动回填历史。"
+          ]
+        },
         {
           "title": "分类与可核对来源",
           "paragraphs": [
@@ -5258,6 +5267,22 @@
         {
           "label": "学习闭环验证",
           "path": "tests/test_memory_learning.py"
+        },
+        {
+          "label": "提炼校验与追加写入",
+          "path": "evolvmem/learning_extraction.py"
+        },
+        {
+          "label": "同源规则样例预览",
+          "path": "evolvmem/extraction_preview.py"
+        },
+        {
+          "label": "原位提炼规则编辑",
+          "path": "evolvmem/web_static/extraction.js"
+        },
+        {
+          "label": "P1 业务回归",
+          "path": "tests/test_extraction_learning_contract.py"
         }
       ]
     }

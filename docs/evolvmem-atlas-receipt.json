@@ -2,8 +2,8 @@
   "schema_version": 1,
   "reviewed_at": "2026-10-04",
   "source": {
-    "sha256": "c5de8eaa8b5bf38c18b67dc4dbd022deeb0b0a6a3573e5191c5910e8cfc80261",
-    "bytes": 188303
+    "sha256": "64553bbcceb0983f04110f98357b57fcee2ae638d6c6266147dd1dee854877b8",
+    "bytes": 190089
   },
   "chapters": [
     {
@@ -270,12 +270,12 @@
       "chapter": "learning",
       "type": "architecture",
       "specification": {
-        "sha256": "476f4649eb566fa55a76be33928f91f55407518de8cf064d0ceaa2c77df09ba0",
-        "bytes": 3123
+        "sha256": "2b8f44a87716c1131c1ba58b9b08f67949c1512008b6301906273f68b18e3af7",
+        "bytes": 3151
       },
       "artifact": {
-        "sha256": "e63dfdf048a6107a8d1d3d54abfec12b75f4b112f1c01eccd172bf33891d54a7",
-        "bytes": 603786
+        "sha256": "4a35de73e702a2bdd14892c6ef4395382a19e7e3a5990a0de9917f14fa49f5d5",
+        "bytes": 603911
       },
       "validation": {
         "checksPassed": 9,
@@ -288,8 +288,8 @@
     }
   ],
   "atlas": {
-    "sha256": "7c41c6728b6586a29e6acf4641cfbbab6ba0a631c507638a869c862701a96840",
-    "bytes": 2141685
+    "sha256": "ebfa085d34729ddc168f5596c3878c93a3c7b360133b34d910d66b0a494b07c5",
+    "bytes": 2142841
   },
-  "visual_review": "Passed: learning diagram unchanged from browser inspection; only analysis filtering explanation updated, rendered in final browser check on 2026-10-04."
+  "visual_review": "2026-10-04: inspected the learning chapter in Chromium at 1440×1000; diagram and new P1 descriptions displayed. Rules workspace checked at 1440×1100 and 390×844 with synthetic data, no horizontal overflow or page errors."
 }

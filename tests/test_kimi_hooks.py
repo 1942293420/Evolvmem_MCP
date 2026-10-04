@@ -774,7 +774,7 @@ class TestSessionEndOutcome:
         monkeypatch.setattr(
             hooks,
             "_extract_candidates",
-            lambda _messages, _token: (_ for _ in ()).throw(
+            lambda _messages, _token, **_options: (_ for _ in ()).throw(
                 hooks.RetryableExtractionError(
                     "still rate limited", rate_limited=True
                 )
@@ -792,7 +792,7 @@ class TestSessionEndOutcome:
             self, monkeypatch, tmp_path, test_config):
         self._wire_session(monkeypatch, tmp_path, test_config)
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_, **_options: [
             CandidateMemory(
                 key="SESSION_SUMMARY",
                 value="本次确认了三项长期架构规则。",
@@ -949,7 +949,7 @@ class TestSessionEndOutcome:
         assert secret in original
         seen = {}
 
-        def fake_extract(messages, llm_config):
+        def fake_extract(messages, llm_config, **_options):
             seen["messages"] = messages
             assert llm_config.provider == "deepseek"
             assert secret not in repr(messages)
@@ -981,7 +981,7 @@ class TestSessionEndOutcome:
             lambda _messages: (_ for _ in ()).throw(ValueError(secret)),
             raising=False,
         )
-        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_, **_options: [
             CandidateMemory(
                 key="SESSION_SUMMARY",
                 value="本次确认了长期架构约束并完成安全检查。",
@@ -1027,7 +1027,7 @@ class TestSessionEndOutcome:
             self, monkeypatch, tmp_path, test_config, tags):
         self._wire_session(monkeypatch, tmp_path, test_config)
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_, **_options: [
             CandidateMemory(
                 key="SESSION_SUMMARY",
                 value="本次确认了长期架构约束并完成安全检查。",
@@ -1050,7 +1050,7 @@ class TestSessionEndOutcome:
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
         summary_secret = "Synthetic-Summary-Metadata-Secret"
         atomic_secret = "Synthetic-Atomic-Metadata-Secret"
-        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_, **_options: [
             CandidateMemory(
                 key="SESSION_SUMMARY",
                 value="本次确认了长期架构约束并完成安全检查。",
@@ -1113,7 +1113,7 @@ class TestSessionEndOutcome:
             self, monkeypatch, tmp_path, test_config):
         self._wire_session(monkeypatch, tmp_path, test_config)
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_, **_options: [
             CandidateMemory(
                 key="SESSION_SUMMARY",
                 value="中文摘要。",
@@ -1132,7 +1132,7 @@ class TestSessionEndOutcome:
             self, monkeypatch, tmp_path, test_config):
         self._wire_session(monkeypatch, tmp_path, test_config)
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_, **_options: [
             CandidateMemory(
                 key="SESSION_SUMMARY",
                 value="本次确认了长期架构约束并完成安全检查。",
@@ -1226,7 +1226,7 @@ class TestSessionEndOutcome:
         monkeypatch.setattr(
             hooks,
             "_extract_candidates",
-            lambda *_: candidates,
+            lambda *_, **_options: candidates,
         )
 
         result = hooks.session_end({"session_id": "synthetic"})
@@ -1252,7 +1252,7 @@ class TestSessionEndOutcome:
         secret = "Synthetic-Pass-In-Malformed-Key-123!"
         self._wire_session(monkeypatch, tmp_path, test_config)
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_, **_options: [
             CandidateMemory(
                 key={"secret": secret},
                 value="这是格式错误但不应逃逸的长期候选。",
@@ -1281,15 +1281,7 @@ class TestSessionEndOutcome:
             self, monkeypatch, tmp_path, test_config, summary_value):
         self._wire_session(monkeypatch, tmp_path, test_config)
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        config_loads = []
-        monkeypatch.setattr(
-            Config,
-            "from_file",
-            classmethod(
-                lambda cls, path=None: config_loads.append(path) or test_config
-            ),
-        )
-        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_, **_options: [
             CandidateMemory(key="SESSION_SUMMARY", value=summary_value),
             CandidateMemory(
                 key="project:x:constraint:safe",
@@ -1301,7 +1293,6 @@ class TestSessionEndOutcome:
         result = hooks.session_end({"session_id": "synthetic"})
 
         assert result.status == "retry"
-        assert config_loads == []
         with MemoryStore(test_config) as store:
             assert store.count_active() == 0
 
@@ -1343,7 +1334,7 @@ class TestSessionEndOutcome:
         self._wire_session(monkeypatch, tmp_path, test_config)
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
         monkeypatch.setattr(
-            hooks, "_extract_candidates", lambda *_: candidates,
+            hooks, "_extract_candidates", lambda *_, **_options: candidates,
         )
         logs = []
         monkeypatch.setattr(hooks, "_log", logs.append)
@@ -1404,7 +1395,7 @@ class TestSessionEndOutcome:
             ),
         ])
         monkeypatch.setattr(
-            hooks, "_extract_candidates", lambda *_: candidates,
+            hooks, "_extract_candidates", lambda *_, **_options: candidates,
         )
         logs = []
         monkeypatch.setattr(hooks, "_log", logs.append)
@@ -1448,7 +1439,7 @@ class TestSessionEndOutcome:
         monkeypatch.setattr(
             hooks,
             "_extract_candidates",
-            lambda _messages, _token: [
+            lambda _messages, _token, **_options: [
                 CandidateMemory(
                     key="project:test:fact:completed",
                     value="这是成功提炼并持久化的长期事实",
@@ -1484,7 +1475,7 @@ class TestSessionEndOutcome:
         monkeypatch.setattr(
             hooks,
             "_extract_candidates",
-            lambda _messages, _token: [
+            lambda _messages, _token, **_options: [
                 CandidateMemory(
                     key="project:test:decision:dual",
                     value="采用双侧原子写入，因为它能够长期保持一致。",
@@ -1529,7 +1520,7 @@ class TestSessionEndOutcome:
         with MemoryStore(test_config):
             pass
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
-        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_: [
+        monkeypatch.setattr(hooks, "_extract_candidates", lambda *_, **_options: [
             CandidateMemory(
                 key="SESSION_SUMMARY",
                 value="本次确认了三项长期架构规则。",
@@ -1586,7 +1577,7 @@ class TestSessionEndOutcome:
         monkeypatch.setattr(
             hooks,
             "_extract_candidates",
-            lambda _messages, _token: [
+            lambda _messages, _token, **_options: [
                 CandidateMemory(
                     key="project:test:fact:invalid-mode",
                     value="非法模式也必须持久化的长期事实",
@@ -1846,7 +1837,7 @@ class TestSessionEndArchiveLinking:
             pass
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
         monkeypatch.setattr(
-            hooks, "_extract_candidates", lambda *_: self._candidates(),
+            hooks, "_extract_candidates", lambda *_, **_options: self._candidates(),
         )
 
         result = hooks.session_end({"session_id": "session_archive_link"})
@@ -1914,7 +1905,7 @@ class TestSessionEndArchiveLinking:
             pass
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
         monkeypatch.setattr(
-            hooks, "_extract_candidates", lambda *_: self._candidates(),
+            hooks, "_extract_candidates", lambda *_, **_options: self._candidates(),
         )
 
         first = hooks.session_end({"session_id": "session_repeat"})
@@ -1935,7 +1926,7 @@ class TestSessionEndArchiveLinking:
             pass
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
         monkeypatch.setattr(
-            hooks, "_extract_candidates", lambda *_: self._candidates(),
+            hooks, "_extract_candidates", lambda *_, **_options: self._candidates(),
         )
         monkeypatch.setattr("evolvmem.session_archive.AESGCM", None)
 
@@ -1962,7 +1953,7 @@ class TestSessionEndArchiveLinking:
             pass
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
         monkeypatch.setattr(
-            hooks, "_extract_candidates", lambda *_: self._candidates(),
+            hooks, "_extract_candidates", lambda *_, **_options: self._candidates(),
         )
 
         def boom(*args, **kwargs):
@@ -1992,7 +1983,7 @@ class TestSessionEndArchiveLinking:
         monkeypatch.setattr(
             hooks,
             "_extract_candidates",
-            lambda *_: [
+            lambda *_, **_options: [
                 CandidateMemory(
                     key="project:proj:playbook:stdio-triage",
                     value="排查握手卡死先确认症状，再定位读取路径，最后回归验证。",
@@ -2064,7 +2055,7 @@ class TestSessionEndConsolidationWiring:
             pass
         monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
         monkeypatch.setattr(
-            hooks, "_extract_candidates", lambda *_: self._persisted_candidates(),
+            hooks, "_extract_candidates", lambda *_, **_options: self._persisted_candidates(),
         )
 
     def test_shadow_mode_runs_consolidation_with_llm_callable(

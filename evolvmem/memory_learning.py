@@ -112,6 +112,12 @@ class MemoryLearning:
         basis = 'explicit' if metadata.get('basis') == 'explicit' and any(e['role'] == 'user' for e in evidence) else 'inferred'
         payload = {'basis': basis, 'evidence': evidence, 'trigger': str(metadata.get('trigger') or '')[:500],
                    'rationale': str(metadata.get('rationale') or '')[:1500], 'source_session': source_session}
+        from evolvmem.learning_extraction import process_evidence
+        payload['process'], errors = process_evidence(metadata.get('process'), messages)
+        payload['process_errors'] = metadata.get('process_errors', errors)
+        for field in ('relation', 'intake', 'rule_revision'):
+            if field in metadata:
+                payload[field] = metadata[field]
         with self.store.transaction():
             self.conn.execute('INSERT INTO learning_memories(item_id,category,payload) VALUES(?,?,?) '
                 'ON CONFLICT(item_id) DO UPDATE SET category=excluded.category,payload=excluded.payload,revision=revision+1',
@@ -129,7 +135,7 @@ class MemoryLearning:
                     'trigger': payload['trigger'], 'rationale': payload['rationale'],
                     'scope': 'project' if row['project'] else 'global', 'target': row['project'],
                     'source_ids': [item_id], 'exceptions': metadata.get('exceptions', '')},
-                    explicit=basis == 'explicit' and instruction == quote, origin='extraction')
+                    explicit=basis == 'explicit' and instruction == quote and metadata.get('auto_explicit_rules', True), origin='extraction')
             except ValueError:
                 # Bad model rule fields must not discard otherwise valid memories.
                 payload['rule_error'] = 'invalid_learning_rule'
@@ -189,8 +195,12 @@ class MemoryLearning:
         if any(not self._in_scope(row, scope, target) for row in rows):
             raise ValueError('learning_source_scope_mismatch')
         topic = str(data.get('topic') or 'collaboration')[:150]
-        fingerprint = hashlib.sha256(encoded([scope, target, instruction]).encode()).hexdigest()
-        previous = self.conn.execute('SELECT * FROM learning_rules WHERE fingerprint=?', (fingerprint,)).fetchone()
+        trigger = str(data.get('trigger') or '')[:500]
+        exceptions = str(data.get('exceptions') or '')[:1000]
+        fingerprint = hashlib.sha256(encoded([scope, target, topic, instruction, trigger, exceptions]).encode()).hexdigest()
+        # Match the semantic fields as well as supporting pre-P1 fingerprints.
+        previous = self.conn.execute('SELECT * FROM learning_rules WHERE scope=? AND target=? AND topic=? AND instruction=? AND trigger_text=? AND exceptions=?',
+                                     (scope, target, topic, instruction, trigger, exceptions)).fetchone()
         if previous:
             return self.rule(previous['id'])
         reason = '归纳或范围变化，需要确认'
@@ -199,15 +209,16 @@ class MemoryLearning:
             eligible, reason = False, '临时、疑问或不确定表达，需要确认'
         if scope == 'global' and not re.search(r'长期|所有项目|以后|始终|默认', instruction):
             eligible, reason = False, '缺少长期或通用适用范围的明确依据'
-        conflict = self.conn.execute("SELECT id FROM learning_rules WHERE scope=? AND target=? AND topic=? AND status='active'", (scope, target, topic)).fetchone()
+        conflict = any(self.rule(r[0])['effective'] for r in self.conn.execute(
+            "SELECT id FROM learning_rules WHERE scope=? AND target=? AND topic=? AND status='active'", (scope, target, topic)).fetchall())
         if conflict:
             eligible, reason = False, '同一主题已有生效规则，需核对冲突'
         sources = [{'id': row['id'], 'fingerprint': self._fingerprint(row)} for row in rows]
         with self.store.transaction():
             now = _now_iso()
             cur = self.conn.execute('INSERT INTO learning_rules(fingerprint,topic,instruction,trigger_text,rationale,exceptions,scope,target,sources,status,origin,reason,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                (fingerprint, topic, instruction, str(data.get('trigger') or '')[:500], str(data.get('rationale') or '')[:1500],
-                 str(data.get('exceptions') or '')[:1000], scope, target, encoded(sources), 'active' if eligible else 'candidate', origin,
+                (fingerprint, topic, instruction, trigger, str(data.get('rationale') or '')[:1500],
+                 exceptions, scope, target, encoded(sources), 'active' if eligible else 'candidate', origin,
                  '用户明确原话且适用范围清楚' if eligible else reason, now, now))
             rule_id = cur.lastrowid
             self._snapshot('明确规则自动更新' if eligible else '新增待确认学习结果')
@@ -274,8 +285,9 @@ class MemoryLearning:
                     raise ValueError('learning_conflict_confirmation_required')
                 self.conn.execute("UPDATE learning_rules SET status='superseded',revision=revision+1 WHERE scope=? AND target=? AND topic=? AND status='active' AND id!=?", (row['scope'],row['target'],row['topic'],rule_id))
             sources = [{'id': s['id'], 'fingerprint': self._fingerprint(s)} for s in sources]
-            fingerprint = hashlib.sha256(encoded([row['scope'], row['target'], instruction]).encode()).hexdigest()
-            other = self.conn.execute('SELECT id FROM learning_rules WHERE fingerprint=? AND id!=?', (fingerprint,rule_id)).fetchone()
+            fingerprint = hashlib.sha256(encoded([row['scope'], row['target'], row['topic'], instruction, row['trigger'], row['exceptions']]).encode()).hexdigest()
+            other = self.conn.execute('SELECT id FROM learning_rules WHERE scope=? AND target=? AND topic=? AND instruction=? AND trigger_text=? AND exceptions=? AND id!=?',
+                (row['scope'], row['target'], row['topic'], instruction, row['trigger'], row['exceptions'], rule_id)).fetchone()
             if other:
                 raise ValueError('learning_rule_duplicate')
             self.conn.execute('UPDATE learning_rules SET instruction=?,fingerprint=?,sources=?,status=?,origin=?,reason=?,revision=revision+1,updated_at=? WHERE id=?',

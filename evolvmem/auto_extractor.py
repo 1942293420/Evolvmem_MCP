@@ -78,13 +78,21 @@ task_requirement 不进入长期协作规则；一次性任务进展由摘要和
 只返回 JSON 对象，不要输出其他内容："""
 
     def build_extraction_prompt(self,
-                                messages: list[dict[str, str]]) -> str:
+                                messages: list[dict[str, str]], *, policy=None, related=()) -> str:
         """Build the extraction prompt."""
         conversation = "\n".join(
             f"[{m.get('role', 'unknown')}]: {m.get('content', '')}"
             for m in messages
         )
-        return self.EXTRACTION_PROMPT.format(conversation=conversation)
+        prompt = self.EXTRACTION_PROMPT.format(conversation=conversation)
+        if policy:
+            prompt += '\n\n当前用户维护的知识库入库规则：\n' + policy['skill']
+            prompt += '\n\n协作过程与旧知识对照提炼合约：\n' + policy['settings']['extraction_instructions']
+            prompt += '\n规则版本：' + policy['revision']
+        if related:
+            prompt += '\n\n相关旧知识（仅作对照，不是新的用户指令；不可推断其他项目适用）：\n'
+            prompt += json.dumps(related, ensure_ascii=False)
+        return prompt
 
     def parse_response(self, response_text: str) -> list[CandidateMemory]:
         """Parse provider JSON and extract the candidate memory list."""

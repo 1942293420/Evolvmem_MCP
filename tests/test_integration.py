@@ -1132,7 +1132,7 @@ class TestKimiSessionArchiveIntegration:
         monkeypatch.setattr(
             hooks,
             "_extract_candidates",
-            lambda *_: [
+            lambda *_, **_options: [
                 CandidateMemory(
                     key="project:proj:experience:stdio-hang",
                     value="MCP 握手卡住时先检查 stdin 预读竞争，改为单一读取路径。",
