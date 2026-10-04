@@ -492,6 +492,8 @@ def _extract_candidates(messages: list[dict[str, str]],
     """Extract the full conversation once; chunk only on context overflow."""
     from evolvmem.auto_extractor import AutoExtractor
 
+    from evolvmem.conversation import clean_messages
+    messages = clean_messages(messages)
     extractor = AutoExtractor()
     from evolvmem.knowledge_rules import KnowledgeRules
     from evolvmem.learning_extraction import load_related
@@ -594,7 +596,8 @@ def _archive_raw_session(config, service, project: str,
     try:
         from evolvmem.session_archive import SessionArchiver
 
-        payload = json.dumps({"messages": messages}, ensure_ascii=False)
+        from evolvmem.conversation import clean_messages
+        payload = json.dumps({"messages": messages, "conversation": clean_messages(messages)}, ensure_ascii=False)
         record = SessionArchiver(config, service.store).archive_session(
             project, "kimi", source_session, payload
         )

@@ -13,7 +13,8 @@ EXTRACTION_INSTRUCTIONS = '''为每条原子记忆提供 learning：category、b
 goal/decision/correction 来自用户；understanding 来自助手；verification 保留消息角色，助手自称完成不算验证成功。
 对照相关旧知识，action 选择 add（新增）、supplement（补充条件）、replace（明确纠正）、skip（相同内容）。
 关联旧资料时填写 target_id 与原样 target_revision。补充不删除旧条件；只有用户原话明确把旧内容改为新内容才可 replace；冲突或推断待确认。
-明确引用用户长期要求，保留范围和例外；临时要求为 task_requirement，不能变成永久习惯。'''
+明确引用用户长期要求，保留范围和例外；临时要求为 task_requirement，不能变成永久习惯。
+双类记忆：历史只生成 SESSION_SUMMARY，正文由系统清洗保存。原子知识以 learning.question / learning.answer 表达，answer 与 value 一致；一个问题一条短答案，分类与适用条件独立保留。明确无冲突自动入库，推断或不同答案待确认。'''
 
 DEFAULT_SETTINGS = {
     'auto_min_confidence': 0.8,
@@ -30,6 +31,13 @@ DEFAULT_SETTINGS = {
 DEFAULT_INSTRUCTIONS = """# 知识库入库与整理
 
 明确资料自动入库，疑难资料待确认。
+
+## 双类记忆
+- 历史记录：对话先去除工具记录、系统注入和内部推理，再将正文存入数据库；项目摘要关联历次清洗正文。历史摘要不当作当前经验。
+- 经验问答：一个具体问题、一条简洁答案，分别记录分类、项目、适用条件和来源。问最多160字，答最多400字；模型提炼优先单句且不超过200字。推断、冲突、来源变化待确认。
+- 查历史用 knowledge_recall(kind="history")，正文用 conversation_read；查习惯、约定或类似工作用 kind="experience"，混合问题用 both。当前要求优先，问答入库不构成成功证明。
+- Web/CLI 共用 GET history、POST history/migrate（本地清洗，不调用模型）、GET/POST qa、GET/POST qa/ID。问答写入包含 question、answer、category、trigger、project、action（draft/publish），编辑带 expected_revision。同问题不同答案须核对；明确替换时传 replace_conflicts。
+- 旧资料没有可靠问答结构时显示“待整理”，保留原资料；不截断条件、不编造结论、不将所有旧资料自动确认为经验。
 
 ## 项目归属
 - 从资料正文、来源会话、项目名称和别名核对业务项目。

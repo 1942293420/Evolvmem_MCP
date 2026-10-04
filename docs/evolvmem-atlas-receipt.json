@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-10-04",
+  "reviewed_at": "2026-10-05",
   "source": {
-    "sha256": "64553bbcceb0983f04110f98357b57fcee2ae638d6c6266147dd1dee854877b8",
-    "bytes": 190089
+    "sha256": "fa373abe574a5f5946fbea49e9117d99c83081a36da539a1c99f35686dba7ee6",
+    "bytes": 201899
   },
   "chapters": [
     {
@@ -16,6 +16,46 @@
       "artifact": {
         "sha256": "e7d802c9ad317e778489a35762c54820e723475f409e892f0ef36ca84dd295c8",
         "bytes": 609536
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "memory-ingestion",
+      "type": "workflow",
+      "specification": {
+        "sha256": "c549e8e74ce590caa86b25fb9d5de891cf52aa5dc11607129f18b8bb93483622",
+        "bytes": 3557
+      },
+      "artifact": {
+        "sha256": "4f0d7146a5d0f8353e46c34f40826f61939943a49b32a93e916ec86987d93893",
+        "bytes": 609674
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "memory-recall",
+      "type": "workflow",
+      "specification": {
+        "sha256": "3ed670468beb23cf39481a140e2b18dabb0483b89bed3cfdc1c5a3a3d5968a97",
+        "bytes": 2844
+      },
+      "artifact": {
+        "sha256": "93b1e79376735695d78548d14e0c774d5d6f9c32db6da37286e8af6d7459065e",
+        "bytes": 605030
       },
       "validation": {
         "checksPassed": 9,
@@ -270,12 +310,12 @@
       "chapter": "learning",
       "type": "architecture",
       "specification": {
-        "sha256": "2b8f44a87716c1131c1ba58b9b08f67949c1512008b6301906273f68b18e3af7",
-        "bytes": 3151
+        "sha256": "e55eae771a2eaf52650de993c2df1f1527a11f7f0b8504d7f3842cb14b1a68d4",
+        "bytes": 3161
       },
       "artifact": {
-        "sha256": "4a35de73e702a2bdd14892c6ef4395382a19e7e3a5990a0de9917f14fa49f5d5",
-        "bytes": 603911
+        "sha256": "9ee661398503894e659a17c14cc894989cb6bc320241a437cda19e5a7801774d",
+        "bytes": 603951
       },
       "validation": {
         "checksPassed": 9,
@@ -288,8 +328,8 @@
     }
   ],
   "atlas": {
-    "sha256": "ebfa085d34729ddc168f5596c3878c93a3c7b360133b34d910d66b0a494b07c5",
-    "bytes": 2142841
+    "sha256": "2597e25262e7b864571e1d2d51962d374220b42f53aeb877d5b52c04da71d71b",
+    "bytes": 2436433
   },
-  "visual_review": "2026-10-04: inspected the learning chapter in Chromium at 1440×1000; diagram and new P1 descriptions displayed. Rules workspace checked at 1440×1100 and 390×844 with synthetic data, no horizontal overflow or page errors."
+  "visual_review": "2026-10-05: Chromium inspected both workflow chapters inside the atlas, including switching, SVG rendering and readable main paths; all 16 chapters pass 9/9 artifact checks, 0 errors and 0 warnings."
 }

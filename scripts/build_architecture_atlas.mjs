@@ -29,9 +29,9 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 const receipts = [], failures = [], specs = [];
 for (const chapter of atlas.chapters) {
   if (!/^[a-z0-9-]+$/.test(chapter.id)) throw new Error('Invalid chapter ID');
-  const spec = path.join(out, chapter.id + '.architecture.json');
+  const spec = path.join(out, chapter.id + '.' + chapter.diagram.diagram_type + '.json');
   fs.writeFileSync(spec, JSON.stringify(chapter.diagram, null, 2) + '\n');
-  const result = spawnSync(process.execPath, [options['--archify'], 'validate', 'architecture', spec, '--quality', 'showcase', '--json'], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  const result = spawnSync(process.execPath, [options['--archify'], 'validate', chapter.diagram.diagram_type, spec, '--quality', 'showcase', '--json'], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
   fs.writeFileSync(path.join(out, chapter.id + '.validation.json'), result.stdout || result.stderr || String(result.error));
   let report;
   try { report = JSON.parse(result.stdout); } catch (_) { report = { stderr: result.stderr, error: String(result.error) }; }
@@ -49,14 +49,14 @@ if (failures.length) {
 if (validateOnly) process.exit(0);
 for (const { chapter, spec } of specs) {
   const htmlPath = path.join(out, chapter.id + '.html');
-  const result = spawnSync(process.execPath, [options['--archify'], 'deliver', 'architecture', spec, htmlPath, '--quality', 'showcase', '--json'], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  const result = spawnSync(process.execPath, [options['--archify'], 'deliver', chapter.diagram.diagram_type, spec, htmlPath, '--quality', 'showcase', '--json'], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
   if (result.status !== 0) throw new Error('Delivery failed for ' + chapter.id + ': ' + result.stdout + result.stderr);
   const receipt = JSON.parse(result.stdout);
   if (!receipt.ok || receipt.validation?.checksPassed !== 9 || receipt.validation?.errors || receipt.validation?.warnings) throw new Error('Incomplete showcase delivery: ' + chapter.id);
   fs.writeFileSync(path.join(out, chapter.id + '.receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
   chapter.html = fs.readFileSync(htmlPath, 'utf8');
   if (digest(chapter.html) !== receipt.artifact.sha256) throw new Error('Delivered artifact changed: ' + chapter.id);
-  receipts.push({ chapter: chapter.id, type: 'architecture', specification: receipt.specification, artifact: receipt.artifact, validation: receipt.validation });
+  receipts.push({ chapter: chapter.id, type: chapter.diagram.diagram_type, specification: receipt.specification, artifact: receipt.artifact, validation: receipt.validation });
 }
 const payload = gzipSync(Buffer.from(JSON.stringify(atlas)), { level: 9 }).toString('base64');
 const template = fs.readFileSync(options['--template'], 'utf8');

@@ -370,13 +370,16 @@ def recall_mentioned_projects(
     excluded: list[tuple[int, str]] = []
     unverified: list[int] = []
     for match, budget in zip(analysis.mentions, budgets):
+        from evolvmem.project_memory import recall_summary
+        overview, overview_ids = recall_summary(service, match.project, min(1100, budget // 3))
+        remainder = budget - len(overview) - (1 if overview else 0)
         # Current workstream checkpoints are deliberately excluded from the
         # knowledge pool. Read their dated progress separately, without
         # changing confidence gates, focus, or the overall project budget.
         progress = read_recent_project_progress(
-            service, match.project, max_chars=max(1, min(2000, budget * 3 // 5)),
+            service, match.project, max_chars=max(1, min(2000, remainder * 3 // 5)),
         )
-        knowledge_budget = budget - len(progress.text) - (1 if progress.text else 0)
+        knowledge_budget = remainder - len(progress.text) - (1 if progress.text else 0)
         result = service.session_start(
             ContextSessionStartRequest(
                 project=match.project,
@@ -387,7 +390,7 @@ def recall_mentioned_projects(
             project_only=True,
         )
         content = str(getattr(result, "block", "") or "").strip()
-        parts = [part for part in (progress.text, content) if part]
+        parts = [part for part in (overview, progress.text, content) if part]
         project_selected: list[int] = []
         project_unverified: list[int] = []
         project_excluded: list[tuple[int, str]] = []
@@ -415,6 +418,7 @@ def recall_mentioned_projects(
         diagnostics["projects"].append(
             {
                 "project": match.project,
+                "document_source_ids": list(overview_ids),
                 "selected_ids": project_selected[:MAX_DIAGNOSTIC_ITEMS],
                 "unverified_ids": project_unverified[:MAX_DIAGNOSTIC_ITEMS],
                 "ownership_detail": progress.diagnostics.get(

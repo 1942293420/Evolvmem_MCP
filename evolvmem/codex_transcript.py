@@ -92,6 +92,11 @@ def parse_transcript(raw: bytes, session_id: str) -> tuple[list[dict], list[dict
         if previous is not None and previous[:2] == marker and previous[2] != row.get('type'):
             previous = None
             continue
-        messages.append({'role': role, 'content': content})
+        message = {'role': role, 'content': content}
+        if payload.get('channel') in ('analysis', 'summary'):
+            message['channel'] = payload['channel']
+        if payload.get('recipient') not in (None, '', 'all'):
+            message['recipient'] = payload['recipient']
+        messages.append(message)
         previous = (*marker, row.get('type'))
     return rows, messages

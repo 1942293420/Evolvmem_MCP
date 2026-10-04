@@ -750,6 +750,23 @@ class ContextService:
             if isinstance(routed, ContextSessionStartResult):
                 return routed
             continuation_code, continuation = routed
+        if project and not project_only:
+            from evolvmem.memory_recall import recall
+            budget = min(request.max_chars or self.config.context_inject_max_chars, self.config.context_inject_max_chars)
+            collaboration = self.learning().context(project, min(1000, max(0, budget // 4)))
+            try:
+                recalled = recall(self, {'project':project, 'query':request.query or '',
+                                         'max_chars':max(1, budget-len(collaboration))})
+            except ValueError:
+                recalled = {'block':''}
+            if recalled['block'] or recalled.get('kind') in ('history', 'experience'):
+                if recalled['kind'] == 'history':
+                    collaboration = ''
+                if recalled['selected_ids']:
+                    self._record_served_access(recalled['selected_ids'])
+                return ContextSessionStartResult(block=collaboration+recalled['block'],
+                    selected_ids=tuple(recalled['selected_ids']), used_chars=len(collaboration)+recalled['used_chars'],
+                    excluded_counts=(), continuation_code=continuation_code, continuation=continuation)
         # 当前项目 ready rollup 的确切摘要：只标记这一个条目，让 renderer 为它
         # 预留名额与字符预算；标记不改变任何准入闸门，未通过闸门时等同未标记。
         reserved_id = self._ready_project_summary_context_id(project)
@@ -769,8 +786,15 @@ class ContextService:
         )
         budget = min(request.max_chars or self.config.context_inject_max_chars, self.config.context_inject_max_chars)
         collaboration = self.learning().context(project, min(1800, max(0, budget // 3)))
+        overview = ''
+        if project and not project_only:
+            from evolvmem.project_memory import recall_summary
+            overview, _ = recall_summary(self, project, min(1100, max(0, budget // 3 - 2)))
+            if overview:
+                overview += '\n\n'
+        prefix = overview + collaboration
         rendered = self.renderer.render(
-            candidates, project=project, max_chars=max(1,budget-len(collaboration)) if collaboration else request.max_chars
+            candidates, project=project, max_chars=max(1,budget-len(prefix)) if prefix else request.max_chars
         )
         if rendered.selected_ids:
             # A renderer exception or an empty block never reaches this update.
@@ -783,9 +807,9 @@ class ContextService:
                 ContextExclusionCount(reason=reason, count=count)
             )
         return ContextSessionStartResult(
-            block=collaboration + rendered.block,
+            block=prefix + rendered.block,
             selected_ids=rendered.selected_ids,
-            used_chars=len(collaboration) + rendered.used_chars,
+            used_chars=len(prefix) + rendered.used_chars,
             excluded_counts=tuple(excluded_counts),
             continuation_code=continuation_code,
             continuation=continuation,
@@ -2173,6 +2197,11 @@ class ContextService:
             persisted=(1 if summary_result is not None else 0)
             + len(candidate_results),
         )
+        if summary_result is not None and summary_result.context_id:
+            from evolvmem.project_memory import refresh
+            project = self.store.get_item(summary_result.context_id, include_layers=False).project
+            if project and project in self._project_store().snapshot().projects:
+                refresh(self, project)
         self._maybe_rollup_project(summary_result, llm=llm)
         if llm is not None and summary_result is not None and summary_result.context_id:
             try:

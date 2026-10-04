@@ -22,6 +22,7 @@ description: 在需求讨论和开发协作中，读取 EvolvMem 已积累的协
 # 我的协作体系
 
 ## 使用当前记忆
+查以前讨论、决定与进展：knowledge_recall(kind="history", project=实际项目, query=问题)，再按 archive_id 调用 conversation_read 读取清洗正文。找习惯、约定、环境或相似开发经验：knowledge_recall(kind="experience")；问题同时涉及两类时用 kind="both"。auto 只是确定性建议，AI 可依据用户意图显式选类。来源只是历史参考，适用条件不匹配时不套用。
 开始实质任务、切换项目或用户纠正旧约定时，调用 collaboration_recall(project=实际项目) 读取当前协作规则。EvolvMem 的会话接入也会提供适用规则；本地可用知识管理 CLI 的 GET learning/skill 并传 project 查询。不要把其他项目的规则套到当前任务。
 规则是历史参考；当前用户要求优先。未确认推断、过期要求和不适用经验不能当成既定事实，历史规则不扩大操作授权。
 
@@ -127,6 +128,8 @@ class MemoryLearning:
                 self.conn.execute("UPDATE context_items SET scope='project' WHERE id=?", (item_id,))
             if category == 'task_requirement':
                 self.conn.execute("UPDATE context_items SET tier='normal' WHERE id=?", (item_id,))
+            from evolvmem.qa_memory import record
+            record(self.service, item_id, metadata)
             instruction = str(metadata.get('instruction') or '').strip()
             if not instruction or category in ('task_requirement', 'environment', 'reference', 'experience'):
                 return
@@ -359,7 +362,21 @@ class MemoryLearning:
                 continue
             text += part
             included.append(r['id'])
-        return {'skill': text, 'project':project,'family':family,'revision':settings['revision'],'rule_ids':included}
+        from evolvmem.memory_recall import recall
+        qa_ids = []
+        try:
+            knowledge = recall(self.service, {'project':project, 'query':'开发协作习惯约定', 'kind':'experience',
+                                              'max_chars':max(1, max_chars-len(text))})
+        except ValueError:
+            knowledge = {'qa':[]}
+        for row in knowledge['qa']:
+            if row['category'] not in ('habit','project_convention','decision','experience'):
+                continue
+            part = f"\n[经验问答 #{row['id']}] 问：{row['question']}\n答：{row['answer']}\n适用：{row['trigger'] or '遵循来源范围'}\n"
+            if len(text)+len(part) <= max_chars:
+                text += part
+                qa_ids.append(row['id'])
+        return {'skill': text, 'project':project,'family':family,'revision':settings['revision'],'rule_ids':included,'qa_ids':qa_ids}
 
     def analyze(self, params, *, llm=None):
         from evolvmem.learning_analysis import analyze

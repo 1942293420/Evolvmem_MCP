@@ -327,6 +327,8 @@ class MemoryMCPServer:
             "memory_consolidate": self._memory_consolidate,
             "context_session_start": self._context_session_start,
             "collaboration_recall": self._collaboration_recall,
+            "knowledge_recall": self._knowledge_recall,
+            "conversation_read": self._conversation_read,
             "context_search": self._context_search,
             "context_project_recall": self._context_project_recall,
             "context_decision_window": self._context_decision_window,
@@ -772,6 +774,26 @@ class MemoryMCPServer:
         if not isinstance(project, str):
             return self._context_error('invalid_arguments')
         return self.context_service.learning().skill(project)
+
+    def _knowledge_recall(self, args: dict) -> dict:
+        error = self._context_gate_error()
+        if error is not None:
+            return error
+        from evolvmem.memory_recall import recall
+        try:
+            return recall(self.context_service, args)
+        except (ValueError, TypeError, KeyError):
+            return self._context_error('invalid_arguments')
+
+    def _conversation_read(self, args: dict) -> dict:
+        error = self._context_gate_error()
+        if error is not None:
+            return error
+        from evolvmem.memory_recall import read_conversation
+        try:
+            return read_conversation(self.context_service, args)
+        except (ValueError, TypeError, KeyError):
+            return self._context_error('invalid_arguments')
 
     def _context_search(self, args: dict) -> dict:
         try:

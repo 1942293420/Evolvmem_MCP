@@ -215,3 +215,37 @@
 }
 
 .knowledge-workspace .rules-layout :is(input,select,textarea,summary,button),.knowledge-workspace .rules-playground,.knowledge-workspace .rules-result {scroll-margin-top:100px;}
+
+/* One ordered workspace: no separated management columns. */
+.knowledge-tabs {justify-content:flex-start;gap:24px;flex-wrap:wrap;}
+.knowledge-tabs>div {display:contents;}
+.knowledge-flow {padding:18px 20px;margin-bottom:24px;background:#f0f4fb;border-radius:8px;}
+.knowledge-flow ol {display:flex;flex-wrap:wrap;gap:18px 36px;margin:0;padding:0;list-style:none;}
+.knowledge-flow li {display:flex;flex-direction:column;gap:5px;font-size:12px;}
+.knowledge-flow li span,.knowledge-flow p {font-size:11px;color:var(--muted);line-height:1.7;}
+.knowledge-flow p {margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line);}
+.knowledge-workspace .rules-layout {display:block;max-width:1000px;}
+.knowledge-workspace .rules-layout .panel {margin-bottom:20px;}
+.knowledge-workspace .rules-stages {display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 20px;}
+.knowledge-workspace .rules-stages button[aria-pressed=true] {border-color:var(--accent);color:var(--accent);background:var(--pale);}
+.knowledge-workspace .rules-stages span {color:var(--muted);font-size:12px;}
+.knowledge-workspace .rules-result {max-width:1000px;box-sizing:border-box;}
+.knowledge-workspace .extraction-comparison {grid-template-columns:1fr;}
+.knowledge-workspace .project-memory-text {white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.9;font-family:inherit;background:#f7f9fc;padding:18px;border-radius:6px;}
+.knowledge-workspace .project-document .section-head {margin-top:0;}
+.knowledge-workspace .project-conversations>summary,.knowledge-workspace .project-fulltext summary,.knowledge-workspace .project-fragments>summary {cursor:pointer;font-weight:600;padding:16px 0;font-size:14px;}
+.knowledge-workspace .project-fragments {border-top:1px solid var(--line);margin-top:24px;}
+.knowledge-workspace .conversation-row {padding:18px 0;border-top:1px solid var(--line);}
+.knowledge-workspace .conversation-row>div {display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px;}
+@media(max-width:650px){
+ .knowledge-tabs {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;}
+ .knowledge-flow {padding:14px;}
+ .knowledge-flow ol {display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+ .knowledge-workspace .rules-stages {gap:8px;}
+ .knowledge-workspace .rules-stages span {flex-basis:100%;}
+ .knowledge-workspace .project-memory-text {padding:12px;font-size:13px;}
+}
+
+.memory-heading h2{margin:8px 0}.memory-lanes{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0}.memory-lanes button.active{color:var(--accent,#2854eb);border-color:currentColor;background:#edf2ff}.memory-shortcuts{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}.qa-cards{display:grid;gap:14px}.qa-card{border:1px solid #dce1eb;border-radius:8px;padding:18px;overflow-wrap:anywhere}.qa-card h4{margin:12px 0;font-size:16px}.qa-card p{white-space:pre-wrap;line-height:1.7}.qa-card details{margin-top:12px}.qa-card details button,.memory-dialog details button{margin:6px 8px 0 0}.memory-dialog{width:min(780px,94vw);max-height:90vh;padding:0;border:1px solid #dce1eb;border-radius:12px}.memory-dialog::backdrop{background:#15244466}.memory-dialog .dialog-body{max-height:68vh;overflow:auto}.memory-dialog textarea{min-height:110px}.memory-dialog .dialog-footer{flex-wrap:wrap}.memory-manager{margin-bottom:22px}.memory-manager .panel{margin-top:0}.memory-manager .section-head{align-items:flex-start;gap:16px}.qa-filters{margin-top:16px}@media(max-width:600px){.memory-lanes{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}.memory-lanes button{padding:10px 4px}.memory-manager .section-head{flex-direction:column}.qa-card{padding:14px}.memory-dialog .form-grid{grid-template-columns:1fr}.memory-dialog .dialog-header,.memory-dialog .dialog-body,.memory-dialog .dialog-footer{padding:16px}}
+
+.memory-heading{padding:24px 0 8px}.memory-manager .panel>.section-head:first-child{margin-top:0}.memory-manager .hint{font-size:13px}.memory-manager .qa-card p{font-size:14px}

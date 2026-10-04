@@ -85,6 +85,12 @@ task_requirement 不进入长期协作规则；一次性任务进展由摘要和
             for m in messages
         )
         prompt = self.EXTRACTION_PROMPT.format(conversation=conversation)
+        prompt += ('\n\n双类记忆输出合约：历史对话由系统清洗后单独入库；SESSION_SUMMARY 只概括本次历史。'
+                   '其余每条原子知识必须有 learning.question 和 learning.answer。'
+                   'question 为自然、具体、可检索的问题，最多 160 字；answer 与 value 完全一致，优先一句话且最多 200 字。'
+                   '只提炼一个问题，复杂经验拆分为多个问题；条件写入 trigger 并在答案保留影响结论的关键限制。'
+                   '按 category 分类，quote 引用本次真实对话；没有明确依据的归纳使用 inferred，等待确认。'
+                   '不能把会话进度、助手自称成功或一次性要求变成长期经验，不得补造问答事实。')
         if policy:
             prompt += '\n\n当前用户维护的知识库入库规则：\n' + policy['skill']
             prompt += '\n\n协作过程与旧知识对照提炼合约：\n' + policy['settings']['extraction_instructions']

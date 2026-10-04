@@ -142,6 +142,18 @@ def plan(service, item, messages, *, policy=None):
         reason = '同一标识已有不同内容，需要明确补充或替代关系'
     if errors or (data.get('quote') and not evidence(data['quote'], messages)):
         reason = '原话或协作过程无法核对：' + ', '.join(errors)
+    if 'question' in data or 'answer' in data:
+        from evolvmem.qa_memory import validate, conflicts
+        try:
+            question, answer = validate(data.get('question'), data.get('answer'))
+            if answer != item.value:
+                reason = '问答答案与记忆内容不一致'
+            elif not quote or data.get('basis') != 'explicit':
+                reason = '经验问答来自推断或缺少用户依据，待确认'
+            elif action != 'replace' and conflicts(service, project, scope, question, answer, data.get('category', 'reference'), data.get('trigger', '')):
+                reason = '同一问题和条件已有不同答案，待确认'
+        except ValueError:
+            reason = '请提供完整且简洁的问答'
     if reason:
         decision.update(action='review', reason=reason)
     status = {'auto': 'active', 'review': 'candidate', 'ignore': 'archived'}[decision['action']]
@@ -165,6 +177,8 @@ def persist(service, item, messages, source_session, archive_id):
         raise ValueError('extraction_rules_changed')
     result = plan(service, item, messages, policy=policy)
     if result['action'] == 'skip':
+        if archive_id is not None:
+            service.store.record_session_source(result['target_id'], archive_id, extraction_version='learning-qa.v1')
         return None, _VectorAftermath()
     category = metadata.get('category', '')
     decision = result['decision']

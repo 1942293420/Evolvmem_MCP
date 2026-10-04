@@ -395,7 +395,9 @@ class LanCapture:
         if not archive_id:
             self._write_stage(path, raw)
         if complete and not archive_id:
-            payload = json.dumps({'source': 'client_reported', 'device_id': identity[0],
+            from evolvmem.conversation import clean_messages
+            _, dialogue_messages = parse_transcript(raw, identity[1])
+            payload = json.dumps({'conversation': clean_messages(dialogue_messages), 'source': 'client_reported', 'device_id': identity[0],
                                   'session_id': identity[1], 'source_sha256': digest,
                                   'parent_session_id': details.get('parent_session_id', ''),
                                   'transcript': raw.decode('utf-8')}, ensure_ascii=False)

@@ -40,6 +40,21 @@ def _now_iso() -> str:
 # statement, executed in order; arbitrary SQL is never split on semicolons, so
 # the whole schema can join one outer transaction without an implicit commit.
 _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS conversation_history (
+        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id),
+        messages TEXT NOT NULL, body TEXT NOT NULL, content_hash TEXT NOT NULL,
+        cleaned_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS knowledge_qa (
+        item_id INTEGER PRIMARY KEY REFERENCES context_items(id) ON DELETE CASCADE,
+        question TEXT NOT NULL, answer TEXT NOT NULL, source_fingerprint TEXT NOT NULL,
+        status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', origin TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS project_memory_documents (
+        project TEXT PRIMARY KEY, summary TEXT NOT NULL, body TEXT NOT NULL,
+        source_ids TEXT NOT NULL, revision TEXT NOT NULL, updated_at TEXT NOT NULL
+    )""",
     """CREATE TABLE IF NOT EXISTS knowledge_metadata (
         item_id INTEGER PRIMARY KEY REFERENCES context_items(id) ON DELETE CASCADE,
         title TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 1,

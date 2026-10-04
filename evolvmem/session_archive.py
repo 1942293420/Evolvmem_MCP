@@ -166,6 +166,8 @@ class SessionArchiver:
                     expires_at=expires_at,
                     recorded_at=_format_ts(moment),
                 )
+                from evolvmem.history_memory import save_clean
+                save_clean(self.store, archive_id, payload)
         except Exception:
             target.unlink(missing_ok=True)
             raise

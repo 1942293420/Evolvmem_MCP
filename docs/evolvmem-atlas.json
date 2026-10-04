@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "title": "EvolvMem 完整架构图册",
-  "reviewed_at": "2026-10-04",
+  "reviewed_at": "2026-10-05",
   "source_root": ".",
   "chapters": [
     {
@@ -286,7 +286,7 @@
           "items": [
             "接入：原生 MCP、Windows PowerShell hooks 与加密采集队列、Kimi / DSH hooks、Codex 中断补录，以及 Signal Web 工作台。",
             "协调：ContextService 的记忆模式与健康门；ContinuityService 的独立任务入口、项目绑定和版本协议；兼容 facade。",
-            "读取：legacy / Context / experience 三条检索路径，以及精确 context_read。",
+            "读取：knowledge_recall 按历史/经验/混合意图返回摘要或问答，conversation_read 按需分页读取清洗正文；原 Context / experience / legacy 接口保留兼容与案例验证。",
             "生成与写入：会话提炼、确定性内容门、冲突与语义替代、项目摘要和候选方法。",
             "事实：SQLite 条目、层、来源、证据、项目、滚动摘要与任务状态；LAN 只共享经 memory_publish 明确写入 public 的整理内容。",
             "派生与维护：FTS5、双 USearch 索引、dirty 标记、归档保留、检查与切换。"
@@ -378,6 +378,390 @@
           "path": "evolvmem/lan_runtime.py:1"
         }
       ]
+    },
+    {
+      "id": "memory-ingestion",
+      "title": "对话入库活动图",
+      "subtitle": "两类记忆 · 清洗、确认与按意图使用",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "workflow",
+        "meta": {
+          "title": "对话入库活动图",
+          "subtitle": "两类记忆 · 清洗、确认与按意图使用",
+          "quality_profile": "showcase",
+          "visual_preset": "signal-flow",
+          "animation": "none",
+          "viewBox": [
+            700,
+            570
+          ]
+        },
+        "lanes": [
+          {
+            "id": "history",
+            "label": "第一类 · 历史记录"
+          },
+          {
+            "id": "capture",
+            "label": "同步与清洗"
+          },
+          {
+            "id": "qa",
+            "label": "第二类 · 经验问答"
+          },
+          {
+            "id": "review",
+            "label": "用户确认"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "sync",
+            "lane": "capture",
+            "col": 0,
+            "type": "backend",
+            "label": "同步对话",
+            "sublabel": "Codex / Kimi"
+          },
+          {
+            "id": "clean",
+            "lane": "capture",
+            "col": 2,
+            "type": "backend",
+            "label": "清洗对话",
+            "sublabel": "只保留用户与助手交流"
+          },
+          {
+            "id": "store",
+            "lane": "history",
+            "col": 0,
+            "type": "database",
+            "label": "保存清洗正文",
+            "sublabel": "SQLite · 可回看"
+          },
+          {
+            "id": "summary",
+            "lane": "history",
+            "col": 2,
+            "type": "backend",
+            "label": "提炼会话摘要",
+            "sublabel": "关联正文与项目"
+          },
+          {
+            "id": "book",
+            "lane": "history",
+            "col": 4,
+            "type": "backend",
+            "label": "更新项目总记忆",
+            "sublabel": "已入库摘要与任务进展"
+          },
+          {
+            "id": "extract",
+            "lane": "qa",
+            "col": 0,
+            "type": "backend",
+            "label": "提炼简洁问答",
+            "sublabel": "分类与适用条件"
+          },
+          {
+            "id": "check",
+            "lane": "qa",
+            "col": 2,
+            "type": "security",
+            "label": "核对来源与冲突",
+            "sublabel": "明确且无冲突？"
+          },
+          {
+            "id": "active",
+            "lane": "qa",
+            "col": 4,
+            "type": "database",
+            "label": "可用经验问答",
+            "sublabel": "有效来源与适用条件"
+          },
+          {
+            "id": "pending",
+            "lane": "review",
+            "col": 2,
+            "type": "frontend",
+            "label": "疑难资料待确认",
+            "sublabel": "核对归属与答案"
+          },
+          {
+            "id": "reviewed",
+            "lane": "review",
+            "col": 4,
+            "type": "frontend",
+            "label": "确认或修正",
+            "sublabel": "也可归档不用"
+          }
+        ],
+        "edges": [
+          {
+            "id": "ingest-0",
+            "from": "sync",
+            "to": "clean"
+          },
+          {
+            "id": "ingest-1",
+            "from": "clean",
+            "to": "store"
+          },
+          {
+            "id": "ingest-2",
+            "from": "store",
+            "to": "summary",
+            "fromSide": "right",
+            "toSide": "left",
+            "route": "straight"
+          },
+          {
+            "id": "ingest-3",
+            "from": "summary",
+            "to": "book"
+          },
+          {
+            "id": "ingest-4",
+            "from": "clean",
+            "to": "extract"
+          },
+          {
+            "id": "ingest-5",
+            "from": "extract",
+            "to": "check",
+            "fromSide": "right",
+            "toSide": "left",
+            "route": "straight"
+          },
+          {
+            "id": "ingest-6",
+            "from": "check",
+            "to": "active",
+            "label": "明确"
+          },
+          {
+            "id": "ingest-7",
+            "from": "check",
+            "to": "pending",
+            "label": "疑难"
+          },
+          {
+            "id": "ingest-8",
+            "from": "pending",
+            "to": "reviewed"
+          },
+          {
+            "id": "ingest-9",
+            "from": "reviewed",
+            "to": "active",
+            "label": "确认"
+          }
+        ],
+        "mainPath": [
+          "store",
+          "summary",
+          "book"
+        ]
+      },
+      "sections": [
+        {
+          "title": "实际行为",
+          "paragraphs": [
+            "历史保留清洗正文与会话摘要；经验只使用有效的简洁问答。来源变化后重新核对，疑难内容不自动生效。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "history_memory.py",
+          "path": "evolvmem/history_memory.py"
+        },
+        {
+          "label": "qa_memory.py",
+          "path": "evolvmem/qa_memory.py"
+        },
+        {
+          "label": "memory_recall.py",
+          "path": "evolvmem/memory_recall.py"
+        }
+      ],
+      "english": "MEMORY ACTIVITIES",
+      "takeaway": "先清洗再提炼，历史与问答分开保存、按意图读取。"
+    },
+    {
+      "id": "memory-recall",
+      "title": "记忆检索流程图",
+      "subtitle": "两类记忆 · 清洗、确认与按意图使用",
+      "diagram": {
+        "schema_version": 1,
+        "diagram_type": "workflow",
+        "meta": {
+          "title": "按意图检索流程图",
+          "subtitle": "两类记忆 · 清洗、确认与按意图使用",
+          "quality_profile": "showcase",
+          "visual_preset": "signal-flow",
+          "animation": "none",
+          "viewBox": [
+            700,
+            440
+          ]
+        },
+        "lanes": [
+          {
+            "id": "history",
+            "label": "历史路径"
+          },
+          {
+            "id": "request",
+            "label": "智能体与请求"
+          },
+          {
+            "id": "qa",
+            "label": "经验路径"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "ask",
+            "lane": "request",
+            "col": 0,
+            "type": "external",
+            "label": "提出问题",
+            "sublabel": "项目、需求与约束"
+          },
+          {
+            "id": "route",
+            "lane": "request",
+            "col": 2,
+            "type": "security",
+            "label": "识别记忆意图",
+            "sublabel": "显式指定优先"
+          },
+          {
+            "id": "summaries",
+            "lane": "history",
+            "col": 0,
+            "type": "backend",
+            "label": "读取项目历史",
+            "sublabel": "已入库会话摘要"
+          },
+          {
+            "id": "read",
+            "lane": "history",
+            "col": 2,
+            "type": "backend",
+            "label": "按需展开正文",
+            "sublabel": "清洗后的对话"
+          },
+          {
+            "id": "historyreply",
+            "lane": "history",
+            "col": 4,
+            "type": "backend",
+            "label": "回顾项目事实",
+            "sublabel": "标明来源与时间"
+          },
+          {
+            "id": "lookup",
+            "lane": "qa",
+            "col": 0,
+            "type": "backend",
+            "label": "检索经验问答",
+            "sublabel": "项目知识 + 全局知识"
+          },
+          {
+            "id": "scope",
+            "lane": "qa",
+            "col": 2,
+            "type": "backend",
+            "label": "核对适用条件",
+            "sublabel": "状态、来源、预算"
+          },
+          {
+            "id": "answer",
+            "lane": "qa",
+            "col": 4,
+            "type": "backend",
+            "label": "参考经验与习惯",
+            "sublabel": "经验入库不代表验证成功"
+          }
+        ],
+        "edges": [
+          {
+            "id": "flow-0",
+            "from": "ask",
+            "to": "route"
+          },
+          {
+            "id": "flow-1",
+            "from": "route",
+            "to": "summaries",
+            "label": "历史"
+          },
+          {
+            "id": "flow-2",
+            "from": "summaries",
+            "to": "read",
+            "fromSide": "right",
+            "toSide": "left",
+            "route": "straight"
+          },
+          {
+            "id": "flow-3",
+            "from": "read",
+            "to": "historyreply"
+          },
+          {
+            "id": "flow-4",
+            "from": "route",
+            "to": "lookup",
+            "label": "经验"
+          },
+          {
+            "id": "flow-5",
+            "from": "lookup",
+            "to": "scope",
+            "fromSide": "right",
+            "toSide": "left",
+            "route": "straight"
+          },
+          {
+            "id": "flow-6",
+            "from": "scope",
+            "to": "answer"
+          }
+        ],
+        "mainPath": [
+          "lookup",
+          "scope",
+          "answer"
+        ]
+      },
+      "sections": [
+        {
+          "title": "实际行为",
+          "paragraphs": [
+            "历史保留清洗正文与会话摘要；经验只使用有效的简洁问答。来源变化后重新核对，疑难内容不自动生效。"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "history_memory.py",
+          "path": "evolvmem/history_memory.py"
+        },
+        {
+          "label": "qa_memory.py",
+          "path": "evolvmem/qa_memory.py"
+        },
+        {
+          "label": "memory_recall.py",
+          "path": "evolvmem/memory_recall.py"
+        }
+      ],
+      "english": "INTENT ROUTING",
+      "takeaway": "先清洗再提炼，历史与问答分开保存、按意图读取。"
     },
     {
       "id": "model",
@@ -2549,6 +2933,13 @@
         ]
       },
       "sections": [
+        {
+          "title": "两类记忆存储",
+          "paragraphs": [
+            "conversation_history 保存清洗正文与消息、哈希和清洗时间；通过 archive_id 关联 session_archives 与会话摘要。加密技术归档的保留周期不会删除已保存的清洗正文。",
+            "knowledge_qa 保存问题、简洁答案、状态及来源指纹；context_items 与 learning_memories 保留归属、分类、条件和证据。来源改变后停止使用旧问答。project_memory_documents 是可重建的项目历史摘录。"
+          ]
+        },
         {
           "title": "层、类型、状态是三个维度",
           "paragraphs": [],
@@ -4980,7 +5371,7 @@
         {
           "title": "资料管理与入库",
           "paragraphs": [
-            "前端共用总览、知识库、经验案例、项目进展导航；管理能力作为知识库内的功能呈现，详情原位编辑，规则和 Skill 未保存时切换会提示。旧独立入口统一跳转，资料写入刷新总览统计。",
+            "首页与主导航围绕项目历史、经验问答、任务断点、整理与规则组织。历史总览、清洗正文和项目问答在项目内切换；全项目问答按项目、分类和状态筛选。归属、入库、规则与 Skill 在同一工作台维护，旧链接继续跳转。",
             "统一读取 Context 全部类型，包括没有兼容旧表映射的候选、任务断点与项目摘要。支持搜索、文本/Markdown 新增、编辑、单条/批量归属、确认入库、归档、恢复和软删除。",
             "内容与状态修改同时更新兼容投影和检索。系统生成摘要、断点及结构化经验通过补充资料记录更正；任务改归属同事务迁移全部历史断点与焦点，关联父子任务保留待处理。",
             "新增学习与协作 Skill 标签；全部资料支持知识用途筛选，详情能修正分类、查看提炼原话与适用条件。协作框架独立于入库管理 Skill，分别服务协作调用与资料整理。"
@@ -5045,14 +5436,14 @@
       "id": "learning",
       "title": "记忆学习与协作体系",
       "english": "MEMORY LEARNING",
-      "subtitle": "对话过程与旧知识对照，原位编辑提炼规则，预览与正式入库共用判断。",
-      "takeaway": "目标、理解、纠正、决定与验证保留原话和消息角色；明确替代须核对旧版本及用户纠正，疑难不会覆盖旧知识。入库规则草稿可先预览，保存后用于后续提炼。",
+      "subtitle": "同步对话 → 清洗提炼 → 项目总记忆 → 学习规则；疑难分支明确标记。",
+      "takeaway": "每个项目有持续更新的正文和摘录摘要，关联历次纯对话；工具证据与对话阅读分开。清洗后提炼并按来源和归属判断入库，疑难资料待确认，规则确认是后续学习环节。",
       "diagram": {
         "schema_version": 1,
         "diagram_type": "architecture",
         "meta": {
           "title": "EvolvMem · 记忆学习与协作体系",
-          "subtitle": "对话与旧知识 → 有据提炼 → 规则分流 → 后续协作",
+          "subtitle": "纯对话与旧知识 → 清洗提炼 → 总记忆 → 协作规则",
           "quality_profile": "showcase",
           "visual_preset": "blueprint",
           "animation": "none",
@@ -5065,8 +5456,8 @@
           {
             "id": "learn-source",
             "type": "backend",
-            "label": "对话与相关旧知识",
-            "sublabel": "同项目 · 原话 · 版本",
+            "label": "纯对话与旧知识",
+            "sublabel": "清洗工具噪声 · 保留原话",
             "pos": [
               40,
               120
@@ -5079,8 +5470,8 @@
           {
             "id": "learn-memory",
             "type": "database",
-            "label": "过程与分类记忆",
-            "sublabel": "新增 · 补充 · 替代 · 跳过",
+            "label": "项目总记忆与来源",
+            "sublabel": "摘要 · 正文 · 会话引用",
             "pos": [
               390,
               120
@@ -5149,8 +5540,8 @@
           {
             "id": "learn-edit",
             "type": "frontend",
-            "label": "规则编辑与预览",
-            "sublabel": "原位对比 · 同源版本",
+            "label": "同页按步骤管理",
+            "sublabel": "调整规则 → 试运行 → 保存",
             "pos": [
               390,
               530
@@ -5211,6 +5602,14 @@
         ]
       },
       "sections": [
+        {
+          "title": "项目总记忆与流程阶段",
+          "paragraphs": [
+            "项目总记忆只汇集已入库的历史会话摘要与任务进展；经验以简洁问答单独分类。摘要是确定性摘录。新对话清洗正文保存到 SQLite；旧加密归档可本地幂等迁移，不调用模型。",
+            "业务历史只展示清洗后的用户与助手交流，去除工具记录、推理和已知系统注入。加密技术归档单独保留以核对证据。问答记录短问题、短答案、项目/全局范围、分类、条件和来源指纹。",
+            "第 3 步“待确认”处理资料归属或内容，第 4 步“规则待确认”处理未来协作约定。Windows 目录通过明确映射绑定项目，不要求与项目标识同名。管理控件在同一列按步骤操作。"
+          ]
+        },
         {
           "title": "P1：完整过程与旧知识对照",
           "paragraphs": [

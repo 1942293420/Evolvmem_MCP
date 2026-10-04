@@ -1864,7 +1864,8 @@ class TestSessionEndArchiveLinking:
                 archive["id"]
             )
         parsed = json.loads(payload)
-        assert set(parsed) == {"messages"}
+        assert set(parsed) == {"messages", "conversation"}
+        assert all(m["role"] in ("user", "assistant") for m in parsed["conversation"])
         roles = [message["role"] for message in parsed["messages"]]
         assert roles == ["user", "assistant"]
         assert secret in parsed["messages"][0]["content"]

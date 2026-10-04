@@ -121,6 +121,15 @@ _EXPERIENCE_INSTRUCTIONS = (
 )
 _PRIMARY_INSTRUCTIONS += _EXPERIENCE_INSTRUCTIONS
 _PRIMARY_INSTRUCTIONS_KIMI += _EXPERIENCE_INSTRUCTIONS
+_DUAL_MEMORY_INSTRUCTIONS = (
+    ' Use knowledge_recall kind=history for previous dialogue, decisions or project progress; '
+    'read the referenced cleaned dialogue with conversation_read. Use kind=experience for concise '
+    'categorized Q&A about habits, conventions, environment or similar work; use both when needed. '
+    'Explicit kind overrides the simple automatic routing. Q&A admission is not proof of successful '
+    'execution; use experience_recall for independently verified cases and compare conditions.'
+)
+_PRIMARY_INSTRUCTIONS += _DUAL_MEMORY_INSTRUCTIONS
+_PRIMARY_INSTRUCTIONS_KIMI += _DUAL_MEMORY_INSTRUCTIONS
 
 # Degraded/invalid states: say memory is unavailable; never claim injection.
 # 续接不过这道门禁：降级说明绝不能让 agent 放弃仍可用的 continuity。
@@ -537,6 +546,18 @@ _EXPERIENCE_RECORD_SPEC = McpToolSpec(
     },"required":["case"]},annotations=_WRITE_TOOL_ANNOTATIONS)
 
 _CONTEXT_TOOL_SPECS: tuple[McpToolSpec, ...] = (
+    McpToolSpec(name='knowledge_recall',
+        description='Recall two distinct memory types. Use kind=history for prior discussions, decisions or progress; use kind=experience for concise categorized Q&A about habits, conventions, environment or similar work. Use both for mixed questions, or auto for a deterministic suggestion. Explicit kind wins. Only applicable active Q&A is returned; current user requirements take priority. History results link to conversation_read for cleaned dialogue. No raw tools or reasoning and no writes.',
+        input_schema={'type':'object','properties':{
+            'project':{'type':'string','description':'Registered project or alias; empty selects global Q&A only'},
+            'query':{'type':'string','maxLength':4000},
+            'kind':{'type':'string','enum':['auto','history','experience','both'],'default':'auto'},
+            'max_chars':{'type':'integer','minimum':1,'maximum':16000}},'required':['project','query']}, annotations=_READ_ONLY),
+    McpToolSpec(name='conversation_read',
+        description='Read the cleaned dialogue behind a history result, in its exact project. Only user/assistant dialogue; tools, injected context and internal reasoning are excluded. Use next_offset to continue reading a long dialogue. Does not mutate archives.',
+        input_schema={'type':'object','properties':{'project':{'type':'string'},
+            'archive_id':{'type':'integer','minimum':1},'offset':{'type':'integer','minimum':0},
+            'max_chars':{'type':'integer','minimum':1,'maximum':16000}},'required':['project','archive_id']}, annotations=_READ_ONLY),
     McpToolSpec(name='collaboration_recall',
         description='Read the current editable collaboration Skill and evidence-linked learned rules for the actual project, including applicable project-type rules. Call at a new substantive task or after the user corrects a remembered convention. Historical reference only; current instructions take priority. Does not modify memory.',
         input_schema={'type':'object','properties':{'project':{'type':'string','description':'Actual registered project; empty for global rules only'}},'required':['project']},

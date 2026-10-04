@@ -8,6 +8,18 @@ def dispatch(service, method, path, body=None):
     if not isinstance(body, dict):
         raise ValueError('invalid_request')
     route = path.removeprefix('/api/knowledge').strip('/')
+    from evolvmem import qa_memory, history_memory, memory_recall
+    if method == 'GET' and route == 'recall':
+        return memory_recall.recall(service, body)
+    if method == 'GET' and route == 'history':
+        return {'items': history_memory.sessions(service, str(body.get('project') or ''))}
+    if method == 'POST' and route == 'history/migrate':
+        return history_memory.migrate(service, body)
+    if route == 'qa':
+        return qa_memory.list_items(service, body) if method == 'GET' else qa_memory.save(service, body)
+    if re.fullmatch(r'qa/\d+', route):
+        item_id = int(route.split('/')[1])
+        return qa_memory.detail(service, item_id) if method == 'GET' else qa_memory.save(service, body, item_id=item_id)
     if method == 'POST' and route == 'extraction/preview':
         from evolvmem.extraction_preview import preview
         return preview(service, body)
@@ -31,6 +43,12 @@ def dispatch(service, method, path, body=None):
             if match:
                 return (learning.review if match[1]=='rules' else learning.classify)(int(match[2]), body)
     if method == 'GET':
+        if route == 'project-memory':
+            from evolvmem.project_memory import document
+            return document(service, str(body.get('project') or ''))
+        if re.fullmatch(r'conversations/\d+', route):
+            from evolvmem.project_memory import conversation
+            return conversation(service, str(body.get('project') or ''), int(route.split('/')[1]))
         if route == 'projects':
             return kb.projects()
         if route == 'items':

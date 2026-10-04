@@ -51,6 +51,8 @@ INSTRUCTIONS = (
     'Evidence-free experience_record saves an unverified candidate. Maintenance and project-board '
     'operations use this user namespace and its existing configuration; sharing remains explicit. '
     'Continuation belongs to personal only. '
+    'Use knowledge_recall kind=history for prior dialogue and progress, then conversation_read for '
+    'cleaned database dialogue; use kind=experience for applicable concise Q&A and both for mixed questions. '
     'A request_indeterminate result means an earlier write may have happened: inspect state '
     'before any new request ID; do not automatically retry the effect.'
 )

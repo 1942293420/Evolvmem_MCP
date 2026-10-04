@@ -15,7 +15,9 @@ def test_knowledge_management_shares_the_main_workbench(http_server):
     assert 'data-page-panel="memories"' in html
     assert 'data-page-panel="experiences"' in html
     assert 'data-page-panel="progress"' in html
-    assert '>知识库</a>' in html
+    assert '>项目历史</a>' in html
+    assert '>经验问答</a>' in html
+    assert '>整理与规则</a>' in html
     assert 'href="/organize"' not in html
     assert 'href="/workflow"' in html
     assert 'src="/knowledge.js"' in html

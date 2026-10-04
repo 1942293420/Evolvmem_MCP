@@ -149,6 +149,16 @@ class KnowledgeBase:
                 self.conn.execute(f'UPDATE knowledge_metadata SET {field}=? WHERE item_id=?', (value, item_id))
 
     def _sync(self, item_ids):
+        item_ids = set(item_ids)
+        from evolvmem.project_memory import refresh
+        projects = {self._row(cid)['project'] for cid in item_ids}
+        # A project move must refresh the old document as well as the new one.
+        for cached in self.conn.execute('SELECT project,source_ids FROM project_memory_documents'):
+            if item_ids.intersection(json.loads(cached['source_ids'])):
+                projects.add(cached['project'])
+        for project in projects:
+            if project and any(p['project']==project and p['status']=='active' for p in self.registry()):
+                refresh(self.service, project)
         from evolvmem.context_service import _VectorAftermath
         active, removed, oldactive, oldremoved = [], [], [], []
         for cid in set(item_ids):
@@ -312,7 +322,7 @@ class KnowledgeBase:
             self._stamp(cid, reason='用户整组迁移任务归属')
         return ids
 
-    def transition(self, item_id, body):
+    def transition(self, item_id, body, *, refresh_qa=True):
         actions = {'publish': 'active', 'archive': 'archived', 'restore': 'active', 'reject': 'archived', 'delete': 'deleted', 'review': 'candidate'}
         if body.get('action') not in actions:
             raise ValueError('invalid_action')
@@ -323,10 +333,19 @@ class KnowledgeBase:
                 raise ValueError('workstream_lifecycle_managed_by_task')
             if target == 'active' and row['scope'] != 'global' and row['ownership']['state'] != 'confirmed':
                 raise ValueError('confirm_project_first')
+            qa = self.conn.execute('SELECT * FROM knowledge_qa WHERE item_id=?', (item_id,)).fetchone() if refresh_qa and target == 'active' else None
+            if qa and qa['question']:
+                from evolvmem import qa_memory
+                if qa['source_fingerprint'] != qa_memory.fingerprint(row):
+                    raise ValueError('qa_source_changed')
+                if qa_memory.conflicts(self.service, row['project'], row['scope'], qa['question'], qa['answer'], row['learning']['category'], row['learning'].get('trigger',''), exclude=(item_id,)):
+                    raise ValueError('qa_conflict_requires_confirmation')
             self.store.set_item_status(item_id, ContextStatus(target))
             for lid in row['legacy_ids']:
                 self.conn.execute('UPDATE memories SET status=?,updated_at=? WHERE id=?', (target, _now_iso(), lid))
             self._stamp(item_id, reason={'publish': '用户确认入库', 'reject': '用户暂不入库'}.get(body['action'], '用户调整资料状态'))
+            if qa and qa['question']:
+                qa_memory.record(self.service, item_id, {'question':qa['question'],'answer':qa['answer']}, origin='manual', approved=True)
         self._sync([item_id])
         return self.detail(item_id)
 

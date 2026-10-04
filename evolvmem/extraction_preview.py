@@ -17,7 +17,9 @@ def preview(service, body, *, llm=None):
     service.knowledge()._project(project)
     if not project:
         raise ValueError('project_required')
-    safe, redacted = redact_messages(messages)
+    from evolvmem.conversation import clean_messages
+    cleaned = clean_messages(messages)
+    safe, redacted = redact_messages(cleaned)
     rules = service.knowledge().rules
     current = rules.read()
     draft = rules.prepare(body['rules']) if body.get('rules') else current
@@ -53,6 +55,8 @@ def preview(service, body, *, llm=None):
             elif not item.key.startswith('user:'):
                 continue
             result = plan(service, item, safe, policy=policy)
+            result['question'] = (item.learning or {}).get('question', '')
+            result['answer'] = (item.learning or {}).get('answer', '')
             result['category'] = (item.learning or {}).get('category', '')
             signature = (item.key.startswith('user:'), item.value, result['category'], (item.learning or {}).get('trigger', ''))
             if signature in seen:
@@ -70,4 +74,5 @@ def preview(service, body, *, llm=None):
     before = run(current)
     after = run(draft) if draft['revision'] != current['revision'] else before
     return {'current': before, 'draft': after, 'redacted': redacted,
-            'model_calls': 1 if before is after else 2, 'persisted': 0}
+            'model_calls': 1 if before is after else 2, 'persisted': 0,
+            'cleaning': {'input_messages': len(messages), 'dialogue_messages': len(cleaned), 'removed': len(messages)-len(cleaned)}}

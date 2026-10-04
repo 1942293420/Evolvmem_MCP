@@ -52,6 +52,7 @@ _LEGACY_TOOLS = {
     "memory_replace", "memory_remove", "memory_consolidate",
 }
 _CONTEXT_TOOLS = {
+    'knowledge_recall', 'conversation_read',
     'collaboration_recall', 'context_decision_window',
     "context_session_start", "context_project_recall", "context_search", "context_read", "context_status",
     "context_confirm", "context_record_outcome",
@@ -68,6 +69,8 @@ _CONTENT_TYPE_VALUES = [member.value for member in ContextContentType]
 
 # 每个协议工具的的最小合法/非法调用参数（registry 对称性测试用）
 _PROBE_ARGS = {
+    'knowledge_recall': {'project':'demo','query':'历史'},
+    'conversation_read': {'project':'demo','archive_id':1},
     'collaboration_recall': {'project':'demo'},
     'context_decision_window': {'project':'demo','query':'探针'},
     "memory_search": {"query": "探针"},
