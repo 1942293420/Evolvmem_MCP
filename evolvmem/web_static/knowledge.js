@@ -104,21 +104,19 @@
     $('#project-results-title').textContent=terms.length?'搜索结果':'全部项目';
     $('#project-result-count').textContent=terms.length?`${rows.length} / ${active.length} 个项目`:`${active.length} 个项目 · ${projectSorts[state.projectSort]}`;
     $('[data-action="project-search-clear"]').hidden=!state.q;
-    $('#project-results').innerHTML=rows.length?`<div class="project-grid">${rows.map(p=>{
+    $('#project-results').innerHTML=rows.length?`<div class="table-wrap project-list-wrap"><table class="project-list"><thead><tr><th>项目</th><th>资料</th><th>待确认</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${rows.map(p=>{
       const name=p.display_name||p.project;
-      const tone=[...p.project].reduce((n,c)=>n+c.codePointAt(0),0)%4;
       const date=p.updated_at?new Date(p.updated_at.replace(' ','T')+'Z'):null;
       const updated=date&&!Number.isNaN(date.valueOf())?new Intl.DateTimeFormat('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'}).format(date).replaceAll('/','.'):'暂无更新';
       const sameName=active.some(x=>x.project!==p.project&&(x.display_name||x.project)===name);
-      return `<article class="project-card history-project-card tone-${tone}" data-project-card="${esc(p.project)}">
-        <div class="project-card-top"><span class="project-cover-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M6 7.5h8l3 3H26v15H6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M11 16h10M11 20h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span><span class="project-card-state ${p.pending?'needs-review':''}">${p.pending?'有资料待确认':p.total?'已整理':'等待第一份记忆'}</span><button class="project-settings quiet write" data-action="project-edit" data-project="${esc(p.project)}" aria-label="编辑 ${esc(name)}" title="项目设置">···</button></div>
-        <h3><a href="#knowledge/library?project=${encodeURIComponent(p.project)}" data-action="open-project" data-project="${esc(p.project)}" title="${esc(name)}">${esc(name)}</a></h3><p class="project-card-id" title="项目标识：${esc(p.project)}">${esc(p.project)}</p>
-        <div class="project-aliases" title="${esc(p.aliases.join(' · '))}">${p.aliases.length?p.aliases.slice(0,2).map(alias=>`<span>${esc(alias)}</span>`).join('')+(p.aliases.length>2?`<span>+${p.aliases.length-2}</span>`:''):'<span class="alias-empty">项目摘要 · 历次对话 · 来源资料</span>'}</div>
-        ${sameName?`<p class="project-name-notice">同名项目，请按上方标识区分</p>`:''}
-        <div class="project-card-metrics"><div><strong>${p.total.toLocaleString('zh-CN')}</strong><span>份资料</span></div><div class="${p.pending?'metric-pending':''}"><strong>${p.pending.toLocaleString('zh-CN')}</strong><span>份待确认</span></div>${p.pending?`<a href="#knowledge/intake?project=${encodeURIComponent(p.project)}" data-action="project-queue" data-project="${esc(p.project)}" aria-label="核对 ${esc(name)} 的待确认资料">去核对 ↗</a>`:''}</div>
-        <div class="project-card-footer"><time title="${esc(p.updated_at||'尚无更新时间')}" ${date&&!Number.isNaN(date.valueOf())?`datetime="${date.toISOString()}"`:''}>${date?'更新于 ':''}${updated}</time><a class="project-open-link" href="#knowledge/library?project=${encodeURIComponent(p.project)}" data-action="open-project" data-project="${esc(p.project)}" aria-label="查看 ${esc(name)} 的项目历史">查看历史 <span class="project-open-arrow" aria-hidden="true">→</span></a></div>
-      </article>`;
-    }).join('')}</div>`:`<div class="project-empty"><span aria-hidden="true">⌕</span><h3>${terms.length?'没有找到匹配的项目':'从第一个项目开始'}</h3><p>${terms.length?'试试项目名称、标识或业务别名。':'添加项目后，历次对话与知识资料会在这里积累。'}</p>${terms.length?'<button data-action="project-search-clear">清除搜索</button>':'<button class="primary write" data-action="project-new">＋ 添加项目</button>'}</div>`;
+      return `<tr data-project-card="${esc(p.project)}" data-action="open-project" data-project="${esc(p.project)}">
+        <td class="project-list-name"><a class="project-open-main" href="#knowledge/library?project=${encodeURIComponent(p.project)}" data-action="open-project" data-project="${esc(p.project)}" title="${esc(name)}">${esc(name)}</a><code class="project-list-id" title="项目标识：${esc(p.project)}">${esc(p.project)}</code>${p.aliases.length?`<span class="project-aliases" title="${esc(p.aliases.join(' · '))}">${p.aliases.slice(0,2).map(alias=>`<span>${esc(alias)}</span>`).join('')+(p.aliases.length>2?`<span>+${p.aliases.length-2}</span>`:'')}</span>`:''}${sameName?'<span class="project-name-notice">同名项目，按标识区分</span>':''}</td>
+        <td class="project-list-num"><strong>${p.total.toLocaleString('zh-CN')}</strong> 份</td>
+        <td class="project-list-num ${p.pending?'metric-pending':''}">${p.pending?`<strong>${p.pending.toLocaleString('zh-CN')}</strong> 份 <a href="#knowledge/intake?project=${encodeURIComponent(p.project)}" data-action="project-queue" data-project="${esc(p.project)}" aria-label="核对 ${esc(name)} 的待确认资料">去核对 ↗</a>`:'0'}</td>
+        <td class="project-list-time"><time title="${esc(p.updated_at||'尚无更新时间')}" ${date&&!Number.isNaN(date.valueOf())?`datetime="${date.toISOString()}"`:''}>${updated}</time></td>
+        <td class="project-list-actions"><a class="project-open-link" href="#knowledge/library?project=${encodeURIComponent(p.project)}" data-action="open-project" data-project="${esc(p.project)}" aria-label="查看 ${esc(name)} 的项目历史">查看历史 →</a><button class="project-settings quiet write" data-action="project-edit" data-project="${esc(p.project)}" aria-label="编辑 ${esc(name)}" title="项目设置">···</button></td>
+      </tr>`;
+    }).join('')}</tbody></table></div>`:`<div class="project-empty"><span aria-hidden="true">⌕</span><h3>${terms.length?'没有找到匹配的项目':'从第一个项目开始'}</h3><p>${terms.length?'试试项目名称、标识或业务别名。':'添加项目后，历次对话与知识资料会在这里积累。'}</p>${terms.length?'<button data-action="project-search-clear">清除搜索</button>':'<button class="primary write" data-action="project-new">＋ 添加项目</button>'}</div>`;
   }
   function filterProjects(){renderProjectCards();history.replaceState(null,'',hash());}
   async function renderLibrary(result){

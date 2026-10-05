@@ -23,12 +23,12 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    await page.locator('#project-sort').selectOption(sort);assert.deepEqual(await ids(),expected.map(x=>'cards-'+x));
   }
   await page.reload();await page.waitForSelector('#project-search');await done();assert.equal(await page.locator('#project-search').inputValue(),'cards');assert.equal(await page.locator('#project-sort').inputValue(),'pending');
-  // A click in the card footer must open the project, not only its title.
-  const card=page.locator('[data-project-card="cards-alpha"]');const bounds=await card.boundingBox();
-  await card.click({position:{x:bounds.width/2,y:bounds.height-26}});await done();await page.waitForSelector('.project-document');assert.ok(page.url().includes('project=cards-alpha'));
+  // A click in the row body must open the project, not only its name link.
+  const card=page.locator('[data-project-card="cards-alpha"]');
+  await card.locator('time').click();await done();await page.waitForSelector('.project-document');assert.ok(page.url().includes('project=cards-alpha'));
   await page.goBack();await page.waitForSelector('#project-search');await done();assert.equal(await page.locator('#project-search').inputValue(),'cards');assert.equal(await page.locator('#project-sort').inputValue(),'pending');checks.push('四种排序、刷新和返回保留条件、整张卡片可打开');
   await click('[data-action="project-edit"][data-project="cards-alpha"]');await page.waitForSelector('#project-name');assert.ok(page.url().includes('/projects'));
-  await page.locator('#project-name').fill('北辰 · 产品设计与需求协作管理');await click('[data-action="project-save"]');assert.match(await page.locator('[data-project-card="cards-alpha"] h3').innerText(),/需求协作/);
+  await page.locator('#project-name').fill('北辰 · 产品设计与需求协作管理');await click('[data-action="project-save"]');assert.match(await page.locator('[data-project-card="cards-alpha"] .project-open-main').innerText(),/需求协作/);
   await click('[data-project-card="cards-alpha"] [data-action="project-queue"]');await page.waitForSelector('#filter-queue');assert.equal(await page.locator('#filter-project').inputValue(),'cards-alpha');
   assert.equal(await page.locator('.knowledge-flow span,.knowledge-flow p,#content>.intro').count(),0);
   assert.equal(await page.locator('.intake-actionbar button').count(),2);assert.equal((await page.locator('[data-action="organize-page"]').innerText()).trim(),'✦ AI 整理');
@@ -43,7 +43,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    await page.setViewportSize({width,height:1000});await go('#knowledge/projects','#project-search');
    assert.equal(await page.locator('[data-project-card="old-evo"]').count(),0);
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),`cards overflow ${width}`);
-   const cols=await page.locator('.project-grid').evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length);assert.equal(cols,width<=640?1:width<=1100?2:3);
+   assert.ok(await page.locator('.project-list tbody tr[data-project-card]').count()>=1,`rows visible ${width}`);
    await page.screenshot({path:`/tmp/evo-project-cards-${width}.png`,fullPage:true});
    await go('#knowledge/intake','#filter-queue');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),`intake overflow ${width}`);
    const tab=page.locator('.knowledge-tabs [data-view="intake"]');assert.notEqual(await tab.evaluate(e=>getComputedStyle(e).backgroundColor),'rgba(0, 0, 0, 0)');
@@ -56,7 +56,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    result.projects=result.projects.filter(p=>p.project.startsWith('cards-')).map(p=>({...p,total:12345,pending:9876,display_name:'项目名称很长时依然可以识别与打开历史资料',aliases:['很长的业务别名应该清晰截断而不会撑破卡片','中文别名','另一个别名']}));
    await route.fulfill({response,json:result});
   });
-  for(const width of [390,768,1101]){await page.setViewportSize({width,height:1000});await go('#knowledge/projects?sort=unknown','#project-search');assert.equal(await page.locator('#project-sort').inputValue(),'recent');assert.ok(await page.locator('[data-project-card]').evaluateAll(xs=>xs.every(x=>x.scrollWidth<=x.clientWidth+2&&x.querySelector('.project-card-metrics a').getBoundingClientRect().right<=x.getBoundingClientRect().right-20)),`large counts overflow ${width}`);}
+  for(const width of [390,768,1101]){await page.setViewportSize({width,height:1000});await go('#knowledge/projects?sort=unknown','#project-search');assert.equal(await page.locator('#project-sort').inputValue(),'recent');assert.ok(await page.locator('[data-project-card]').evaluateAll(xs=>xs.every(x=>[...x.cells].every(td=>td.scrollWidth<=td.clientWidth+2))),`large counts overflow ${width}`);}
   await page.unroute('**/api/knowledge/projects');
   await page.route('**/api/knowledge/projects',route=>route.fulfill({json:{projects:[],pending:0,total:0,unassigned:{}}}));await page.reload();await page.waitForSelector('.project-empty');await done();await click('.project-empty [data-action="project-new"]');await page.waitForSelector('#project-id');await click('#dialog [data-action="close"]');await page.unroute('**/api/knowledge/projects');checks.push('长名称、别名、大资料数、无效排序回退及空项目添加入口');
   assert.deepEqual(errors,[]);console.log(JSON.stringify({checks,page_errors:errors},null,2));
