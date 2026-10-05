@@ -354,3 +354,25 @@
   }
   @keyframes table-wrap-edge {0% {opacity:1;} 80% {opacity:1;} 100% {opacity:0;}}
 }
+/* History classification lives beside the organized project directory. */
+.history-tabs{display:flex;gap:8px;border-bottom:1px solid var(--line,#ddd);margin-bottom:22px;padding-bottom:10px}
+.history-tabs a{padding:10px 18px;border-radius:8px;text-decoration:none;color:inherit}
+.history-tabs a[aria-current="page"]{background:#e7eef0;color:#194b55;font-weight:700}
+.history-rules .stage-instructions{min-height:140px}
+.history-batch{flex-wrap:wrap;margin:18px 0}
+.history-batch select{max-width:240px;min-width:160px}
+.history-classification{width:100%;min-width:760px;table-layout:fixed}
+.history-classification th:first-child{width:44px}
+.history-classification th:nth-child(2){width:40%}
+.history-classification th:nth-child(3){width:27%}
+.history-classification td{vertical-align:top;overflow-wrap:anywhere}
+.history-classification td small{display:block;margin:6px 0;color:#637681}
+.history-classification td p{font-size:13px;margin:8px 0;white-space:pre-wrap}
+.history-classification select{width:100%;margin-bottom:8px}
+.history-classification button{white-space:normal}
+.history-source{overflow-wrap:anywhere}
+.history-pager{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:18px}
+.history-source-dialog{width:min(900px,92vw);max-height:85vh;padding:24px;border:1px solid #cbd5da;border-radius:14px}
+.history-source-dialog .project-memory-text{white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;overflow:auto}
+#history-notice{min-height:24px;white-space:pre-wrap}
+@media(max-width:600px){.history-review .section-head,.history-rules .section-head{align-items:flex-start;flex-direction:column}.history-tabs a{padding:10px 12px}.history-batch>*{flex:1 1 140px}.history-pager span{font-size:12px}}

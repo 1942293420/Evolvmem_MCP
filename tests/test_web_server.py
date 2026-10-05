@@ -530,12 +530,20 @@ def test_http_index_served(http_server):
 def test_http_architecture_served(http_server):
     """旧架构入口跳到主工作台内的产品说明。"""
     base, _, _ = http_server
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    # Inspect the redirect contract here; product_modules.e2e.cjs checks the
+    # browser hash route. HTTP proxies may forward a fragment as a path.
+    opener = urllib.request.build_opener(NoRedirect)
     for route in ("/architecture", "/architecture.html"):
-        with urllib.request.urlopen(base + route) as resp:
-            html = resp.read().decode("utf-8")
-        assert resp.headers.get_content_type() == "text/html"
-        assert 'data-page-panel="principles"' in html
-        assert resp.geturl().endswith("/#principles")
+        with pytest.raises(urllib.error.HTTPError) as redirected:
+            opener.open(base + route)
+        assert redirected.value.code == 302
+        assert redirected.value.headers['Location'] == '/#principles'
+    with urllib.request.urlopen(base + '/') as resp:
+        assert resp.headers.get_content_type() == 'text/html'
+        assert 'data-page-panel="principles"' in resp.read().decode('utf-8')
 
 
 def test_http_context_failure_500_bounded_no_partial_state(test_config):

@@ -28,7 +28,7 @@ EvolvMem 保存长期偏好、项目决策、故障经验和任务断点，供�
 
 ## 项目知识库管理
 
-Web 使用统一工作台：顶部保留总览、知识库、经验案例和项目进展；“知识库”内部切换项目资料、全部资料、待确认、入库规则与管理 Skill，详情在当前界面编辑。无需进入单独的管理站点。旧 `/knowledge`、`/organize` 和 `/legacy` 链接自动进入统一界面，工作原理仍在 `/workflow`。
+Web 使用统一工作台：顶部保留总览、项目历史、经验知识、任务断点、资料整理和 Skill 规则，详情在当前界面编辑。旧 `/knowledge`、`/organize` 和 `/legacy` 链接自动进入统一界面；`/workflow` 与 `/architecture` 跳转到主界面的工作原理。
 
 支持粘贴或导入文本 / Markdown、搜索全文、维护项目别名、编辑内容、单条与批量改归属、确认入库、归档、恢复和软删除。系统生成的摘要、任务断点和结构化经验可新增补充资料记录更正；任务改归属会整组迁移历史断点与焦点，带父子关联的任务暂保留待处理。
 
@@ -45,7 +45,9 @@ python -m evolvmem.knowledge_cli POST items/123/assign --file request.json
 
 写入请求带详情返回的 `expected_revision`；改归属文件例如 `{"project":"eva","expected_revision":"读取到的版本"}`。可将数据目录中的 `knowledge-management` 链接到本机技能目录；AI 发现和 Web 编辑共用同一份 SKILL.md。当前已打开的聊天需主动读取新规则，新会话按客户端机制发现技能。
 
-「处理 Skill」页把项目归属、数据清洗、摘要问答提炼、入库判断、协作学习五个环节各自独立编辑；任一环节保存后，数据目录 `skills/` 下同步导出 `evolvmem-ownership`、`evolvmem-cleaning`、`evolvmem-extraction`、`evolvmem-ingestion`、`evolvmem-collaboration` 五个独立 SKILL.md，可整体链接到客户端技能目录供 AI 分别发现。每个环节带样例试运行；点「放入待确认验证」用已保存规则真实处理样例，归属/清洗/提炼/入库结果作为候选进入「资料待确认」，协作学习建议进入「协作学习成果」，确认后才算正式知识。
+「项目历史」分为「已整理」和「未归属项目」。项目整理 Skill 在「未归属项目」内编辑和保存；勾选未归属会话或资料后，点击「AI 预览所选」，核对建议、手动改选项目，再单条或批量保存分类。AI 预览只使用已保存规则，每次最多 20 条，每条最多 3,000 字正文片段；不修改归属。批量保存逐条检查版本，失败项保留草稿；新会话归属后沿用现有清洗提炼流程。
+
+「处理 Skill」页保留数据清洗、摘要问答提炼、入库判断、协作学习四个环节；任一环节保存后，数据目录 `skills/` 下同步导出 `evolvmem-ownership`、`evolvmem-cleaning`、`evolvmem-extraction`、`evolvmem-ingestion`、`evolvmem-collaboration` 五个独立 SKILL.md，可整体链接到客户端技能目录供 AI 分别发现。清洗、提炼与入库环节可用样例试运行；点「放入待确认验证」用已保存规则处理样例，结果作为候选进入「资料待确认」。协作学习建议进入「协作学习成果」，确认后才算正式知识。
 
 ## 运行环境
 

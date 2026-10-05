@@ -1,7 +1,7 @@
 /* Product diagrams use explicit SVG activity notation, within the main shell. */
 window.EvolvPrinciples={render(mount){
  if(mount.dataset.ready)return;mount.dataset.ready='true';
- const modules=[['项目历史','项目目录 · 搜索与排序','项目摘要 · 历次清洗对话','#knowledge/projects'],['经验知识','分类问答 · 适用条件','经验案例 · 来源与验证','#knowledge/qa'],['任务断点','任务目标 · 当前进度','下一步 · 阻塞 · 续接','#progress'],['资料整理','AI 整理 · 核对归属','确认入库 · 纠正与归档','#knowledge/intake'],['Skill 规则','归属 · 清洗 · 提炼 · 入库 · 协作','独立文件导出 · 待确认验证','#knowledge/skill']];
+ const modules=[['项目历史','已整理 · 未归属项目','归属 Skill · 预览与批量保存','#knowledge/projects'],['经验知识','分类问答 · 适用条件','经验案例 · 来源与验证','#knowledge/qa'],['任务断点','任务目标 · 当前进度','下一步 · 阻塞 · 续接','#progress'],['资料整理','清洗结果 · 核对内容','确认入库 · 纠正与归档','#knowledge/intake'],['Skill 规则','清洗 · 提炼 · 入库 · 协作','独立文件导出 · 待确认验证','#knowledge/skill']];
  const text=(x,y,lines,cls='')=>`<text x="${x}" y="${y}" text-anchor="middle" class="${cls}">${lines.map((s,i)=>`<tspan x="${x}" dy="${i?24:0}">${s}</tspan>`).join('')}</text>`;
  const box=(x,y,w,h,lines,cls='')=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" class="node ${cls}"/>${text(x+w/2,y+h/2-(lines.length-1)*12+6,lines)}`;
  const arrow=(d,label,x,y)=>`<path d="${d}" class="edge" marker-end="url(#arrow)"/>${label?text(x,y,[label],'edge-label'):''}`;
@@ -19,7 +19,7 @@ window.EvolvPrinciples={render(mount){
  const flow=svg('一段对话如何成为可用知识',830,
    box(30,40,250,84,['① 同步对话','接收各智能体的交流'])+arrow('M280 82H350')+
    box(350,40,260,84,['② 判断项目归属','按绑定、名称、别名核对'])+arrow('M610 82H685')+
-   box(685,40,265,84,['不明确 → 资料待确认','你选择项目后继续'],'warm')+
+   box(685,40,265,84,['不明确 → 未归属项目','保存规则 → 预览与分类'],'warm')+
    arrow('M480 124V200','归属明确',546,165)+arrow('M818 124V165H650V240H620')+
    box(340,200,280,90,['③ 清洗与整理表达','去噪正文 + 有依据的需求'])+
    arrow('M480 290V345H190V390','历史',295,365)+arrow('M480 345H770V390','经验 / 需求',683,365)+
@@ -36,7 +36,7 @@ window.EvolvPrinciples={render(mount){
    '<circle cx="337" cy="112" r="10" class="terminal"/>'+
    arrow('M337 122V150')+box(207,150,260,64,['接收对话，核对所属项目'])+
    arrow('M337 214V246')+diamond(337,284,'归属明确？')+
-   arrow('M437 284H688','[否]',563,269)+box(688,249,230,70,['查看归属线索','选择或新增项目'],'warm')+
+   arrow('M437 284H688','[否]',563,269)+box(688,249,230,70,['保存归属 Skill → AI 预览','核对 / 改选 → 批量保存'],'warm')+
    arrow('M803 319V366H345')+arrow('M337 322V358','[是]',375,345)+
    '<path d="M337 358L345 366L337 374L329 366Z" class="decision"/>'+
    arrow('M337 374V404')+box(207,404,260,76,['去掉工具记录与系统注入','保留纯对话正文'])+

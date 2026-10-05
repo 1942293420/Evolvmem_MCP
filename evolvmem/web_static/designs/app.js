@@ -85,7 +85,7 @@
     state.page=page;
     document.body.dataset.activePage=page;
     $$('[data-page-panel]').forEach(el=>el.hidden=el.dataset.pagePanel!==page);
-    const navView=knowledgeView==='library'?(project&&!['__all__','__global__'].includes(project)?'projects':'intake'):['learning','rules'].includes(knowledgeView)?'intake':knowledgeView||'projects';
+    const navView=knowledgeView==='unassigned'?'projects':knowledgeView==='library'?(project&&!['__all__','__global__'].includes(project)?'projects':'intake'):['learning','rules'].includes(knowledgeView)?'intake':knowledgeView||'projects';
     $$('[data-page-link]').forEach(el=>{const current=el.dataset.pageLink===page&&(page!=='memories'||el.dataset.knowledgeView===navView)||(page==='experiences'&&el.dataset.knowledgeView==='qa');el.classList.toggle('active',current);el.setAttribute('aria-current',current?'page':'false');});
     if(page==='principles')EvolvPrinciples.render(document.querySelector('[data-slot=principles]'));
     let targetHash=`#${page}`;

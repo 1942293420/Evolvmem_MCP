@@ -38,8 +38,16 @@ with s.store.transaction():
 from tests.test_memory_learning import memory
 learning_source=memory(s, text='讨论方案时先列业务目标，再核对实现范围。')
 s.learning().propose({'topic':'acceptance','instruction':'界面改动后核对实际操作入口。','trigger':'界面改动后','scope':'project','target':'evo','source_ids':[learning_source['id']]},origin='analysis')
+# Synthetic unassigned history for the project-classification workflow.
+for index in range(2):
+    SessionArchiver(config,s.store).archive_session('', 'kimi', f'unassigned-demo-{index}', json.dumps({'messages':[
+        {'role':'user','content':f'Evo 演示项目需要整理历史会话 {index}，先预览再确认归属。'}]},ensure_ascii=False))
+s.knowledge().create({'title':'未归属演示资料','body':'这份资料需要归属 Evo 演示项目。','scope':'project','action':'draft'})
 # Only the external provider is substituted; HTTP, parsing and policy checks remain real.
 def model(prompt, *a, **kw):
+    if '你是项目历史分类助手' in prompt:
+        samples=json.loads(prompt.split('待分类资料（仅正文片段，不代表完整会话）：\n',1)[1])
+        return json.dumps({'items':[{'key':r['key'],'project':'evo','reason':'正文说明属于 Evo 演示项目。'} for r in samples]},ensure_ascii=False)
     if '"rules"' in prompt:
         return json.dumps({'rules':[]})
     if '[user]: 我想在经验里直接加项目，不要让我到处找。' in prompt:
