@@ -1,8 +1,10 @@
 """Editable stage skills must change the real pipeline, with traceable requirements."""
 import json
+from pathlib import Path
 import pytest
 from tests.test_extraction_learning_contract import service, persist
 from evolvmem.knowledge_api import dispatch
+from evolvmem.pipeline_skills import verify
 
 
 def save_stage(service, stage, **changes):
@@ -107,3 +109,91 @@ def test_total_skill_size_rejected_before_overwriting_saved_rules(service):
     with pytest.raises(ValueError,match='invalid_skill_format'):
         save_stage(service,'cleaning',instructions='数据清洗。' * 2400)
     assert service.knowledge().rules.read()['revision']==before['revision']
+
+
+def exported(service, stage):
+    path = Path(service.config.data_dir) / 'skills' / f'evolvmem-{stage}' / 'SKILL.md'
+    return path.read_text(encoding='utf-8') if path.exists() else ''
+
+
+def test_stages_export_as_five_standalone_skill_files(service):
+    dispatch(service, 'GET', 'skills')
+    for stage in ('ownership', 'cleaning', 'extraction', 'ingestion', 'collaboration'):
+        assert f'name: evolvmem-{stage}' in exported(service, stage), stage
+    save_stage(service, 'ownership', instructions='先核对已经登记的项目归属。')
+    assert '先核对已经登记的项目归属。' in exported(service, 'ownership')
+    assert '先核对已经登记的项目归属。' not in exported(service, 'cleaning')
+
+
+def test_full_rules_save_and_framework_save_refresh_stage_exports(service):
+    rules = service.knowledge().rules.read()
+    dispatch(service, 'POST', 'rules', {'expected_revision': rules['revision'],
+        'settings': {**rules['settings'], 'ownership_instructions': '整体保存也要同步导出。'}})
+    assert '整体保存也要同步导出。' in exported(service, 'ownership')
+    old = service.learning().settings()
+    dispatch(service, 'POST', 'learning/framework', {'expected_revision': old['revision'],
+        'framework': old['framework'] + '\n先确认业务目标再动手。\n'})
+    assert '先确认业务目标再动手。' in exported(service, 'collaboration')
+
+
+def test_ownership_verify_parks_sample_with_decision_reason(service):
+    result = verify(service, 'ownership', {'body': 'evo 项目需要保留可追溯的历史记录。'})
+    assert result['created'] == 1 and result['decision']['project'] == 'evo'
+    row = service.knowledge().detail(result['ids'][0])
+    assert row['status'] == 'candidate' and row['project'] == ''
+    assert 'Skill 验证' in row['ingestion_reason'] and 'evo' in row['ingestion_reason']
+    assert 'skill-verify' in row['tags']
+
+
+def test_ingestion_verify_uses_saved_thresholds(service):
+    save_stage(service, 'ingestion', settings={'min_chars': 100})
+    result = verify(service, 'ingestion', {'body': '太短。'})
+    assert result['decision']['action'] == 'review'
+    row = service.knowledge().detail(result['ids'][0])
+    assert row['status'] == 'candidate' and '长度' in row['ingestion_reason']
+    with pytest.raises(ValueError, match='invalid_content'):
+        verify(service, 'ingestion', {'body': ''})
+    with pytest.raises(LookupError, match='skill_not_found'):
+        verify(service, 'unknown-stage', {'body': '内容'})
+
+
+def test_cleaning_verify_saves_cleaned_dialogue_as_pending(service):
+    save_stage(service, 'cleaning', instructions='保留原话。', settings={'cleaning_drop_lines': ['客户端固定提示']})
+    messages = [{'role': 'user', 'content': '客户端固定提示\n我需要直接编辑规则。'}, {'role': 'tool', 'content': '工具噪声'}]
+    result = verify(service, 'cleaning', {'messages': messages})
+    row = service.knowledge().detail(result['ids'][0])
+    assert row['status'] == 'candidate'
+    assert '我需要直接编辑规则。' in row['body'] and '工具噪声' not in row['body']
+    with pytest.raises(ValueError, match='invalid_preview_messages'):
+        verify(service, 'cleaning', {'messages': []})
+
+
+def test_extraction_verify_parks_model_candidates_for_confirmation(service):
+    quote = '以后提交前先跑一遍相关测试。'
+    def model(prompt):
+        return json.dumps({'memories': [
+            {'key': 'SESSION_SUMMARY', 'value': '讨论提交前跑测试的要求。'},
+            {'key': 'project:evo:convention:testing', 'value': '提交前先运行相关测试。', 'attribute': 'constraint',
+             'confidence': .95, 'learning': {'category': 'project_convention', 'basis': 'explicit', 'quote': quote,
+                                             'instruction': '提交前先运行相关测试。', 'topic': 'testing',
+                                             'question': '提交代码前要做什么？', 'answer': '先运行相关测试。'}}]})
+    result = verify(service, 'extraction', {'project': 'evo', 'messages': [{'role': 'user', 'content': quote}]}, llm=model)
+    assert result['created'] == 1 and result['model_calls'] == 1
+    row = service.knowledge().detail(result['ids'][0])
+    assert row['status'] == 'candidate' and row['project'] == 'evo'
+    assert row['title'] == '提交代码前要做什么？' and row['body'] == '先运行相关测试。'
+    from evolvmem.qa_memory import detail as qa_detail
+    assert qa_detail(service, row['id'])['question'] == '提交代码前要做什么？'
+
+
+def test_collaboration_verify_reports_empty_scope_without_model(service):
+    result = verify(service, 'collaboration', {})
+    assert result['status'] == 'empty' and result['created'] == 0
+
+
+def test_consecutive_verifies_do_not_leave_an_open_transaction(service):
+    verify(service, 'ownership', {'body': 'evo 项目需要验证归属判断。'})
+    result = verify(service, 'cleaning', {'messages': [{'role': 'user', 'content': '连续两次验证都要成功。'}]})
+    assert result['created'] == 1
+    again = verify(service, 'ingestion', {'body': 'evo 项目的第三次验证也要正常写入。'})
+    assert again['created'] == 1

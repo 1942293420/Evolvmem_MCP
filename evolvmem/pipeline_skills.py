@@ -1,5 +1,6 @@
 """Stage editors over the existing policy and collaboration sources; no shadow copies."""
 import json
+from pathlib import Path
 from evolvmem.conversation import clean_messages, render
 from evolvmem.extraction_policy import redact_messages
 
@@ -32,6 +33,26 @@ def read(service, stage):
                         '本地入库条件 + AI 整理说明' if stage=='ingestion' else '协作框架 + 已确认规则'}
 
 
+def export_skills(service):
+    """Each stage snapshot is also written as its own installable SKILL.md."""
+    root = Path(service.config.data_dir) / 'skills'
+    for stage in STAGES:
+        skill = read(service, stage)['skill']
+        path = root / f'evolvmem-{stage}' / 'SKILL.md'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.read_text(encoding='utf-8') == skill:
+            continue
+        temp = path.with_suffix('.tmp')
+        temp.write_text(skill, encoding='utf-8')
+        temp.replace(path)
+
+
+def _ensure_exported(service):
+    root = Path(service.config.data_dir) / 'skills'
+    if any(not (root / f'evolvmem-{stage}' / 'SKILL.md').exists() for stage in STAGES):
+        export_skills(service)
+
+
 def save(service, stage, body):
     current = read(service, stage)
     if body.get('expected_revision') != current['revision']:
@@ -54,6 +75,7 @@ def save(service, stage, body):
             values[field] = instructions
         rules.save({'expected_revision':body['expected_revision'], 'settings':values,
                     'instructions':policy['instructions'] if field else instructions})
+    export_skills(service)
     return read(service, stage)
 
 
@@ -81,12 +103,74 @@ def preview(service, stage, body):
             'rule_revision':policy['revision'], 'persisted':0, 'model_calls':0}
 
 
+def verify(service, stage, body, *, llm=None):
+    """Run one stage with the saved rules and park outputs in the review queues."""
+    if stage not in STAGES:
+        raise LookupError('skill_not_found')
+    if not isinstance(body, dict):
+        raise ValueError('invalid_request')
+    kb = service.knowledge()
+    title = STAGES[stage][0]
+    if stage in ('ownership', 'ingestion'):
+        text = str(body.get('body') or '').strip()
+        if not 1 <= len(text) <= 20000:
+            raise ValueError('invalid_content')
+        project = str(body.get('project') or '')
+        if project:
+            kb._project(project)
+        decision = kb.preview({'title': text[:40], 'body': text, 'project': project, 'source': 'Skill 验证'})
+        row = kb.create({'title': '验证 · ' + text.split('\n', 1)[0][:40], 'body': text,
+                         'action': 'draft', 'source': f'Skill 验证 · {title}', 'tags': ['skill-verify']})
+        suggestion = f"；建议归属 {decision['project']}" if decision.get('project') else ''
+        with service._cutover_lock.shared(), kb.store.transaction():
+            kb._stamp(row['id'], reason=f"Skill 验证：{decision['reason']}{suggestion}",
+                      rule_revision=decision['rule_revision'])
+        return {'stage': stage, 'created': 1, 'ids': [row['id']], 'decision': decision}
+    if stage == 'cleaning':
+        result = preview(service, stage, {'messages': body.get('messages')})
+        row = kb.create({'title': f"验证 · 清洗结果（{result['input_messages']} 轮 → {result['dialogue_messages']} 轮）",
+                         'body': result['text'], 'action': 'draft', 'source': f'Skill 验证 · {title}',
+                         'tags': ['skill-verify']})
+        with service._cutover_lock.shared(), kb.store.transaction():
+            kb._stamp(row['id'], reason='Skill 验证：清洗结果待确认，确认后才会入库',
+                      rule_revision=result['rule_revision'])
+        return {'stage': stage, 'created': 1, 'ids': [row['id']], 'redacted': result['redacted']}
+    if stage == 'extraction':
+        from evolvmem import qa_memory
+        from evolvmem.extraction_preview import preview as extract_preview
+        project = str(body.get('project') or '')
+        result = extract_preview(service, {'messages': body.get('messages'), 'project': project}, llm=llm)
+        created = []
+        for candidate in result['draft']['candidates']:
+            if candidate.get('action') == 'skip':
+                continue
+            try:
+                if candidate.get('question') and candidate.get('answer'):
+                    saved = qa_memory.save(service, {'question': candidate['question'], 'answer': candidate['answer'],
+                                                     'category': candidate.get('category') or 'reference',
+                                                     'project': project, 'action': 'draft',
+                                                     'source': f'Skill 验证 · {title}'})
+                else:
+                    saved = kb.create({'title': candidate['body'][:40], 'body': candidate['body'], 'project': project,
+                                       'action': 'draft', 'source': f'Skill 验证 · {title}', 'tags': ['skill-verify']})
+                created.append(saved['id'])
+            except ValueError:
+                continue
+        return {'stage': stage, 'created': len(created), 'ids': created,
+                'model_calls': result['model_calls'], 'redacted': result['redacted']}
+    analysis = service.learning().analyze({'project': str(body.get('project') or '')}, llm=llm)
+    return {'stage': stage, 'created': len(analysis.get('rules', [])), **analysis}
+
+
 def dispatch(service, method, route, body):
     if method == 'GET' and route == 'skills':
+        _ensure_exported(service)
         return {'skills':[read(service, stage) for stage in STAGES]}
     parts = route.split('/')
     if len(parts)==2:
         return read(service, parts[1]) if method=='GET' else save(service, parts[1], body)
     if len(parts)==3 and method=='POST' and parts[2]=='preview':
         return preview(service, parts[1], body)
+    if len(parts)==3 and method=='POST' and parts[2]=='verify':
+        return verify(service, parts[1], body)
     raise LookupError('route_not_found')

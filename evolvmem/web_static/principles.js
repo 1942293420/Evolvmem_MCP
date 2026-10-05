@@ -1,7 +1,7 @@
 /* Product diagrams use explicit SVG activity notation, within the main shell. */
 window.EvolvPrinciples={render(mount){
  if(mount.dataset.ready)return;mount.dataset.ready='true';
- const modules=[['项目历史','项目目录 · 搜索与排序','项目摘要 · 历次清洗对话','#knowledge/projects'],['经验知识','分类问答 · 适用条件','经验案例 · 来源与验证','#knowledge/qa'],['任务断点','任务目标 · 当前进度','下一步 · 阻塞 · 续接','#progress'],['资料整理','AI 整理 · 核对归属','确认入库 · 纠正与归档','#knowledge/intake'],['Skill 规则','归属 · 清洗 · 提炼','入库 · 协作学习','#knowledge/skill']];
+ const modules=[['项目历史','项目目录 · 搜索与排序','项目摘要 · 历次清洗对话','#knowledge/projects'],['经验知识','分类问答 · 适用条件','经验案例 · 来源与验证','#knowledge/qa'],['任务断点','任务目标 · 当前进度','下一步 · 阻塞 · 续接','#progress'],['资料整理','AI 整理 · 核对归属','确认入库 · 纠正与归档','#knowledge/intake'],['Skill 规则','归属 · 清洗 · 提炼 · 入库 · 协作','独立文件导出 · 待确认验证','#knowledge/skill']];
  const text=(x,y,lines,cls='')=>`<text x="${x}" y="${y}" text-anchor="middle" class="${cls}">${lines.map((s,i)=>`<tspan x="${x}" dy="${i?24:0}">${s}</tspan>`).join('')}</text>`;
  const box=(x,y,w,h,lines,cls='')=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" class="node ${cls}"/>${text(x+w/2,y+h/2-(lines.length-1)*12+6,lines)}`;
  const arrow=(d,label,x,y)=>`<path d="${d}" class="edge" marker-end="url(#arrow)"/>${label?text(x,y,[label],'edge-label'):''}`;

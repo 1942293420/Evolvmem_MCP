@@ -41,7 +41,11 @@ def dispatch(service, method, path, body=None):
             commands = {'learning/analyze': learning.analyze, 'learning/framework': learning.save_framework,
                         'learning/restore': learning.restore, 'learning/family': learning.set_family}
             if route in commands:
-                return commands[route](body)
+                result = commands[route](body)
+                if route in ('learning/framework', 'learning/restore'):
+                    from evolvmem.pipeline_skills import export_skills
+                    export_skills(service)
+                return result
             match = re.fullmatch(r'learning/(rules|memories)/(\d+)', route)
             if match:
                 return (learning.review if match[1]=='rules' else learning.classify)(int(match[2]), body)
@@ -65,7 +69,11 @@ def dispatch(service, method, path, body=None):
                     'rules': kb.rules.save, 'preview': kb.preview,
                     'organize': kb.organize, 'batch': kb.batch}
         if route in commands:
-            return commands[route](body)
+            result = commands[route](body)
+            if route == 'rules':
+                from evolvmem.pipeline_skills import export_skills
+                export_skills(service)
+            return result
         match = re.fullmatch(r'items/(\d+)/(update|assign|transition)', route)
         if match:
             return getattr(kb, match[2])(int(match[1]), body)

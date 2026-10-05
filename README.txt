@@ -43,6 +43,8 @@ python -m evolvmem.knowledge_cli POST items/123/assign --file request.json
 
 写入请求带详情返回的 expected_revision；改归属文件例如 {"project":"eva","expected_revision":"读取到的版本"}。可将数据目录中的 knowledge-management 链接到本机技能目录；AI 发现和 Web 编辑共用同一份 SKILL.md。当前已打开的聊天需主动读取新规则，新会话按客户端机制发现技能。
 
+「处理 Skill」页把项目归属、数据清洗、摘要问答提炼、入库判断、协作学习五个环节各自独立编辑；任一环节保存后，数据目录 skills/ 下同步导出 evolvmem-ownership、evolvmem-cleaning、evolvmem-extraction、evolvmem-ingestion、evolvmem-collaboration 五个独立 SKILL.md，可整体链接到客户端技能目录供 AI 分别发现。每个环节带样例试运行；点「放入待确认验证」用已保存规则真实处理样例，归属/清洗/提炼/入库结果作为候选进入「资料待确认」，协作学习建议进入「协作学习成果」，确认后才算正式知识。
+
 运行环境
 
 - Linux、macOS 或 Windows 的 WSL2；Python 3.10 及以上。
