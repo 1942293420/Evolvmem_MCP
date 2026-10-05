@@ -1,7 +1,7 @@
 /* Product diagrams use explicit SVG activity notation, within the main shell. */
 window.EvolvPrinciples={render(mount){
  if(mount.dataset.ready)return;mount.dataset.ready='true';
- const modules=[['项目历史','项目登记 · 名称与别名','项目摘要 · 历次清洗对话','#knowledge/projects'],['经验知识','分类问答 · 适用条件','经验案例 · 来源与验证','#knowledge/qa'],['任务断点','任务目标 · 当前进度','下一步 · 阻塞 · 续接','#progress'],['资料整理','核对归属 · 检查正文','确认入库 · 纠正与归档','#knowledge/intake'],['Skill 规则','归属 · 清洗 · 提炼','入库 · 协作学习','#knowledge/skill']];
+ const modules=[['项目历史','项目目录 · 搜索与排序','项目摘要 · 历次清洗对话','#knowledge/projects'],['经验知识','分类问答 · 适用条件','经验案例 · 来源与验证','#knowledge/qa'],['任务断点','任务目标 · 当前进度','下一步 · 阻塞 · 续接','#progress'],['资料整理','AI 整理 · 核对归属','确认入库 · 纠正与归档','#knowledge/intake'],['Skill 规则','归属 · 清洗 · 提炼','入库 · 协作学习','#knowledge/skill']];
  const text=(x,y,lines,cls='')=>`<text x="${x}" y="${y}" text-anchor="middle" class="${cls}">${lines.map((s,i)=>`<tspan x="${x}" dy="${i?24:0}">${s}</tspan>`).join('')}</text>`;
  const box=(x,y,w,h,lines,cls='')=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" class="node ${cls}"/>${text(x+w/2,y+h/2-(lines.length-1)*12+6,lines)}`;
  const arrow=(d,label,x,y)=>`<path d="${d}" class="edge" marker-end="url(#arrow)"/>${label?text(x,y,[label],'edge-label'):''}`;
@@ -23,7 +23,7 @@ window.EvolvPrinciples={render(mount){
    arrow('M480 124V200','归属明确',546,165)+arrow('M818 124V165H650V240H620')+
    box(340,200,280,90,['③ 清洗与整理表达','去噪正文 + 有依据的需求'])+
    arrow('M480 290V345H190V390','历史',295,365)+arrow('M480 345H770V390','经验 / 需求',683,365)+
-   box(50,390,280,92,['历史摘要 + 清洗正文','到「项目历史」查看'])+
+   box(50,390,280,92,['历史摘要 + 清洗正文','到「项目历史」搜索查看'])+
    box(625,390,300,92,['简洁问答 + 分类 + 来源','明确且无冲突才自动入库'])+
    arrow('M770 482V512')+diamond(770,550,'依据明确无冲突？')+
    arrow('M670 550H620','否',645,534)+box(340,510,280,80,['资料待确认','核对原话，修正后再入库'],'warm')+

@@ -32,8 +32,10 @@ class KnowledgeBase:
 
     def projects(self):
         counts = {}
-        for r in self.conn.execute("SELECT project,status,COUNT(*) n FROM context_items WHERE status NOT IN ('deleted','superseded') GROUP BY project,status"):
+        updated = {r['project']: r['updated_at'] for r in self.conn.execute('SELECT project,updated_at FROM context_project_registry')}
+        for r in self.conn.execute("SELECT project,status,COUNT(*) n,MAX(updated_at) updated_at FROM context_items WHERE status NOT IN ('deleted','superseded') GROUP BY project,status"):
             counts.setdefault(r['project'], {})[r['status']] = r['n']
+            updated[r['project']] = max(updated.get(r['project']) or '', r['updated_at'] or '')
         pending = {}
         rows = self.conn.execute("SELECT i.id,i.project,i.status FROM context_items i WHERE i.status IN ('active','candidate')").fetchall()
         facts = load_ownership(self.store, [r['id'] for r in rows])
@@ -45,7 +47,7 @@ class KnowledgeBase:
         projects += [{'project': p, 'display_name': p, 'status': 'unregistered', 'aliases': [], 'revision': 0} for p in counts if p and p not in known]
         for row in projects:
             c = counts.get(row['project'], {})
-            row.update(counts=c, total=sum(c.values()), active=c.get('active', 0), pending=pending.get(row['project'], 0))
+            row.update(counts=c, total=sum(c.values()), active=c.get('active', 0), pending=pending.get(row['project'], 0), updated_at=updated.get(row['project'], ''))
         return {'projects': projects, 'unassigned': counts.get('', {}),
                 'pending': sum(pending.values()), 'total': sum(sum(c.values()) for c in counts.values())}
 

@@ -58,6 +58,22 @@ def model(prompt, *a, **kw):
 kimi_hooks._load_llm_config=lambda **kwargs: object()
 kimi_hooks._call_llm_with_retry=model
 kimi_hooks._llm_callable=lambda credentials:model
+if os.environ.get('EVOLVMEM_CARD_FIXTURE') == '1':
+    for slug, name, alias, total, pending, day in [
+        ('cards-alpha','北辰 · 产品设计','设计稿',1,1,1),
+        ('cards-beta','云帆 · 客户服务','售后',3,0,2),
+        ('cards-gamma','星河 · 开发工具','工具箱',2,2,3),
+    ]:
+        s.knowledge().save_project({'project':slug,'display_name':name,'aliases':[alias]})
+        for index in range(total):
+            s.knowledge().create({'title':f'{name}资料 {index}',
+                'body':f'{name}需要在项目历史中查看摘要、对话和资料。',
+                'project':slug,'action':'draft' if index < pending else 'publish',
+                'content_type':'reference'})
+        stamp=f'2026-10-{day:02} 12:00:00'
+        with s.store.transaction():
+            s.store._connection().execute('UPDATE context_items SET updated_at=? WHERE project=?',(stamp,slug))
+            s.store._connection().execute('UPDATE context_project_registry SET updated_at=? WHERE project=?',(stamp,slug))
 server=HTTPServer(('127.0.0.1',int(os.environ.get('EVOLVMEM_TEST_PORT','39478'))),make_handler(s))
 print('Temporary browser fixture ready',flush=True)
 try:server.serve_forever()

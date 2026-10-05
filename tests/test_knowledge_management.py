@@ -26,6 +26,23 @@ def manager(service):
     return service.knowledge()
 
 
+def test_project_cards_use_latest_visible_material_or_project_update(service):
+    kb=manager(service)
+    first=kb.create({'title':'项目历史','body':'项目的有效历史记录需要可追溯。','project':'eva','action':'publish'})
+    deleted=kb.create({'title':'删除记录','body':'这条删除记录不应影响项目排序。','project':'eva','action':'publish'})
+    with service.store.transaction():
+        kb.conn.execute("UPDATE context_project_registry SET updated_at='2026-01-01 00:00:00'")
+        kb.conn.execute("UPDATE context_items SET updated_at='2026-03-01 08:00:00' WHERE id=?",(first['id'],))
+        kb.conn.execute("UPDATE context_items SET status='deleted',updated_at='2026-04-01 08:00:00' WHERE id=?",(deleted['id'],))
+    projects={p['project']:p for p in kb.projects()['projects']}
+    assert projects['eva']['updated_at']=='2026-03-01 08:00:00'
+    assert projects['eva']['total']==1
+    assert projects['evolvmem']['updated_at']=='2026-01-01 00:00:00'
+    with service.store.transaction():
+        kb.conn.execute("UPDATE context_project_registry SET updated_at='2026-05-01 00:00:00' WHERE project='eva'")
+    assert next(p for p in kb.projects()['projects'] if p['project']=='eva')['updated_at']=='2026-05-01 00:00:00'
+
+
 def test_human_confirmation_becomes_trusted_for_actual_recall(service):
     result = service.legacy_facade().add('eva:business:fact:rule', '客服规则：退款需要核对原订单和实际支付金额。')
     cid = service.store.resolve_legacy_mapping(result)

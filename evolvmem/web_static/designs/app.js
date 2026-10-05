@@ -109,7 +109,7 @@
       }
       if(query!==undefined) controller.query=query;
       if(knowledgeView!==undefined)controller.view=knowledgeView;
-      if(page==='memories'&&replace)controller.lane=new URLSearchParams(location.hash.split('?')[1]||'').get('lane')||'overview';
+      if(page==='memories'&&replace){const params=new URLSearchParams(location.hash.split('?')[1]||'');controller.lane=params.get('lane')||'overview';controller.projectSort=params.get('sort')||'recent';}
       targetHash=controller.hash?.()||targetHash;
       controller.page=1;controller.draw();controller.load();
     }
