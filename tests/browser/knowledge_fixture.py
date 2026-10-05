@@ -43,8 +43,12 @@ for index in range(2):
     SessionArchiver(config,s.store).archive_session('', 'kimi', f'unassigned-demo-{index}', json.dumps({'messages':[
         {'role':'user','content':f'Evo 演示项目需要整理历史会话 {index}，先预览再确认归属。'}]},ensure_ascii=False))
 s.knowledge().create({'title':'未归属演示资料','body':'这份资料需要归属 Evo 演示项目。','scope':'project','action':'draft'})
+from tests.test_knowledge_cleaning import ready
+ready(s)
 # Only the external provider is substituted; HTTP, parsing and policy checks remain real.
 def model(prompt, *a, **kw):
+    if '你是资料清洗助手' in prompt:
+        return json.dumps({'cleaned_text':'用户要求先清洗资料，核对后再归入 Evo 演示项目。','category':'task_requirement','reason':'保留明确目标与处理顺序。'},ensure_ascii=False)
     if '你是项目历史分类助手' in prompt:
         samples=json.loads(prompt.split('待分类资料（仅正文片段，不代表完整会话）：\n',1)[1])
         return json.dumps({'items':[{'key':r['key'],'project':'evo','reason':'正文说明属于 Evo 演示项目。'} for r in samples]},ensure_ascii=False)

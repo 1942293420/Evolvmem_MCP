@@ -412,3 +412,34 @@ def test_forked_rollout_archives_and_a_parent_still_cannot_claim_it(lan):
     assert upload(adapter, raw, session='parent-1')['error'] == 'session_id_mismatch'
     assert runtime.server_for('jiangli').context_service.store._connection().execute(
         'SELECT COUNT(*) FROM session_archives').fetchone()[0] == 1
+
+
+def test_confirmed_cleaning_reaches_worker_and_keeps_original_quotes(lan, monkeypatch):
+    from evolvmem import kimi_hooks
+    from evolvmem.knowledge_api import dispatch
+    runtime, adapter = lan
+    raw = transcript() + b'{"type":"turn_context","payload":{"cwd":"D:\\\\other"}}\n'
+    saved = upload(adapter, raw, extract=True)
+    assert saved['extraction_status'] == 'unassigned'
+    service = runtime.server_for('jiangli').context_service
+    service.knowledge().save_project({'project': 'demo', 'display_name': '演示项目'})
+    row = dispatch(service, 'GET', 'cleaning')['items'][0]
+    approved = '人工确认保留：完整会话归档；仅整理这一主题。'
+    assert dispatch(service, 'POST', 'cleaning/save', {'items': [{**row, 'cleaned_text': approved, 'category': 'task_requirement'}]})['succeeded'] == 1
+    row = dispatch(service, 'GET', 'history/organization')['items'][0]
+    assigned = dispatch(service, 'POST', 'history/organization/save', {'items': [{**row, 'project': 'demo'}]})
+    assert assigned['succeeded'] == 1, assigned
+    prompts = []
+    def model(prompt, *args, **kwargs):
+        prompts.append(prompt)
+        return json.dumps({'memories': [{'key': 'SESSION_SUMMARY', 'value': '本次确认保留完整会话归档，正在核验清洗稿与原话分别保存。'}]})
+    monkeypatch.setattr(kimi_hooks, '_call_llm_with_retry', model)
+    (runtime.settings.owner_data_dir / 'llm_credentials.json').write_text(json.dumps({'provider': 'deepseek', 'api_key': 'fixture-only'}))
+    assert adapter.process_pending() == 1
+    status = adapter.call_tool('jiangli', 'session_archive_status', {'device_id': 'windows-main', 'session_id': 'session-1'})
+    assert status['extraction_status'] == 'extracted', status
+    assert approved in prompts[0]
+    assert '客户确认保留完整会话归档和任务断点。' in prompts[0]
+    history = dispatch(service, 'GET', f"conversations/{saved['archive_id']}", {'project': 'demo'})
+    assert history['cleaning']['text'] == approved
+    assert '客户确认保留完整会话归档和任务断点。' in history['text']

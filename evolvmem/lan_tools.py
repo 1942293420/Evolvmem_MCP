@@ -132,6 +132,9 @@ class LanTools:
                 return 0
             user, capture, row = selected
             payload = capture.archiver.read_payload(row['archive_id'])
+            from evolvmem.knowledge_cleaning import review
+            cleaned = review(capture.server.context_service, f"archive:{row['archive_id']}")
+            options = {'reviewed_cleaning': cleaned['cleaned_text']} if cleaned and cleaned['state'] == 'assigned' else {}
         try:
             if payload is None:
                 raise LanError('archive_payload_unavailable')
@@ -142,7 +145,7 @@ class LanTools:
             transcript = json.loads(payload)
             _, messages = parse_transcript(transcript['transcript'].encode('utf-8'), row['session_id'])
             source = 'codex:' + row['device_id'] + ':' + row['session_id']
-            prepared = prepare_extraction(capture.server.config, row['project'], source, messages, credentials)
+            prepared = prepare_extraction(capture.server.config, row['project'], source, messages, credentials, **options)
             with self.lock:
                 # A newer snapshot may have replaced this one while the model worked.
                 if not capture.is_current(row):

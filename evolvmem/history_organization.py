@@ -36,7 +36,7 @@ def _unassigned_archives(service):
     return rows
 
 
-def _record(service, key, *, visible=None):
+def _source_record(service, key, *, visible=None):
     match = re.fullmatch(r'(archive|item):([1-9][0-9]*)', str(key))
     if not match:
         raise ValueError('invalid_items')
@@ -73,24 +73,24 @@ def _record(service, key, *, visible=None):
             'source':row['adapter'] + ' · ' + row['external_session_id'], 'available':bool(text)}
 
 
-def listing(service, options):
+def source_refs(service):
     conn = service.store._connection()
     archives = _unassigned_archives(service)
-    visible = {r['id'] for r in archives}
     refs = [{'key':f'archive:{r["id"]}', 'created_at':r['created_at']} for r in archives]
     refs.extend({'key':f'item:{r["id"]}', 'created_at':r['created_at']} for r in conn.execute(
         "SELECT id,created_at FROM context_items WHERE project='' AND scope!='global' AND status IN ('active','candidate')"))
     refs.sort(key=lambda r:(r['created_at'], r['key']), reverse=True)
-    page = max(1, int(options.get('page', 1)))
-    items = []
-    for ref in refs[(page-1)*20:page*20]:
-        try:
-            row = _record(service, ref['key'], visible=visible)
-        except ValueError:
-            continue  # A concurrent confirmation can remove an entry.
-        row['body'] = row['body'][:600]
-        items.append(row)
-    return {'items':items, 'total':len(refs), 'page':page, 'page_size':20}
+    return refs
+
+
+def _record(service, key, **kwargs):
+    from evolvmem.knowledge_cleaning import prepared
+    return prepared(service, key, **kwargs)
+
+
+def listing(service, options):
+    from evolvmem.knowledge_cleaning import listing as clean_listing
+    return clean_listing(service, options, ready=True)
 
 
 def _entries(body, limit):
@@ -176,7 +176,10 @@ def save(service, body):
                 row = _checked(service, entry)
                 identity = int(entry['key'].split(':')[1])
                 if row['kind'] == 'item':
-                    kb.assign(identity, {'project':project, 'expected_revision':entry['expected_revision']})
+                    original = kb.detail(identity)
+                    updated = kb.update(identity, {'expected_revision':original['revision'], 'body':row['body']})
+                    updated = service.learning().classify(identity, {'expected_revision':updated['revision'], 'category':row['category']})
+                    kb.assign(identity, {'project':project, 'expected_revision':updated['revision']})
                 else:
                     # Existing confirmed source knowledge must never silently move.
                     if conn.execute("SELECT 1 FROM context_sources s JOIN context_items i ON i.id=s.item_id WHERE s.archive_id=? AND i.project!='' AND i.project!=? AND i.status IN ('active','candidate')", (identity, project)).fetchone():
@@ -186,6 +189,7 @@ def save(service, body):
                             raise ValueError('classification_source_changed')
                         conn.execute("UPDATE lan_session_uploads SET project=?,extraction_status='pending',backfill_status='pending',error='' WHERE archive_id=?", (project, identity))
                     conn.execute('UPDATE session_archives SET project=? WHERE id=?', (project, identity))
+                conn.execute("UPDATE knowledge_cleaning_reviews SET state='assigned' WHERE source_key=?", (entry['key'],))
             results.append({'key':entry['key'], 'ok':True, 'project':project})
         except (ValueError, LookupError, ProjectStoreError, sqlite3.IntegrityError) as error:
             results.append({'key':entry['key'], 'ok':False, 'error':str(error) if not isinstance(error, sqlite3.IntegrityError) else 'identity_conflict'})

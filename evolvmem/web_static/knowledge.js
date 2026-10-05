@@ -43,14 +43,15 @@
     $('.knowledge-tabs').hidden=!management;$('.knowledge-flow').hidden=!management;
     const flowSteps={intake:1,library:2,rules:3,skill:2,learning:4};
     mount.querySelectorAll('.knowledge-flow li').forEach((li,i)=>{const current=flowSteps[state.view]===i+1;li.classList.toggle('current',current);if(current)li.setAttribute('aria-current','step');else li.removeAttribute('aria-current');});
-    const titles={projects:'项目历史',unassigned:'项目历史',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'经验知识',intake:'资料待确认',rules:'清洗与入库规则',skill:'处理 Skill',learning:'协作学习'};
-    $('#knowledge-title').textContent=titles[state.view];$('#knowledge-description').textContent=state.view==='skill'?'修改 AI 的资料清洗、提炼与学习方式；项目归属规则在项目历史中维护；保存后可把样例结果放入待确认资料验证。':state.view==='qa'?'按分类、项目和条件整理可复用知识；每条问答都有来源。':management?'在同一工作台完成核对、入库、规则调整与学习。':'每个项目一份总记忆，关联历次会话的摘要与清洗正文。';
+    const titles={projects:'项目历史',unassigned:'项目历史',cleaning:'数据清洗',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'经验知识',intake:'资料待确认',rules:'清洗与入库规则',skill:'处理 Skill',learning:'协作学习'};
+    $('#knowledge-title').textContent=titles[state.view];$('#knowledge-description').textContent=state.view==='cleaning'?'原始资料先清洗，核对并保存后再进入项目归类。':state.view==='skill'?'维护提炼、入库与协作规则。清洗和项目归属在各自页面中管理。':state.view==='qa'?'按分类、项目和条件整理可复用知识；每条问答都有来源。':management?'在同一工作台完成核对、入库、规则调整与学习。':'每个项目一份总记忆，关联历次会话的摘要与清洗正文。';
     try {
     mount.querySelectorAll('[data-view]').forEach(a=>{const active=a.dataset.view===state.view;a.classList.toggle('active',active);a.setAttribute('aria-current',active?'page':'false');});
     const info=await refreshProjects();if(seq!==renderSequence)return;
     $('#content').onclick=null;$('#content').oninput=null;$('#content').onchange=null;
     if(state.view==='learning'){await EvolvLearning.render({mount:$('#content'),api,esc,toast,detail,projects:state.projects,onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
     if(state.view==='projects'){renderProjects(info);return;}
+    if(state.view==='cleaning'){await EvolvCleaning.render({mount:$('#content'),api,esc,toast,onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
     if(state.view==='unassigned'){$('#content').innerHTML=historyTabs()+'<div id="history-organization"></div>';await EvolvHistoryOrganization.render({mount:$('#history-organization'),api,esc,toast,projects:state.projects,onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
     if(state.view==='qa'){const hashSort=new URLSearchParams(location.hash.split('?')[1]||'').get('sort');if(Object.hasOwn(qaSorts,hashSort))state.qaSort=hashSort;$('#content').innerHTML=`<div class="qa-sort-bar"><label for="qa-sort">排序</label><select id="qa-sort" aria-label="问答排序方式">${Object.entries(qaSorts).map(([key,label])=>`<option value="${key}" ${state.qaSort===key?'selected':''}>${label}</option>`).join('')}</select></div><div class="memory-manager"></div>`;await EvolvMemory.render({mount:$('.memory-manager'),doc:{project:state.project,name:'所有项目',source_ids:[],sessions:[],qa_count:0},projects:state.projects,api:qaApi,esc,toast,lane:'qa',standalone:true,onLane:()=>{},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));},onChanged:render,onSource:detail,onDirty:v=>rulesDirty=v});return;}
     if(state.view==='skill'){await EvolvPipeline.render({mount:$('#content'),api,esc,toast,onDirty:v=>{rulesDirty=v;const s=$('#stage-state');if(s)s.classList.toggle('unsaved',v);},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
@@ -78,7 +79,7 @@
       else result.items.sort(byRecent);
     }
     return result;}
-  function historyTabs(){return `<nav class="history-tabs" aria-label="项目历史分类"><a href="#knowledge/projects" data-view="projects" aria-current="${state.view==='projects'?'page':'false'}">已整理</a><a href="#knowledge/unassigned" data-view="unassigned" aria-current="${state.view==='unassigned'?'page':'false'}">未归属项目</a></nav>`;}
+  function historyTabs(){return `<nav class="history-tabs" aria-label="项目历史分类"><a href="#knowledge/projects" data-view="projects" aria-current="${state.view==='projects'?'page':'false'}">已整理</a><a href="#knowledge/unassigned" data-view="unassigned" aria-current="${state.view==='unassigned'?'page':'false'}">待入库项目</a></nav>`;}
   function renderProjects(info){
     projectInfo=info;
     const active=info.projects.filter(p=>p.status==='active');
@@ -87,7 +88,7 @@
       <div class="project-collection-top"><div class="project-collection-summary"><span><strong>${active.length}</strong> 个项目</span><i></i><span><strong>${active.reduce((n,p)=>n+p.total,0).toLocaleString('zh-CN')}</strong> 份项目资料</span><i></i><span><strong>${active.reduce((n,p)=>n+p.pending,0).toLocaleString('zh-CN')}</strong> 份待确认</span></div><button class="primary write" data-action="project-new">＋ 添加项目</button></div>
       <div class="project-searchbar"><div class="project-search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="project-search" type="search" maxlength="200" placeholder="搜索项目名称、标识或别名…" aria-label="搜索项目" value="${esc(state.q)}"><button class="quiet" data-action="project-search-clear" aria-label="清除项目搜索" ${state.q?'':'hidden'}>清除</button></div><label class="project-sort-label" for="project-sort">排序<select id="project-sort">${Object.entries(projectSorts).map(([key,label])=>`<option value="${key}" ${state.projectSort===key?'selected':''}>${label}</option>`).join('')}</select></label></div>
       <div class="project-results-heading"><h2 id="project-results-title">全部项目</h2><span id="project-result-count" role="status" aria-live="polite"></span></div><div id="project-results"></div>
-      <div class="project-utilities"><a href="#knowledge/library?project=__global__" data-action="open-project" data-project="__global__"><span class="project-utility-icon">◎</span><span><strong>全局知识</strong><small>跨项目的习惯、约定与通用资料</small></span><span aria-hidden="true">↗</span></a><a href="#knowledge/unassigned" data-view="unassigned"><span class="project-utility-icon">?</span><span><strong>未归属项目</strong><small>编辑规则、AI 预览与批量保存分类</small></span><span aria-hidden="true">↗</span></a></div>
+      <div class="project-utilities"><a href="#knowledge/library?project=__global__" data-action="open-project" data-project="__global__"><span class="project-utility-icon">◎</span><span><strong>全局知识</strong><small>跨项目的习惯、约定与通用资料</small></span><span aria-hidden="true">↗</span></a><a href="#knowledge/unassigned" data-view="unassigned"><span class="project-utility-icon">?</span><span><strong>待入库项目</strong><small>清洗确认后，预览并保存项目归属</small></span><span aria-hidden="true">↗</span></a></div>
       ${other.length?`<details class="project-other-names"><summary>待整理名称与归档项目 <span>${other.length}</span></summary><p class="hint">这些名称单独保留，不重复显示成正式项目。可核对别名和来源后整理归属。</p>${other.map(p=>{const canonical=active.find(x=>x.aliases.includes(p.project));return `<div class="conversation-row"><strong>${esc(p.display_name||p.project)}</strong><span class="badge">${p.status==='archived'?'已归档项目':canonical?'已登记别名 · '+esc(canonical.display_name||canonical.project):'项目名待确认'}</span><button data-action="open-project" data-project="${esc(p.project)}">核对 ${p.total} 份资料</button></div>`;}).join('')}</details>`:''}
     </section>`;
     renderProjectCards();
@@ -246,7 +247,7 @@
     kind:'memories', integrated:true,
     get project(){return state.project;}, set project(value){state.project=value||'__all__';state.q='';state.type='';state.category='';state.status='';state.queue='all';state.view='library';state.memoryLane='overview';state.fragmentsOpen=false;},
     get query(){return state.q;}, set query(value){state.q=value;state.view='library';state.memoryLane='overview';},
-    set view(value){if(['projects','unassigned','library','intake','rules','skill','learning','qa'].includes(value))state.view=value;},
+    set view(value){if(['projects','unassigned','cleaning','library','intake','rules','skill','learning','qa'].includes(value))state.view=value;},
     hash,
     set projectSort(value){if(state.view==='qa'){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';return;}state.projectSort=Object.hasOwn(projectSorts,value)?value:'recent';},
     set qaSort(value){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';},

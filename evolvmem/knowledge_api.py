@@ -8,6 +8,9 @@ def dispatch(service, method, path, body=None):
     if not isinstance(body, dict):
         raise ValueError('invalid_request')
     route = path.removeprefix('/api/knowledge').strip('/')
+    if route == 'cleaning' or route.startswith('cleaning/'):
+        from evolvmem.knowledge_cleaning import dispatch as cleaning_dispatch
+        return cleaning_dispatch(service, method, route[len('cleaning'):], body)
     if route == 'history/organization' or route.startswith('history/organization/'):
         from evolvmem.history_organization import dispatch as organization_dispatch
         return organization_dispatch(service, method, route[len('history/organization'):], body)

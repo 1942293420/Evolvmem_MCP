@@ -10,11 +10,12 @@ from evolvmem.legacy_models import LegacyExtractionItem, LegacyExtractionRequest
 from evolvmem.lan_sharing import LanError
 
 
-def prepare_extraction(config, project, source_session, messages, llm_config):
+def prepare_extraction(config, project, source_session, messages, llm_config, *, reviewed_cleaning=None):
     """Only provider calls happen here; persistence uses the shared core later."""
     safe_messages, _ = redact_messages(messages)
+    options = {'reviewed_cleaning': reviewed_cleaning} if reviewed_cleaning else {}
     summary, candidates = kimi_hooks._split_summary_candidate(
-        kimi_hooks._extract_candidates(safe_messages, llm_config, config=config, project=project))
+        kimi_hooks._extract_candidates(safe_messages, llm_config, config=config, project=project, **options))
     if summary is None:
         raise LanError('extraction_summary_missing')
     value, _ = sanitize_summary(summary.value)

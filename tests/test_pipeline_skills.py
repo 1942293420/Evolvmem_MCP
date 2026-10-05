@@ -48,6 +48,24 @@ def test_cleaning_preview_archive_and_real_extraction_use_saved_skill(service, m
     assert '整理需求时保留用户原话依据' in prompts[0]
 
 
+def test_reviewed_cleaning_limits_extraction_without_replacing_original_evidence(service, monkeypatch):
+    from evolvmem.session_extraction import prepare_extraction
+    from evolvmem import kimi_hooks
+    prompts = []
+    def model(prompt, *a, **kw):
+        prompts.append(prompt)
+        return json.dumps({'memories': [{'key': 'SESSION_SUMMARY', 'value': '项目正在改进规则编辑方式。'}]})
+    monkeypatch.setattr(kimi_hooks, '_call_llm_with_retry', model)
+    messages = [{'role': 'user', 'content': '旧想法取消了，只保留清洗后编辑规则的需求。'}]
+    prepare_extraction(service.config, 'evo', 'reviewed', messages, object(),
+                       reviewed_cleaning='保留需求：用户可以修改规则。')
+    assert '<reviewed_cleaning>\n保留需求：用户可以修改规则。' in prompts[0]
+    assert '只从其中保留的主题' in prompts[0]
+    assert '[user]: 旧想法取消了' in prompts[0]
+    assert '不是原话证据' in prompts[0]
+    assert messages[0]['content'] == '旧想法取消了，只保留清洗后编辑规则的需求。'
+
+
 def test_normalized_requirement_keeps_quote_and_questions_pending(service):
     quote='我想在经验里直接加项目，不要让我到处找。'
     answer='在经验问答中提供项目创建入口，创建后自动选中。'

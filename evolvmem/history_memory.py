@@ -26,6 +26,16 @@ def save_clean(store, archive_id, payload, *, policy=None):
 
 
 def read(service, project, archive_id):
+    result = _read_original(service, project, archive_id)
+    from evolvmem.knowledge_cleaning import review
+    cleaned = review(service, f'archive:{archive_id}')
+    if cleaned and cleaned['state'] == 'assigned':
+        result['cleaning'] = {'text': cleaned['cleaned_text'], 'category': cleaned['category'],
+                              'updated_at': cleaned['updated_at']}
+    return result
+
+
+def _read_original(service, project, archive_id):
     archive = service.store.get_session_archive(archive_id)
     if not archive or archive['project'] != project or not project:
         raise ValueError('conversation_not_in_project')
@@ -115,6 +125,10 @@ def sessions(service, project):
             'failed': '提炼失败 · 待重试', 'not_requested': '已同步 · 尚未提炼',
             'extracted': '已提炼 · 尚无入库摘要', 'superseded': '历史快照',
         }.get(jobs.get(row['id']), '已同步 · 尚无入库摘要')
+        from evolvmem.knowledge_cleaning import review
+        cleaned = review(service, f"archive:{row['id']}")
+        if not summary and cleaned and cleaned['state'] == 'assigned':
+            stage = {'pending': '清洗已确认 · 待提炼', 'processing': '清洗已确认 · 提炼中'}.get(jobs.get(row['id']), stage)
         result.append({'id': row['id'], 'adapter': row['adapter'], 'created_at': row['created_at'],
                        'state': row['state'], 'summary': summary, 'stage': stage,
                        'source_ids': [r['id'] for r in linked],

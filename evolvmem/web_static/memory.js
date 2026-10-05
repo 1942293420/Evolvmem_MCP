@@ -47,7 +47,7 @@ window.EvolvMemory = {async render({mount, doc, projects, api, esc, toast, lane=
   }
   async function act(action,b){
     if(action==='close'){if(discard())$('.memory-dialog').close();return;}
-    if(action==='conversation'){if(!discard())return;const r=await api('conversations/'+b.dataset.id+'?'+new URLSearchParams({project:b.dataset.project}));modal('整理后的历史对话',`<p class="hint">${r.storage==='database'?'正文保存在数据库中。':'旧来源读取时清洗；可在历史记录页迁移入库。'}需求、回复、纠正与决定按顺序保留。</p><pre class="project-memory-text">${esc(r.text)}</pre>`);return;}
+    if(action==='conversation'){if(!discard())return;const r=await api('conversations/'+b.dataset.id+'?'+new URLSearchParams({project:b.dataset.project}));modal('整理后的历史对话',`<p class="hint">${r.storage==='database'?'正文保存在数据库中。':'旧来源读取时清洗；可在历史记录页迁移入库。'}需求、回复、纠正与决定按顺序保留。</p>${r.cleaning?`<h3>已确认清洗稿</h3><pre class="project-memory-text">${esc(r.cleaning.text)}</pre><h3>原始对话 · 核对依据</h3>`:""}<pre class="project-memory-text">${esc(r.text)}</pre>`);return;}
     if(action==='source'){if(!discard())return;$('.memory-dialog').close();await onSource(Number(b.dataset.id));return;}
     if(action==='project-new'){await EvolvProjects.create({api,esc,onSaved:async project=>{projects=(await api('projects')).projects;const select=$('#qa-project');const created=projects.find(p=>p.project===project);const name=created?.display_name||project;select.add(new Option(name===project?name:`${name}（${project}）`,project));select.value=project;dirty(true);}});return;}
     if(action==='new'){await edit();return;}
