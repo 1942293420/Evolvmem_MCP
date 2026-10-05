@@ -13,6 +13,8 @@ from evolvmem.context_store import _now_iso
 from evolvmem.knowledge_rules import KnowledgeRules
 from evolvmem.project_ownership import load_ownership, UNREVIEWED_FACT
 
+_PROJECT_ID_RE = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
+
 
 class KnowledgeBase:
     def __init__(self, service):
@@ -53,6 +55,8 @@ class KnowledgeBase:
 
     def save_project(self, body):
         project = str(body.get('project', '')).strip()
+        if not _PROJECT_ID_RE.fullmatch(project) and not self._registered(project):
+            raise ValueError('invalid_project_id')
         with self.store.transaction():
             ps = self.service._project_store()
             ps.register_project(project)
@@ -66,6 +70,9 @@ class KnowledgeBase:
                 for alias in aliases:
                     ps.add_alias(alias.strip(), project)
         return {'ok': True, 'project': project}
+
+    def _registered(self, project):
+        return bool(project) and self.conn.execute('SELECT 1 FROM context_project_registry WHERE project=?', (project,)).fetchone() is not None
 
     def _row(self, item_id):
         row = self.conn.execute('SELECT * FROM context_items WHERE id=?', (int(item_id),)).fetchone()

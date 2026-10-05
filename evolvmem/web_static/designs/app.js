@@ -21,9 +21,10 @@
     return Number.isNaN(d.valueOf()) ? value : d.toLocaleString('zh-CN',{hour12:false});
   };
   const shortDate = value => date(value).split(' ')[0];
+  const bareSummary = value => String(value ?? '').replace(/^\[[A-Za-z]+\]\s*/, '');
   const badge = (value, good=false) => `<span class="ui-badge ${good?'good':'neutral'}">${esc(value)}</span>`;
   const options = (items, selected) => items.map(([v,t])=>`<option value="${esc(v)}" ${v===selected?'selected':''}>${esc(t)}</option>`).join('');
-  const projectOptions = selected => options([['','全部项目'],...state.projects.map(p=>[p.project,name(p.project)])],selected);
+  const projectOptions = selected => options([['','全部项目'],...state.projects.map(p=>[p.project,p.display_name?`${p.display_name} · ${p.project}`:name(p.project)])],selected);
   const section = (title, content) => `<section class="ui-detail-section"><h3>${title}</h3>${content}</section>`;
   const list = (items, ordered=false) => items?.length ? `<${ordered?'ol':'ul'}>${items.map(v=>`<li>${esc(v)}</li>`).join('')}</${ordered?'ol':'ul'}>` : '<p class="ui-note">尚未记录</p>';
   const conditions = values => values && Object.keys(values).length ? `<dl class="ui-conditions">${Object.entries(values).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>` : '<p class="ui-note">未记录明确条件，采用前仍需核对当前场景。</p>';
@@ -64,14 +65,14 @@
       headings=col('项目摘要')+col('项目','data-col-project')+col('摘要状态','data-col-status')+col('内容更新','data-col-date data-col-extra')+col('来源截至','data-col-date data-col-extra');
       body=rows.map(row=>`<tr>${cell(recordLink(kind,row,row.summary||'暂无已生成内容',row.id==null?'尚无可展开的摘要':''))}${project(row)}${status(row)}${updated(row.content_updated_at)}${updated(row.covered_through)}</tr>`).join('');
     } else {
-      headings=col('任务概况')+col('项目','data-col-project')+col('任务状态','data-col-status')+col('断点版本','data-col-number data-col-extra')+col('更新日期','data-col-date data-col-extra');
-      body=rows.map(row=>`<tr>${cell(recordLink(kind,row,row.summary,row.is_focus?'当前续接任务':''))}${project(row)}${status(row)}${cell(esc(row.checkpoint_revision),'data-col-number data-col-extra')}${updated(row.updated_at)}</tr>`).join('');
+      headings=col('任务概况')+col('项目','data-col-project')+col('任务状态','data-col-status')+'<th scope="col" class="data-col-number data-col-extra" style="white-space:nowrap">断点版本</th>'+col('更新日期','data-col-date data-col-extra');
+      body=rows.map(row=>`<tr>${cell(recordLink(kind,row,bareSummary(row.summary),row.is_focus?'当前续接任务':''))}${project(row)}${status(row)}${cell(esc(row.checkpoint_revision),'data-col-number data-col-extra')}${updated(row.updated_at)}</tr>`).join('');
     }
     const title={memory:'记忆记录',experience:'经验案例',summary:'项目摘要',workstream:'任务断点'}[kind];
     return `<div class="data-table-wrap"><table class="data-table"><caption class="data-sr-only">${title}，点击内容展开详情</caption><thead><tr>${headings}</tr></thead><tbody>${body}</tbody></table></div>`;
   }
   function progressCard(row, kind) {
-    return `<button class="ui-card" data-detail="${kind}" data-id="${esc(row.id ?? '')}" ${row.id==null?'disabled':''}><span class="ui-card-head">${badge(label(row.status),['ready','completed'].includes(row.status))}<span>${esc(shortDate(row.updated_at))}</span></span><h3 class="ui-card-title">${esc(kind==='summary'?name(row.project):row.summary)}</h3><p class="ui-card-copy">${esc(kind==='summary'?row.summary:name(row.project))}</p><span class="ui-card-foot"><span>${kind==='summary'?'项目的最近记录':'保存的任务断点'}</span><span>查看详情 ↗</span></span></button>`;
+    return `<button class="ui-card" data-detail="${kind}" data-id="${esc(row.id ?? '')}" ${row.id==null?'disabled':''}><span class="ui-card-head">${badge(label(row.status),['ready','completed'].includes(row.status))}<span>${esc(shortDate(row.updated_at))}</span></span><h3 class="ui-card-title">${esc(kind==='summary'?name(row.project):bareSummary(row.summary))}</h3><p class="ui-card-copy">${esc(kind==='summary'?bareSummary(row.summary):name(row.project))}</p><span class="ui-card-foot"><span>${kind==='summary'?'项目的最近记录':'保存的任务断点'}</span><span>查看详情 ↗</span></span></button>`;
   }
   function navigate(page, project, query, knowledgeView, replace=false) {
     if(!state.ready) return;
@@ -84,7 +85,8 @@
     state.page=page;
     document.body.dataset.activePage=page;
     $$('[data-page-panel]').forEach(el=>el.hidden=el.dataset.pagePanel!==page);
-    $$('[data-page-link]').forEach(el=>{const current=el.dataset.pageLink===page&&(page!=='memories'||(el.dataset.knowledgeView==='projects'?['projects','library'].includes(knowledgeView||'projects'):el.dataset.knowledgeView==='intake'?['intake','library'].includes(knowledgeView):el.dataset.knowledgeView==='skill'?['rules','skill','learning'].includes(knowledgeView):el.dataset.knowledgeView===knowledgeView))||(page==='experiences'&&el.dataset.knowledgeView==='qa');el.classList.toggle('active',current);el.setAttribute('aria-current',current?'page':'false');});
+    const navView=knowledgeView==='library'?(project&&!['__all__','__global__'].includes(project)?'projects':'intake'):['learning','rules'].includes(knowledgeView)?'intake':knowledgeView||'projects';
+    $$('[data-page-link]').forEach(el=>{const current=el.dataset.pageLink===page&&(page!=='memories'||el.dataset.knowledgeView===navView)||(page==='experiences'&&el.dataset.knowledgeView==='qa');el.classList.toggle('active',current);el.setAttribute('aria-current',current?'page':'false');});
     if(page==='principles')EvolvPrinciples.render(document.querySelector('[data-slot=principles]'));
     let targetHash=`#${page}`;
     const mount=$(`[data-slot="${{memories:'memory-browser',experiences:'experience-browser',progress:'progress-browser'}[page]}"]`);

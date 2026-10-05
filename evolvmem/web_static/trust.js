@@ -14,11 +14,16 @@
   const request = (path, options = {}) =>
     (window.EvolvAuth && window.EvolvAuth.fetch ? window.EvolvAuth.fetch : fetch)(path, options);
 
+  const ERROR_LABEL = {
+    item_not_found: '没有找到这条记录，请检查编号',
+  };
+
   async function getJson(path) {
     const response = await request(path, {cache: 'no-store'});
     const data = await response.json().catch(() => null);
     if (!response.ok || !data || data.ok === false) {
-      throw new Error((data && data.error) || `请求失败（${response.status}）`);
+      const code = data && data.error;
+      throw new Error(ERROR_LABEL[code] || code || `请求失败（${response.status}）`);
     }
     return data;
   }
@@ -153,6 +158,10 @@
 
   // ---- current rules ----
 
+  // L0 summaries may carry a raw "content_type: " prefix from the source key;
+  // the badge already shows the type, so the title drops the prefix.
+  const bareTitle = value => String(value ?? '').replace(/^[A-Za-z_]+:\s*/, '');
+
   function renderRules(section) {
     if (!section.items.length) {
       $('trust-rules').innerHTML = empty('当前没有已确认且正在生效的规则或决定。');
@@ -160,7 +169,7 @@
     }
     $('trust-rules').innerHTML = section.items.map(item => `
       <div class="trust-item">
-        <p class="trust-item-title">${esc(item.l0 || '（无摘要）')}</p>
+        <p class="trust-item-title">${esc(bareTitle(item.l0) || '（无摘要）')}</p>
         <div class="trust-badges">
           ${badge(CONTENT_LABEL[item.content_type] || item.content_type, '')}
           ${badge(item.applicability === 'current_predecessor' ? '当前生效（继任尚未生效）' : '当前生效', 'good')}
@@ -222,6 +231,25 @@
       </div>`).join('');
   }
 
+  // The open-issues card only summarizes the tasks; the full list stays in the
+  // latest-progress card so the page does not render it twice.
+  function renderWorkstreamsSummary(workstreams, title) {
+    const items = workstreams && workstreams.items ? workstreams.items : [];
+    if (!items.length) {
+      return `<h3 class="trust-subhead">${esc(title)}</h3>${empty('当前没有进行中的任务断点。')}`;
+    }
+    const preview = items.slice(0, 3).map(item => `
+      <div class="trust-item">
+        <p class="trust-item-title">${esc(item.objective || '任务断点')}</p>
+        <div class="trust-item-meta">
+          <span>${esc(WS_STATUS_LABEL[item.status] || item.status)}</span>
+          <span>更新：${when(item.updated_at)}</span>
+        </div>
+      </div>`).join('');
+    const rest = items.length > 3 ? `<p class="trust-note">其余 ${items.length - 3} 条见「最新进展」中的完整任务列表。</p>` : '';
+    return `<h3 class="trust-subhead">${esc(title)} · ${items.length} 条</h3>${preview}${rest}`;
+  }
+
   // ---- open issues / review backlog ----
 
   function projectOptions(selected) {
@@ -255,7 +283,7 @@
       </div>`;
     }).join('') : empty('没有待确认归属的条目。默认知识页只使用已确认归属的内容。');
 
-    const unfinished = renderWorkstreams(workstreams, '进行中任务');
+    const unfinished = renderWorkstreamsSummary(workstreams, '进行中任务');
     const heldSources = (issues.held_sources || []).length ? `
       <h3 class="trust-subhead">待确认来源</h3>
       ${issues.held_sources.map(source => `<div class="trust-item">
