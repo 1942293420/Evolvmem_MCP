@@ -368,6 +368,41 @@ def test_unit_mixing_two_projects_without_proof_waits_for_review(service, monkey
     assert task['status'] == 'review'
     assert mixed['item_id'] is None
 
+def test_segmentation_prompt_merges_one_tasks_advice_and_keeps_a_real_switch():
+    """Prompt contract for a synthetic mixed dialogue: no provider is called.
+
+    The real-model verdict stays with the manual re-run; this test only pins the
+    guidance the program hands over. One task's consecutive advice must stay one
+    unit even though later lines drop the project name, a short insertion about
+    another project must stay its own unit, and coverage, verbatim evidence and
+    the review rule must not be relaxed.
+    """
+    from evolvmem.topic_segmentation import message_spans, prompt, record_windows
+    messages = [{'role': 'user', 'content': 'Evo 演示项目这次的任务是整理流程，下面是连续七条改进建议。'}]
+    messages += [{'role': 'assistant', 'content': f'改进建议{i}：这里只写做法，正文不再重复项目名。'}
+                 for i in range(1, 8)]
+    messages.append({'role': 'user', 'content': '另外 DSH 演示项目的导出必须保留来源版本。'})
+    messages.append({'role': 'user', 'content': '回到 Evo 演示项目：结论是不要按每条建议机械拆开。'})
+    records = record_windows(message_spans(messages))
+    # The program never pre-merges: the model still sees every advice separately.
+    assert len(records) == len(messages)
+    rendered = prompt(records, 1, 1, projects=('evo', 'dsh'))
+    for position in range(1, len(records) + 1):
+        assert f'[{position}] ' in rendered, 'full numbered coverage must reach the model'
+    # Same project and same task: continuous advice, conditions and conclusion are one unit.
+    assert '同一项目' in rendered and '合并成一个整理单元' in rendered
+    assert '不按每条建议' in rendered and '不按消息条数' in rendered
+    assert '真正切换' in rendered
+    # A short insertion about another project is not swallowed by its neighbour.
+    assert '短插入' in rendered and '独立成单元' in rendered
+    # Ownership is never inherited or inferred: only a directly named project counts.
+    assert '不继承上一单元的项目' in rendered and '不推断' in rendered
+    assert 'project_hint（仅当正文直接点名' in rendered
+    # The existing validation rules stay exact.
+    assert '不重叠、不遗漏、不跳号' in rendered
+    assert '逐字' in rendered and 'review' in rendered
+
+
 def test_worker_segments_long_source_in_bounded_chunks_and_keeps_middle(service, monkeypatch):
     source = long_topic_archive(service, session='long-session')
     task_id = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]['id']
