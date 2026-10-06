@@ -59,6 +59,59 @@ def test_cleaning_preserves_dialogue_but_excludes_tools_analysis_and_injected_co
     assert result[-1]['content'] == '先清洗，再入库。'
 
 
+def test_cleaning_removes_only_structurally_wrapped_known_injections():
+    from evolvmem.conversation import clean_messages
+    messages = [
+        {'role':'user','content':'<recommended_plugins>\n'
+            '[{"id":"plugin-alpha","name":"Alpha"}]\n</recommended_plugins>\n先核对项目范围。'},
+        {'role':'assistant','content':'<external_codex_apps_open_page>\n'
+            '{"url":"https://example.invalid/page"}\n</external_codex_apps_open_page>'},
+        {'role':'assistant','content':'可以，按项目范围推进。'},
+        {'role':'user','content':'{"type":"recommended_plugins","plugins":[{"id":"plugin-alpha"}]}'},
+        {'role':'user','content':'这段讨论只是提到 recommended_plugins 与 '
+            'external_codex_apps_open_page 两个名称，属于正常引用，必须保留。'},
+    ]
+    before = json.loads(json.dumps(messages, ensure_ascii=False))
+    result = clean_messages(messages)
+    assert [m['role'] for m in result] == ['user','assistant','user','user']
+    assert result[0]['content'] == '先核对项目范围。'
+    assert result[1]['content'] == '可以，按项目范围推进。'
+    assert result[2]['content'] == '{"type":"recommended_plugins","plugins":[{"id":"plugin-alpha"}]}'
+    assert 'recommended_plugins' in result[3]['content']
+    assert 'external_codex_apps_open_page' in result[3]['content']
+    # The injected original payload is never rewritten by cleaning.
+    assert messages == before
+
+
+def test_cleaning_keeps_injection_tags_quoted_inside_code_fences():
+    from evolvmem.conversation import clean_messages
+    fenced = ('示例代码：\n```\n<recommended_plugins>示例</recommended_plugins>\n'
+              '<external_codex_apps_open_page>示例</external_codex_apps_open_page>\n```\n'
+              '这段引用必须保留。')
+    inline = '`<recommended_plugins>` 只是行内引用，保留。'
+    messages = [
+        {'role':'user','content':fenced},
+        {'role':'user','content':'<external_codex_apps_open_page>{"url":"x"}'
+            '</external_codex_apps_open_page>\n真实注入后面的对话。'},
+        {'role':'user','content':inline},
+    ]
+    before = json.loads(json.dumps(messages, ensure_ascii=False))
+    result = clean_messages(messages)
+    assert [m['content'] for m in result] == [fenced, '真实注入后面的对话。', inline]
+    assert messages == before
+
+
+def test_cleaning_removes_agents_header_without_a_for_suffix():
+    from evolvmem.conversation import clean_messages
+    messages = [
+        {'role':'user','content':'# AGENTS.md instructions\n<INSTRUCTIONS>GLOBAL_RULES</INSTRUCTIONS>'},
+        {'role':'user','content':'# AGENTS.md instructions for /tmp\n<INSTRUCTIONS>AUTO_RULES</INSTRUCTIONS>'},
+        {'role':'user','content':'去掉注入后，这段真实对话仍要保留。'},
+    ]
+    result = clean_messages(messages)
+    assert [m['content'] for m in result] == ['去掉注入后，这段真实对话仍要保留。']
+
+
 def test_archive_read_returns_only_dialogue_and_enforces_project(service):
     from evolvmem.session_archive import SessionArchiver
     from evolvmem.project_memory import conversation

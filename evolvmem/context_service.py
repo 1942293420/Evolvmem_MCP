@@ -2116,7 +2116,7 @@ class ContextService:
 
         with self._cutover_lock.shared():
             with self.store.transaction():
-                summary_result, candidate_results, aftermath = (
+                summary_result, candidate_results, reused_results, aftermath = (
                     self._extraction_batch_writes(
                         request,
                         self.store.legacy_projection(),
@@ -2196,6 +2196,7 @@ class ContextService:
             candidates=candidate_results,
             persisted=(1 if summary_result is not None else 0)
             + len(candidate_results),
+            reused=reused_results,
         )
         if summary_result is not None and summary_result.context_id:
             from evolvmem.project_memory import refresh
@@ -2350,7 +2351,7 @@ class ContextService:
 
         with self._cutover_lock.shared():
             with backend.transaction():
-                summary_result, candidate_results, aftermath = (
+                summary_result, candidate_results, reused_results, aftermath = (
                     self._extraction_batch_writes(
                         request,
                         backend,
@@ -2366,6 +2367,7 @@ class ContextService:
             candidates=candidate_results,
             persisted=(1 if summary_result is not None else 0)
             + len(candidate_results),
+            reused=reused_results,
         )
 
     def _extraction_batch_writes(
@@ -2380,7 +2382,10 @@ class ContextService:
         isolated_writer=None,
         learning_writer=None,
     ) -> tuple[
-        LegacyMutationResult | None, tuple[LegacyMutationResult, ...], _VectorAftermath
+        LegacyMutationResult | None,
+        tuple[LegacyMutationResult, ...],
+        tuple[LegacyMutationResult, ...],
+        _VectorAftermath,
     ]:
         """Shared extraction policy; the caller owns the lock and transaction.
 
@@ -2394,6 +2399,9 @@ class ContextService:
         archive) quarantines experience/playbook items as Core candidates
         before any legacy conflict/merge logic — it returns the mutation
         result, or None when an identical item already exists.
+        A learning writer's ``changed=False`` result is a matched duplicate:
+        it is returned through ``reused`` (not ``candidates``) so it never
+        counts as a write yet a caller can still track the reused entity.
         """
         detector = ConflictDetector(reader)
         engine = self.embedding_engine if engine_ready else None
@@ -2402,13 +2410,17 @@ class ContextService:
             request.summary, reader, write_add, write_replace, aftermaths
         )
         candidate_results: list[LegacyMutationResult] = []
+        reused_results: list[LegacyMutationResult] = []
         for item in request.candidates:
             if len(candidate_results) >= request.max_writes:
                 break
             if learning_writer is not None and item.learning and _extraction_content_type(item) not in _ISOLATED_CONTENT_TYPES:
                 result, aftermath = learning_writer(item)
                 if result is not None:
-                    candidate_results.append(result)
+                    if result.changed:
+                        candidate_results.append(result)
+                    else:
+                        reused_results.append(result)
                     aftermaths.append(aftermath)
                 continue
             if (
@@ -2457,6 +2469,7 @@ class ContextService:
         return (
             summary_result,
             tuple(candidate_results),
+            tuple(reused_results),
             self._merge_aftermaths(tuple(aftermaths)),
         )
 

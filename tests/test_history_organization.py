@@ -104,3 +104,39 @@ def test_lan_archive_confirmation_queues_existing_extraction_and_backfill(servic
     assert call(service, '/save', {'items':[{**row,'project':'evo'}]})['succeeded'] == 1
     upload = conn.execute('SELECT * FROM lan_session_uploads').fetchone()
     assert (upload['project'],upload['extraction_status'],upload['backfill_status']) == ('evo','pending','pending')
+
+
+def _delete(service, row):
+    return dispatch(service, 'POST', 'cleaning/delete', {
+        'confirm_permanent': True,
+        'items': [{'key': row['key'], 'expected_revision': row['expected_revision']}]})
+
+
+def test_deleted_source_leaves_the_backlog_and_is_never_queued(service):
+    a = archive(service, project='')
+    ready(service)
+    row = call(service, '')['items'][0]
+    assert row['key'] == f'archive:{a.id}'
+    assert _delete(service, row)['succeeded'] == 1
+    from evolvmem.history_organization import source_refs
+    from evolvmem.organization_arrival import backlog
+    assert source_refs(service) == []
+    result = backlog(service)
+    assert (result['created'], result['queue_total'], result['remaining']) == (0, 0, 0)
+    assert service.store._connection().execute(
+        'SELECT count(*) FROM organization_tasks').fetchone()[0] == 0
+    assert call(service, '')['items'] == []
+
+
+def test_arrival_mode_never_discovers_a_deleted_source(service):
+    from evolvmem.organization_arrival import discover_new, update_settings
+    update_settings(service, {'auto_new': True})
+    a = archive(service, session='deleted-arrival', project='')
+    ready(service)
+    row = call(service, '')['items'][0]
+    assert row['key'] == f'archive:{a.id}'
+    assert _delete(service, row)['succeeded'] == 1
+    result = discover_new(service)
+    assert result['created'] == 0 and result['items'] == []
+    assert service.store._connection().execute(
+        'SELECT count(*) FROM organization_tasks').fetchone()[0] == 0

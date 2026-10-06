@@ -299,16 +299,30 @@ def retry(service, task_id):
 
 
 def resegment(service, task_id):
-    """Explicitly discard stored units and process the frozen snapshot again."""
+    """Explicitly discard stored units and segment the current source again.
+
+    The snapshot is re-derived from the current valid source and the source and
+    rule revisions are checked first. Keeping a frozen snapshot while records
+    come from the current cleaned messages would shift every offset after a
+    runtime cleaning change, so a stale task is sent back to enqueue instead of
+    being silently resegmented. A task that already carries a human decision is
+    never discarded by resegmentation: the reviewer must resolve it first.
+    """
+    task = _task_row(service, task_id)
+    if task['status'] == 'superseded':
+        raise ValueError('task_superseded')
+    manual = service.store._connection().execute(
+        "SELECT 1 FROM organization_units WHERE task_id=? AND decision='manual' LIMIT 1",
+        (task_id,)).fetchone()
+    if manual:
+        raise ValueError('resegment_manual_review_required')
+    _assert_current(service, task)
+    _, text = source_snapshot(service, task['source_key'])
     with service.store.transaction():
-        conn = service.store._connection()
-        row = conn.execute('SELECT status FROM organization_tasks WHERE id=?', (task_id,)).fetchone()
-        if row is None:
-            raise ValueError('task_not_found')
-        if row['status'] == 'superseded':
-            raise ValueError('task_superseded')
-        conn.execute("UPDATE organization_tasks SET status='pending',stage='queued',unit_count=0,review_count=0,"
-                     "error_code='',error_detail='',finished_at=NULL,updated_at=? WHERE id=?", (_now_iso(), task_id))
+        service.store._connection().execute(
+            "UPDATE organization_tasks SET source_snapshot=?,source_title=?,status='pending',stage='queued',"
+            "unit_count=0,review_count=0,error_code='',error_detail='',finished_at=NULL,updated_at=? WHERE id=?",
+            (text, _source_title(service, task['source_key'], text), _now_iso(), task_id))
     return {'ok': True, 'status': 'pending', 'stage': 'queued', 'task': task_view(service, task_id)}
 
 
@@ -723,13 +737,17 @@ class OrganizationWorker:
     # -- stage 3: ingestion through the existing extraction paths --
 
     def _ingest(self, service, task, *, extract=True):
-        """History + extraction through the shared per-unit pipeline."""
-        snapshot = _task_row(service, task['id'])['source_snapshot']
-        archive_id = int(task['source_key'].split(':')[1]) if task['source_key'].startswith('archive:') else None
-        if archive_id is not None:
-            spans = _source_spans(service, task, archive_id)
-        else:
-            spans = topic_segmentation.message_spans([{'role': 'assistant', 'content': snapshot}])
+        """History + extraction through the shared per-unit pipeline.
+
+        Every source kind uses the same real cleaned messages and structural
+        spans, so an item's offsets and author are never re-derived from a
+        prefixed transport form. The frozen snapshot is only a fallback for a
+        source whose messages cannot be re-read, and it stays author-unknown.
+        """
+        messages = source_messages(service, task['source_key'])
+        spans = topic_segmentation.message_spans(messages) if messages else \
+            topic_segmentation.message_spans([{'role': 'unknown',
+                                               'content': _task_row(service, task['id'])['source_snapshot']}])
         _ingest_units(service, task, spans, extract=extract)
 
     def _extract_units(self, service, task):

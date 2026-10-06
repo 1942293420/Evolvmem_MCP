@@ -93,15 +93,26 @@ def _handled_sources(service):
     return handled
 
 
+def _deleted_sources(service):
+    """Sources whose cleaning review records an explicit, permanent deletion.
+
+    They must never re-enter a candidate list: the delete already removed their
+    payload and rows, so ``record`` rejects them as ``cleaning_source_deleted``.
+    """
+    return {r['source_key'] for r in service.store._connection().execute(
+        "SELECT source_key FROM knowledge_cleaning_reviews WHERE state='deleted'")}
+
+
 def source_refs(service):
     conn = service.store._connection()
     handled = _handled_sources(service)
+    deleted = _deleted_sources(service)
     archives = _unassigned_archives(service)
     refs = [{'key':f'archive:{r["id"]}', 'created_at':r['created_at']} for r in archives]
     refs.extend({'key':f'item:{r["id"]}', 'created_at':r['created_at']} for r in conn.execute(
         "SELECT id,created_at FROM context_items WHERE project='' AND scope!='global' "
         "AND status IN ('active','candidate') AND identity_key NOT LIKE 'organization:%'"))
-    refs = [ref for ref in refs if ref['key'] not in handled]
+    refs = [ref for ref in refs if ref['key'] not in handled and ref['key'] not in deleted]
     refs.sort(key=lambda r:(r['created_at'], r['key']), reverse=True)
     return refs
 

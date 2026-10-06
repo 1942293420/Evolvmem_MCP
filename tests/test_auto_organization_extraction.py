@@ -379,3 +379,35 @@ def test_native_user_expectation_or_negation_is_not_verified(service,proof):
                                     'steps':['重新写入缓存'],'result':proof})
     assert not _bind_experience(service,item['id'],[{'role':'user','content':proof}],archive_id=archived.id)
     assert service.experiences().read(item['id'])['success_count']==0
+
+
+def test_reused_duplicate_knowledge_is_tracked_per_unit(service, monkeypatch):
+    """A skipped duplicate still backs each unit, so one source can be withdrawn."""
+    from evolvmem.unit_derivations import currently_backed
+    text = '用户要求：Evo 演示项目先明确验收条件。'
+    first = many_topic_archive(service, session='dup-one', text=text)
+    second = many_topic_archive(service, session='dup-two', text=text)
+    tasks = org(service, '/tasks', {'items': [
+        {'key': f'archive:{first.id}'}, {'key': f'archive:{second.id}'}]})['items']
+    task_ids = [t['id'] for t in tasks]
+    run_worker(service, monkeypatch, model_for(service, projects={'evo'}))
+    conn = service.store._connection()
+    rows = conn.execute("SELECT id FROM context_items WHERE identity_key LIKE '%:learn:%'").fetchall()
+    matching = [r['id'] for r in rows if service.knowledge().detail(r['id'])['body'] == text]
+    assert len(matching) == 1, 'identical knowledge stays one entity'
+    item_id = matching[0]
+    derivations = conn.execute(
+        "SELECT unit_task_id FROM unit_derivations WHERE item_id=? AND kind='knowledge'",
+        (item_id,)).fetchall()
+    assert {r['unit_task_id'] for r in derivations} == set(task_ids), \
+        'a reused duplicate must still be tracked for every unit that uses it'
+    for task_id in task_ids[:1]:
+        unit = org(service, '/units', {'task_id': task_id})['items'][0]
+        org(service, '/correct', {'task_id': task_id, 'digest': unit['digest'],
+            'expected_revision': unit['revision'], 'negative': True, 'reason': '撤回这条来源'})
+        assert currently_backed(service.store, item_id) is True
+    last = task_ids[1]
+    unit = org(service, '/units', {'task_id': last})['items'][0]
+    org(service, '/correct', {'task_id': last, 'digest': unit['digest'],
+        'expected_revision': unit['revision'], 'negative': True, 'reason': '撤回最后一条来源'})
+    assert currently_backed(service.store, item_id) is False

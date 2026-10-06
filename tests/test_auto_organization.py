@@ -55,6 +55,66 @@ def test_multi_project_source_keeps_middle_units_and_exact_spans(service, monkey
     assert task['stage'] == 'done'
 
 
+def test_item_source_extracts_the_real_body_with_unknown_author(service, monkeypatch):
+    """An unstructured item has no author: offsets and role must stay real."""
+    body = ('用户要求：Evo 演示项目先明确验收条件，最后确认批量删除必须逐条确认'
+            '（完整尾句到此结束）。')
+    item = service.knowledge().create({'title': '待整理资料', 'body': body,
+                                       'scope': 'project', 'action': 'draft'})
+    ready(service)
+    model = model_for(service, projects={'evo', 'dsh'})
+    task = org(service, '/tasks', {'items': [{'key': f'item:{item["id"]}'}]})['items'][0]
+    tasks = run_worker(service, monkeypatch, model)
+    task = next(t for t in tasks if t['id'] == task['id'])
+    assert task['status'] == 'completed'
+    assert model.extract_calls, 'the assigned unit must reach the real extraction stage'
+    # The provider sees the complete body from offset zero, never a snapshot
+    # whose transport prefix shifted the text, and never as the assistant.
+    assert f'[unknown]: {body}' in model.extract_calls[0]
+    records = service.store._connection().execute(
+        'SELECT role,text FROM organization_units WHERE task_id=?', (task['id'],)).fetchall()
+    assert records and {r['role'] for r in records} == {'unknown'}
+    assert any(r['text'] == body for r in records)
+
+
+def test_resegment_rebuilds_a_stale_snapshot_from_the_current_source(service, monkeypatch):
+    """A runtime cleaning change keeps the archive revision but not the snapshot."""
+    from evolvmem.auto_organization import source_snapshot
+    source = many_topic_archive(service, session='stale-snapshot')
+    task = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]
+    current = source_snapshot(service, task['source_key'])[1]
+    conn = service.store._connection()
+    # An older release froze the snapshot before injected wrappers were cleaned:
+    # the archive revision is unchanged while the runtime cleaning output differs.
+    stale = '<recommended_plugins>\n[{"id":"plugin-alpha"}]\n</recommended_plugins>\n' + current
+    conn.execute('UPDATE organization_tasks SET source_snapshot=? WHERE id=?', (stale, task['id']))
+    conn.commit()
+    resegmented = org(service, '/resegment', {'task_id': task['id']})
+    assert resegmented['status'] == 'pending' and resegmented['stage'] == 'queued'
+    detail = org(service, '/detail', {'task_id': task['id']})
+    # The old derivation is no longer the current source and nothing injected remains.
+    assert detail['source_text'] == current and 'recommended_plugins' not in detail['source_text']
+    run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
+    units = org(service, '/units', {'task_id': task['id']})['items']
+    assert units, 'resegmentation must produce units'
+    for unit in units:
+        assert current[unit['source_start']:unit['source_end']] == unit['text']
+    assert any('不能只看开头结尾' in u['text'] for u in units), 'the middle content must survive'
+
+
+def test_resegment_refuses_a_stale_task_instead_of_overwriting_decisions(service):
+    source = many_topic_archive(service, session='resegment-stale')
+    task = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]
+    rules = service.knowledge().rules.read()
+    service.knowledge().rules.save({'expected_revision': rules['revision'],
+                                    'instructions': rules['instructions'] + '\n新增归属说明。'})
+    with pytest.raises(ValueError, match='revision_conflict'):
+        org(service, '/resegment', {'task_id': task['id']})
+    # The stale task is not silently resegmented; re-enqueueing is the guided path.
+    assert org(service)['items'][0]['id'] == task['id']
+    assert org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['created'] == 1
+
+
 def test_fabricated_quote_is_rejected_and_source_is_not_ingested(service, monkeypatch):
     source = many_topic_archive(service, session='fabricated-session')
     task_id = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]['id']

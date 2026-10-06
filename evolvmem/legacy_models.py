@@ -429,12 +429,15 @@ class LegacyExtractionResult:
 
     ``summary`` is None when an equivalent active summary already satisfied
     the batch; ``candidates`` holds one result per candidate actually written,
-    in request order — skipped duplicates never appear.
+    in request order — skipped duplicates never appear there. A skipped
+    duplicate that was matched to an existing entity is reported in ``reused``
+    so a caller can keep per-source tracking without a second write.
     """
 
     summary: LegacyMutationResult | None
     candidates: tuple[LegacyMutationResult, ...]
     persisted: int
+    reused: tuple[LegacyMutationResult, ...] = ()
 
     def __post_init__(self) -> None:
         if self.summary is not None and not isinstance(
@@ -459,6 +462,22 @@ class LegacyExtractionResult:
                     "candidates must be an iterable of LegacyMutationResult"
                 )
         object.__setattr__(self, "candidates", candidates)
+        if isinstance(self.reused, (str, bytes)):
+            raise ContextValidationError(
+                "reused must be an iterable of LegacyMutationResult"
+            )
+        try:
+            reused = tuple(self.reused)
+        except TypeError as exc:
+            raise ContextValidationError(
+                "reused must be an iterable of LegacyMutationResult"
+            ) from exc
+        for item in reused:
+            if not isinstance(item, LegacyMutationResult):
+                raise ContextValidationError(
+                    "reused must be an iterable of LegacyMutationResult"
+                )
+        object.__setattr__(self, "reused", reused)
         if type(self.persisted) is not int or self.persisted < 0:
             raise ContextValidationError(
                 "persisted must be a non-negative integer"

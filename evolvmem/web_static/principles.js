@@ -60,13 +60,13 @@ window.EvolvPrinciples={render(mount){
    arrow('M510 214V248')+diamond(510,286,'版本仍有效？')+
    arrow('M410 286H300','[否]',352,268)+box(40,251,260,70,['标记待确认','不提交陈旧结果'],'warm')+
    arrow('M510 324V360')+
-   box(360,360,300,80,['按有界分段处理完整正文','中间内容不丢，覆盖全部原文'])+
+   box(360,360,300,80,['先去除系统注入，原始资料保留','全文分段核对，作者未知不冒认'])+
    arrow('M510 440V474')+diamond(510,512,'覆盖校验通过？')+
    arrow('M410 512H300','[否]',352,494)+box(40,477,260,70,['停止入库并说明原因','可显式重试'],'warm')+
    arrow('M510 550V586')+
    box(360,586,300,90,['程序核对项目已登记、证据有效','人工决定不被覆盖；歧义等待确认'])+
    arrow('M510 676V712')+
-   box(360,712,300,86,['先写来源关联的历史记录','再按单元提炼问答候选'])+
+   box(360,712,300,86,['先写历史，再按单元提炼问答','复用知识也保留各个来源'])+
    arrow('M660 755H790','[结果]',716,738)+
    box(790,712,220,86,['查看运行/提炼/待确认/失败','逐条改项目、暂存或写指导'],'warm')+
    arrow('M900 798V834')+diamond(900,872,'指导适用范围？')+
@@ -77,5 +77,5 @@ window.EvolvPrinciples={render(mount){
    arrow('M900 986V1008H967')+arrow('M1085 986V1008H983')+'<path d="M975 1000L983 1008L975 1016L967 1008Z" class="decision"/>'+arrow('M975 1016V1022')+box(790,1022,370,80,['指导可停用；反例与过宽条件留待确认','经验须绑定真实结果；暂存可恢复'])+arrow('M975 1102V1124')+'<circle cx="975" cy="1139" r="14" fill="none" stroke="#344b5b" stroke-width="2"/><circle cx="975" cy="1139" r="9" class="terminal"/>',1200);
   const diagrams={modules:moduleMap,flow,activity,organization};
  mount.innerHTML=`<header class="data-page-header"><span class="knowledge-eyebrow">产品说明</span><h1>工作原理</h1><p>先看七个模块各管什么，再看一段对话怎样成为知识，以及你什么时候需要参与。</p></header><nav class="principles-tabs" aria-label="工作原理图类型"><button data-principle="modules" aria-pressed="true">模块职责图</button><button data-principle="flow" aria-pressed="false">业务流程图</button><button data-principle="activity" aria-pressed="false">入库活动图</button><button data-principle="organization" aria-pressed="false">自动整理活动图</button></nav><section class="principle-board"><div class="section-head"><div><h2 id="principle-title">七个业务模块，分别负责什么</h2><p id="principle-description" class="hint">项目摘要属于项目历史；任务断点只回答如何继续任务。</p></div><button class="ui-button" data-diagram-size>放大图中文字</button></div><p class="diagram-scroll-hint">小屏可横向滚动看清文字。</p><div class="product-diagram" tabindex="0" aria-label="图示，可横向滚动">${moduleMap}</div><p class="diagram-legend" hidden>活动图符号：● 开始 · ◎ 结束 · 圆角框为动作 · 菱形为判断 · 黑条为分支汇合。</p></section><div class="principle-links">${modules.map(m=>`<a href="${m[3]}"><strong>${m[0]} →</strong><span>${m[1]}</span></a>`).join('')}</div>`;
- mount.onclick=e=>{const b=e.target.closest('[data-principle]');if(b){mount.querySelectorAll('[data-principle]').forEach(t=>t.setAttribute('aria-pressed',String(t===b)));const kind=b.dataset.principle;const board=mount.querySelector('.product-diagram');board.innerHTML=diagrams[kind];board.scrollLeft=0;mount.querySelector('.diagram-legend').hidden=!['activity','organization'].includes(kind);mount.querySelector('#principle-title').textContent=({modules:'七个业务模块，分别负责什么',flow:'一段对话，怎样成为可用知识',activity:'历史与经验并行，经验核对验证依据',organization:'整篇自动整理，可离开页面稍后核对'})[kind];mount.querySelector('#principle-description').textContent=({modules:'项目摘要属于项目历史；任务断点只回答如何继续任务。',flow:'预览与修改可切页暂存；批量操作仅处理勾选项，统一确认弃用项删除，保留项保存分类。',activity:'历史保留记录；经验须有实际验证依据。候选保留待核对，不冒充已验证方法。',organization:'任务按来源版本持久运行；编号区间校验不通过就停止，先写历史再按单元提炼，经验须绑定真实结果，人工决定优先，指导默认只影响本批。'})[kind];}if(e.target.closest('[data-diagram-size]')){const board=mount.querySelector('.product-diagram');board.classList.toggle('enlarged');e.target.textContent=board.classList.contains('enlarged')?'恢复图大小':'放大图中文字';}};
+ mount.onclick=e=>{const b=e.target.closest('[data-principle]');if(b){mount.querySelectorAll('[data-principle]').forEach(t=>t.setAttribute('aria-pressed',String(t===b)));const kind=b.dataset.principle;const board=mount.querySelector('.product-diagram');board.innerHTML=diagrams[kind];board.scrollLeft=0;mount.querySelector('.diagram-legend').hidden=!['activity','organization'].includes(kind);mount.querySelector('#principle-title').textContent=({modules:'七个业务模块，分别负责什么',flow:'一段对话，怎样成为可用知识',activity:'历史与经验并行，经验核对验证依据',organization:'整篇自动整理，可离开页面稍后核对'})[kind];mount.querySelector('#principle-description').textContent=({modules:'项目摘要属于项目历史；任务断点只回答如何继续任务。',flow:'预览与修改可切页暂存；批量操作仅处理勾选项，统一确认弃用项删除，保留项保存分类。',activity:'历史保留记录；经验须有实际验证依据。候选保留待核对，不冒充已验证方法。',organization:'任务按来源版本持久运行；去噪保留原始资料与真实作者，复用知识保留每个来源。重新分段刷新快照，已有人工结论不被重分段覆盖；经验须绑定真实结果，指导默认只影响本批。'})[kind];}if(e.target.closest('[data-diagram-size]')){const board=mount.querySelector('.product-diagram');board.classList.toggle('enlarged');e.target.textContent=board.classList.contains('enlarged')?'恢复图大小':'放大图中文字';}};
 }};

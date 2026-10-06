@@ -142,6 +142,14 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
                 detail = service.knowledge().detail(mutation.context_id)
                 if detail['content_type'] == 'experience':
                     experience_ids.append(mutation.context_id)
+            # A matched duplicate is reused, not rewritten: the unit still points
+            # at the existing knowledge so one withdrawal cannot silently drop it.
+            for mutation in result.reused:
+                if mutation is None or mutation.context_id is None:
+                    continue
+                item_ids.append(mutation.context_id)
+                record_derivation(service, task['id'], unit['digest'], mutation.context_id,
+                                  kind='knowledge', project=unit['project'])
             for item_id in experience_ids:
                 _bind_experience(service, item_id, messages, archive_id=_archive_id(task))
             _set_stage(service, task['id'], unit['digest'], 'done', want, '')

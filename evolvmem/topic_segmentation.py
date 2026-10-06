@@ -296,8 +296,9 @@ def unit_evidence(unit: dict, spans: list[dict], *, minimum: int = 12):
 def unit_messages(unit: dict, spans: list[dict]) -> list[dict]:
     """The unit's own messages only: the provider must never see the whole archive.
 
-    An unstructured source has no verifiable author, so it is passed as
-    non-user content and can never become user evidence.
+    An unstructured source has no verifiable author, so its real ``unknown``
+    role is preserved and it can never become user evidence or be presented as
+    the assistant's own words.
     """
     messages = []
     for span in spans:
@@ -307,6 +308,5 @@ def unit_messages(unit: dict, spans: list[dict]) -> list[dict]:
             continue
         content = unit['text'][start - unit['source_start']:end - unit['source_start']].strip()
         if content:
-            role = span['role'] if span['role'] in ('user', 'assistant', 'tool') else 'assistant'
-            messages.append({'role': role, 'content': content})
+            messages.append({'role': str(span.get('role') or 'unknown'), 'content': content})
     return messages

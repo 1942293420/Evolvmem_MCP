@@ -217,7 +217,12 @@ def persist(service, item, messages, source_session, archive_id):
     if result['action'] == 'skip':
         if archive_id is not None:
             service.store.record_session_source(result['target_id'], archive_id, extraction_version='learning-qa.v1')
-        return None, _VectorAftermath()
+        # Report the reused entity through ``reused`` (changed=False) instead of
+        # None, so a per-unit caller can still track which knowledge backs it
+        # without counting another write or rewriting its metadata.
+        return (LegacyMutationResult(legacy_id=None, context_id=result['target_id'], changed=False,
+                                     old_legacy_id=None, old_context_id=None, available_layers=()),
+                _VectorAftermath())
     category = metadata.get('category', '')
     decision = result['decision']
     # Always append a versioned source; only a proven correction supersedes a predecessor.
