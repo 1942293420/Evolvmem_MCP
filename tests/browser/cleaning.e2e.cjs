@@ -26,8 +26,9 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.locator(`[data-clean-text="item:${a.id}"]`).fill('人工核对：Evo 演示项目先清洗，再由用户确认项目归属。');await page.locator(`[data-clean-category="item:${a.id}"]`).selectOption('decision');
   await page.screenshot({path:'/tmp/evo-cleaning-desktop.png',fullPage:true});
   await page.setViewportSize({width:390,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));await page.screenshot({path:'/tmp/evo-cleaning-mobile.png',fullPage:true});await page.setViewportSize({width:1440,height:1100});
+  for(const id of [b.id,c.id])await page.locator(`[data-clean-select="item:${id}"]`).uncheck();
   await click('[data-clean-action="save-all"]');assert.match(await page.locator('#clean-notice').innerText(),/成功 1 条/);
-  assert.match(await page.locator('#clean-notice').innerText(),/2 条建议删除，已跳过/);
+  assert.match(await page.locator('#clean-notice').innerText(),/删除成功 0 条/);
   assert.equal((await api('history/organization')).items.some(r=>r.key===`item:${b.id}`),false);
   await click(`[data-clean-action="keep-row"][data-key="item:${c.id}"]`);
   assert.ok(!await page.locator(`[data-clean-action="delete-row"][data-key="item:${c.id}"]`).evaluate(el=>el.classList.contains('delete-highlight')));
@@ -42,6 +43,6 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.locator('[data-view="unassigned"]').click();await page.waitForSelector('#history-instructions');await done();
   await page.locator(`[data-history-select="item:${a.id}"]`).check();await click('[data-history-action="preview"]');await click(`[data-history-action="save-row"][data-key="item:${a.id}"]`);
   const saved=await api('items/'+a.id);assert.equal(saved.project,'evo');assert.match(saved.body,/人工核对/);assert.equal(saved.learning.category,'decision');
-  assert.deepEqual(errors,[]);console.log('PASS: cleaning navigation, saved rules, AI preview, manual text/category, batch save, stage gate, AI discard question/highlight, bulk-save skips undecided, retain override, isolated row delete cancel/confirm, project classification uses reviewed draft, mobile');
+  assert.deepEqual(errors,[]);console.log('PASS: cleaning navigation, saved rules, AI preview, manual text/category, batch save, stage gate, AI discard question/highlight, bulk-save leaves unchecked, retain override, isolated row delete cancel/confirm, project classification uses reviewed draft, mobile');
  }catch(e){await page.screenshot({path:'/tmp/evo-cleaning-failed.png',fullPage:true});throw e;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

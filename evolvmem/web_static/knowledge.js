@@ -12,6 +12,8 @@
   const errors = {revision_conflict:'资料已被其他操作更新，请重新打开后再保存。',project_required:'请选择所属项目，或明确选择全局知识。',project_not_found:'项目未登记，请先在项目知识库添加。',confirm_project_first:'请先确认资料归属，再确认入库。',qa_source_changed:'来源已变化，请到经验问答重新核对和保存答案。',invalid_qa_question:'请填写 4–160 字的明确问题。',invalid_qa_answer:'请填写 5–400 字的简洁答案。',qa_conflict_requires_confirmation:'同一问题和条件已有不同答案。请核对来源后，勾选替换旧答案或保存待确认。',invalid_content:'请填写标题和正文；正文最多 100,000 字。',workstream_move_confirmation_required:'任务断点需要整组迁移，请打开详情操作。',workstream_has_related_tasks:'此任务有关联父任务或子任务，暂不能单独迁移。请先在任务管理中核对关联关系。',workstream_lifecycle_managed_by_task:'任务断点的状态由任务管理维护，请到顶部的项目进展查看任务。',managed_content_create_correction:'此内容由任务或经验生成，请新增补充资料。',invalid_rule_settings:'入库条件格式不正确，请检查 JSON 设置。',invalid_skill_format:'Skill 格式不完整，请保留文件头和 JSON 入库条件。',invalid_skill_frontmatter:'请保留 Skill 的 name 和 description。',identity_conflict:'目标项目已存在同一资料，请先核对重复内容。',alias_conflict:'别名已属于其他项目，请换一个别名。',invalid_items:'请先选择要整理的资料。',invalid_instructions:'请填写 AI 执行说明。',invalid_confidence:'置信度需在 0 到 1 之间。',invalid_content_limits:'最少字数不能大于最多字数。',invalid_collaboration_skill:'协作 Skill 需保留 name/description 文件头。',invalid_project_id:'项目标识需以小写字母或数字开头，只能包含小写字母、数字、点、下划线或连字符，最长 64 个字符。',invalid_preview_messages:'样例格式不正确：请以“用户：”“助手：”或“工具：”标明每轮角色，总长度不超过 20,000 字。',extraction_provider_unavailable:'尚未配置提炼模型，请先完成模型配置再验证。',extraction_summary_missing:'模型这次没有返回会话摘要，请调整样例后重试。'};
   const state = {view:'projects',project:'__all__',q:'',status:'',type:'',category:'',page:1,queue:'all',rows:[],selected:new Set(),projects:[],rules:null,total:0,document:null,memoryLane:'overview',projectSort:'recent',qaSort:'recent',fragmentsOpen:false};
   let toastTimer, renderSequence=0, rulesDirty=false, actionBusy=false;
+  let cleaningNode=null;const cleaningState={dirty:false,busy:false,background:false};
+  function syncCleaning(){if(state.view==='cleaning'){rulesDirty=cleaningState.dirty;actionBusy=cleaningState.busy&&!cleaningState.background;mount.setAttribute('aria-busy',String(cleaningState.busy));}}
   function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,6500); }
   async function api(route, body) {
     const response=await EvolvAuth.fetch('/api/knowledge/'+route,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -37,6 +39,7 @@
   async function refreshProjects(){const result=await api('projects');state.projects=result.projects;$('#pending-count').textContent=result.pending||'';return result;}
   async function render(){
     const seq=++renderSequence; $('#content').inert=true;
+    if(state.view==='cleaning')syncCleaning();else{if($('#content').contains(cleaningNode))rulesDirty=false;actionBusy=false;mount.setAttribute('aria-busy','false');}
     $('#new-item').hidden=!['intake','library'].includes(state.view)||(state.view==='library'&&!state.project.startsWith('__'));
     const management=['intake','rules','skill','learning'].includes(state.view)||(state.view==='library'&&state.project==='__all__');
     $('.knowledge-heading').hidden=state.view==='library'&&!state.project.startsWith('__');
@@ -51,7 +54,11 @@
     $('#content').onclick=null;$('#content').oninput=null;$('#content').onchange=null;
     if(state.view==='learning'){$('#content').innerHTML='<section class="panel"><h2>协作学习已停用</h2><p>各环节由 Skill 明确维护。旧学习资料保留，但不再自动生成或注入规则。</p><a href="#knowledge/skill" data-view="skill">打开经验提取与验证 Skill</a></section>';return;}
     if(state.view==='projects'){renderProjects(info);return;}
-    if(state.view==='cleaning'){await EvolvCleaning.render({mount:$('#content'),api,esc,toast,onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
+    if(state.view==='cleaning'){
+      if(cleaningNode){$('#content').replaceChildren(cleaningNode);syncCleaning();return;}
+      cleaningNode=document.createElement('div');$('#content').replaceChildren(cleaningNode);
+      try{await EvolvCleaning.render({mount:cleaningNode,api,esc,toast,onDirty:v=>{cleaningState.dirty=v;syncCleaning();},onBusy:(v,background=false)=>{cleaningState.busy=v;cleaningState.background=background;syncCleaning();}});}catch(error){cleaningNode=null;throw error;}return;
+    }
     if(state.view==='unassigned'){$('#content').innerHTML=historyTabs()+'<div id="history-organization"></div>';await EvolvHistoryOrganization.render({mount:$('#history-organization'),api,esc,toast,projects:state.projects,onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
     if(state.view==='qa'){const hashSort=new URLSearchParams(location.hash.split('?')[1]||'').get('sort');if(Object.hasOwn(qaSorts,hashSort))state.qaSort=hashSort;$('#content').innerHTML=`<div class="qa-sort-bar"><label for="qa-sort">排序</label><select id="qa-sort" aria-label="问答排序方式">${Object.entries(qaSorts).map(([key,label])=>`<option value="${key}" ${state.qaSort===key?'selected':''}>${label}</option>`).join('')}</select></div><div class="memory-manager"></div>`;await EvolvMemory.render({mount:$('.memory-manager'),doc:{project:state.project,name:'所有项目',source_ids:[],sessions:[],qa_count:0},projects:state.projects,api:qaApi,esc,toast,lane:'qa',standalone:true,onLane:()=>{},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));},onChanged:render,onSource:detail,onDirty:v=>rulesDirty=v});return;}
     if(state.view==='skill'){await EvolvPipeline.render({mount:$('#content'),api,esc,toast,onDirty:v=>{rulesDirty=v;const s=$('#stage-state');if(s)s.classList.toggle('unsaved',v);},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
@@ -241,7 +248,7 @@
   mount.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='search')actions.search().catch(x=>toast(x.message));});
   $('#new-item').onclick=()=>newItem();
   mount.classList.toggle('readonly',!EvolvAuth.canWrite);$('#readonly').hidden=EvolvAuth.canWrite;
-  window.addEventListener('beforeunload',e=>{if(rulesDirty){e.preventDefault();e.returnValue='';}});
+  window.addEventListener('beforeunload',e=>{if(rulesDirty||cleaningState.dirty||cleaningState.busy){e.preventDefault();e.returnValue='';}});
   function hash(){const p=new URLSearchParams();if(state.project!=='__all__')p.set('project',state.project);if(state.q)p.set('q',state.q);if(state.view==='projects'&&state.projectSort!=='recent')p.set('sort',state.projectSort);if(state.view==='qa'&&state.qaSort!=='recent')p.set('sort',state.qaSort);if(state.memoryLane!=='overview'&&state.view==='library')p.set('lane',state.memoryLane);return `#knowledge/${state.view}${p.size?'?'+p:''}`;}
   return {
     kind:'memories', integrated:true,
@@ -252,7 +259,7 @@
     set projectSort(value){if(state.view==='qa'){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';return;}state.projectSort=Object.hasOwn(projectSorts,value)?value:'recent';},
     set qaSort(value){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';},
     set lane(value){state.memoryLane=['overview','history','qa'].includes(value)?value:'overview';},
-    canLeave(){if(actionBusy){toast('正在处理，请稍候再切换。');return false;}if(rulesDirty&&!confirm('当前内容有未保存的修改。放弃修改并离开？'))return false;rulesDirty=false;return true;},
+    canLeave(){if(actionBusy){toast('正在处理，请稍候再切换。');return false;}if(state.view!=='cleaning'&&rulesDirty&&!confirm('当前内容有未保存的修改。放弃修改并离开？'))return false;rulesDirty=false;return true;},
     draw(){},
     load(){state.page=1;state.selected.clear();return render().catch(e=>{$('#content').innerHTML=`<div class="empty error">${esc(e.message)}<br><button data-action="retry">重新加载</button></div>`;});},
   };
