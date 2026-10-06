@@ -388,5 +388,10 @@
 .clean-category select{flex:1;min-width:0}
 .cleaning-select-all{padding:10px 0}
 .knowledge-workspace .danger{color:#a82128;border-color:#e5bec1}
+.cleaning-card.cleaning-delete-pending{border:2px solid #b93830;background:#fffaf8}
+.cleaning-delete-question{margin:12px 0;padding:14px;border-radius:8px;background:#fff0e9;color:#8c241e;overflow-wrap:anywhere}
+.cleaning-delete-question p{margin:8px 0 0}
+.knowledge-workspace button.delete-highlight{background:#b52c25;color:#fff;border:2px solid #8c241e;font-weight:700;box-shadow:0 0 0 3px #f8d2ca}
+.knowledge-workspace button.delete-highlight:hover{background:#90221c;color:#fff}
 #clean-notice{min-height:24px}
 @media(max-width:760px){.cleaning-comparison{grid-template-columns:1fr}.cleaning-card{padding:14px}.cleaning-card>.section-head,.cleaning-review>.section-head{flex-direction:column;align-items:flex-start}}

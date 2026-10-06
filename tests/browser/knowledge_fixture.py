@@ -48,6 +48,8 @@ ready(s)
 # Only the external provider is substituted; HTTP, parsing and policy checks remain real.
 def model(prompt, *a, **kw):
     if '你是资料清洗助手' in prompt:
+        if '无用测试资料' in prompt.split('正文分段',1)[-1]:
+            return json.dumps({'cleaned_text':'待核对的无用测试资料。','category':'reference','recommended_action':'delete','reason':'按清洗 Skill，本条没有完成事项或明确决定。'},ensure_ascii=False)
         return json.dumps({'cleaned_text':'用户要求先清洗资料，核对后再归入 Evo 演示项目。','category':'task_requirement','reason':'保留明确目标与处理顺序。'},ensure_ascii=False)
     if '你是项目历史分类助手' in prompt:
         samples=json.loads(prompt.split('待分类资料（仅正文片段，不代表完整会话）：\n',1)[1])

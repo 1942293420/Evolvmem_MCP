@@ -140,3 +140,35 @@ def test_delete_removes_all_unassigned_snapshots_and_cleaning_draft(service):
     for a in (old,latest):assert not (service.config.data_dir/a.payload_path).exists()
     assert clean(service)['total']==dispatch(service,'GET','history/organization')['total']==0
     assert all(not r[0] and not r[1] for r in service.store._connection().execute('SELECT source_text,cleaned_text FROM knowledge_cleaning_reviews'))
+
+
+def test_delete_recommendation_is_preview_only_and_requires_a_decision(service,monkeypatch):
+    from evolvmem import kimi_hooks
+    archive(service,project='');row=clean(service)['items'][0]
+    monkeypatch.setattr(kimi_hooks,'_load_llm_config',lambda:object())
+    monkeypatch.setattr(kimi_hooks,'_call_llm_with_retry',lambda *a,**k:json.dumps({
+        'cleaned_text':'','category':'reference','recommended_action':'delete',
+        'reason':'按已保存 Skill，本条没有有效事项或决定。'}))
+    result=clean(service,'/preview',{'items':[row]})['items'][0]
+    assert result['ok'] and result['recommended_action']=='delete'
+    assert result['cleaned_text']  # Still has source text if the user chooses to retain it.
+    assert '没有有效事项' in result['delete_reason']
+    assert clean(service)['total']==1
+    saved=clean(service,'/save',{'items':[result]})
+    assert saved['failed']==1 and saved['items'][0]['error']=='cleaning_delete_decision_required'
+    assert clean(service,'/save',{'items':[{**result,'recommended_action':'keep'}]})['succeeded']==1
+
+
+def test_partial_noise_does_not_recommend_deleting_whole_long_source(service,monkeypatch):
+    from evolvmem import kimi_hooks
+    service.knowledge().create({'title':'混合资料','body':'甲'*12000+'必须保留的业务决定。','action':'draft'})
+    row=clean(service)['items'][0]
+    responses=iter([
+        {'cleaned_text':'','recommended_action':'delete','reason':'本段无意义'},
+        {'cleaned_text':'必须保留的业务决定。','recommended_action':'keep','reason':'有业务决定'}])
+    monkeypatch.setattr(kimi_hooks,'_load_llm_config',lambda:object())
+    monkeypatch.setattr(kimi_hooks,'_call_llm_with_retry',lambda *a,**k:json.dumps(next(responses)))
+    result=clean(service,'/preview',{'items':[row]})['items'][0]
+    assert result['ok'] and result['recommended_action']=='keep'
+    assert not result['delete_reason']
+    assert '必须保留的业务决定' in result['cleaned_text']

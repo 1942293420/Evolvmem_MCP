@@ -1,7 +1,7 @@
 /* Product diagrams use explicit SVG activity notation, within the main shell. */
 window.EvolvPrinciples={render(mount){
  if(mount.dataset.ready)return;mount.dataset.ready='true';
- const modules=[['数据清洗','清洗 Skill · 原文与 AI 预览','修改清洗稿 · 分类 · 永久删除','#knowledge/cleaning'],['项目历史','已整理 · 清洗后待入库项目','归属 Skill · 预览与批量保存','#knowledge/projects'],['经验知识','分类问答 · 适用条件','经验案例 · 来源与验证','#knowledge/qa'],['任务断点','任务目标 · 当前进度','下一步 · 阻塞 · 续接','#progress'],['资料整理','入库复核 · 核对内容','确认入库 · 纠正与归档','#knowledge/intake'],['Skill 规则','经验提取与验证','提取说明 · 准入条件 · 候选核对','#knowledge/skill']];
+ const modules=[['数据清洗','清洗 Skill · 原文与 AI 预览','弃用提示 · 逐条确认删除','#knowledge/cleaning'],['项目历史','已整理 · 清洗后待入库项目','归属 Skill · 预览与批量保存','#knowledge/projects'],['经验知识','分类问答 · 适用条件','经验案例 · 来源与验证','#knowledge/qa'],['任务断点','任务目标 · 当前进度','下一步 · 阻塞 · 续接','#progress'],['资料整理','入库复核 · 核对内容','确认入库 · 纠正与归档','#knowledge/intake'],['Skill 规则','经验提取与验证','提取说明 · 准入条件 · 候选核对','#knowledge/skill']];
  const text=(x,y,lines,cls='')=>`<text x="${x}" y="${y}" text-anchor="middle" class="${cls}">${lines.map((s,i)=>`<tspan x="${x}" dy="${i?24:0}">${s}</tspan>`).join('')}</text>`;
  const box=(x,y,w,h,lines,cls='')=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" class="node ${cls}"/>${text(x+w/2,y+h/2-(lines.length-1)*12+6,lines)}`;
  const arrow=(d,label,x,y)=>`<path d="${d}" class="edge" marker-end="url(#arrow)"/>${label?text(x,y,[label],'edge-label'):''}`;
@@ -15,7 +15,7 @@ window.EvolvPrinciples={render(mount){
    modules.slice(3).map((m,i)=>box(26+i*324,385,280,132,[m[0],m[1],m[2]],'warm')).join('')+
    text(490,566,['清洗、归属、提取与验证由各自 Skill 管理；历史与经验分别检索。'],'caption'));
  const flow=svg('历史和经验并行处理与检索',920,
-   box(305,20,370,70,['原始资料 → 清洗预览','核对或修改清洗稿，批量保存'])+arrow('M490 90V125')+
+   box(305,20,370,70,['原始资料 → 清洗预览','弃用项询问删除；保留项批量保存'])+arrow('M490 90V125','[保留]',539,112)+arrow('M675 55H720','[确认删除]',786,15)+box(720,25,230,65,['永久删除此条','取消则仍保留'],'warm')+
    box(305,125,370,70,['待入库项目 → 确认归属','使用已保存的项目归属 Skill'])+
    arrow('M490 195V230H245V270')+arrow('M490 230H735V270')+
    box(65,270,360,85,['历史分支','原文、清洗稿、会话与项目摘要'])+
@@ -28,13 +28,16 @@ window.EvolvPrinciples={render(mount){
    box(555,620,360,80,['已验证经验索引','回答：什么方法在什么条件下有效'])+
    arrow('M245 700V745H490V785')+arrow('M735 700V745H490')+
    box(280,785,420,80,['按问题选择历史、经验或同时查询','正文与验证依据保存在数据库'],'accent'));
- const activity=svg('历史与经验处理活动图',1160,
-   '<rect x="24" y="18" width="932" height="1118" rx="16" class="swimlane"/><path d="M650 18V1136 M24 82H956" class="lane-line"/>'+
+ const activity=svg('历史与经验处理活动图',1320,
+   '<rect x="24" y="18" width="932" height="1278" rx="16" class="swimlane"/><path d="M650 18V1296 M24 82H956" class="lane-line"/>'+
    text(337,57,['系统处理'])+text(802,57,['用户核对'])+
    '<circle cx="337" cy="112" r="10" class="terminal"/>'+arrow('M337 122V150')+
    box(207,150,260,70,['按 Skill 清洗并预览'])+arrow('M467 185H688')+
-   box(688,150,230,100,['核对或修改清洗稿','批量保存','确认项目归属'],'warm')+
-   arrow('M803 250V290H337V315')+'<rect x="125" y="315" width="420" height="7" class="terminal"/>'+
+   box(688,150,230,70,['核对清洗稿与弃用建议','每条可手动删除'],'warm')+
+   arrow('M803 220V262')+diamond(803,300,'确认永久删除？')+
+   arrow('M703 300H570','[是]',626,282)+box(250,265,320,70,['删除此条资料','取消确认则保留'],'warm')+
+   arrow('M410 335V361')+'<circle cx="410" cy="376" r="14" fill="none" stroke="#344b5b" stroke-width="2"/><circle cx="410" cy="376" r="9" class="terminal"/>'+
+   arrow('M803 338V450H337V475','[保留：保存并确认归属]',788,418)+'<g transform="translate(0 160)">'+'<rect x="125" y="315" width="420" height="7" class="terminal"/>'+
    arrow('M175 322V360')+arrow('M495 322V360')+
    box(45,360,260,90,['历史：保存原文与清洗稿','生成会话和项目摘要'])+
    box(365,360,260,90,['经验：提取与验证','核对方法、条件和实际结果'])+
@@ -47,8 +50,8 @@ window.EvolvPrinciples={render(mount){
    arrow('M495 880V922')+box(45,880,260,75,['历史可检索','记录不等于成功经验'])+
    arrow('M175 955V990H329')+arrow('M495 922V990H345')+'<path d="M337 982L345 990L337 998L329 990Z" class="decision"/>'+
    arrow('M337 998V1025')+box(207,1025,260,60,['按历史 / 经验 / 两者检索'])+
-   arrow('M337 1085V1100')+'<circle cx="337" cy="1115" r="14" fill="none" stroke="#344b5b" stroke-width="2"/><circle cx="337" cy="1115" r="9" class="terminal"/>');
+   arrow('M337 1085V1100')+'<circle cx="337" cy="1115" r="14" fill="none" stroke="#344b5b" stroke-width="2"/><circle cx="337" cy="1115" r="9" class="terminal"/></g>');
  const diagrams={modules:moduleMap,flow,activity};
  mount.innerHTML=`<header class="data-page-header"><span class="knowledge-eyebrow">产品说明</span><h1>工作原理</h1><p>先看六个模块各管什么，再看一段对话怎样成为知识，以及你什么时候需要参与。</p></header><nav class="principles-tabs" aria-label="工作原理图类型"><button data-principle="modules" aria-pressed="true">模块职责图</button><button data-principle="flow" aria-pressed="false">业务流程图</button><button data-principle="activity" aria-pressed="false">入库活动图</button></nav><section class="principle-board"><div class="section-head"><div><h2 id="principle-title">六个业务模块，分别负责什么</h2><p id="principle-description" class="hint">项目摘要属于项目历史；任务断点只回答如何继续任务。</p></div><button class="ui-button" data-diagram-size>放大图中文字</button></div><p class="diagram-scroll-hint">小屏可横向滚动看清文字。</p><div class="product-diagram" tabindex="0" aria-label="图示，可横向滚动">${moduleMap}</div><p class="diagram-legend" hidden>活动图符号：● 开始 · ◎ 结束 · 圆角框为动作 · 菱形为判断 · 黑条为分支汇合。</p></section><div class="principle-links">${modules.map(m=>`<a href="${m[3]}"><strong>${m[0]} →</strong><span>${m[1]}</span></a>`).join('')}</div>`;
- mount.onclick=e=>{const b=e.target.closest('[data-principle]');if(b){mount.querySelectorAll('[data-principle]').forEach(t=>t.setAttribute('aria-pressed',String(t===b)));const kind=b.dataset.principle;const board=mount.querySelector('.product-diagram');board.innerHTML=diagrams[kind];board.scrollLeft=0;mount.querySelector('.diagram-legend').hidden=kind!=='activity';mount.querySelector('#principle-title').textContent=({modules:'六个业务模块，分别负责什么',flow:'一段对话，怎样成为可用知识',activity:'历史与经验并行，经验核对验证依据'})[kind];mount.querySelector('#principle-description').textContent=({modules:'项目摘要属于项目历史；任务断点只回答如何继续任务。',flow:'先确认清洗与归属，再并行生成项目历史和经验；两类均可检索。',activity:'历史保留记录；经验须有实际验证依据。候选保留待核对，不冒充已验证方法。'})[kind];}if(e.target.closest('[data-diagram-size]')){const board=mount.querySelector('.product-diagram');board.classList.toggle('enlarged');e.target.textContent=board.classList.contains('enlarged')?'恢复图大小':'放大图中文字';}};
+ mount.onclick=e=>{const b=e.target.closest('[data-principle]');if(b){mount.querySelectorAll('[data-principle]').forEach(t=>t.setAttribute('aria-pressed',String(t===b)));const kind=b.dataset.principle;const board=mount.querySelector('.product-diagram');board.innerHTML=diagrams[kind];board.scrollLeft=0;mount.querySelector('.diagram-legend').hidden=kind!=='activity';mount.querySelector('#principle-title').textContent=({modules:'六个业务模块，分别负责什么',flow:'一段对话，怎样成为可用知识',activity:'历史与经验并行，经验核对验证依据'})[kind];mount.querySelector('#principle-description').textContent=({modules:'项目摘要属于项目历史；任务断点只回答如何继续任务。',flow:'AI 提示弃用后，由你逐条决定是否删除；保留项确认清洗与归属，再生成历史和经验。',activity:'历史保留记录；经验须有实际验证依据。候选保留待核对，不冒充已验证方法。'})[kind];}if(e.target.closest('[data-diagram-size]')){const board=mount.querySelector('.product-diagram');board.classList.toggle('enlarged');e.target.textContent=board.classList.contains('enlarged')?'恢复图大小':'放大图中文字';}};
 }};
