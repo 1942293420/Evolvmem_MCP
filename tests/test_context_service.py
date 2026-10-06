@@ -2636,7 +2636,7 @@ def test_degraded_primary_rejects_lifecycle_and_archive_operations(
     service.close()
 
 
-def test_confirm_promotes_candidate_under_lock_and_syncs_vector(
+def test_confirm_keeps_transaction_but_does_not_verify_method(
     test_config, probe_store
 ):
     service = _lifecycle_service(
@@ -2659,8 +2659,8 @@ def test_confirm_promotes_candidate_under_lock_and_syncs_vector(
     # 锁内事务：状态翻转与 evidence 插入都持共享 cutover 锁
     assert probe_store.status_lock_states == [True]
     assert probe_store.evidence_lock_states == [True]
-    # 提交后才同步：新 active 项的 L0 进入 context 向量缓存
-    assert item.id in service.vector_index.ids
+    # 人工确认不等于具有实际验证依据，方法不进入经验索引。
+    assert item.id not in service.vector_index.ids
     service.close()
 
 
@@ -2885,8 +2885,8 @@ def test_run_consolidation_promotes_and_degrades_playbook_without_error(
         probe_store.get_item(item.id, include_layers=False).status
         is ContextStatus.ACTIVE
     )
-    # 晋升项的 L0 在提交后进入 context 向量缓存
-    assert item.id in service.vector_index.ids
+    # 旧式来源计数未绑定独立验证证据，不能当作已验证方法索引。
+    assert item.id not in service.vector_index.ids
     # 无 LLM：playbook 生成是显式降级，不是错误
     assert report.playbook_reason == "llm_unavailable"
     assert report.playbook_created_ids == ()

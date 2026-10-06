@@ -135,19 +135,6 @@ class MemoryLearning:
                 self.conn.execute("UPDATE context_items SET tier='normal' WHERE id=?", (item_id,))
             from evolvmem.qa_memory import record
             record(self.service, item_id, metadata)
-            instruction = str(metadata.get('instruction') or '').strip()
-            if not instruction or category in ('task_requirement', 'environment', 'reference', 'experience'):
-                return
-            try:
-                self.propose({'topic': metadata.get('topic') or row['identity_key'], 'instruction': instruction,
-                    'trigger': payload['trigger'], 'rationale': payload['rationale'],
-                    'scope': 'project' if row['project'] else 'global', 'target': row['project'],
-                    'source_ids': [item_id], 'exceptions': metadata.get('exceptions', '')},
-                    explicit=basis == 'explicit' and instruction == quote and metadata.get('auto_explicit_rules', True), origin='extraction')
-            except ValueError:
-                # Bad model rule fields must not discard otherwise valid memories.
-                payload['rule_error'] = 'invalid_learning_rule'
-                self.conn.execute('UPDATE learning_memories SET payload=? WHERE item_id=?', (encoded(payload), item_id))
 
     def classify(self, item_id, body):
         kb = self.service.knowledge()
@@ -322,7 +309,7 @@ class MemoryLearning:
         path = Path(self.service.config.data_dir) / 'collaboration' / 'SKILL.md'
         path.parent.mkdir(parents=True, exist_ok=True)
         temp = path.with_suffix('.tmp')
-        temp.write_text(self.settings()['framework'], encoding='utf-8')
+        temp.write_text('---\nname: evolvmem-collaboration\ndescription: 已停用的协作学习入口\n---\n\n协作学习已停用。不再自动生成、注入或应用协作规则。\n处理资料请使用各环节 Skill；查询历史和已验证经验沿用对应检索工具。\n旧框架与学习结果保留在数据库，停用不删除记录。\n', encoding='utf-8')
         temp.replace(path)
         return path
 
@@ -352,56 +339,13 @@ class MemoryLearning:
         return row
 
     def skill(self, project='', *, max_chars=12000):
-        family = next((x['family'] for x in self.families() if x['project']==project), '')
-        settings = self.settings()
-        applicable = []
-        for saved in self.conn.execute("SELECT id FROM learning_rules WHERE status='active' AND (scope='global' OR (scope='project' AND target=?) OR (scope='family' AND target=? AND target!='')) ORDER BY CASE scope WHEN 'project' THEN 0 WHEN 'family' THEN 1 ELSE 2 END,id DESC", (project,family)):
-            rule = self.rule(saved['id'])
-            if rule['effective']:
-                applicable.append(rule)
-        text = settings['framework'] + '\n## 已学习的适用规则\n'
-        included = []
-        for r in applicable:
-            part = f"\n- [规则 #{r['id']} · {r['scope']}:{r['target'] or '通用'}] {r['instruction']}\n  适用：{r['trigger'] or '遵循来源范围'}；例外：{r['exceptions'] or '无额外声明'}；依据：" + ', '.join('#'+str(s['id']) for s in r['sources']) + '\n'
-            if len(text) + len(part) > max_chars:
-                continue
-            text += part
-            included.append(r['id'])
-        from evolvmem.memory_recall import recall
-        qa_ids = []
-        try:
-            knowledge = recall(self.service, {'project':project, 'query':'开发协作习惯约定', 'kind':'experience',
-                                              'max_chars':max(1, max_chars-len(text))})
-        except ValueError:
-            knowledge = {'qa':[]}
-        for row in knowledge['qa']:
-            if row['category'] not in ('habit','project_convention','decision','experience'):
-                continue
-            part = f"\n[经验问答 #{row['id']}] 问：{row['question']}\n答：{row['answer']}\n适用：{row['trigger'] or '遵循来源范围'}\n"
-            if len(text)+len(part) <= max_chars:
-                text += part
-                qa_ids.append(row['id'])
-        return {'skill': text, 'project':project,'family':family,'revision':settings['revision'],'rule_ids':included,'qa_ids':qa_ids}
+        return {'status':'disabled', 'skill':'', 'project':project, 'family':'', 'revision':self.settings()['revision'], 'rule_ids':[], 'qa_ids':[]}
 
     def analyze(self, params, *, llm=None):
+        if params.get('automatic'):
+            return {'status':'disabled', 'rules':[]}
         from evolvmem.learning_analysis import analyze
         return analyze(self, params, llm=llm)
 
     def context(self, project, max_chars=1800):
-        """Bounded injection; unconfigured installations retain their old behavior."""
-        if self.settings()['revision'] == 0:
-            return ''
-        skill = self.skill(project)
-        header = '[EvolvMem 协作记忆：历史参考，当前要求优先，不扩大授权]\n'
-        text = header
-        framework = self.settings()['framework'].split('---',2)[-1].strip()
-        if len(text)+len(framework)+1 <= max_chars // 2:
-            text += framework + '\n'
-        for rule_id in skill['rule_ids']:
-            r = self.rule(rule_id)
-            part = f"规则 #{r['id']}（{r['scope']}:{r['target'] or '通用'}，适用：{r['trigger'] or '来源范围'}）：{r['instruction']}" + (f"；例外：{r['exceptions']}" if r['exceptions'] else '') + '\n'
-            if len(text)+len(part)+40 <= max_chars:
-                text += part
-        if text == header:
-            return ''
-        return text + '[协作记忆结束]\n'
+        return ''

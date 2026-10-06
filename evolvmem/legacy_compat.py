@@ -29,6 +29,11 @@ class LegacyCompatibilityFacade:
     def __init__(self, service: "ContextService") -> None:
         self._service = service
 
+    def _eligible(self, mem_id):
+        from evolvmem.memory_eligibility import eligible
+        cid = self._service.store.resolve_legacy_mapping(mem_id)
+        return cid is None or eligible(self._service.store, cid)
+
     # ---- narrow legacy reads ----
 
     def get_by_id(self, mem_id: int) -> dict | None:
@@ -40,19 +45,19 @@ class LegacyCompatibilityFacade:
 
     def get_by_ids(self, ids: list[int]) -> list[dict]:
         """Batch fetch records by id."""
-        return self._reader().get_by_ids(ids)
+        return [row for row in self._reader().get_by_ids(ids) if self._eligible(row["id"])]
 
     def get_active(self) -> list[dict]:
         """Return all status='active' and unexpired memories, ordered by updated_at descending."""
-        return self._reader().get_active()
+        return [row for row in self._reader().get_active() if self._eligible(row["id"])]
 
     def search_fts(self, query: str, top_k: int = 20) -> list[dict]:
         """FTS5 full-text search over the legacy projection."""
-        return self._reader().search_fts(query, top_k)
+        return [row for row in self._reader().search_fts(query, top_k) if self._eligible(row["id"])]
 
     def all_ids(self) -> list[int]:
         """Return ids of all non-deleted records (for USearch sync)."""
-        return self._reader().all_ids()
+        return [mid for mid in self._reader().all_ids() if self._eligible(mid)]
 
     def count_active(self) -> int:
         """Count status='active' and unexpired memories (same scope as get_active)."""

@@ -1470,7 +1470,8 @@ class ContextStore:
             "ORDER BY i.id",
             (_now_iso(),),
         ).fetchall()
-        return [ContextVectorDocument(item_id=row["item_id"], l0=row["l0"]) for row in rows]
+        from evolvmem.memory_eligibility import eligible
+        return [ContextVectorDocument(item_id=row["item_id"], l0=row["l0"]) for row in rows if eligible(self, row["item_id"])]
 
     def get_retrieval_records(
         self, item_ids: list[int]

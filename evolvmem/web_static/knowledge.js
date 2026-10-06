@@ -3,8 +3,8 @@
   window.EvolvKnowledge = {create(mount, hooks = {}) {
   mount.classList.add('knowledge-workspace');
   mount.innerHTML=`<header class="knowledge-heading"><div><span class="knowledge-eyebrow">PROJECT KNOWLEDGE</span><h1 id="knowledge-title">项目历史</h1><p id="knowledge-description">每个项目一份总记忆，关联历次会话的摘要与清洗正文。</p></div><div class="actions"><span id="readonly" class="hint" hidden>当前为只读访问</span><button id="new-item" class="primary write">＋ 新增资料</button></div></header>
-  <nav class="knowledge-tabs" aria-label="整理与规则"><div><a href="#knowledge/intake" data-view="intake">资料待确认 <b id="pending-count"></b></a><a href="#knowledge/library" data-view="library">来源资料</a><a href="#knowledge/learning" data-view="learning">协作学习成果</a><a href="#knowledge/rules" data-view="rules">高级入库设置</a><a href="#knowledge/skill" data-view="skill">处理 Skill</a></div></nav>
-  <div class="knowledge-flow" aria-label="记忆处理流程"><ol><li><b>1 · 同步与归属</b></li><li><b>2 · 清洗提炼</b></li><li><b>3 · 分别入库</b></li><li><b>4 · 参考与学习</b></li></ol></div><div id="content" aria-live="polite"></div><div id="toast" role="status" hidden></div><dialog id="dialog" aria-labelledby="knowledge-dialog-title"><div id="dialog-content"></div></dialog>`;
+  <nav class="knowledge-tabs" aria-label="整理与规则"><div><a href="#knowledge/intake" data-view="intake">资料待确认 <b id="pending-count"></b></a><a href="#knowledge/library" data-view="library">来源资料</a><a href="#knowledge/rules" data-view="rules">高级入库设置</a><a href="#knowledge/skill" data-view="skill">处理 Skill</a></div></nav>
+  <div class="knowledge-flow" aria-label="记忆处理流程"><ol><li><b>1 · 清洗确认</b></li><li><b>2 · 项目归属</b></li><li><b>3 · 历史与经验</b></li><li><b>4 · 历史与经验检索</b></li></ol></div><div id="content" aria-live="polite"></div><div id="toast" role="status" hidden></div><dialog id="dialog" aria-labelledby="knowledge-dialog-title"><div id="dialog-content"></div></dialog>`;
   const $ = s => mount.querySelector(s);
   const esc = v => String(v ?? '').replace(/[&<>"']/g, x => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
   const types = {reference:'参考资料',fact:'事实 / 业务规则',decision:'决策',experience:'经验',playbook:'操作方法',session_summary:'会话摘要',project_summary:'项目摘要',workstream_checkpoint:'任务断点',workflow_policy:'流程规范',constraint:'约束',preference:'偏好',user_profile:'用户资料'};
@@ -41,15 +41,15 @@
     const management=['intake','rules','skill','learning'].includes(state.view)||(state.view==='library'&&state.project==='__all__');
     $('.knowledge-heading').hidden=state.view==='library'&&!state.project.startsWith('__');
     $('.knowledge-tabs').hidden=!management;$('.knowledge-flow').hidden=!management;
-    const flowSteps={intake:1,library:2,rules:3,skill:2,learning:4};
+    const flowSteps={intake:3,library:3,rules:3,skill:3,learning:4};
     mount.querySelectorAll('.knowledge-flow li').forEach((li,i)=>{const current=flowSteps[state.view]===i+1;li.classList.toggle('current',current);if(current)li.setAttribute('aria-current','step');else li.removeAttribute('aria-current');});
     const titles={projects:'项目历史',unassigned:'项目历史',cleaning:'数据清洗',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'经验知识',intake:'资料待确认',rules:'清洗与入库规则',skill:'处理 Skill',learning:'协作学习'};
-    $('#knowledge-title').textContent=titles[state.view];$('#knowledge-description').textContent=state.view==='cleaning'?'原始资料先清洗，核对并保存后再进入项目归类。':state.view==='skill'?'维护提炼、入库与协作规则。清洗和项目归属在各自页面中管理。':state.view==='qa'?'按分类、项目和条件整理可复用知识；每条问答都有来源。':management?'在同一工作台完成核对、入库、规则调整与学习。':'每个项目一份总记忆，关联历次会话的摘要与清洗正文。';
+    $('#knowledge-title').textContent=titles[state.view];$('#knowledge-description').textContent=state.view==='cleaning'?'原始资料先清洗，核对并保存后再进入项目归类。':state.view==='skill'?'统一维护经验提取与验证规则；清洗和项目归属在各自页面中管理。':state.view==='qa'?'按分类、项目和条件整理可复用知识；每条问答都有来源。':management?'在同一工作台完成核对、保存、规则调整与检索。':'每个项目一份总记忆，关联历次会话的摘要与清洗正文。';
     try {
     mount.querySelectorAll('[data-view]').forEach(a=>{const active=a.dataset.view===state.view;a.classList.toggle('active',active);a.setAttribute('aria-current',active?'page':'false');});
     const info=await refreshProjects();if(seq!==renderSequence)return;
     $('#content').onclick=null;$('#content').oninput=null;$('#content').onchange=null;
-    if(state.view==='learning'){await EvolvLearning.render({mount:$('#content'),api,esc,toast,detail,projects:state.projects,onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
+    if(state.view==='learning'){$('#content').innerHTML='<section class="panel"><h2>协作学习已停用</h2><p>各环节由 Skill 明确维护。旧学习资料保留，但不再自动生成或注入规则。</p><a href="#knowledge/skill" data-view="skill">打开经验提取与验证 Skill</a></section>';return;}
     if(state.view==='projects'){renderProjects(info);return;}
     if(state.view==='cleaning'){await EvolvCleaning.render({mount:$('#content'),api,esc,toast,onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
     if(state.view==='unassigned'){$('#content').innerHTML=historyTabs()+'<div id="history-organization"></div>';await EvolvHistoryOrganization.render({mount:$('#history-organization'),api,esc,toast,projects:state.projects,onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
@@ -221,7 +221,7 @@
     'create-auto':()=>create('auto'),'create-draft':()=>create('draft'),
     'item-save':async()=>{const r=await api(`items/${editing.id}/update`,{expected_revision:editing.revision,title:$('#item-title').value,body:$('#item-body').value,tags:$('#item-tags').value.split(/[,，]/).map(s=>s.trim()).filter(Boolean)});await render();await detail(r.id);toast('资料内容已保存');},
     assign:async()=>{const p=$('#item-project').value;if(!p)throw new Error('请选择项目或全局知识。');if(editing.workstream_id&&!confirm('将迁移整个任务及其全部历史断点到所选项目。确认继续？'))return;await api(`items/${editing.id}/assign`,{expected_revision:editing.revision,project:p==='__global__'?'':p,move_workstream:!!editing.workstream_id});await render();await detail(editing.id);toast('项目归属已确认');},
-    'classification-save':async()=>{const r=await api('learning/memories/'+editing.id,{expected_revision:editing.revision,category:$('#item-category').value,trigger:$('#item-trigger').value});await render();await detail(r.id);toast('分类已修正，受影响的协作规则需要重新确认');},
+    'classification-save':async()=>{const r=await api('learning/memories/'+editing.id,{expected_revision:editing.revision,category:$('#item-category').value,trigger:$('#item-trigger').value});await render();await detail(r.id);toast('分类已修正，后续检索按新分类处理');},
     correction:()=>newItem({project:editing.project,title:'补充：'+editing.title,source:`对知识资料 #${editing.id} 的补充 / 更正`}),
     'batch-assign':()=>modal('批量更改归属',`<p class="intro" style="margin-top:20px">已选择 ${state.selected.size} 份资料。任务断点请在详情中整组迁移。</p><div class="field"><label for="batch-project">目标项目</label><select id="batch-project">${projectOptions('')}</select></div>`,'<button data-action="close">取消</button><button class="primary write" data-action="batch-assign-save">确认更改</button>'),
     'batch-assign-save':()=>{const p=$('#batch-project').value;if(!p)throw new Error('请选择目标项目。');return batch('assign',{project:p==='__global__'?'':p});},

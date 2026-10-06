@@ -13,7 +13,7 @@ def save_stage(service, stage, **changes):
 
 
 def test_skill_catalog_and_attribution_settings_are_executable(service):
-    assert [s['id'] for s in dispatch(service, 'GET', 'skills')['skills']] == ['ownership', 'cleaning', 'extraction', 'ingestion', 'collaboration']
+    assert [s['id'] for s in dispatch(service, 'GET', 'skills')['skills']] == ['ownership', 'cleaning', 'extraction']
     sample = {'body': 'evo 项目需要保留可追溯的历史记录。', 'source': '样例'}
     assert service.knowledge().preview(sample)['project'] == 'evo'
     old = dispatch(service, 'GET', 'skills/ownership')
@@ -109,13 +109,11 @@ def test_normalization_is_derived_and_original_history_is_unchanged(service):
     assert not service.learning().overview()['rules']
 
 
-def test_collaboration_stage_uses_existing_framework_versions(service):
+def test_collaboration_stage_is_retired_and_data_remains(service):
     old=service.learning().settings()
-    saved=save_stage(service,'collaboration',instructions=old['framework']+'\n先核对当前业务目标。\n')
-    current=service.learning().overview()
-    assert saved['revision']==current['revision']>old['revision']
-    assert current['framework'].endswith('先核对当前业务目标。\n')
-    assert current['versions']
+    with pytest.raises(ValueError,match='collaboration_disabled'):
+        save_stage(service,'collaboration',instructions=old['framework'])
+    assert service.learning().settings()==old
     with pytest.raises(ValueError,match='invalid_rule_settings'):
         save_stage(service,'cleaning',settings={'auto_min_confidence':0})
 
@@ -134,9 +132,9 @@ def exported(service, stage):
     return path.read_text(encoding='utf-8') if path.exists() else ''
 
 
-def test_stages_export_as_five_standalone_skill_files(service):
+def test_stages_export_as_three_standalone_skill_files(service):
     dispatch(service, 'GET', 'skills')
-    for stage in ('ownership', 'cleaning', 'extraction', 'ingestion', 'collaboration'):
+    for stage in ('ownership', 'cleaning', 'extraction'):
         assert f'name: evolvmem-{stage}' in exported(service, stage), stage
     save_stage(service, 'ownership', instructions='先核对已经登记的项目归属。')
     assert '先核对已经登记的项目归属。' in exported(service, 'ownership')
@@ -149,9 +147,10 @@ def test_full_rules_save_and_framework_save_refresh_stage_exports(service):
         'settings': {**rules['settings'], 'ownership_instructions': '整体保存也要同步导出。'}})
     assert '整体保存也要同步导出。' in exported(service, 'ownership')
     old = service.learning().settings()
-    dispatch(service, 'POST', 'learning/framework', {'expected_revision': old['revision'],
-        'framework': old['framework'] + '\n先确认业务目标再动手。\n'})
-    assert '先确认业务目标再动手。' in exported(service, 'collaboration')
+    with pytest.raises(ValueError, match='collaboration_disabled'):
+        dispatch(service, 'POST', 'learning/framework', {'expected_revision': old['revision'],
+            'framework': old['framework'] + '\n先确认业务目标再动手。\n'})
+    assert service.learning().settings()==old
 
 
 def test_ownership_verify_parks_sample_with_decision_reason(service):
@@ -205,8 +204,8 @@ def test_extraction_verify_parks_model_candidates_for_confirmation(service):
 
 
 def test_collaboration_verify_reports_empty_scope_without_model(service):
-    result = verify(service, 'collaboration', {})
-    assert result['status'] == 'empty' and result['created'] == 0
+    with pytest.raises(ValueError, match='collaboration_disabled'):
+        verify(service, 'collaboration', {})
 
 
 def test_consecutive_verifies_do_not_leave_an_open_transaction(service):

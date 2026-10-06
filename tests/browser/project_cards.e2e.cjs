@@ -35,10 +35,10 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await click('[data-action="organize-page"]');await page.waitForSelector('.proposals');assert.match(await page.locator('#dialog-content').innerText(),/整理结果预览/);await click('#dialog [data-action="close"]');
   await click('.intake-actionbar [data-view="skill"]');await page.waitForSelector('#stage-instructions');checks.push('项目编辑和待确认入口独立可点；AI 整理先预览；Skill 按钮可跳转；说明小字移除');
   await go('#knowledge/projects','#project-search');await click('.project-utilities [data-project="__global__"]');await page.waitForSelector('.project-document');assert.ok(page.url().includes('__global__'));
-  await go('#knowledge/projects','#project-search');await click('.project-utilities [data-project="__none__"]');await page.waitForSelector('#filter-project');assert.equal(await page.locator('#filter-project').inputValue(),'__none__');
-  for(const [view,selector] of [['library','#search'],['learning','#learning-project'],['rules','#min-confidence'],['skill','#stage-instructions'],['intake','#filter-queue']]){
+  await go('#knowledge/projects','#project-search');await click('.project-utilities [data-view="unassigned"]');await page.waitForSelector('#history-instructions');await go('#knowledge/library','#search');
+  for(const [view,selector] of [['library','#search'],['rules','#min-confidence'],['skill','#stage-instructions'],['intake','#filter-queue']]){
    await click(`.knowledge-tabs [data-view="${view}"]`);await page.waitForSelector(selector);assert.equal(await page.locator(`.knowledge-tabs [data-view="${view}"]`).getAttribute('aria-current'),'page');
-  }checks.push('全局与未归属辅助入口、五个顶部导航按钮及选中状态');
+  }checks.push('全局与未归属辅助入口、四个顶部导航按钮及选中状态');
   for(const width of [390,768,1024,1440]){
    await page.setViewportSize({width,height:1000});await go('#knowledge/projects','#project-search');
    assert.equal(await page.locator('[data-project-card="old-evo"]').count(),0);

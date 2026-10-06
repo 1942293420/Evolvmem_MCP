@@ -44,17 +44,9 @@ def dispatch(service, method, path, body=None):
             if re.fullmatch(r'learning/versions/\d+', route):
                 return learning.version(int(route.split('/')[-1]))
         if method == 'POST':
-            commands = {'learning/analyze': learning.analyze, 'learning/framework': learning.save_framework,
-                        'learning/restore': learning.restore, 'learning/family': learning.set_family}
-            if route in commands:
-                result = commands[route](body)
-                if route in ('learning/framework', 'learning/restore'):
-                    from evolvmem.pipeline_skills import export_skills
-                    export_skills(service)
-                return result
-            match = re.fullmatch(r'learning/(rules|memories)/(\d+)', route)
-            if match:
-                return (learning.review if match[1]=='rules' else learning.classify)(int(match[2]), body)
+            if not re.fullmatch(r'learning/memories/\d+', route):
+                raise ValueError('collaboration_disabled')
+            return learning.classify(int(route.split('/')[-1]), body)
     if method == 'GET':
         if route == 'project-memory':
             from evolvmem.project_memory import document

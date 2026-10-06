@@ -76,6 +76,9 @@ class ContextVectorSynchronizer:
         dirty marker survives even a successful update, because earlier
         failures may still be unsynchronized.
         """
+        from evolvmem.memory_eligibility import eligible
+        if self.store.get_item(item_id, include_layers=False) is not None and not eligible(self.store, item_id):
+            return self.remove_l0(item_id)
         try:
             was_dirty = bool(self.vector_index.is_dirty())
         except Exception:

@@ -36,12 +36,16 @@ def detail(service, item_id):
         raise ValueError('history_is_not_qa')
     saved = service.store._connection().execute('SELECT * FROM knowledge_qa WHERE item_id=?', (item_id,)).fetchone()
     current = fingerprint(row)
-    effective = bool(saved and saved['status'] == 'active' and saved['source_fingerprint'] == current
+    from evolvmem.memory_eligibility import eligible
+    proof_ready = eligible(service.store, item_id)
+    effective = bool(proof_ready and saved and saved['status'] == 'active' and saved['source_fingerprint'] == current
                      and service.learning().usable(row)
                      and window_contains(row['effective_from'], row['effective_until'], _now_iso()))
     status = saved['status'] if saved else 'unformatted'
     reason = saved['reason'] if saved else '旧资料尚未整理为简洁问答'
-    if saved and saved['source_fingerprint'] != current:
+    if not proof_ready:
+        status, reason = 'candidate', '方法尚无独立验证依据，仅保留待验证候选'
+    elif saved and saved['source_fingerprint'] != current:
         status, reason = 'stale', '来源正文、分类、条件或归属已改变，需要重新核对问答'
     elif saved and saved['status'] == 'active' and not effective:
         status, reason = 'candidate', '来源尚未生效、已失效或归属待确认'

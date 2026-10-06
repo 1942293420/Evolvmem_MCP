@@ -157,7 +157,7 @@ def test_collaboration_skill_uses_effective_qa_but_does_not_promote_temporary_re
     qa_memory.save(service, {'project':'evo','question':'本次临时任务是什么？','answer':'本次只调整导航的显示顺序。',
         'category':'task_requirement','action':'publish'})
     skill = service.learning().skill('evo')['skill']
-    assert '问：界面讨论先明确什么？' in skill
+    assert skill == ''
     assert '本次只调整导航的显示顺序。' not in skill
 
 

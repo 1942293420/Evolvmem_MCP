@@ -3,7 +3,6 @@ window.EvolvExtraction = {
   settings(root, previous) {
     return {...previous,
       extraction_instructions:root.querySelector('#extraction-instructions').value,
-      auto_explicit_rules:root.querySelector('#extraction-auto').checked,
       related_memory_projects:[...root.querySelectorAll('[data-related-project]:checked')].map(e=>e.value)};
   },
   process(learning, esc) {
@@ -12,12 +11,11 @@ window.EvolvExtraction = {
     const n=learning?.normalization;const normalized=n?`<section class="requirement-expression"><h4>整理后的需求表达</h4><p>${esc(n.requirement)}</p>${(learning.evidence||[]).map(e=>`<blockquote>${esc(e.quote)}</blockquote>`).join('')}${n.acceptance?.length?`<p>用户明确的验收要求：${n.acceptance.map(esc).join('；')}</p>`:''}${n.questions?.length?`<p class="reason">待确认：${n.questions.map(esc).join('；')}</p>`:''}${learning.normalization_errors?.length?`<p class="reason">${learning.normalization_errors.map(esc).join('；')}</p>`:''}<small>这是引用原话整理的需求，不改写历史对话。</small></section>`:'';
     if(!entries.length)return normalized;
     const relation=learning.relation;
-    return normalized+`<details class="extraction-process"><summary>查看协作过程${relation?.target_id?' · 关联资料 #'+Number(relation.target_id):''}</summary>${entries.map(([stage,e])=>`<div><strong>${esc(names[stage]||stage)}</strong><blockquote>${esc(e.quote)}</blockquote><small>${esc(({user:'用户',assistant:'助手',tool:'工具'})[e.role]||e.role)} · 消息 ${Number(e.message_index)+1}${stage==='verification'?' · 原始陈述，不直接计作成功':''}</small></div>`).join('')}${learning.process_errors?.length?'<p class="hint">部分过程无法核对，已留待确认。</p>':''}</details>`;
+    return normalized+`<details class="extraction-process"><summary>查看交流与验证来源${relation?.target_id?' · 关联资料 #'+Number(relation.target_id):''}</summary>${entries.map(([stage,e])=>`<div><strong>${esc(names[stage]||stage)}</strong><blockquote>${esc(e.quote)}</blockquote><small>${esc(({user:'用户',assistant:'助手',tool:'工具'})[e.role]||e.role)} · 消息 ${Number(e.message_index)+1}${stage==='verification'?' · 原始陈述，不直接计作成功':''}</small></div>`).join('')}${learning.process_errors?.length?'<p class="hint">部分过程无法核对，已留待确认。</p>':''}</details>`;
   },
   mount({editor,preview,output,api,esc,projects,policy,getDraft,onDirty,onBusy}) {
     const active=projects.filter(p=>p.status==='active');
-    editor.innerHTML=`<label class="extraction-choice extraction-auto-choice"><input type="checkbox" id="extraction-auto" ${policy.settings.auto_explicit_rules?'checked':''}><span><strong>明确规则自动生效</strong><small>有用户原话且无冲突时自动更新，其余留待确认。</small></span></label>
-      <details class="rules-disclosure"><summary>对照项目旧知识<span>选择后续提炼可参考的项目</span></summary><div class="rules-disclosure-body"><p class="hint">勾选并保存后，该项目提炼会将最多 20 条旧知识（共 8,000 字）与对话一起发送给当前配置模型。未勾选时仅处理新对话。</p><div class="extraction-projects">${active.map(p=>`<label class="extraction-choice"><input type="checkbox" data-related-project value="${esc(p.project)}" ${policy.settings.related_memory_projects.includes(p.project)?'checked':''}>${esc(p.display_name||p.project)}</label>`).join('')||'<p class="hint">还没有已登记项目，请先在项目资料中添加。</p>'}</div></div></details>
+    editor.innerHTML=`      <details class="rules-disclosure"><summary>对照项目旧知识<span>选择后续提炼可参考的项目</span></summary><div class="rules-disclosure-body"><p class="hint">勾选并保存后，该项目提炼会将最多 20 条旧知识（共 8,000 字）与对话一起发送给当前配置模型。未勾选时仅处理新对话。</p><div class="extraction-projects">${active.map(p=>`<label class="extraction-choice"><input type="checkbox" data-related-project value="${esc(p.project)}" ${policy.settings.related_memory_projects.includes(p.project)?'checked':''}>${esc(p.display_name||p.project)}</label>`).join('')||'<p class="hint">还没有已登记项目，请先在项目资料中添加。</p>'}</div></div></details>
       <details class="rules-disclosure"><summary>对话提炼说明<span>如何记录目标、纠正与决定</span></summary><div class="rules-disclosure-body"><div class="field"><label for="extraction-instructions">提炼说明</label><textarea id="extraction-instructions" class="code rules-long-text">${esc(policy.settings.extraction_instructions)}</textarea><small>可先在试运行中比较效果，再保存修改。</small></div></div></details>`;
     preview.innerHTML=`<div class="field"><label for="extraction-project">样例所属项目</label><select id="extraction-project"><option value="">请选择项目</option>${active.map(p=>`<option value="${esc(p.project)}">${esc(p.display_name||p.project)}</option>`).join('')}</select></div>
       <div class="field"><label for="extraction-sample">样例对话</label><textarea id="extraction-sample">用户：以后，修改界面时先明确操作目标和验收条件。

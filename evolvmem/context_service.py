@@ -2203,13 +2203,6 @@ class ContextService:
             if project and project in self._project_store().snapshot().projects:
                 refresh(self, project)
         self._maybe_rollup_project(summary_result, llm=llm)
-        if llm is not None and summary_result is not None and summary_result.context_id:
-            try:
-                project = knowledge._row(summary_result.context_id)['project']
-                family = next((r['family'] for r in learning.families() if r['project']==project), '')
-                learning.analyze({'project':project,'family':family,'automatic':True}, llm=llm)
-            except Exception:
-                logger.warning('Learning analysis deferred after extraction', exc_info=False)
         return result
 
     # ---- rolling project summary trigger ----
@@ -2846,6 +2839,11 @@ class ContextService:
                 index.save()  # persist the removals; the preserved marker stays
                 return
             for legacy_id, text in upserts:
+                from evolvmem.memory_eligibility import eligible
+                context_id = self.store.resolve_legacy_mapping(legacy_id)
+                if context_id is not None and not eligible(self.store, context_id):
+                    index.remove(legacy_id)
+                    continue
                 embedding = np.asarray(
                     engine.encode_document(text), dtype=np.float32
                 )

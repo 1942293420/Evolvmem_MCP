@@ -343,6 +343,9 @@ class ContextRetriever:
         *,
         implicit_end: str | None = None,
     ) -> bool:
+        from evolvmem.memory_eligibility import eligible
+        if not eligible(self.store, item.id):
+            return False
         moment = request.as_of or now.strftime(_TIMESTAMP_FORMAT)
         if request.as_of is None:
             if item.status is ContextStatus.ACTIVE:

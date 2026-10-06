@@ -1,4 +1,4 @@
-"""Stage editors over the existing policy and collaboration sources; no shadow copies."""
+"""Three active stage editors over the existing saved policy."""
 import json
 from pathlib import Path
 from evolvmem.conversation import clean_messages, render
@@ -7,7 +7,7 @@ from evolvmem.extraction_policy import redact_messages
 STAGES = {
     'ownership': ('项目归属', '先判断资料属于哪个项目；不明确的交给你确认。', 'ownership_instructions', ('project_alias_matching', 'ambiguous_project_names')),
     'cleaning': ('数据清洗与需求表达', '去除噪声，保留原话；将口语整理成有依据的需求。', 'cleaning_instructions', ('cleaning_drop_lines', 'cleaning_collapse_duplicates')),
-    'extraction': ('摘要与问答提炼', '历史生成摘要，经验按问题、答案、分类和条件保存。', 'extraction_instructions', ('related_memory_projects',)),
+    'extraction': ('经验提取与验证', '历史生成项目摘要；经验提取、依据核对与准入判断在同一环节完成。', 'extraction_instructions', ('related_memory_projects', 'auto_min_confidence', 'require_source', 'min_chars', 'max_chars', 'ignore_keywords')),
     'ingestion': ('入库判断', '明确且无冲突自动通过，推断与疑难内容待确认。', None, ('auto_min_confidence', 'require_source', 'min_chars', 'max_chars', 'ignore_keywords', 'auto_explicit_rules')),
     'collaboration': ('协作学习', '从已确认知识积累协作约定，保留适用条件和版本。', None, ()),
 }
@@ -25,7 +25,9 @@ def read(service, stage):
         instructions = policy['settings'][field] if field else policy['instructions']
         revision, settings = policy['revision'], {k: policy['settings'][k] for k in keys}
     skill = instructions if stage == 'collaboration' else f'---\nname: evolvmem-{stage}\ndescription: {description}\n---\n\n{instructions}\n\n## 可执行条件\n\n```json\n{json.dumps(settings, ensure_ascii=False, indent=2)}\n```\n\n读取当前生效版本：GET skills/{stage}。下载文件为当时的快照，实际处理读取当前规则。\n'
-    return {'id':stage, 'title':title, 'description':description, 'instructions':instructions,
+    if stage == 'extraction':
+        skill += '\n## 提取结果准入说明\n' + policy['instructions'] + '\n'
+    return {'admission_instructions': policy['instructions'] if stage == 'extraction' else '', 'id':stage, 'title':title, 'description':description, 'instructions':instructions,
             'settings':settings, 'revision':revision, 'skill':skill,
             'execution':'本地匹配条件 + AI 归属说明' if stage=='ownership' else
                         '本地去噪 + 模型整理需求' if stage=='cleaning' else
@@ -36,7 +38,7 @@ def read(service, stage):
 def export_skills(service):
     """Each stage snapshot is also written as its own installable SKILL.md."""
     root = Path(service.config.data_dir) / 'skills'
-    for stage in STAGES:
+    for stage in ('ownership', 'cleaning', 'extraction'):
         skill = read(service, stage)['skill']
         path = root / f'evolvmem-{stage}' / 'SKILL.md'
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,14 +48,26 @@ def export_skills(service):
         temp.write_text(skill, encoding='utf-8')
         temp.replace(path)
 
+    # Retire generated entrypoints without deleting the archived rule contents.
+    for stage, message in (('ingestion', '入库判断已并入经验提取与验证，请读取 skills/extraction。'),
+                           ('collaboration', '协作学习已停用，不再自动生成、应用或注入协作规则。')):
+        path = root / f'evolvmem-{stage}' / 'SKILL.md'
+        if path.exists():
+            temp = path.with_suffix('.tmp')
+            temp.write_text(f'---\nname: evolvmem-{stage}\ndescription: 已停用的旧环节入口\n---\n\n{message}\n')
+            temp.replace(path)
+    service.learning().export_framework()
+
 
 def _ensure_exported(service):
     root = Path(service.config.data_dir) / 'skills'
-    if any(not (root / f'evolvmem-{stage}' / 'SKILL.md').exists() for stage in STAGES):
+    if any(not (root / f'evolvmem-{stage}' / 'SKILL.md').exists() for stage in ('ownership', 'cleaning', 'extraction')):
         export_skills(service)
 
 
 def save(service, stage, body):
+    if stage == 'collaboration':
+        raise ValueError('collaboration_disabled')
     current = read(service, stage)
     if body.get('expected_revision') != current['revision']:
         raise ValueError('revision_conflict')
@@ -63,9 +77,7 @@ def save(service, stage, body):
     settings = body.get('settings', {})
     if not isinstance(settings, dict) or set(settings) - set(current['settings']):
         raise ValueError('invalid_rule_settings')
-    if stage == 'collaboration':
-        service.learning().save_framework({'expected_revision':current['revision'], 'framework':instructions})
-    else:
+    if stage != 'collaboration':
         rules = service.knowledge().rules
         policy = rules.read()
         # Use caller revision so a concurrent change in another stage is detected.
@@ -73,8 +85,11 @@ def save(service, stage, body):
         values = {**policy['settings'], **settings}
         if field:
             values[field] = instructions
+        admission = body.get('admission_instructions', policy['instructions']) if stage == 'extraction' else policy['instructions']
+        if not isinstance(admission, str) or not 1 <= len(admission.strip()) <= 50000:
+            raise ValueError('invalid_instructions')
         rules.save({'expected_revision':body['expected_revision'], 'settings':values,
-                    'instructions':policy['instructions'] if field else instructions})
+                    'instructions':admission if field else instructions})
     export_skills(service)
     return read(service, stage)
 
@@ -107,6 +122,8 @@ def verify(service, stage, body, *, llm=None):
     """Run one stage with the saved rules and park outputs in the review queues."""
     if stage not in STAGES:
         raise LookupError('skill_not_found')
+    if stage == 'collaboration':
+        raise ValueError('collaboration_disabled')
     if not isinstance(body, dict):
         raise ValueError('invalid_request')
     kb = service.knowledge()
@@ -165,7 +182,7 @@ def verify(service, stage, body, *, llm=None):
 def dispatch(service, method, route, body):
     if method == 'GET' and route == 'skills':
         _ensure_exported(service)
-        return {'skills':[read(service, stage) for stage in STAGES]}
+        return {'skills':[read(service, stage) for stage in ('ownership', 'cleaning', 'extraction')]}
     parts = route.split('/')
     if len(parts)==2:
         return read(service, parts[1]) if method=='GET' else save(service, parts[1], body)

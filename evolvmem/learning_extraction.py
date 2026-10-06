@@ -185,6 +185,8 @@ def plan(service, item, messages, *, policy=None):
     normalized, normalization_errors = normalization(data, messages, item.value)
     if normalization_errors or (normalized and normalized['questions']):
         reason = '需求表达存在待确认问题或缺少依据：' + '；'.join(normalization_errors or normalized['questions'])
+    if data.get('category') == 'experience':
+        reason = '经验方法须绑定实际验证结果，提炼和人工入库不能替代验证'
     if reason:
         decision.update(action='review', reason=reason)
     status = {'auto': 'active', 'review': 'candidate', 'ignore': 'archived'}[decision['action']]

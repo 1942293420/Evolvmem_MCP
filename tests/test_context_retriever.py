@@ -653,11 +653,12 @@ def test_type_priority_base_values_follow_the_frozen_table(store, test_config):
     ids = {}
     for content_type, base in TYPE_PRIORITY_BASE.items():
         item = add_item(store, f"type-{content_type.value}", content_type=content_type)
-        ids[item.id] = base
+        if content_type is not ContextContentType.EXPERIENCE:
+            ids[item.id] = base
 
     results = results_by_id(make_retriever(test_config, store), request_for())
 
-    assert len(results) == len(TYPE_PRIORITY_BASE)
+    assert len(results) == len(TYPE_PRIORITY_BASE) - 1  # unverified method is excluded
     for item_id, base in ids.items():
         assert results[item_id].score_components.type_priority == pytest.approx(base)
 
@@ -862,7 +863,7 @@ def test_target_type_not_starved_by_irrelevant_types(test_config, store):
         add_item(store, f'noise-{n}', l0='zebra striped animal',
                  content_type=ContextContentType.FACT)
     target = add_item(store, 'experience-target', l0='zebra striped animal',
-                      content_type=ContextContentType.EXPERIENCE)
+                      content_type=ContextContentType.SESSION_SUMMARY)
     results = make_retriever(test_config, store).search(request_for(
-        top_k=1, content_types=(ContextContentType.EXPERIENCE,)))
+        top_k=1, content_types=(ContextContentType.SESSION_SUMMARY,)))
     assert [r.id for r in results] == [target.id]

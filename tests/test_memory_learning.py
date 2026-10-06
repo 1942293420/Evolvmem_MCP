@@ -19,6 +19,10 @@ def memory(s, text='讨论方案时先说明目标和取舍。', project='evo', 
     s.learning().capture(row['id'], {'category': category, 'basis': basis, 'quote': quote or text,
         'instruction': text, 'trigger': '讨论方案', 'topic': 'planning', 'rationale': '避免遗漏业务目标'},
         messages=[{'role': 'user', 'content': text}], source_session='test-session')
+    # Seed an archived pre-retirement rule to keep old-data integrity coverage.
+    if category not in ('task_requirement','environment','reference','experience'):
+        s.learning().propose({'topic':'planning','instruction':text,'trigger':'讨论方案','scope':'project','target':project,'source_ids':[row['id']]},
+            explicit=basis=='explicit' and (quote is None or quote==text), origin='historical-fixture')
     return s.knowledge().detail(row['id'])
 
 
@@ -28,7 +32,7 @@ def test_explicit_rule_is_visible_with_quote_and_scoped_to_project(service):
     assert row['learning']['evidence'][0]['quote'] == row['body']
     rules = service.learning().overview()['rules']
     assert len(rules) == 1 and rules[0]['status'] == 'active'
-    assert row['body'] in service.learning().skill('evo')['skill']
+    assert service.learning().skill('evo')['skill']==''
     assert row['body'] not in service.learning().skill('shop')['skill']
 
 
@@ -75,7 +79,7 @@ def test_project_type_analysis_uses_actual_sources_and_requires_confirmation(ser
     assert candidate['status'] == 'candidate'
     assert str(row['id']) in prompts[0]
     service.learning().review(candidate['id'], {'expected_revision': candidate['revision'], 'action': 'accept'})
-    assert '内部工具先明确业务目标。' in service.learning().skill('support')['skill']
+    assert service.learning().skill('support')['status']=='disabled'
     assert '内部工具先明确业务目标。' not in service.learning().skill('shop')['skill']
 
 
@@ -98,7 +102,7 @@ def test_framework_version_restore_and_active_source_checks(service):
     assert row['body'] not in service.learning().skill('evo')['skill']
 
 
-def test_real_extraction_preserves_learning_and_injects_project_rules(service):
+def test_real_extraction_preserves_knowledge_without_injecting_rules(service):
     from evolvmem.auto_extractor import AutoExtractor
     from evolvmem.legacy_models import LegacyExtractionItem, LegacyExtractionRequest
     from evolvmem.context_models import ContextSessionStartRequest
@@ -117,7 +121,8 @@ def test_real_extraction_preserves_learning_and_injects_project_rules(service):
     assert row['learning']['basis']=='explicit'
     assert row['scope']=='project'
     recalled=service.session_start(ContextSessionStartRequest(project='evo',query='讨论界面改造',max_chars=4000))
-    assert '规则 #' in recalled.block and text in recalled.block
+    assert '规则 #' not in recalled.block and text in recalled.block
+    assert not service.learning().overview()['rules']
     assert recalled.used_chars==len(recalled.block) and len(recalled.block)<=4000
     assert text not in service.learning().context('shop')
 
@@ -154,7 +159,7 @@ def test_bad_learning_rule_does_not_discard_the_extracted_memory(service):
     result = service.persist_legacy_extraction(request)
     row = service.knowledge().detail(result.candidates[0].context_id)
     assert row['body'] == '应保留可复用的项目约定。'
-    assert row['learning']['rule_error'] == 'invalid_learning_rule'
+    assert 'rule_error' not in row['learning']
     assert service.learning().overview()['rules'] == []
 
 

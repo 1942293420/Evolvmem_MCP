@@ -67,8 +67,8 @@ class AutoExtractor:
 
 ## 记忆学习元数据
 原子记忆可增加 learning 对象：category 为 habit（长期习惯）、project_convention（项目约定）、task_requirement（任务要求）、environment（环境事实）、decision（决策依据）、experience（技术经验）或 reference（参考资料）；basis 为 explicit（用户明确）或 inferred（推断）。
-learning.quote 必须逐字引用本次会话的一段原话；trigger 写适用时机，rationale 保留纠正或选择的原因；可复用的协作要求加 instruction 与稳定 topic（例如 requirements、testing、communication、delivery）。
-用户直接表达的协作要求，instruction 保留原话、条件和范围；推断或归纳明确标为 inferred，不能把助手建议写成用户要求。用户纠正时保留被纠正的理解及原因。单一项目约定仍用 project: key；只有明确长期通用要求才用 user: key。
+learning.quote 必须逐字引用本次会话的一段原话；trigger 写适用时机，rationale 保留纠正或选择的原因；不生成自动执行的协作规则；用户要求作为有范围和来源的知识记录。
+用户直接表达的要求保留原话、条件和范围；推断或归纳明确标为 inferred，不能把助手建议写成用户要求。用户纠正时保留被纠正的理解及原因。单一项目约定仍用 project: key；只有明确长期通用要求才用 user: key。
 task_requirement 不进入长期协作规则；一次性任务进展由摘要和任务断点保留。不要为填满字段臆造规则。SESSION_SUMMARY 不需要 learning。
 
 ## 会话内容
@@ -95,7 +95,7 @@ task_requirement 不进入长期协作规则；一次性任务进展由摘要和
             prompt += '\n\n项目归属 Skill：\n' + policy['settings'].get('ownership_instructions', '')
             prompt += '\n\n数据清洗与需求表达 Skill：\n' + policy['settings'].get('cleaning_instructions', '')
             prompt += '\n\n当前用户维护的知识库入库规则：\n' + policy['skill']
-            prompt += '\n\n协作过程与旧知识对照提炼合约：\n' + policy['settings']['extraction_instructions']
+            prompt += '\n\n交流来源与旧知识对照提炼合约：\n' + policy['settings']['extraction_instructions']
             prompt += '\n规则版本：' + policy['revision']
         prompt += ('\n\n需求表达输出：用户表达具体需求时，使用 category=task_requirement；'
                    'learning.normalization={"requirement":"与 answer/value 一致的明确需求",'

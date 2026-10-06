@@ -165,13 +165,7 @@ class LanTools:
                         self.lock.acquire()
                     # Do not generate a rollup using a source snapshot invalidated during the call.
                     return response if self._memory_revision(user) == version else None
-                try:
-                    learning = capture.server.context_service.learning()
-                    family = next((r['family'] for r in learning.families() if r['project']==row['project']), '')
-                    learned = learning.analyze({'project':row['project'], 'family':family, 'automatic':True}, llm=unlocked_llm)
-                    receipt['learning_status'] = learned['status']
-                except Exception:
-                    receipt['learning_status'] = 'failed'
+                receipt['learning_status'] = 'disabled'
                 try:
                     rolled = capture.server.context_service.rollup_project(row['project'], llm=unlocked_llm)
                     receipt['project_summary_status'] = rolled.status

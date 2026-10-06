@@ -56,7 +56,7 @@ def test_unconfirmed_same_key_conflict_preserves_old_memory_and_rule(service):
     new = persist(service, '开发完成后先交付再运行相关测试。', session='new', basis='inferred')
     assert service.knowledge().detail(old['id'])['status'] == 'active'
     assert new['status'] == 'candidate'
-    assert old['body'] in service.learning().skill('evo')['skill']
+    assert service.learning().skill('evo')['skill']==''
     assert new['body'] not in service.learning().skill('evo')['skill']
 
 
@@ -69,7 +69,7 @@ def test_explicit_correction_replaces_exact_old_version_and_is_idempotent(servic
     new = persist(service, text, **args)
     assert service.knowledge().detail(old['id'])['status'] == 'superseded'
     assert new['supersedes'] == old['id']
-    assert text in service.learning().skill('evo')['skill']
+    assert service.learning().skill('evo')['skill']==''
     assert old['body'] not in service.learning().skill('evo')['skill']
     before = len(service.learning().overview()['rules'])
     assert persist(service, text, **args) is None
@@ -168,7 +168,7 @@ def test_kimi_session_preserves_learning_at_real_storage_boundary(monkeypatch, t
     s = _make_service(test_config, mode=ContextMode.SHADOW)
     try:
         rows = s.learning().overview()['rules']
-        assert any(r['instruction'] == text and r['effective'] for r in rows)
+        assert rows == []
     finally:
         s.close()
 
@@ -180,7 +180,8 @@ def test_same_summary_different_conditions_are_not_collapsed(service):
                      action='supplement', target_id=first['id'], target_revision=first['revision'])
     assert second is not None and second['id'] != first['id']
     assert second['learning']['trigger'] == '修改支付金额计算时'
-    assert {r['trigger'] for r in service.learning().overview()['rules']} == {'修改数据库结构时', '修改支付金额计算时'}
+    assert service.learning().overview()['rules'] == []
+    assert {r['learning']['trigger'] for r in service.knowledge().list_items({'project':'evo'})['items'] if r['learning'].get('trigger')} == {'修改数据库结构时', '修改支付金额计算时'}
 
 
 def test_rule_version_change_rolls_back_entire_extraction_batch(service):
@@ -198,7 +199,7 @@ def test_explicit_rule_switch_keeps_knowledge_but_requires_rule_confirmation(ser
     kb.rules.save({'expected_revision': p['revision'], 'settings': {**p['settings'], 'auto_explicit_rules': False}})
     row = persist(service, '开发完成后先运行相关测试再交付。')
     assert row['status'] == 'active'
-    assert service.learning().overview()['rules'][0]['status'] == 'candidate'
+    assert service.learning().overview()['rules'] == []
 
 
 def test_learning_memories_remain_available_to_legacy_clients(service):
