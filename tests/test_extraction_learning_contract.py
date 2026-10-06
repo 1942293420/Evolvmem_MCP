@@ -18,6 +18,10 @@ def service(test_config):
 
 
 def request(text, *, session='p1-session', key='project:evo:constraint:testing', **learning):
+    # Every auto-ingested memory must carry a traceable pair: answer == value,
+    # quote is a real user line (the shared extraction contract).
+    learning.setdefault('question', '本项目的这项约定是什么？')
+    learning.setdefault('answer', text)
     return LegacyExtractionRequest(
         summary=LegacyExtractionItem(key=f'project:evo:progress:log:{session}',
             value='Evo 正在讨论并完善长期开发协作约定。', attribute='fact'),
@@ -110,7 +114,8 @@ def test_preview_compares_unsaved_rules_without_writes_and_matches_real_ingestio
     response = json.dumps({'memories': [
         {'key': 'SESSION_SUMMARY', 'value': 'Evo 正在完善需求讨论阶段的协作约定。'},
         {'key': 'project:evo:constraint:testing', 'value': text, 'attribute': 'constraint', 'confidence': .9,
-         'learning': {'category': 'project_convention', 'basis': 'explicit', 'quote': text, 'instruction': text}}]})
+         'learning': {'category': 'project_convention', 'basis': 'explicit', 'quote': text, 'instruction': text,
+                      'question': '需求讨论阶段的协作约定是什么？', 'answer': text}}]})
     before = service.store._connection().total_changes
     result = preview(service, {'project': 'evo', 'messages': messages,
         'rules': {'expected_revision': policy['revision'], 'settings': {**policy['settings'], 'auto_min_confidence': .99}}},

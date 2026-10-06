@@ -109,7 +109,8 @@ def test_real_extraction_preserves_knowledge_without_injecting_rules(service):
     text = '讨论界面改造时先明确用户的操作目标。'
     c = AutoExtractor().parse_response(json.dumps({'memories':[{
         'key':'project:evo:preference:planning','value':text,'attribute':'preference',
-        'learning':{'category':'project_convention','basis':'explicit','quote':text,'instruction':text,'topic':'planning'}
+        'learning':{'category':'project_convention','basis':'explicit','quote':text,'instruction':text,'topic':'planning',
+                    'question':'讨论界面改造时先明确什么？','answer':text}
     }]}))[0]
     kb=service.knowledge()
     policy=kb.rules.read()

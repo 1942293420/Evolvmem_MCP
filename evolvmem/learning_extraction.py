@@ -112,6 +112,39 @@ def load_related(config, project, messages):
         service.close()
 
 
+def basis_gate(data, messages, item):
+    """Deterministic basis check before a candidate may become active.
+
+    Optional metadata must never be a bypass: a missing ``question``/``answer``
+    pair means "unconfirmed", not "nothing to check", and no message role but a
+    real user may supply the quote that makes a memory an explicit requirement.
+    A provider that marks its own inference as ``inferred`` keeps the candidate
+    isolated even when a user quote exists; the explicit/inferred separation
+    stays with the reviewer. The ``normalization`` questions and errors keep
+    their own check in ``plan``. Returns ``(reason, qa)``; ``qa`` is the
+    validated ``(question, answer)`` pair or ``None``.
+    """
+    from evolvmem.qa_memory import validate
+    value = item.value
+    if not value:
+        return '', None
+    if data.get('basis') != 'explicit':
+        return '推断或缺少用户明确依据，待确认', None
+    if not isinstance(data.get('question'), str) or not data['question'].strip():
+        return '缺少完整问答，无法作为已确认用户决定入库', None
+    if not isinstance(data.get('answer'), str) or not data['answer'].strip():
+        return '缺少答案，无法作为已确认用户决定入库', None
+    try:
+        question, answer = validate(data.get('question'), data.get('answer'))
+    except ValueError:
+        return '问答缺失、过长或不可用，需要整理', None
+    if answer != value:
+        return '问答答案与记忆内容不一致', None
+    if not evidence(data.get('quote'), messages, ('user',)):
+        return '缺少可在用户对话中逐字核对的原话依据，待确认', None
+    return '', (question, answer)
+
+
 def plan(service, item, messages, *, policy=None):
     """Do not accept a model's replacement/skip instruction without checking it."""
     kb = service.knowledge()
@@ -174,18 +207,13 @@ def plan(service, item, messages, *, policy=None):
         reason = '同一标识已有不同内容，需要明确补充或替代关系'
     if errors or (data.get('quote') and not evidence(data['quote'], messages)):
         reason = '原话或协作过程无法核对：' + ', '.join(errors)
-    if 'question' in data or 'answer' in data:
-        from evolvmem.qa_memory import validate, conflicts
-        try:
-            question, answer = validate(data.get('question'), data.get('answer'))
-            if answer != item.value:
-                reason = '问答答案与记忆内容不一致'
-            elif not quote or data.get('basis') != 'explicit':
-                reason = '经验问答来自推断或缺少用户依据，待确认'
-            elif action != 'replace' and conflicts(service, project, scope, question, answer, data.get('category', 'reference'), data.get('trigger', '')):
-                reason = '同一问题和条件已有不同答案，待确认'
-        except ValueError:
-            reason = '请提供完整且简洁的问答'
+    qa_reason, qa = basis_gate(data, messages, item)
+    if qa_reason:
+        reason = reason or qa_reason
+    if qa is not None:
+        from evolvmem.qa_memory import conflicts
+        if action != 'replace' and conflicts(service, project, scope, qa[0], qa[1], data.get('category', 'reference'), data.get('trigger', '')):
+            reason = reason or '同一问题和条件已有不同答案，待确认'
     normalized, normalization_errors = normalization(data, messages, item.value)
     if normalization_errors or (normalized and normalized['questions']):
         reason = '需求表达存在待确认问题或缺少依据：' + '；'.join(normalization_errors or normalized['questions'])

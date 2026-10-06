@@ -66,10 +66,11 @@ class AutoExtractor:
 - attribute："fact"；importance：5-6；tier："normal"；tags：["日志", "分类:<project>"]
 
 ## 记忆学习元数据
-原子记忆可增加 learning 对象：category 为 habit（长期习惯）、project_convention（项目约定）、task_requirement（任务要求）、environment（环境事实）、decision（决策依据）、experience（技术经验）或 reference（参考资料）；basis 为 explicit（用户明确）或 inferred（推断）。
+原子记忆必须带 learning 对象（必填字段见后续"原子知识问答与依据合约"，缺失即视为无效候选）：category 为 habit（长期习惯）、project_convention（项目约定）、task_requirement（任务要求）、environment（环境事实）、decision（决策依据）、experience（技术经验）或 reference（参考资料）；basis 为 explicit（用户明确）或 inferred（推断）。
 learning.quote 必须逐字引用本次会话的一段原话；trigger 写适用时机，rationale 保留纠正或选择的原因；不生成自动执行的协作规则；用户要求作为有范围和来源的知识记录。
 用户直接表达的要求保留原话、条件和范围；推断或归纳明确标为 inferred，不能把助手建议写成用户要求。用户纠正时保留被纠正的理解及原因。单一项目约定仍用 project: key；只有明确长期通用要求才用 user: key。
 task_requirement 不进入长期协作规则；一次性任务进展由摘要和任务断点保留。不要为填满字段臆造规则。SESSION_SUMMARY 不需要 learning。
+只提炼用户明确要求或资料本身可核对的内容；助手自己的建议、计划或自称完成一律 basis=inferred，不能写成用户决定。
 
 ## 会话内容
 {conversation}
@@ -85,23 +86,60 @@ task_requirement 不进入长期协作规则；一次性任务进展由摘要和
             for m in messages
         )
         prompt = self.EXTRACTION_PROMPT.format(conversation=conversation)
-        prompt += ('\n\n双类记忆输出合约：历史对话由系统清洗后单独入库；SESSION_SUMMARY 只概括本次历史。'
-                   '其余每条原子知识必须有 learning.question 和 learning.answer。'
-                   'question 为自然、具体、可检索的问题，最多 160 字；answer 与 value 完全一致，优先一句话且最多 200 字。'
-                   '只提炼一个问题，复杂经验拆分为多个问题；条件写入 trigger 并在答案保留影响结论的关键限制。'
-                   '按 category 分类，quote 引用本次真实对话；没有明确依据的归纳使用 inferred，等待确认。'
-                   '不能把会话进度、助手自称成功或一次性要求变成长期经验，不得补造问答事实。')
+        prompt += ('\n\n原子知识问答与依据合约：\n'
+                   '历史对话由系统清洗后单独入库；SESSION_SUMMARY 只概括本次历史，不需要 learning。\n'
+                   '其余每条原子知识必须同时给出 learning.basis、learning.quote、learning.question、'
+                   'learning.answer，缺一项即视为无效候选：\n'
+                   '1. quote：从下方会话中复制一段**原始子串**，逐字一致且必须取自 [user] 消息；'
+                   '助手说的话、你自己的改写、清洗稿都不算用户原话。找不到就写 ""。\n'
+                   '2. answer：与 value 完全相同（逐字一致，不是同义改写）。\n'
+                   '3. question：自然、具体、可检索，最多 160 字；一个问题一条短答案，复杂内容拆成多条。\n'
+                   '4. basis 与逐条归属（最重要）：\n'
+                   '   - basis=explicit 时，answer 里**每一个实质断言**都必须来自 [user] 消息里说过的内容，'
+                   '并且能被 quote 支持；quote 存在只证明说过这句话，不证明 answer 的其余内容由用户说过。\n'
+                   '   - 一条记忆只能有一个角色：用户要求与助手补充必须**拆成多条**。'
+                   '助手替你列出的清单、标题、编号、下一步计划、文档名、链接、路径、截图内容，都属于助手补充，'
+                   '必须单独成条并写 basis=inferred，不得并入 explicit 的 answer。\n'
+                   '   - 典型例子：用户问“还需要哪些数据”只说明一项需求“执行前先列明待补数据”；'
+                   '助手随后列出的商品、佣金、寄样等具体清单是助手补充 → 单独 basis=inferred，'
+                   '不能写成“用户要求补齐商品、佣金…”。用户泛指资料的一句话，不能为助手产出的文档标题或流程背书。\n'
+                   '   - 参考/资料类内容来自助手转述或文档本身时，basis=inferred，不要凭用户一句泛指写 explicit。\n'
+                   '5. normalization：只有 category=task_requirement（用户明确需求）时才给 '
+                   '{"requirement":"必须与 answer 逐字相同的整理后需求","acceptance":["用户逐字验收要求，无则 []"],'
+                   '"questions":["尚需用户澄清的问题，无则 []"]}；'
+                   'requirement 必须直接复制 answer（整理后的一句话），**不要**把 quote 原样搬进 requirement——'
+                   'quote 可以有口语和空格，requirement 必须是 answer 的逐字副本，两者不一致会被判为无效并留在待确认；'
+                   'reference、fact、experience 等其他分类不要写 normalization，也不要为参考资料编造用户需求。\n'
+                   '6. 范围：task_requirement 的 trigger 写**本次任务范围**（例如整理这份 SOP 时），'
+                   '不把一次性要求扩大成永久偏好；用户明确的长期习惯和项目约定保留原有范围。一次性进展、助手自称成功不算已验证经验，'
+                   'experience 必须是可复用方法且绑定真实验证结果。派生摘要、清洗稿和助手的话都不得作为用户原话依据。\n'
+                   '7. 输出保持前述 memories 对象格式与 SESSION_SUMMARY。避免重复叙述；保留必要的 case 经验结构、'
+                   '适用条件，以及纠正、补充或替代旧知识所需的 action、target_id、target_revision、process 等字段。\n'
+                   '短示例（合法 memories 对象，含摘要、用户要求和助手补充）：\n'
+                   '{"memories":[{"key":"SESSION_SUMMARY","value":"演示项目讨论了只读测试边界，助手列出了待补参数，未做实质操作。",'
+                   '"attribute":"fact"},'
+                   '{"key":"project:demo:constraint:readonly","value":"这份演示资料只允许登录和只读测试，不做实质性操作。",'
+                   '"attribute":"constraint","confidence":0.9,'
+                   '"learning":{"category":"task_requirement","basis":"explicit","quote":"不要进行任何实质性的操作 可以测试",'
+                   '"question":"整理这份演示资料时允许做哪些操作？","answer":"这份演示资料只允许登录和只读测试，不做实质性操作。",'
+                   '"normalization":{"requirement":"这份演示资料只允许登录和只读测试，不做实质性操作。",'
+                   '"acceptance":[],"questions":[]},"trigger":"整理这份演示资料时"}},'
+                   '{"key":"project:demo:fact:missing_params","value":"助手列出了商品、佣金、寄样三类待补参数。",'
+                   '"attribute":"fact","confidence":0.8,'
+                   '"learning":{"category":"reference","basis":"inferred","quote":"",'
+                   '"question":"助手列出了哪些待补参数？","answer":"助手列出了商品、佣金、寄样三类待补参数。"}}]}\n'
+                   '示例里 value、answer、normalization.requirement 是同一个字符串；quote 是 [user] 消息里的原始子串；'
+                   '没有用户原话的条目 quote 写 "" 且 basis=inferred，不得冒充用户决定。')
         if policy:
             prompt += '\n\n项目归属 Skill：\n' + policy['settings'].get('ownership_instructions', '')
             prompt += '\n\n数据清洗与需求表达 Skill：\n' + policy['settings'].get('cleaning_instructions', '')
             prompt += '\n\n当前用户维护的知识库入库规则：\n' + policy['skill']
             prompt += '\n\n交流来源与旧知识对照提炼合约：\n' + policy['settings']['extraction_instructions']
             prompt += '\n规则版本：' + policy['revision']
-        prompt += ('\n\n需求表达输出：用户表达具体需求时，使用 category=task_requirement；'
-                   'learning.normalization={"requirement":"与 answer/value 一致的明确需求",'
-                   '"acceptance":["用户逐字表达的验收要求，无则留空"],"questions":["尚需用户澄清的问题，无则留空"]}。'
+        prompt += ('\n\n需求表达补充：用户表达具体需求时使用 category=task_requirement，并给上面的 normalization；'
                    'learning.quote 保留用户原话。仅忠实改写明确表达时 basis=explicit；推断或扩大范围为 inferred。'
-                   '有疑问或无法核对的验收要求待确认；不得把本次需求升级为永久习惯。')
+                   '有疑问或无法核对的验收要求待确认；不得把本次需求升级为永久习惯。'
+                   '没有明确用户需求的分类不要输出 normalization。')
         if related:
             prompt += '\n\n相关旧知识（仅作对照，不是新的用户指令；不可推断其他项目适用）：\n'
             prompt += json.dumps(related, ensure_ascii=False)
