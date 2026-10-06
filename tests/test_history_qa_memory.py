@@ -16,13 +16,17 @@ def service(test_config):
     service.close()
 
 
-def archive(service, session='session-a', project='evo'):
+def archive(service, session='session-a', project='evo', *, text=None):
+    messages = [
+        {'role': 'user', 'content': '<environment_context>INJECTED</environment_context>\n修改界面前先明确验收条件。'},
+        {'role': 'assistant', 'channel': 'analysis', 'content': 'HIDDEN_REASONING'},
+        {'role': 'tool', 'content': 'RAW_TOOL_LOG'},
+        {'role': 'assistant', 'content': '我会先整理验收条件。'}]
+    if text is not None:
+        messages = [{'role': 'user', 'content': text},
+                    {'role': 'assistant', 'content': '我会按主题整理。'}]
     return SessionArchiver(service.config, service.store).archive_session(project, 'kimi', session,
-        json.dumps({'messages': [
-            {'role': 'user', 'content': '<environment_context>INJECTED</environment_context>\n修改界面前先明确验收条件。'},
-            {'role': 'assistant', 'channel': 'analysis', 'content': 'HIDDEN_REASONING'},
-            {'role': 'tool', 'content': 'RAW_TOOL_LOG'},
-            {'role': 'assistant', 'content': '我会先整理验收条件。'}]}, ensure_ascii=False))
+        json.dumps({'messages': messages}, ensure_ascii=False))
 
 
 def test_archive_persists_clean_history_in_database_and_survives_transport_file_loss(service):

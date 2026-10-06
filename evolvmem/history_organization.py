@@ -16,7 +16,12 @@ def _has_uploads(service):
 
 
 def _unassigned_archives(service):
-    """Deduplicate across all projects so assigning a head never exposes an old version."""
+    """Deduplicate across all projects so assigning a head never exposes an old version.
+
+    This stays the revision/visibility oracle for every source, including ones a
+    background task already handles; the manual queue filters handled sources in
+    ``source_refs`` instead.
+    """
     conn = service.store._connection()
     ignored = set()
     if _has_uploads(service) and conn.execute("SELECT 1 FROM sqlite_master WHERE name='lan_session_heads'").fetchone():
@@ -73,12 +78,30 @@ def _source_record(service, key, *, visible=None):
             'source':row['adapter'] + ' · ' + row['external_session_id'], 'available':bool(text)}
 
 
+def _handled_sources(service):
+    """Sources already processed by a current background task.
+
+    A handled multi-project archive leaves the manual queue (it may never get a
+    single project) while its units stay visible in the review view. Derived
+    organization items are never offered back as new source input.
+    """
+    conn = service.store._connection()
+    handled = set()
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='organization_tasks'").fetchone():
+        for row in conn.execute("SELECT source_key FROM organization_tasks WHERE status IN ('completed','review','running','pending')"):
+            handled.add(row['source_key'])
+    return handled
+
+
 def source_refs(service):
     conn = service.store._connection()
+    handled = _handled_sources(service)
     archives = _unassigned_archives(service)
     refs = [{'key':f'archive:{r["id"]}', 'created_at':r['created_at']} for r in archives]
     refs.extend({'key':f'item:{r["id"]}', 'created_at':r['created_at']} for r in conn.execute(
-        "SELECT id,created_at FROM context_items WHERE project='' AND scope!='global' AND status IN ('active','candidate')"))
+        "SELECT id,created_at FROM context_items WHERE project='' AND scope!='global' "
+        "AND status IN ('active','candidate') AND identity_key NOT LIKE 'organization:%'"))
+    refs = [ref for ref in refs if ref['key'] not in handled]
     refs.sort(key=lambda r:(r['created_at'], r['key']), reverse=True)
     return refs
 

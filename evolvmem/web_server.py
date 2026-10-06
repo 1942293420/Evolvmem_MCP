@@ -1249,7 +1249,7 @@ def make_handler(service: ContextService):
             if path.startswith('/api/knowledge/'):
                 self._knowledge('GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()})
                 return
-            if path in ('/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js'):
+            if path in ('/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js'):
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 data = asset.read_bytes()
                 self.send_response(200)
@@ -1550,6 +1550,9 @@ def run(port: int = 9377, data_dir: str | None = None,
         rules.save({'expected_revision': rules.read()['revision']})
     # 单线程服务：sqlite 连接不支持跨线程使用；本地单用户控制台无需并发
     server = HTTPServer((host, port), make_handler(service))
+    # 单个有界后台整理 worker：独立连接、独立线程；中断的任务在启动时回到队列
+    from evolvmem.auto_organization import OrganizationWorker
+    organization = OrganizationWorker(config).start()
     print(f"EvolvMem web console: http://{host}:{port} "
           f"(data: {config.db_path})")
     try:
@@ -1557,6 +1560,7 @@ def run(port: int = 9377, data_dir: str | None = None,
     except KeyboardInterrupt:
         pass
     finally:
+        organization.stop()
         server.server_close()
         service.close()
 

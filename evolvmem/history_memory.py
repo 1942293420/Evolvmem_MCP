@@ -29,21 +29,62 @@ def read(service, project, archive_id):
     result = _read_original(service, project, archive_id)
     from evolvmem.knowledge_cleaning import review
     cleaned = review(service, f'archive:{archive_id}')
-    if cleaned and cleaned['state'] == 'assigned':
+    # A mixed-source project read shows only its own units, so the whole-source
+    # cleaning draft would leak other projects' text; omit it there.
+    if cleaned and cleaned['state'] in ('ready', 'assigned') and cleaned['cleaned_text'] \
+            and result.get('storage') != 'per_project_units':
         result['cleaning'] = {'text': cleaned['cleaned_text'], 'category': cleaned['category'],
                               'updated_at': cleaned['updated_at']}
     return result
 
 
+def project_units(service, project, archive_id):
+    """Range-exact organization units attributed to one project for one archive.
+
+    A multi-project archive is never forced into a single project, so the read
+    path returns only the units that really belong to the requested project.
+    """
+    conn = service.store._connection()
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='organization_units'").fetchone():
+        return []
+    rows = conn.execute(
+        'SELECT u.text,u.cleaned_text,u.source_start,u.source_end,u.role,u.category,u.project,u.digest,'
+        'u.task_id,i.id AS item_id FROM organization_units u '
+        'JOIN organization_tasks t ON t.id=u.task_id '
+        'LEFT JOIN context_items i ON i.id=u.item_id '
+        "WHERE t.source_key=? AND u.project=? AND t.status!='superseded' "
+        "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' AND i.status='active' "
+        'ORDER BY u.source_start,u.ordinal',
+        (f'archive:{archive_id}', project)).fetchall()
+    from evolvmem.auto_organization import task_view
+    current = {row['task_id']: task_view(service, row['task_id'])['source_current'] for row in rows}
+    return [dict(row) for row in rows if current[row['task_id']]]
+
+
 def _read_original(service, project, archive_id):
     archive = service.store.get_session_archive(archive_id)
-    if not archive or archive['project'] != project or not project:
+    if not archive or not project:
         raise ValueError('conversation_not_in_project')
+    if archive['project'] and archive['project'] != project:
+        raise ValueError('conversation_not_in_project')
+    if not archive['project']:
+        # Unbound multi-project source: only the requested project's units.
+        units = project_units(service, project, archive_id)
+        if not units:
+            raise ValueError('conversation_not_in_project')
+        return {'archive_id': archive_id, 'project': project, 'available': True,
+                'messages': [{'role': unit['role'] or 'unknown',
+                              'content': unit['cleaned_text'] or unit['text']} for unit in units],
+                'text': '\n\n'.join(unit['cleaned_text'] or unit['text'] for unit in units),
+                'revision': hashlib.sha256(json.dumps(
+                    [[unit['digest'], unit['source_start'], unit['source_end']] for unit in units]).encode()).hexdigest(),
+                'storage': 'per_project_units', 'units': units}
     row = service.store._connection().execute('SELECT * FROM conversation_history WHERE archive_id=?', (archive_id,)).fetchone()
     if row:
         return {'archive_id': archive_id, 'project': project, 'available': True,
                 'messages': json.loads(row['messages']), 'text': row['body'],
-                'revision': row['content_hash'], 'storage': 'database'}
+                'revision': row['content_hash'], 'storage': 'database',
+                'units': project_units(service, project, archive_id)}
     # Backward compatible read does not silently mutate old archives.
     from evolvmem.session_archive import SessionArchiver
     payload = SessionArchiver(service.config, service.store).read_payload(archive_id)
@@ -98,6 +139,18 @@ def sessions(service, project):
     rows = conn.execute('SELECT a.*,h.content_hash,h.cleaned_at FROM session_archives a '
                         'LEFT JOIN conversation_history h ON h.archive_id=a.id WHERE a.project=? '
                         'ORDER BY a.created_at DESC,a.id DESC', (project,)).fetchall()
+    # A multi-project source stays unbound, but its units for this project still
+    # belong in this project's history listing.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='organization_units'").fetchone():
+        extra = conn.execute(
+            'SELECT a.*,h.content_hash,h.cleaned_at FROM session_archives a '
+            'LEFT JOIN conversation_history h ON h.archive_id=a.id '
+            "WHERE a.project='' AND EXISTS(SELECT 1 FROM organization_units u "
+            'JOIN organization_tasks t ON t.id=u.task_id '
+            "WHERE t.source_key='archive:'||a.id AND u.project=? AND t.status!='superseded' "
+            "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' AND u.item_id IS NOT NULL) "
+            'ORDER BY a.created_at DESC,a.id DESC', (project,)).fetchall()
+        rows = list(rows) + [row for row in extra if row['id'] not in {r['id'] for r in rows}]
     jobs = {}
     ignored = set()
     if conn.execute("SELECT 1 FROM sqlite_master WHERE name='lan_session_uploads'").fetchone():
@@ -109,6 +162,8 @@ def sessions(service, project):
     result, seen = [], set()
     for row in rows:
         if row['id'] in ignored:
+            continue
+        if not row['project'] and not project_units(service, project, row['id']):
             continue
         key = (row['adapter'], row['external_session_id'].split(':')[0] if row['adapter'] == 'codex' else row['external_session_id'])
         if key in seen:

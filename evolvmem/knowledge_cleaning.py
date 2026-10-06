@@ -67,7 +67,13 @@ def checked(service,entry):
     return row
 
 
-def _clean_input(service,row,policy):
+def cleaned_messages(service,row,policy):
+    """The cleaned message list behind one source, with structural roles.
+
+    An unstructured item's author cannot be verified, so it is marked
+    ``unknown`` rather than being presented as the user's own words; archive
+    sources keep their original roles.
+    """
     messages=[{'role':'user','content':row['body']}]
     if row['kind']=='archive':
         identity=int(row['key'].split(':')[1])
@@ -79,6 +85,13 @@ def _clean_input(service,row,policy):
             payload=SessionArchiver(service.config,service.store).read_payload(identity)
             if payload:messages=from_payload(payload,policy=policy)
     safe,_=redact_messages(clean_messages(messages,policy=policy))
+    if row['kind']!='archive':
+        return [{'role':'unknown','content':safe[0]['content']}] if safe else []
+    return safe
+
+
+def _clean_input(service,row,policy):
+    safe=cleaned_messages(service,row,policy)
     return render(safe) if row['kind']=='archive' else safe[0]['content'] if safe else ''
 
 

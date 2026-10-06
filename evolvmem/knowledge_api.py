@@ -14,6 +14,9 @@ def dispatch(service, method, path, body=None):
     if route == 'history/organization' or route.startswith('history/organization/'):
         from evolvmem.history_organization import dispatch as organization_dispatch
         return organization_dispatch(service, method, route[len('history/organization'):], body)
+    if route == 'organization' or route.startswith('organization/'):
+        from evolvmem.auto_organization import dispatch as auto_dispatch
+        return auto_dispatch(service, method, route[len('organization'):], body)
     if route == 'skills' or route.startswith('skills/'):
         from evolvmem.pipeline_skills import dispatch as skills_dispatch
         return skills_dispatch(service, method, route, body)

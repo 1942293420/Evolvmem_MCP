@@ -44,7 +44,7 @@ def detail(service, item_id):
     status = saved['status'] if saved else 'unformatted'
     reason = saved['reason'] if saved else '旧资料尚未整理为简洁问答'
     if not proof_ready:
-        status, reason = 'candidate', '方法尚无独立验证依据，仅保留待验证候选'
+        status, reason = 'candidate', '来源暂存、归属已变更，或方法尚无验证依据，暂不用于召回'
     elif saved and saved['source_fingerprint'] != current:
         status, reason = 'stale', '来源正文、分类、条件或归属已改变，需要重新核对问答'
     elif saved and saved['status'] == 'active' and not effective:

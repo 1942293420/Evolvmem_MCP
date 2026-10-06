@@ -135,8 +135,12 @@ def plan(service, item, messages, *, policy=None):
         'scope': scope, 'source': bool(messages), 'confidence': item.confidence if item.confidence is not None else .9,
         'content_type': item.attribute}, kb.registry(), policy=policy)
     # Exact content plus scope is a duplicate even when the model changes the key.
+    # History summaries are records, not knowledge peers: the same text in a
+    # session summary must never make its own extracted candidate look like a
+    # duplicate of itself.
     peers = service.store._connection().execute(
-        "SELECT id FROM context_items WHERE project=? AND scope=? AND status NOT IN ('deleted','superseded')",
+        "SELECT id FROM context_items WHERE project=? AND scope=? AND status NOT IN ('deleted','superseded') "
+        "AND content_type NOT IN ('session_summary','project_summary','workstream_checkpoint')",
         (project, scope)).fetchall()
     same_key = []
     for peer in peers:

@@ -6,13 +6,16 @@ from evolvmem.config import Config
 from evolvmem.context_models import ContextMode
 from tests.test_web_server import _make_service
 from evolvmem.web_server import make_handler
+import re
 from evolvmem import kimi_hooks
+HINTS={'Evo 演示项目':'evo','dsh-a':'dsh-a','DSH 备用项目':'dsh-b','其余内容':'','导出':'dsh-a','未归属事项':''}
+PROJECTS={'evo','dsh-a','dsh-b'}
 config=Config(data_dir=Path(tempfile.mkdtemp(prefix='evo-p1-browser-')))
 s=_make_service(config,mode=ContextMode.SHADOW)
 s.knowledge().save_project({'project':'evo','display_name':'Evo 演示项目'})
-s.knowledge().save_project({'project':'old-evo','display_name':'Evo 演示项目'})
+s.knowledge().save_project({'project':'old-evo','display_name':'旧版 Evo 演示项目'})
 s.knowledge().save_project({'project':'dsh-a','display_name':'DSH'})
-s.knowledge().save_project({'project':'dsh-b','display_name':'DSH'})
+s.knowledge().save_project({'project':'dsh-b','display_name':'DSH 备用项目'})
 with s.store.transaction():
     s.store._connection().execute("UPDATE context_project_registry SET status='archived' WHERE project='old-evo'")
 from evolvmem.session_archive import SessionArchiver
@@ -51,6 +54,36 @@ def model(prompt, *a, **kw):
         if '无用测试资料' in prompt.split('正文分段',1)[-1]:
             return json.dumps({'cleaned_text':'待核对的无用测试资料。','category':'reference','recommended_action':'delete','reason':'按清洗 Skill，本条没有完成事项或明确决定。'},ensure_ascii=False)
         return json.dumps({'cleaned_text':'用户要求先清洗资料，核对后再归入 Evo 演示项目。','category':'task_requirement','reason':'保留明确目标与处理顺序。'},ensure_ascii=False)
+    if '整理分段助手' in prompt:
+        # Whole-source segmentation over program-numbered records: the model
+        # answers with record ids, never with a copy of the source text.
+        records=[(int(pos),content) for pos,content in re.findall(r'^\[(\d+)\] [\w]+：(.*)$',prompt,re.M)]
+        groups=[]
+        for pos,content in records:
+            hint=next((value for marker,value in HINTS.items() if marker in content),None)
+            if hint is not None or not groups:
+                groups.append({'start':pos,'end':pos,'hint':hint or '','title':content[:40],
+                               'category':'task_requirement' if hint else 'reference'})
+            else:
+                groups[-1]['end']=pos
+        units=[{'start_id':g['start'],'end_id':g['end'],'title':g['title'],
+                'cleaned_summary':g['title'][:180],'category':g['category'],
+                'project_hint':g['hint'] if g['hint'] in PROJECTS else '',
+                'evidence_quote':g['title'][:20],'disposition':'keep','disposition_reason':''}
+               for g in groups]
+        return json.dumps({'units':units},ensure_ascii=False)
+    if '长期记忆提炼器' in prompt and '[user]:' in prompt:
+        # Real extraction contract for one unit: concise QA grounded in the unit.
+        lines=[content.strip() for role,content in re.findall(r'^\[(\w+)\]: (.*)$',prompt,re.M)
+               if role in ('user','assistant')]
+        source=(lines or ['这段资料需要整理。'])[0]
+        value=source[:200]
+        if len(value)<10:value=(value+'：这是一段需要整理的业务资料。')[:200]
+        learning={'category':'task_requirement','basis':'explicit','quote':value,
+                  'question':'这段对话明确了什么要求？','answer':value,'trigger':'',
+                  'rationale':'提炼自本次对话','topic':'auto','instruction':'按对话内容执行'}
+        return json.dumps({'memories':[{'key':'SESSION_SUMMARY','value':'本次整理了一个话题的对话内容，供项目历史核对。'},
+            {'key':'project:x:request:auto','value':value,'confidence':.9,'attribute':'constraint','learning':learning}]},ensure_ascii=False)
     if '你是项目历史分类助手' in prompt:
         samples=json.loads(prompt.split('待分类资料（仅正文片段，不代表完整会话）：\n',1)[1])
         return json.dumps({'items':[{'key':r['key'],'project':'evo','reason':'正文说明属于 Evo 演示项目。'} for r in samples]},ensure_ascii=False)
@@ -89,6 +122,34 @@ if os.environ.get('EVOLVMEM_CARD_FIXTURE') == '1':
             s.store._connection().execute('UPDATE context_items SET updated_at=? WHERE project=?',(stamp,slug))
             s.store._connection().execute('UPDATE context_project_registry SET updated_at=? WHERE project=?',(stamp,slug))
 server=HTTPServer(('127.0.0.1',int(os.environ.get('EVOLVMEM_TEST_PORT','39478'))),make_handler(s))
+# A pending auto-organization task plus the bounded worker, both synthetic.
+from evolvmem.auto_organization import OrganizationWorker
+from evolvmem.knowledge_api import dispatch as knowledge_dispatch
+from evolvmem.session_archive import SessionArchiver as _Archiver
+_auto=[] if os.environ.get('EVOLVMEM_ORGANIZATION_FIXTURE')!='1' else [
+    'Evo 演示项目：自动整理要先分段再归属。\n',
+    '其余内容：这条没有明确项目线索，需要人工确认。\n',
+    'dsh-a：导出必须保留来源版本。\n']
+if _auto:
+    _source=_Archiver(config,s.store).archive_session('','kimi','organization-demo',
+        json.dumps({'messages':[{'role':'user','content':''.join(_auto)},
+                                {'role':'assistant','content':'会按主题整理。'}]},ensure_ascii=False))
+    _full=knowledge_dispatch(s,'GET','cleaning/detail',{'key':f'archive:{_source.id}'})
+    knowledge_dispatch(s,'POST','cleaning/save',{'items':[{'key':_full['key'],
+        'expected_revision':_full['expected_revision'],'cleaned_text':_full['body'],'category':'reference'}]})
+    knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{_source.id}'}]})
+    # A second source with two units that both need a human decision.
+    _review=_Archiver(config,s.store).archive_session('','kimi','organization-review-demo',
+        json.dumps({'messages':[{'role':'user','content':'未归属事项一：没有项目线索。\n未归属事项二：同样需要人工确认。'},
+                                {'role':'assistant','content':'会逐条等待确认。'}]},ensure_ascii=False))
+    _review_full=knowledge_dispatch(s,'GET','cleaning/detail',{'key':f'archive:{_review.id}'})
+    knowledge_dispatch(s,'POST','cleaning/save',{'items':[{'key':_review_full['key'],
+        'expected_revision':_review_full['expected_revision'],'cleaned_text':_review_full['body'],'category':'reference'}]})
+    knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{_review.id}'}]})
+_worker=OrganizationWorker(config,mode=ContextMode.SHADOW).start() if _auto else None
 print('Temporary browser fixture ready',flush=True)
 try:server.serve_forever()
-finally:server.server_close();s.close();shutil.rmtree(config.data_dir)
+finally:
+    server.server_close()
+    if _worker:_worker.stop()
+    s.close();shutil.rmtree(config.data_dir)

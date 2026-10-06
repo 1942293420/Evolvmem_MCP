@@ -52,6 +52,95 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
         messages TEXT NOT NULL, body TEXT NOT NULL, content_hash TEXT NOT NULL,
         cleaned_at TEXT NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS organization_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_key TEXT NOT NULL,
+        source_revision TEXT NOT NULL,
+        rule_revision TEXT NOT NULL,
+        source_snapshot TEXT NOT NULL DEFAULT '',
+        source_title TEXT NOT NULL DEFAULT '',
+        stage TEXT NOT NULL DEFAULT 'queued',
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        error_code TEXT NOT NULL DEFAULT '',
+        error_detail TEXT NOT NULL DEFAULT '',
+        unit_count INTEGER NOT NULL DEFAULT 0,
+        review_count INTEGER NOT NULL DEFAULT 0,
+        superseded_by INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(source_key, source_revision, rule_revision)
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_organization_tasks_status
+        ON organization_tasks(status, id)""",
+    """CREATE TABLE IF NOT EXISTS organization_units (
+        task_id INTEGER NOT NULL REFERENCES organization_tasks(id) ON DELETE CASCADE,
+        ordinal INTEGER NOT NULL,
+        digest TEXT NOT NULL,
+        title TEXT NOT NULL,
+        text TEXT NOT NULL,
+        source_start INTEGER NOT NULL,
+        source_end INTEGER NOT NULL,
+        category TEXT NOT NULL DEFAULT 'reference',
+        role TEXT NOT NULL DEFAULT '',
+        cleaned_text TEXT NOT NULL DEFAULT '',
+        disposition TEXT NOT NULL DEFAULT 'keep',
+        disposition_reason TEXT NOT NULL DEFAULT '',
+        extraction_stage TEXT NOT NULL DEFAULT 'pending',
+        extraction_error TEXT NOT NULL DEFAULT '',
+        extraction_signature TEXT NOT NULL DEFAULT '',
+        project_hint TEXT NOT NULL DEFAULT '',
+        project TEXT NOT NULL DEFAULT '',
+        decision TEXT NOT NULL DEFAULT 'review',
+        reason TEXT NOT NULL DEFAULT '',
+        evidence_quote TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL DEFAULT 1,
+        item_id INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(task_id, ordinal)
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_organization_units_digest
+        ON organization_units(task_id, digest)""",
+    """CREATE TABLE IF NOT EXISTS unit_derivations (
+        unit_task_id INTEGER NOT NULL,
+        unit_digest TEXT NOT NULL,
+        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL DEFAULT '',
+        project TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(unit_task_id, unit_digest, item_id)
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_unit_derivations_digest
+        ON unit_derivations(unit_digest, item_id)""",
+    """CREATE TABLE IF NOT EXISTS organization_guidance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope TEXT NOT NULL DEFAULT 'batch' CHECK(scope IN ('batch','future')),
+        project TEXT NOT NULL DEFAULT '',
+        condition TEXT NOT NULL DEFAULT '',
+        exceptions TEXT NOT NULL DEFAULT '',
+        guidance TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'reusable',
+        negative INTEGER NOT NULL DEFAULT 0,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        revision INTEGER NOT NULL DEFAULT 1,
+        source_text TEXT NOT NULL DEFAULT '',
+        source_task_id INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_organization_guidance_enabled
+        ON organization_guidance(enabled, scope)""",
+    """CREATE TABLE IF NOT EXISTS organization_settings (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        auto_new INTEGER NOT NULL DEFAULT 0,
+        activation_at TEXT NOT NULL DEFAULT '',
+        baseline_id INTEGER NOT NULL DEFAULT 0,
+        revision INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL
+    )""",
     """CREATE TABLE IF NOT EXISTS knowledge_qa (
         item_id INTEGER PRIMARY KEY REFERENCES context_items(id) ON DELETE CASCADE,
         question TEXT NOT NULL, answer TEXT NOT NULL, source_fingerprint TEXT NOT NULL,
@@ -423,6 +512,9 @@ class ContextStore:
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA journal_mode=WAL")
+            # A bounded background worker shares this database with the web
+            # request thread; wait for a writer instead of failing the task.
+            conn.execute("PRAGMA busy_timeout=15000")
             conn.execute("PRAGMA foreign_keys=ON")
             self._conn = conn
             if create_schema:
@@ -514,6 +606,26 @@ class ContextStore:
                 "revision": "INTEGER NOT NULL DEFAULT 1",
                 "experience_version": "INTEGER NOT NULL DEFAULT 1",
             },
+        }
+        additions["organization_tasks"] = {
+            "source_snapshot": "TEXT NOT NULL DEFAULT ''",
+            "source_title": "TEXT NOT NULL DEFAULT ''",
+        }
+        additions["organization_units"] = {
+            "role": "TEXT NOT NULL DEFAULT ''",
+            "cleaned_text": "TEXT NOT NULL DEFAULT ''",
+            "disposition": "TEXT NOT NULL DEFAULT 'keep'",
+            "disposition_reason": "TEXT NOT NULL DEFAULT ''",
+            "extraction_stage": "TEXT NOT NULL DEFAULT 'pending'",
+            "extraction_error": "TEXT NOT NULL DEFAULT ''",
+            "extraction_signature": "TEXT NOT NULL DEFAULT ''",
+        }
+        additions["organization_guidance"] = {
+            "state": "TEXT NOT NULL DEFAULT 'reusable'",
+            "revision": "INTEGER NOT NULL DEFAULT 1",
+        }
+        additions["organization_settings"] = {
+            "baseline_id": "INTEGER NOT NULL DEFAULT 0",
         }
         for table, columns in additions.items():
             existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -976,7 +1088,7 @@ class ContextStore:
         """Link one item to its origin archive and refresh source bookkeeping."""
         self._require_transaction("record_session_source")
         cursor = self._connection().execute(
-            "INSERT INTO context_sources ("
+            "INSERT OR IGNORE INTO context_sources ("
             "item_id, archive_id, source_kind, source_ref, extraction_version, "
             "created_at"
             ") VALUES (?, ?, 'session', ?, ?, ?)",
@@ -989,7 +1101,10 @@ class ContextStore:
             (item_id, item_id),
         )
         self.recompute_source_states([item_id])
-        return int(cursor.lastrowid)
+        row = self._connection().execute(
+            "SELECT id FROM context_sources WHERE item_id=? AND source_kind='session' AND source_ref=?",
+            (item_id, str(archive_id))).fetchone()
+        return int(row['id'])
 
     def list_archive_sources(self, archive_id: int) -> list[dict]:
         """All context_sources rows backed by one archive."""

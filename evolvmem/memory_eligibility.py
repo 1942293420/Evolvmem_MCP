@@ -1,6 +1,9 @@
 """History remains searchable; method claims require independently bound proof."""
 
 def eligible(store, item_id):
+    from evolvmem.unit_derivations import currently_backed
+    if not currently_backed(store, item_id):
+        return False
     row = store._connection().execute(
         "SELECT i.content_type,i.status,i.success_count,i.experience_payload,l.category "
         "FROM context_items i LEFT JOIN learning_memories l ON l.item_id=i.id WHERE i.id=?", (item_id,)).fetchone()

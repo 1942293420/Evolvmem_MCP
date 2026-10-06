@@ -10,10 +10,16 @@ from evolvmem.legacy_models import LegacyExtractionItem, LegacyExtractionRequest
 from evolvmem.lan_sharing import LanError
 
 
-def prepare_extraction(config, project, source_session, messages, llm_config, *, reviewed_cleaning=None):
-    """Only provider calls happen here; persistence uses the shared core later."""
+def prepare_extraction(config, project, source_session, messages, llm_config, *,
+                       reviewed_cleaning=None, related_context=None):
+    """Only provider calls happen here; persistence uses the shared core later.
+
+    ``related_context`` lets a caller pass the bounded same-project peers it
+    already looked up (the shared ``learning_extraction.related`` result) so the
+    provider can propose add/supplement/replace/skip against real knowledge.
+    """
     safe_messages, _ = redact_messages(messages)
-    options = {'reviewed_cleaning': reviewed_cleaning} if reviewed_cleaning else {}
+    options = {'reviewed_cleaning': reviewed_cleaning, 'related_context': related_context}
     summary, candidates = kimi_hooks._split_summary_candidate(
         kimi_hooks._extract_candidates(safe_messages, llm_config, config=config, project=project, **options))
     if summary is None:
