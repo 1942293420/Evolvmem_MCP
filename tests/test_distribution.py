@@ -81,12 +81,17 @@ http = HTTPServer(('127.0.0.1', 0), make_handler(server.context_service))
 worker = threading.Thread(target=http.serve_forever, daemon=True)
 worker.start()
 try:
+    # Loopback only: an ambient HTTP proxy would re-append the fragment from
+    # the /workflow redirect Location onto the request target and 404.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     for path in ('/', '/designs/signal.css', '/designs/organizer.js',
                  '/insights.js', '/workflow', '/api/stats', '/api/insights'):
-        with urllib.request.urlopen('http://127.0.0.1:'+str(http.server_port)+path,
-                                    timeout=3) as response:
+        with opener.open('http://127.0.0.1:'+str(http.server_port)+path,
+                         timeout=3) as response:
             assert response.status == 200, path
             assert len(response.read()) > 0, path
+            if path == '/workflow':
+                assert response.geturl().endswith('/#principles'), response.geturl()
 finally:
     http.shutdown()
     worker.join(3)
