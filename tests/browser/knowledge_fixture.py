@@ -48,6 +48,34 @@ for index in range(2):
 s.knowledge().create({'title':'未归属演示资料','body':'这份资料需要归属 Evo 演示项目。','scope':'project','action':'draft'})
 from tests.test_knowledge_cleaning import ready
 ready(s)
+# One synthetic candidate whose answer widened a real user quote: the stored
+# review verdict must stay visible in the item detail panel.
+
+_wide=s.knowledge().create({'title':'入口范围待确认','body':'退款、删除、导出均放在卡片。','project':'evo',
+    'action':'draft','content_type':'reference'})
+with s.store.transaction():
+    s.learning().capture(_wide['id'],{'category':'project_convention','basis':'explicit',
+        'quote':'设置入口在卡片本身，退款入口也在卡片上。','question':'这些入口放在哪里？',
+        'answer':'退款、删除、导出均放在卡片。','trigger':'查看卡片入口时',
+        'answer_support':{'verdict':'review','reason':'需独立核对答案是否超出用户原话范围：答案增加了用户未说的入口范围',
+            'quote':'设置入口在卡片本身，退款入口也在卡片上。','asked':'退款、删除、导出均放在卡片。',
+            'original_answer':'退款、删除、导出均放在卡片。','corrected':False,'failed':True,
+            'question':'这些入口放在哪里？','digest':'fixture','source':'fixture'}},messages=[
+            {'role':'user','content':'设置入口在卡片本身，退款入口也在卡片上。'}])
+
+# One narrowed candidate: the corrected answer is one contiguous user fragment.
+_narrow=s.knowledge().create({'title':'入口位置已收窄','body':'设置入口在卡片本身','project':'evo',
+    'action':'draft','content_type':'reference'})
+with s.store.transaction():
+    s.learning().capture(_narrow['id'],{'category':'project_convention','basis':'explicit',
+        'quote':'设置入口在卡片本身','question':'设置入口在哪里？','answer':'设置入口在卡片本身',
+        'trigger':'查看入口时',
+        'answer_support':{'verdict':'narrow','reason':'只有前半句能直接引用',
+            'quote':'设置入口在卡片本身','asked':'设置入口和退款入口都在卡片上',
+            'original_answer':'设置入口和退款入口都在卡片上','original_quote':'设置入口在卡片本身，退款入口也在卡片上。',
+            'corrected':True,'question':'设置入口在哪里？','digest':'fixture','source':'fixture'}},messages=[
+            {'role':'user','content':'设置入口在卡片本身，退款入口也在卡片上。'}])
+
 # Only the external provider is substituted; HTTP, parsing and policy checks remain real.
 def model(prompt, *a, **kw):
     if '你是资料清洗助手' in prompt:
@@ -84,6 +112,23 @@ def model(prompt, *a, **kw):
                   'rationale':'提炼自本次对话','topic':'auto','instruction':'按对话内容执行'}
         return json.dumps({'memories':[{'key':'SESSION_SUMMARY','value':'本次整理了一个话题的对话内容，供项目历史核对。'},
             {'key':'project:x:request:auto','value':value,'confidence':.9,'attribute':'constraint','learning':learning}]},ensure_ascii=False)
+    if '独立核对员' in prompt:
+        # Independent answer-scope reviewer: one verdict per numbered candidate.
+        candidates=re.findall(r'"编号": (\d+),\n\s+"引用": "([^"]*)"',prompt)
+        out=[]
+        for n,quote in candidates:
+            if '卡片本身' in prompt and '设置入口在卡片本身' in quote and '退款入口也在卡片上' in quote:
+                # Extractive narrowing example: only the first clause is quoted.
+                out.append({'id':int(n),'verdict':'narrow','reason':'只有前半句能直接引用',
+                            'quote':quote,'corrected_quote':'设置入口在卡片本身'})
+                continue
+            if '纠正：禁止上传' in prompt and '上传' in prompt:
+                # A later user correction wins even when the answer matches the quote.
+                out.append({'id':int(n),'verdict':'review','reason':'用户随后明确纠正：禁止上传任何资料',
+                            'quote':quote})
+            else:
+                out.append({'id':int(n),'verdict':'supported','reason':'与本条用户原话一致','quote':quote})
+        return json.dumps(out,ensure_ascii=False)
     if '你是项目历史分类助手' in prompt:
         samples=json.loads(prompt.split('待分类资料（仅正文片段，不代表完整会话）：\n',1)[1])
         return json.dumps({'items':[{'key':r['key'],'project':'evo','reason':'正文说明属于 Evo 演示项目。'} for r in samples]},ensure_ascii=False)

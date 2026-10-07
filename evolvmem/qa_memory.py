@@ -46,6 +46,8 @@ def _unverified_experience(row):
 
 def _review_code(reason, row):
     text = str(reason or '')
+    if any(keyword in text for keyword in ('超出用户原话', '独立核对', '答案或原话已改变')):
+        return 'evidence'
     if any(keyword in text for keyword in ('原话', '推断', '缺少用户明确依据', '缺少依据')):
         return 'evidence'
     if any(keyword in text for keyword in ('同一标识', '相同标识', '重复标识', '已有不同答案', '已有不同内容')):

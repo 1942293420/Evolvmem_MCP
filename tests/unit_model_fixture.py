@@ -36,6 +36,7 @@ class UnitProvider:
         self.extraction = extraction
         self.calls = []
         self.extract_calls = []
+        self.review_calls = []
 
     # -- segmentation --
 
@@ -99,8 +100,26 @@ class UnitProvider:
             memories = self.extraction(prompt, memories) or memories
         return json.dumps({'memories': memories}, ensure_ascii=False)
 
+    def review(self, prompt):
+        """Answer the independent answer-scope review for every numbered candidate.
+
+        A candidate whose quote is not verbatim in the prompt is answered with
+        ``review`` so a broken fixture cannot silently promote unreviewed text.
+        """
+        found = re.findall(r'"编号": (\d+),\n\s+"引用": "([^"]*)"', prompt)
+        out = []
+        for number, quote in found:
+            verdict = 'supported' if quote and quote in prompt else 'review'
+            out.append({'id': int(number), 'verdict': verdict,
+                        'reason': '与本条用户原话一致' if verdict == 'supported' else '引用无法在消息中核对',
+                        'quote': quote})
+        self.review_calls.append(prompt)
+        return json.dumps(out, ensure_ascii=False)
+
     def __call__(self, prompt, *args, **kwargs):
         self.calls.append(prompt)
+        if '独立核对员' in prompt:
+            return self.review(prompt)
         if '整理分段助手' in prompt:
             return self.segment(prompt)
         if '编号消息' not in prompt and EXTRACTION_LINE.search(prompt):

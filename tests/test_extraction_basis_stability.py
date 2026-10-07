@@ -5,6 +5,8 @@ change it catches: a gate that stops reading a missing ``question``/``answer``
 (or a missing ``normalization``) as "nothing to check", and a gate that stops
 accepting an assistant-role quote as user evidence.
 """
+import json
+
 import pytest
 
 from evolvmem.context_models import ContextMode
@@ -12,7 +14,7 @@ from evolvmem.learning_extraction import plan
 from evolvmem.legacy_models import LegacyExtractionItem
 from tests.test_web_server import _make_service
 
-USER_LINE = '帮我把资料整理成SOP，但不要对店铺做任何实质性的操作，可以先测试。'
+USER_LINE = '帮我把资料整理成SOP；整理时只做只读查看和无副作用测试，不进行实质性操作。'
 ASSISTANT_LINE = '我先只读资料并做无副作用测试，之后再整理可执行 skill。'
 
 
@@ -36,6 +38,15 @@ def full_learning(value, **extra):
             'normalization': {'requirement': value, 'acceptance': [], 'questions': []}, **extra}
 
 
+def reviewed(item, messages, *, quote=USER_LINE):
+    """Run the production batch review, then keep the deterministic plan gate."""
+    from evolvmem import answer_support
+    answer_support.support(messages, [item], lambda _prompt: json.dumps(
+        [{'id': 1, 'verdict': 'supported', 'reason': '与本条用户原话一致', 'quote': quote}],
+        ensure_ascii=False))
+    return item
+
+
 def test_omitting_question_and_answer_does_not_promote_a_user_requirement(service):
     """Catch: a missing question/answer pair must not read as "nothing to check"."""
     value = '整理演示店铺资料时只做只读查看和无副作用测试，不进行任何实质性操作。'
@@ -50,17 +61,18 @@ def test_complete_answer_promotes_with_or_without_the_optional_normalization(ser
     """Catch: promotion must not depend on optional normalization being present."""
     value = '整理演示店铺资料时只做只读查看和无副作用测试，不进行任何实质性操作。'
     messages = [{'role': 'assistant', 'content': ASSISTANT_LINE}, {'role': 'user', 'content': USER_LINE}]
-    assert plan(service, item(value, full_learning(value)), messages)['status'] == 'active'
+    assert plan(service, reviewed(item(value, full_learning(value)), messages),
+                messages)['status'] == 'active'
     without = full_learning(value)
     without.pop('normalization')
-    assert plan(service, item(value, without), messages)['status'] == 'active'
+    assert plan(service, reviewed(item(value, without), messages), messages)['status'] == 'active'
 
 
 def test_answer_that_is_not_the_user_quote_still_promotes_and_keeps_the_source_quote(service):
     """Catch: the extracted answer may be a faithful summary; the quote must stay the user line."""
     value = '整理演示店铺资料时只做只读查看和无副作用测试。'
-    result = plan(service, item(value, full_learning(value)),
-                  [{'role': 'user', 'content': USER_LINE}])
+    messages = [{'role': 'user', 'content': USER_LINE}]
+    result = plan(service, reviewed(item(value, full_learning(value)), messages), messages)
     assert result['status'] == 'active'
     assert result['body'] == value
     assert result['normalization']['requirement'] == value
@@ -88,8 +100,8 @@ def test_paraphrased_quote_is_not_user_evidence(service):
 def test_direct_user_requirement_with_a_complete_answer_can_still_auto_enter(service):
     """Catch: a real user restriction must not be parked by the new QA requirement."""
     value = '整理演示店铺资料时只做只读查看和无副作用测试。'
-    result = plan(service, item(value, full_learning(value)),
-                  [{'role': 'user', 'content': USER_LINE}])
+    messages = [{'role': 'user', 'content': USER_LINE}]
+    result = plan(service, reviewed(item(value, full_learning(value)), messages), messages)
     assert result['status'] == 'active'
     assert result['normalization']['requirement'] == value
 

@@ -528,6 +528,29 @@ def _extract_candidates(messages: list[dict[str, str]],
                 f"{llm_config.provider} extraction response omitted "
                 "SESSION_SUMMARY"
             )
+        # 核对前统一候选标识到本次项目（占位或错误项目都归一），使正式入库
+        # 与预览以同一标识复验，避免已审核条目落库后被判为“标识已变化”。
+        from evolvmem import answer_support
+        for candidate in candidates:
+            answer_support.normalize_key(candidate, project)
+        # 每批一次有界模型核对：独立检查 explicit 答案是否超出用户原话。
+        # 完整批次消息整体送审；异常在共享模块内按条 fail-closed，这里再兜底。
+        try:
+            _, replacements = answer_support.support(
+                batch, candidates,
+                lambda review_prompt: _call_llm_with_retry(review_prompt, llm_config, deadline=deadline),
+            )
+        except Exception as error:
+            _log(f"answer support review skipped: {type(error).__name__}")
+            for candidate in candidates:
+                data = candidate.learning
+                if isinstance(data, dict) and answer_support.needs_check(data, candidate):
+                    answer_support._fail(
+                        data, answer_support.REVIEW_REASON + '：独立核对未完成，待确认',
+                        original=data.get('answer'), messages=batch)
+            replacements = {}
+        if replacements:
+            candidates = [replacements.get(id(c), c) for c in candidates]
         return candidates
 
     try:

@@ -124,6 +124,12 @@ class MemoryLearning:
         for field in ('relation', 'intake', 'rule_revision'):
             if field in metadata:
                 payload[field] = metadata[field]
+        # The independent answer check is persisted with the row it verified:
+        # verdict, reason, original answer and the quote that was actually used
+        # stay visible for plan/persist and the preview after a correction.
+        support = metadata.get('answer_support')
+        if isinstance(support, dict):
+            payload['answer_support'] = support
         with self.store.transaction():
             self.conn.execute('INSERT INTO learning_memories(item_id,category,payload) VALUES(?,?,?) '
                 'ON CONFLICT(item_id) DO UPDATE SET category=excluded.category,payload=excluded.payload,revision=revision+1',

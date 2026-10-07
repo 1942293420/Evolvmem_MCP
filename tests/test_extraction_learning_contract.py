@@ -30,10 +30,33 @@ def request(text, *, session='p1-session', key='project:evo:constraint:testing',
                       'instruction': text, 'topic': 'testing', **learning}),), source_session=session)
 
 
-def persist(s, text, **kw):
-    messages = kw.pop('messages', [{'role': 'user', 'content': text}])
-    r = s.persist_legacy_extraction(request(text, **kw), source_messages=messages)
+def reviewer(prompt):
+    """Shared-contract independent reviewer stub: one supported verdict per candidate."""
+    quote = prompt.split('"引用": "', 1)[1].split('"', 1)[0]
+    count = prompt.count('"\u7f16\u53f7"') or 1
+    return json.dumps([{'id': i, 'verdict': 'supported', 'reason': '与本条用户原话一致', 'quote': quote}
+                       for i in range(1, count + 1)], ensure_ascii=False)
+
+
+def reviewed(s, text, *, messages=None, llm=reviewer, **kw):
+    """Build the request, run the real batch review, then persist.
+
+    The review lives at the extraction boundary (never inside ``plan``), so the
+    fixture runs the same production helper the batch path uses before the
+    candidate can promote. Returns the persisted row or ``None``.
+    """
+    from evolvmem import answer_support
+    messages = messages or [{'role': 'user', 'content': text}]
+    req = request(text, **kw)
+    answer_support.support(messages, list(req.candidates), llm)
+    r = s.persist_legacy_extraction(req, source_messages=messages)
     return s.knowledge().detail(r.candidates[0].context_id) if r.candidates else None
+
+
+def persist(s, text, **kw):
+    messages = kw.pop('messages', None)
+    llm = kw.pop('llm', reviewer)
+    return reviewed(s, text, messages=messages, llm=llm, **kw)
 
 
 def test_full_process_retains_roles_and_does_not_turn_assistant_claim_into_success(service):
@@ -116,10 +139,14 @@ def test_preview_compares_unsaved_rules_without_writes_and_matches_real_ingestio
         {'key': 'project:evo:constraint:testing', 'value': text, 'attribute': 'constraint', 'confidence': .9,
          'learning': {'category': 'project_convention', 'basis': 'explicit', 'quote': text, 'instruction': text,
                       'question': '需求讨论阶段的协作约定是什么？', 'answer': text}}]})
+    def llm(prompt):
+        # The preview now also runs the independent answer review: answer it
+        # with the real reviewed contract instead of the extraction payload.
+        return reviewer(prompt) if '独立核对员' in prompt else response
     before = service.store._connection().total_changes
     result = preview(service, {'project': 'evo', 'messages': messages,
         'rules': {'expected_revision': policy['revision'], 'settings': {**policy['settings'], 'auto_min_confidence': .99}}},
-        llm=lambda prompt: response)
+        llm=llm)
     assert service.store._connection().total_changes == before
     assert kb.rules.read()['revision'] == policy['revision']
     assert result['current']['candidates'][0]['status'] == 'active'

@@ -31,11 +31,27 @@ def preview(service, body, *, llm=None):
         if config is None:
             raise ValueError('extraction_provider_unavailable')
         llm = lambda prompt: _call_llm_with_retry(prompt, config)
+    # ``calls`` counts every real provider callback of this preview, including
+    # the independent answer review (one extraction + one review per version).
+    calls = []
+
+    def provider(prompt):
+        calls.append(prompt)
+        return llm(prompt)
 
     def run(policy):
+        started = len(calls)
         safe, _ = redact_messages(clean_messages(messages, policy=policy))
         prompt = extractor.build_extraction_prompt(safe, policy=policy, related=old)
-        candidates = extractor.parse_response(llm(prompt))
+        candidates = extractor.parse_response(provider(prompt))
+        # Same shared independent review as the ingestion batch, before ``plan``,
+        # so the preview shows the same verdict, correction and reasons. Keys are
+        # normalized to the selected project first, exactly like ingestion.
+        from evolvmem import answer_support
+        for candidate in candidates:
+            answer_support.normalize_key(candidate, project)
+        _, replacements = answer_support.support(safe, candidates, provider)
+        candidates = [replacements.get(id(c), c) for c in candidates]
         if not any(c.key.strip().upper() == 'SESSION_SUMMARY' for c in candidates):
             raise ValueError('extraction_summary_missing')
         results, seen, writes = [], set(), 0
@@ -56,6 +72,9 @@ def preview(service, body, *, llm=None):
             elif not item.key.startswith('user:'):
                 continue
             result = plan(service, item, safe, policy=policy)
+            # ``action`` mirrors the real ingestion decision (review included);
+            # the raw model action stays in ``decision``.
+            result['action'] = result['decision']['action'] if result['action'] != 'skip' else 'skip'
             result['question'] = (item.learning or {}).get('question', '')
             result['answer'] = (item.learning or {}).get('answer', '')
             result['category'] = (item.learning or {}).get('category', '')
@@ -73,10 +92,11 @@ def preview(service, body, *, llm=None):
                     seen.add(signature)
             results.append(result)
         return {'rule_revision': policy['revision'], 'skill': policy['skill'], 'prompt': prompt,
-                'candidates': results, 'related_ids': [r['id'] for r in old], 'cleaned_messages':safe}
+                'candidates': results, 'related_ids': [r['id'] for r in old], 'cleaned_messages':safe,
+                'model_calls': len(calls) - started}
 
     before = run(current)
     after = run(draft) if draft['revision'] != current['revision'] else before
     return {'current': before, 'draft': after, 'redacted': redacted,
-            'model_calls': 1 if before is after else 2, 'persisted': 0,
+            'model_calls': len(calls), 'persisted': 0,
             'cleaning': {'input_messages': len(messages), 'dialogue_messages': len(cleaned), 'removed': len(messages)-len(cleaned)}}

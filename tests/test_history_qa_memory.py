@@ -57,18 +57,30 @@ def test_history_migration_is_local_idempotent_and_keeps_missing_sources_explici
     assert migrate(service, {'project': 'evo', 'limit': 10})['unavailable'] == [a.id]
 
 
+def reviewed_items(messages, candidates, verdict=None):
+    """Run the production batch review at the extraction boundary."""
+    from evolvmem import answer_support
+    quote = (candidates[0].learning or {}).get('quote', '')
+    reply = json.dumps([verdict or {'id': 1, 'verdict': 'supported', 'reason': '与本条用户原话一致',
+                                    'quote': quote}], ensure_ascii=False)
+    answer_support.support(messages, list(candidates), lambda _prompt: reply)
+    return candidates
+
+
 def extracted_qa(service, *, question='修改界面前应先明确什么？', answer='修改界面前先明确验收条件。',
                  key='ui-goal', basis='explicit', quote=None, session='qa-session'):
     from evolvmem.legacy_models import LegacyExtractionItem, LegacyExtractionRequest
     messages = [{'role': 'user', 'content': quote or answer}]
     a = SessionArchiver(service.config, service.store).archive_session('evo', 'kimi', session,
         json.dumps({'messages': messages}, ensure_ascii=False))
+    candidates = (LegacyExtractionItem(key='project:evo:constraint:'+key, value=answer, attribute='constraint', confidence=.95,
+        learning={'category':'project_convention', 'basis':basis, 'quote':quote or answer,
+                  'question':question, 'answer':answer, 'trigger':'修改界面时'}),)
+    if basis == 'explicit':
+        reviewed_items(messages, candidates)
     result = service.persist_legacy_extraction(LegacyExtractionRequest(
         summary=LegacyExtractionItem(key='project:evo:progress:log:'+session, value='本次讨论了界面修改前的开发协作要求。', attribute='fact'),
-        candidates=(LegacyExtractionItem(key='project:evo:constraint:'+key, value=answer, attribute='constraint', confidence=.95,
-            learning={'category':'project_convention', 'basis':basis, 'quote':quote or answer,
-                      'question':question, 'answer':answer, 'trigger':'修改界面时'}),),
-        source_session=session), source_archive_id=a.id, source_messages=messages)
+        candidates=candidates, source_session=session), source_archive_id=a.id, source_messages=messages)
     return result, a
 
 

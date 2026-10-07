@@ -425,3 +425,7 @@
 .organization-pager select{padding:6px 8px;border:1px solid var(--line);border-radius:6px}
 @media(max-width:760px){.organization-settings{flex-direction:column;align-items:flex-start}.organization-pager>*{flex:1 1 120px}}
 .organization-unit.is-aside{opacity:.72;border-style:dashed}
+/* Independent answer-scope review: verdict, reason and the corrected text. */
+.answer-support{margin-top:8px}
+.answer-support .struck{color:var(--muted);text-decoration:line-through}
+.answer-support blockquote{margin:4px 0}

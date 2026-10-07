@@ -117,7 +117,12 @@ def test_real_extraction_preserves_knowledge_without_injecting_rules(service):
     kb.rules.save({'expected_revision':policy['revision']})
     request=LegacyExtractionRequest(summary=LegacyExtractionItem(key='project:evo:progress:log:learning',value='Evo 正在完善知识库与协作体系。',attribute='fact'),
         candidates=(LegacyExtractionItem(key=c.key,value=c.value,attribute=c.attribute,learning=c.learning),),source_session='integration-session')
-    result=service.persist_legacy_extraction(request,source_messages=[{'role':'user','content':text}])
+    messages=[{'role':'user','content':text}]
+    from evolvmem import answer_support
+    answer_support.support(messages, list(request.candidates),
+        lambda prompt: json.dumps([{'id':1,'verdict':'supported','reason':'与原话一致','quote':text}],
+                                  ensure_ascii=False))
+    result=service.persist_legacy_extraction(request, source_messages=messages)
     row=kb.detail(result.candidates[0].context_id)
     assert row['learning']['basis']=='explicit'
     assert row['scope']=='project'
