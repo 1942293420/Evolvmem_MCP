@@ -8,6 +8,7 @@ from evolvmem.conversation import from_payload, render
 from evolvmem.context_store import _now_iso
 from evolvmem.extraction_policy import redact_messages
 from evolvmem.project_ownership import load_ownership, UNREVIEWED_FACT
+from evolvmem.session_identity import identity_key
 
 
 def save_clean(store, archive_id, payload, *, policy=None):
@@ -168,7 +169,7 @@ def sessions(service, project):
             continue
         if not row['project'] and not project_units(service, project, row['id']):
             continue
-        key = (row['adapter'], row['external_session_id'].split(':')[0] if row['adapter'] == 'codex' else row['external_session_id'])
+        key = identity_key(row['adapter'], row['external_session_id'])
         if key in seen:
             continue
         seen.add(key)

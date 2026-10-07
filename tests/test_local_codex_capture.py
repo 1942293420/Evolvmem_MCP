@@ -728,6 +728,165 @@ def test_one_broken_file_does_not_stop_the_round(service, roots, monkeypatch):
     assert len(archives(service)) == 1
 
 
+# ------------------------------------------------- system sub-session filter
+
+GUARDIAN = {'subagent': {'other': 'guardian'}}
+
+
+def meta(payload, moment=NEW):
+    return event('session_meta', {'timestamp': stamp(moment), 'cwd': '/home/u/demo', **payload}, moment)
+
+
+def conversation(meta_row):
+    """A session body whose messages would be collected if the gate let them in."""
+    return [meta_row,
+            event('response_item', {'type': 'message', 'role': 'user', 'id': 'evt-user-1',
+                  'content': [{'type': 'input_text', 'text': TEXT_HEAD}]}),
+            event('response_item', {'type': 'message', 'role': 'assistant', 'id': 'evt-ai-1',
+                  'content': [{'type': 'output_text', 'text': TEXT_AI}]})]
+
+
+def track_untouched_cursor(service, path, session_id=SESSION):
+    """A cursor row as a pre-filter install would have written it."""
+    capture.ensure_schema(service.store)
+    stat = path.stat()
+    with service.store.transaction():
+        service.store._connection().execute(
+            'INSERT INTO local_capture_files (session_id,path,device,inode,file_size,file_mtime,'
+            'first_seen_at,updated_at) VALUES (?,?,?,?,?,?,?,?)',
+            (session_id, str(path), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime,
+             capture._now(), capture._now()))
+
+
+def cursor_row(service, path):
+    stat = path.stat()
+    return service.store._connection().execute(
+        'SELECT * FROM local_capture_files WHERE device=? AND inode=?',
+        (stat.st_dev, stat.st_ino)).fetchone()
+
+
+def test_a_guardian_subagent_session_is_never_archived(service, roots):
+    """A system guardian sub-session is not new user chat and stays out."""
+    path = write_session(roots, conversation(meta({'id': SESSION, 'source': GUARDIAN,
+                                                   'parent_thread_id': OTHER})))
+    write_config(service, roots, since=NEW)
+    result = scan(service)
+    assert result['archives'] == 0 and archives(service) == []
+    assert result['ignored_subagent_sessions'] == 1
+    assert result['files_read'] == 0 and result['bytes_read'] == 0
+    assert cursor_row(service, path) is None, 'an ignored session needs no cursor'
+    # An untracked sub-session leaves no state at all, so the read-only view has
+    # no backlog, no failure and nothing to exclude; only a *known* sub-session
+    # (a cursor from before this filter) is counted and parked.
+    state = status(service)
+    assert state['ignored_subagent_sessions'] == 0 and state['pending_bytes'] == 0
+    assert state['needs_review'] == 0 and state['failed_batches'] == 0 and state['last_error'] == ''
+    # A repeated scan ignores it again and never creates a cursor.
+    assert scan(service)['ignored_subagent_sessions'] == 1
+    assert cursor_row(service, path) is None
+
+
+def test_source_subagent_without_a_parent_is_ignored(service, roots):
+    path = write_session(roots, conversation(meta({'id': SESSION, 'source': GUARDIAN})))
+    write_config(service, roots, since=NEW)
+    assert scan(service)['ignored_subagent_sessions'] == 1
+    assert archives(service) == [] and cursor_row(service, path) is None
+
+
+def test_only_a_parent_thread_marker_is_ignored(service, roots):
+    path = write_session(roots, conversation(meta({'id': SESSION, 'parent_thread_id': OTHER})))
+    write_config(service, roots, since=NEW)
+    assert scan(service)['ignored_subagent_sessions'] == 1
+    assert archives(service) == [] and cursor_row(service, path) is None
+
+
+def test_a_tracked_subagent_session_never_advances_or_archives(service, roots):
+    """A cursor created before this filter is parked, never consumed."""
+    path = write_session(roots, conversation(meta({'id': SESSION, 'source': GUARDIAN,
+                                                   'parent_thread_id': OTHER})))
+    write_config(service, roots, since=NEW)
+    track_untouched_cursor(service, path)
+    first = scan(service)
+    assert first['archives'] == 0 and first['ignored_subagent_sessions'] == 1
+    row = cursor_row(service, path)
+    assert row['file_state'] == capture.STATE_IGNORED_SUBAGENT
+    assert row['scanned_offset_bytes'] == 0, 'the cursor must not move'
+    # The sub-session keeps appending; nothing may be archived or consumed.
+    with open(path, 'a', encoding='utf-8') as handle:
+        handle.write(jsonl(rows()[-2:]))
+    second = scan(service)
+    assert second['archives'] == 0 and second['bytes_read'] == 0
+    assert second['ignored_subagent_sessions'] == 1
+    assert cursor_row(service, path)['scanned_offset_bytes'] == 0
+    state = status(service)
+    assert state['pending_bytes'] == 0, 'an ignored session is never backlog'
+    session = state['sessions'][0]
+    assert session['ignored_subagent'] is True and session['pending_bytes'] == 0
+    assert session['needs_review'] is False and session['last_error'] == ''
+
+
+def test_real_user_sessions_keep_being_archived(service, roots):
+    """vscode/cli sessions and plain user forks stay in scope."""
+    shapes = {
+        'vscode': {'id': SESSION, 'source': {'vscode': {'task': 'code'}}},
+        'cli': {'id': SESSION, 'source': {'cli': 'local'}},
+        'forked': {'id': SESSION, 'forked_from_id': OTHER},
+        'plain': {'id': SESSION},
+    }
+    for name, payload in shapes.items():
+        session = '01a0fb28-893d-7250-9445-1a2c2fe6a0%02d' % len(name)
+        path = write_session(roots, conversation(meta({**payload, 'id': session})),
+                             name='rollout-2026-06-01T00-00-00-%s-%s.jsonl' % (session, name))
+        write_config(service, roots, since=NEW)
+        assert capture.subagent_session(path) is False, name
+        write_config(service, roots, since=NEW)
+        result = scan(service)
+        assert result['ignored_subagent_sessions'] == 0, name
+        assert result['archives'] == 1, name
+        stored = payloads(service)
+        assert stored[-1]['source']['session_id'] == session, name
+        assert TEXT_HEAD in stored[-1]['transcript'], name
+
+
+def test_a_session_without_any_session_meta_is_still_collected(service, roots):
+    """The existing mid-session batch contract is unchanged (no meta, no marker)."""
+    path = write_session(roots, [event('response_item', {'type': 'message', 'role': 'user',
+                                                         'id': 'evt-user-1',
+                                                         'content': [{'type': 'input_text', 'text': TEXT_HEAD}]}),
+                                 event('response_item', {'type': 'message', 'role': 'assistant',
+                                                         'id': 'evt-ai-1',
+                                                         'content': [{'type': 'output_text', 'text': TEXT_AI}]})])
+    write_config(service, roots, since=NEW)
+    assert capture.subagent_session(path) is False
+    assert scan(service)['archives'] == 1
+    assert status(service)['ignored_subagent_sessions'] == 0
+
+
+def test_the_subagent_check_reads_only_the_first_line(service, roots, monkeypatch):
+    """The verdict is a bounded first-line read, cached in the existing state."""
+    path = write_session(roots, conversation(meta({'id': SESSION, 'source': GUARDIAN,
+                                                   'parent_thread_id': OTHER})))
+    write_config(service, roots, since=NEW)
+    track_untouched_cursor(service, path)
+    reads = []
+    real_open = open
+
+    def counting_open(name, *args, **kwargs):
+        if str(name) == str(path):
+            reads.append(name)
+        return real_open(name, *args, **kwargs)
+
+    monkeypatch.setattr('builtins.open', counting_open)
+    assert scan(service)['ignored_subagent_sessions'] == 1
+    assert len(reads) == 1, 'only the first-line probe may open the file'
+    # The cached verdict means later scans do not open it at all.
+    reads.clear()
+    assert scan(service)['ignored_subagent_sessions'] == 1
+    assert reads == []
+    status(service)
+    assert reads == []
+
+
 # ------------------------------------------------------------------ discovery
 
 def test_archived_batch_is_discoverable_by_auto_new(service, roots):

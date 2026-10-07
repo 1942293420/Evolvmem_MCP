@@ -30,7 +30,7 @@ import re
 import time
 from datetime import datetime, timezone
 
-from evolvmem.codex_transcript import dialogue_messages
+from evolvmem.codex_transcript import dialogue_messages, workspace_details
 from evolvmem.conversation import clean_messages
 from evolvmem.session_archive import SessionArchiver
 
@@ -56,6 +56,11 @@ ROLLOUT_SUFFIX = '.jsonl'
 STATE_ADVANCING = 'advancing'
 STATE_REWRITTEN = 'rewritten'
 STATE_BLOCKED = 'blocked'
+# A system sub-session (Codex guardian) is never a user conversation. The value
+# lives in the existing state column, so no schema change is needed to cache it.
+STATE_IGNORED_SUBAGENT = 'ignored_subagent'
+
+FIRST_RECORD_LIMIT = 262144
 
 BLOCK_LINE_TOO_LONG = 'line_too_long'
 BLOCK_CONTENT_CHANGED = 'content_changed_needs_review'
@@ -348,24 +353,45 @@ def session_id_for(path):
     return tail if SESSION_ID_RE.fullmatch(tail) else ''
 
 
-def _peek_session_id(path, limit=262144):
-    """First complete line's session id, for files whose name is not canonical."""
+def _first_record(path, limit=FIRST_RECORD_LIMIT):
+    """The first complete line of a rollout file, read bounded and never whole."""
     try:
         with open(path, 'rb') as handle:
             raw = handle.readline(limit)
     except OSError:
-        return ''
+        return None
     if not raw.endswith(b'\n'):
-        return ''
+        return None
     try:
         row = json.loads(raw.decode('utf-8'))
     except (UnicodeDecodeError, ValueError):
-        return ''
-    payload = row.get('payload') if isinstance(row, dict) else None
+        return None
+    return row if isinstance(row, dict) else None
+
+
+def _peek_session_id(path):
+    """First complete line's session id, for files whose name is not canonical."""
+    row = _first_record(path)
+    payload = row.get('payload') if row else None
     if isinstance(payload, dict) and isinstance(payload.get('id'), str) \
             and SESSION_ID_RE.fullmatch(payload['id']):
         return payload['id']
     return ''
+
+
+def subagent_session(path):
+    """Whether the first session_meta declares a system sub-session.
+
+    Codex guardian sub-sessions carry ``source={"subagent": {...}}`` and a
+    ``parent_thread_id``; they inherit earlier context and are not new user
+    conversation, so they are never organized. The judgement reuses the shared
+    ``workspace_details`` rule, which also keeps a plain ``forked_from_id`` user
+    fork and a vscode/cli session in scope. Only the first line is read, bounded.
+    """
+    row = _first_record(path)
+    if row is None or row.get('type') != 'session_meta':
+        return False
+    return bool(workspace_details([row])['subagent'])
 
 
 def discover_files(roots, *, since=0.0, known=()):
@@ -446,7 +472,7 @@ def live_state(row):
     all, which keeps the read-only view and the scan selection affordable for a
     library of hundreds of sessions.
     """
-    if row['file_state'] == STATE_BLOCKED:
+    if row['file_state'] in (STATE_BLOCKED, STATE_IGNORED_SUBAGENT):
         return row['file_state']
     try:
         stat = os.stat(row['path'])
@@ -493,6 +519,13 @@ def _freeze(store, row, reason, *, cap=0, stat=None):
             'UPDATE local_capture_files SET file_state=?,blocked_cap_bytes=?,file_size=?,file_mtime=?,'
             'last_error=?,last_error_at=?,updated_at=? WHERE id=?',
             (STATE_BLOCKED, int(cap), size, mtime, reason, _now(), _now(), row['id']))
+
+
+def _mark_ignored_subagent(store, row):
+    with store.transaction():
+        store._connection().execute(
+            "UPDATE local_capture_files SET file_state=?,last_error='',blocked_cap_bytes=0,updated_at=? "
+            'WHERE id=?', (STATE_IGNORED_SUBAGENT, _now(), row['id']))
 
 
 def _clear_block(store, row, state):
@@ -679,6 +712,7 @@ class _Round:
         self.files_read = 0
         self.files_skipped_old = 0
         self.files_blocked = 0
+        self.ignored_subagent_sessions = 0
         self.lines_read = 0
         self.errors = []
 
@@ -834,6 +868,17 @@ class LocalCodexCapture:
             except OSError:
                 continue
             row = _load_row(self.store, stat)
+            if row is not None and row['file_state'] == STATE_IGNORED_SUBAGENT:
+                round_.ignored_subagent_sessions += 1
+                continue
+            if subagent_session(path):
+                # A system sub-session inherits earlier context; it is not new
+                # user conversation and must never be organized. A cursor that
+                # predates this filter is parked instead of being consumed.
+                if row is not None:
+                    _mark_ignored_subagent(self.store, row)
+                round_.ignored_subagent_sessions += 1
+                continue
             if row is None:
                 session_id = session_id_for(path) or _peek_session_id(path)
                 if not session_id:
@@ -877,6 +922,7 @@ class LocalCodexCapture:
                 'files_seen': round_.files_seen, 'files_read': round_.files_read,
                 'files_skipped_old': round_.files_skipped_old,
                 'files_blocked': round_.files_blocked, 'lines_read': round_.lines_read,
+                'ignored_subagent_sessions': round_.ignored_subagent_sessions,
                 'scanned_bytes': round_.bytes_read, 'errors': round_.errors}
 
     def _record_scan(self, round_):
@@ -914,23 +960,30 @@ def status(config, store):
     auto_new = _auto_new(store)
     sessions = []
     for row in connection.execute('SELECT * FROM local_capture_files ORDER BY updated_at DESC, id DESC'):
-        try:
-            size = os.stat(row['path']).st_size
-        except OSError:
-            size = row['file_size']
-        pending = max(0, size - row['scanned_offset_bytes'])
-        state = live_state(row)
-        blocked = state == STATE_BLOCKED
-        if not blocked:
-            reason = ''
-        elif row['last_error']:
-            reason = row['last_error']
+        ignored = row['file_state'] == STATE_IGNORED_SUBAGENT
+        if ignored:
+            # No file read at all here: the ignored verdict is cached in the
+            # existing state column, so it never shows up as backlog or failure.
+            size, pending, state, blocked, reason = row['file_size'], 0, STATE_IGNORED_SUBAGENT, False, ''
         else:
-            reason = change_reason(row, size)
+            try:
+                size = os.stat(row['path']).st_size
+            except OSError:
+                size = row['file_size']
+            pending = max(0, size - row['scanned_offset_bytes'])
+            state = live_state(row)
+            blocked = state == STATE_BLOCKED
+            if not blocked:
+                reason = ''
+            elif row['last_error']:
+                reason = row['last_error']
+            else:
+                reason = change_reason(row, size)
         sessions.append({
             'session_id': row['session_id'],
             'file': os.path.basename(row['path']),
             'file_state': state,
+            'ignored_subagent': ignored,
             'blocked': blocked,
             'needs_review': blocked,
             'blocked_reason': reason,
@@ -943,9 +996,9 @@ def status(config, store):
             'filtered_events': row['filtered_events'],
             'failed_batches': row['failed_batches'],
             'rewrite_count': row['rewrite_count'],
-            'last_error': row['last_error'],
+            'last_error': '' if ignored else row['last_error'],
             'last_success_at': row['last_success_at'],
-            'last_error_at': row['last_error_at'],
+            'last_error_at': '' if ignored else row['last_error_at'],
             'updated_at': row['updated_at'],
         })
     return {
@@ -965,6 +1018,7 @@ def status(config, store):
         'filtered_events': scan_row['filtered_events'] if scan_row else 0,
         'failed_batches': sum(session['failed_batches'] for session in sessions),
         'needs_review': sum(1 for session in sessions if session['needs_review']),
+        'ignored_subagent_sessions': sum(1 for session in sessions if session['ignored_subagent']),
         'files': len(sessions),
         'last_error': scan_row['last_error'] if scan_row else '',
         'pending_bytes': sum(session['pending_bytes'] for session in sessions),

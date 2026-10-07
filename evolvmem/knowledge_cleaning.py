@@ -10,6 +10,7 @@ from evolvmem import history_organization as organization
 from evolvmem.conversation import clean_messages, from_payload, render
 from evolvmem.extraction_policy import redact_messages
 from evolvmem.memory_learning import CATEGORIES
+from evolvmem.session_identity import logical_identity
 
 
 def review(service, key):
@@ -191,9 +192,13 @@ def delete(service,body):
                 row=checked(service,entry);identity=int(row['key'].split(':')[1]);keys=[row['key']]
                 if row['kind']=='archive':
                     head=service.store.get_session_archive(identity)
-                    logical=head['external_session_id'].split(':')[0] if head['adapter']=='codex' else head['external_session_id']
+                    # A whole Windows snapshot shares one session head across its
+                    # versions, so deleting it removes those versions. Each local
+                    # incremental batch has its own identity, so deleting one batch
+                    # must never purge an independent sibling batch.
+                    logical=logical_identity(head['adapter'],head['external_session_id'])
                     versions=[dict(r) for r in conn.execute('SELECT * FROM session_archives WHERE adapter=?',(head['adapter'],))
-                        if (r['external_session_id'].split(':')[0] if head['adapter']=='codex' else r['external_session_id'])==logical]
+                        if logical_identity(r['adapter'],r['external_session_id'])==logical]
                     for version in versions:
                         aid=version['id']
                         if version['project'] or conn.execute('SELECT 1 FROM context_sources WHERE archive_id=?',(aid,)).fetchone() or conn.execute('SELECT 1 FROM session_archive_holds WHERE archive_id=?',(aid,)).fetchone():

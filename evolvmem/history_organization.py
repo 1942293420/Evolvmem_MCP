@@ -8,6 +8,7 @@ import time
 from evolvmem.conversation import from_payload, render
 from evolvmem.extraction_policy import redact_messages
 from evolvmem.project_store import ProjectStoreError
+from evolvmem.session_identity import identity_key
 
 
 def _has_uploads(service):
@@ -32,7 +33,10 @@ def _unassigned_archives(service):
     for row in conn.execute('SELECT id,project,adapter,external_session_id,created_at FROM session_archives ORDER BY created_at DESC,id DESC'):
         if row['id'] in ignored:
             continue
-        identity = (row['adapter'], row['external_session_id'].split(':')[0] if row['adapter']=='codex' else row['external_session_id'])
+        # One logical source per version family: a whole Windows snapshot keeps
+        # only its newest upload, while every local incremental batch is its own
+        # independent source, so a later batch never hides an older queued one.
+        identity = identity_key(row['adapter'], row['external_session_id'])
         if identity in seen:
             continue
         seen.add(identity)
