@@ -3,10 +3,14 @@
 One correction is a one-off by default. Reuse of a correction for later sources
 is an explicit request. A reusable rule needs a *narrow* match condition: the
 user's own condition must contain at least one distinctive term beyond generic
-words such as 资料 / 项目, and every condition term (or the whole condition
-phrase) must be present in the unit. Exceptions exclude a match instead of
-silently shrinking the keyword set, and two matching rules that point at
-different projects are a conflict for review, never a first-rule-wins guess.
+words such as 资料 / 项目. The condition and every exception are then matched
+as one complete contiguous phrase: case and the phrase's own horizontal
+whitespace never matter, but the phrase is never reassembled from terms
+scattered over the unit, the unit is never compacted, and a unit line break (or
+any other vertical whitespace) stays a hard boundary. Exceptions exclude a
+match instead of silently shrinking the keyword set, and two matching rules
+that point at different projects are a conflict for review, never a
+first-rule-wins guess.
 """
 from __future__ import annotations
 
@@ -22,7 +26,58 @@ GENERIC = {
     '相关', '通用', '默认', '需要', '这个', '那个', '东西', '信息', '工作', '事情',
     '文件', '数据', '聊天', '对话', '会话', '记录', '情况', '问题', '时候',
 }
-MIN_PHRASE = 4
+MIN_PHRASE = 4  # Kept for importers; matching below applies at every length.
+# Contiguous-phrase matching. Only the stored phrase is cleaned: its allowed
+# horizontal whitespace (space / tab / full-width space / nbsp) is dropped and
+# the remaining literal characters are joined by an optional horizontal gap, so
+# stored "不是AB" matches a unit "不是 ab" and stored "创作者 联络" matches
+# "创作者联络" -- whitespace may differ in both directions. The pattern is
+# searched on the casefolded unit with its ORIGINAL whitespace and line breaks,
+# so the phrase's outer ASCII word edges still see the unit's real neighbours
+# ("AlphaShop" matches inside "an alphashop document", never "XAlphaShop" or
+# "alphashopping"), and no line break or other vertical whitespace is ever
+# consumed: a phrase is never assembled across two paragraphs. A stored phrase
+# that itself contains a line break (or any other non-allowed whitespace) never
+# matches.
+_PHRASE_GAP = r'[ \t\u3000\u00a0]*'
+_PHRASE_HORIZONTAL = re.compile(r'[ \t\u3000\u00a0]')
+_ASCII_WORD_CHARS = frozenset(
+    '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_')
+_ASCII_EDGE_LEFT = '(?<![0-9A-Za-z_])'
+_ASCII_EDGE_RIGHT = '(?![0-9A-Za-z_])'
+
+
+def phrase_pattern(phrase):
+    """Compile one stored condition or exception into a contiguous-phrase regex.
+
+    The phrase's own allowed horizontal whitespace is removed and its literal
+    characters are joined by ``_PHRASE_GAP``, so "不是AB" matches "不是 ab" and
+    "创作者 联络" matches "创作者联络" in either direction. The regex is meant
+    to be searched on a casefolded unit that keeps its original whitespace, so
+    the outer ASCII word edges see the unit's real neighbours. Empty input, or a
+    phrase that still contains a line break or other non-allowed whitespace,
+    yields ``None``.
+    """
+    cleaned = _PHRASE_HORIZONTAL.sub('', str(phrase or '').casefold())
+    if not cleaned or any(char.isspace() for char in cleaned):
+        return None
+    pattern = _PHRASE_GAP.join(re.escape(char) for char in cleaned)
+    if cleaned[0] in _ASCII_WORD_CHARS:
+        pattern = _ASCII_EDGE_LEFT + pattern
+    if cleaned[-1] in _ASCII_WORD_CHARS:
+        pattern = pattern + _ASCII_EDGE_RIGHT
+    return re.compile(pattern)
+
+
+def phrase_match(phrase, unit) -> bool:
+    """True when one stored phrase appears whole and contiguous in the unit.
+
+    The unit keeps its original whitespace and line breaks; only the phrase's
+    own horizontal whitespace is optional, and the phrase's parts are never
+    searched independently (no cross-paragraph reassembly).
+    """
+    pattern = phrase_pattern(phrase)
+    return bool(pattern and pattern.search(str(unit or '').casefold()))
 
 
 def terms(text: str) -> set[str]:
@@ -92,13 +147,8 @@ def set_enabled(service, guidance_id, enabled, *, expected_revision=None):
 
 
 def _condition_match(row, folded: str):
-    condition = str(row['condition'] or '').strip()
-    if not condition:
-        return False
-    if len(condition) >= MIN_PHRASE and condition.casefold() in folded:
-        return True
-    needed = terms(condition)
-    return bool(needed) and all(token in folded for token in needed)
+    """The condition matches only as one complete contiguous phrase."""
+    return phrase_match(row['condition'], folded)
 
 
 def exception_items(exceptions) -> list[str]:
@@ -111,11 +161,8 @@ def exception_items(exceptions) -> list[str]:
 
 
 def _exception_hit(item: str, folded: str) -> bool:
-    """One exception item uses the original single-value match rule."""
-    if item.casefold() in folded:
-        return True
-    needed = terms(item)
-    return bool(needed) and all(token in folded for token in needed)
+    """One exception item uses the same complete contiguous phrase rule."""
+    return phrase_match(item, folded)
 
 
 def _excluded(row, folded: str) -> str:
