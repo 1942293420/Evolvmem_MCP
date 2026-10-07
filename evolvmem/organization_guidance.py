@@ -101,15 +101,29 @@ def _condition_match(row, folded: str):
     return bool(needed) and all(token in folded for token in needed)
 
 
-def _excluded(row, folded: str) -> bool:
-    """An exception present in the text removes this rule from consideration."""
-    exceptions = str(row['exceptions'] or '').strip()
-    if not exceptions:
-        return False
-    if exceptions.casefold() in folded:
+def exception_items(exceptions) -> list[str]:
+    """Split a stored exceptions field into non-empty items.
+
+    Several exceptions are separated by ``|`` or a newline. A single-value field
+    (the original form) yields exactly one item, and empty segments are ignored.
+    """
+    return [item.strip() for item in re.split(r'[|\n]', str(exceptions or '')) if item.strip()]
+
+
+def _exception_hit(item: str, folded: str) -> bool:
+    """One exception item uses the original single-value match rule."""
+    if item.casefold() in folded:
         return True
-    needed = terms(exceptions)
+    needed = terms(item)
     return bool(needed) and all(token in folded for token in needed)
+
+
+def _excluded(row, folded: str) -> str:
+    """The exception item that removes this rule, or '' when none matches."""
+    for item in exception_items(row['exceptions']):
+        if _exception_hit(item, folded):
+            return item
+    return ''
 
 
 def classify(service, unit):
@@ -134,9 +148,10 @@ def classify(service, unit):
             continue
         if not condition_hit:
             continue
-        if _excluded(row, folded):
-            negatives.append({**row, 'negative': True, 'conflict': True,
-                              'reason': '命中你设置的例外：' + row['exceptions']})
+        hit = _excluded(row, folded)
+        if hit:
+            negatives.append({**row, 'negative': True, 'conflict': True, 'exception_hit': hit,
+                              'reason': '命中你设置的例外：' + hit})
             continue
         if row['negative']:
             negatives.append({**row, 'reason': '你标记的反例与这条单元相关，需人工核对后再归属'})

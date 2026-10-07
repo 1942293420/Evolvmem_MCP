@@ -65,6 +65,76 @@ def currently_backed(store, item_id):
     return False
 
 
+def current_item_ids(store, item_ids):
+    """Keep only items a current source still backs, for shared read paths.
+
+    A re-segmentation, set-aside or project move can leave an item's derivation
+    rows behind while no current unit references them any more. History listing
+    and the project document must drop those items. An item with no
+    organization derivation at all is ordinary history and is kept; anything
+    else is decided by the single canonical ``currently_backed`` rule, so the
+    derivation's stale ``project`` column can never mark a moved unit valid.
+    """
+    ids = [int(i) for i in item_ids if i is not None]
+    if not ids:
+        return []
+    conn = store._connection()
+    if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='unit_derivations'").fetchone():
+        return ids
+    placeholders = ','.join('?' * len(ids))
+    has_derivation = {row[0] for row in conn.execute(
+        'SELECT DISTINCT item_id FROM unit_derivations WHERE item_id IN (%s)' % placeholders, ids)}
+    return [item_id for item_id in ids
+            if item_id not in has_derivation or currently_backed(store, item_id)]
+
+
+def qa_move_snapshot(service, item_id):
+    """Snapshot a currently-valid Q&A before a pure project move.
+
+    Returns the stored question/answer/origin only when the row is active, its
+    answer still matches the item body, the item is still usable, it is not an
+    experience, and the stored fingerprint matches the pre-move row. An
+    already-stale row (for example a changed trigger or category) therefore
+    returns None and is never reactivated. Shared items never reach the move
+    branch, and a candidate, unverified or rejected row returns None too.
+    """
+    from evolvmem import qa_memory
+    conn = service.store._connection()
+    saved = conn.execute('SELECT question,answer,status,origin,source_fingerprint '
+                         'FROM knowledge_qa WHERE item_id=?', (int(item_id),)).fetchone()
+    if not saved or saved['status'] != 'active' or not saved['question']:
+        return None
+    detail = service.knowledge().detail(item_id)
+    if detail['content_type'] == 'experience' or saved['answer'] != detail['body']:
+        return None
+    if not service.learning().usable(detail):
+        return None
+    if saved['source_fingerprint'] != qa_memory.fingerprint(detail):
+        return None
+    return {'question': saved['question'], 'answer': saved['answer'],
+            'origin': saved['origin'] or 'extraction'}
+
+
+def rerecord_moved_qa(service, item_id, snapshot) -> bool:
+    """Re-record a snapshot through the normal Q&A path after the move.
+
+    ``qa_memory.record`` recomputes the fingerprint and re-checks conflicts
+    under the new project, so a conflicting answer becomes a candidate instead
+    of leaving two active answers. The stored origin is preserved and
+    ``approved`` restates the approval that already made this row active, so
+    no candidate is promoted; a conflict may demote the moved Q&A.
+    """
+    from evolvmem import qa_memory
+    if not snapshot:
+        return False
+    with service.store.transaction():
+        qa_memory.record(service, item_id,
+                         {'question': snapshot['question'], 'answer': snapshot['answer']},
+                         origin=snapshot['origin'], approved=True)
+    return True
+
+
 def is_shared(service, item_id, *, archive_id=None, unit_ref='', session_ref='') -> bool:
     """True when a source link other than this unit's own provenance backs the item.
 

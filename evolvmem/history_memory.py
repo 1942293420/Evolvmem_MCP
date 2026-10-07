@@ -141,7 +141,9 @@ def sessions(service, project):
                         'ORDER BY a.created_at DESC,a.id DESC', (project,)).fetchall()
     # A multi-project source stays unbound, but its units for this project still
     # belong in this project's history listing.
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='organization_units'").fetchone():
+    has_units = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='organization_units'").fetchone() is not None
+    if has_units:
         extra = conn.execute(
             'SELECT a.*,h.content_hash,h.cleaned_at FROM session_archives a '
             'LEFT JOIN conversation_history h ON h.archive_id=a.id '
@@ -160,6 +162,7 @@ def sessions(service, project):
                 'JOIN lan_session_heads h ON h.device_id=u.device_id AND h.session_id=u.session_id '
                 'WHERE h.sha256!=u.sha256 AND u.archive_id IS NOT NULL')}
     result, seen = [], set()
+    from evolvmem.unit_derivations import current_item_ids
     for row in rows:
         if row['id'] in ignored:
             continue
@@ -174,6 +177,29 @@ def sessions(service, project):
             "AND i.status='active' AND i.content_type='session_summary'", (row['id'], project)).fetchall()
         facts = load_ownership(service.store, [r['id'] for r in linked])
         linked = [r for r in linked if not facts.get(r['id'], UNREVIEWED_FACT).excluded]
+        # A re-segmentation, set-aside or corrected project move leaves the old
+        # summary active but without a current unit. Keep only summaries a
+        # current source still backs (ordinary history has no unit link at all).
+        current = set(current_item_ids(service.store, [r['id'] for r in linked]))
+        linked = [r for r in linked if r['id'] in current]
+        # A project correction can leave the same unit summary under two
+        # identities. Show it once, preferring the item the current unit points
+        # at, so the listing and its source ids stay a single current source.
+        unit_items = set()
+        if has_units:
+            unit_items = {item[0] for item in conn.execute(
+                'SELECT DISTINCT u.item_id FROM organization_units u '
+                'JOIN organization_tasks t ON t.id=u.task_id '
+                "WHERE t.source_key=? AND u.project=? AND t.status!='superseded' "
+                "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' "
+                'AND u.item_id IS NOT NULL', (f"archive:{row['id']}", project))}
+        kept, contents = [], set()
+        for item in sorted(linked, key=lambda r: (r['id'] not in unit_items, r['id'])):
+            if item['content'] in contents:
+                continue
+            contents.add(item['content'])
+            kept.append(item)
+        linked = kept
         summary = '\n'.join(r['content'] for r in linked)
         stage = '已入库' if summary else {
             'pending': '等待清洗提炼', 'processing': '清洗提炼中', 'unassigned': '归属待确认',

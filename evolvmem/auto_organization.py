@@ -945,12 +945,18 @@ def _follow_derived(service, task_id, digest, project, reason):
                                                   unit_ref=session_ref, session_ref=session_ref):
                     unit_derivations.supersede(service, item_id, '归属范围已修正，保留原始验证记录')
                 continue
+            # Capture a currently-valid Q&A before the project changes; only its
+            # project field moves, so it can be re-recorded through the normal
+            # Q&A path (which re-checks conflicts) instead of being left stale.
+            snapshot = (unit_derivations.qa_move_snapshot(service, item_id)
+                        if project and detail['project'] != project else None)
             if not project and not unit_derivations.is_shared(service, item_id, archive_id=archive_id,
                                                               unit_ref=session_ref, session_ref=session_ref):
                 unit_derivations.supersede(service, item_id, reason or '归属已撤回，先停止展示')
             elif project and unit_derivations.retarget(service, item_id, project, archive_id=archive_id,
                                            unit_ref=session_ref, session_ref=session_ref):
                 unit_derivations.update_project(service, task_id, digest, item_id, project)
+                unit_derivations.rerecord_moved_qa(service, item_id, snapshot)
             else:
                 _candidate_reason(service, item_id,
                                   '该知识同时来自其他来源，未随本次修正迁移；本单元会重新提炼')
