@@ -43,8 +43,16 @@ MAX_MESSAGE_CHARS = 8000      # a single oversized message is never cut silently
 QUALIFIER_MARKS = ('一般', '通常', '平时', '大概', '可能', '或许', '也许',
                    '可以考虑', '或者', '也可以', '还能', '暂时',
                    '仅当', '如果', '除非', '不一定', '有些', '例如', '比如', '或', '可以')
-NEGATION_MARKS = ('不能', '不得', '不要', '不允许', '禁止', '无需', '不用', '不再',
+NEGATION_MARKS = ('不能', '不得', '不要', '不允许', '禁止', '严禁', '无需', '不用', '不再',
                   '别', '没有', '无', '否')
+# A ``supported`` answer may only be hard-blocked for dropping an explicit
+# *normative* prohibition: deleting "不能/不得/不要/不允许/禁止" flips a rule into
+# its opposite. Background state words ("没有/无/否") can describe the
+# user's situation rather than a rule, so a faithful extractive summary may
+# legitimately leave them out; they stay guards of the ``narrow`` fragment path
+# (``fragment_reason``) only.
+NORMATIVE_NEGATION_MARKS = ('不能', '不得', '不要', '不允许', '禁止', '严禁',
+                            '无需', '不用', '不再', '别')
 _MARKS = tuple(dict.fromkeys(QUALIFIER_MARKS + NEGATION_MARKS))
 
 
@@ -197,15 +205,17 @@ def fragment_reason(corrected, original_quote, location):
 
 
 def _lost_marks(quote, answer):
-    """Negations the original quoted span carries but the answer dropped.
+    """Normative prohibitions the original quoted span carries but the answer dropped.
 
-    Only negations are intercepted here ("不要/不能/禁止"...), because removing
-    one flips the meaning and no wording equivalence can excuse it. Soft
-    modality and alternatives ("一般/可能/或者/可以") stay the model's semantic
-    judgment; a keyword list must not fake that understanding.
+    Only explicit prohibitions are intercepted here ("不能/不得/不要/不允许/禁止/
+    严禁"), because removing one flips a rule into its opposite and no wording
+    equivalence can excuse it. Background state words ("没有/无/否") and soft
+    modality or alternatives ("一般/可能/或者/可以") stay the reviewer's semantic
+    judgment: a faithful extractive summary may omit them, and a keyword list
+    must not fake that understanding.
     """
     return [mark for mark in marks(quote)
-            if mark in NEGATION_MARKS and mark not in _text(answer)]
+            if mark in NORMATIVE_NEGATION_MARKS and mark not in _text(answer)]
 
 
 def budget_problem(messages):
@@ -248,10 +258,15 @@ def build_prompt(messages, items):
         '2. 完整阅读整批消息，包括末尾的 [user] 消息是否明确纠正或改口；助手自己的补充只有在用户明确采纳后'
         '（同一条消息或紧邻确认）才能算用户已确认，否则不算。\n'
         '3. 引用存在只证明说过这句话，不能证明答案其余内容；不要用助手、工具或摘要内容当作依据。\n'
-        '4. 优先收窄，不要一律 review：只要原问题能由同一条 [user] 消息中的连续原话片段完整回答，'
-        '并且保留该片段的限定、备选与否定的原意，就选 narrow 并给出该片段；'
-        '只有在没有任何片段能忠实回答原问题、原问题本身带未确认前提、或看完后续消息仍歧义时，'
-        '才选 review。supported 仅当答案与用户原话含义完全一致且没有增加用户未说的断言。\n'
+        '4. 优先收窄，不要一律 review：narrow 要求该连续原话片段已经把原问题正面回答清楚，'
+        '并且片段表达的是用户已确认的事实或需求——引用原文只证明用户说过，不证明其中的疑问或备选已被采纳；'
+        '片段复述原问题、仍在提问或咨询（如“设备怎么保养，通常是不是要返厂？”）、'
+        '或只抄尚未采纳的备选（如“浮窗可以右键或者别的办法打开”回答不了“左右键各自如何分工？”）时都选 review。'
+        '只要原问题在某条 [user] 消息中已由连续原话片段完整回答，并且保留该片段的限定、备选与否定的原意，'
+        '就选 narrow 并给出该片段；'
+        '只有在没有任何片段能忠实回答原问题、原问题本身带未确认前提、或看完后续消息仍歧义时，才选 review。'
+        'supported 仅当答案与用户原话含义完全一致且没有增加用户未说的断言；忠实归纳需求可以省略描述现状的背景（如“现在没有层次”），但不能丢弃实际要求或禁止。'
+        '不要只因为句末有问号或答案比原话短就一律 review。\n'
         '5. supported/narrow 都要给出“引用定位”：从 [user] 消息逐字复制的连续片段；'
         'narrow 还要给 corrected_quote：与原引用同一条用户消息里能支持答案的最长连续片段（不超过 400 字），'
         '不得跨消息拼接，不得删除原引用中的限定或否定；corrected_quote 应尽量完整保留该片段的原话用词。\n'

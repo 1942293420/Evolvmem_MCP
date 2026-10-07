@@ -156,6 +156,41 @@ def test_supported_rewrite_may_promote_with_the_original_quote(service):
                 [{'role': 'user', 'content': CARD_LINE}])['status'] == 'active'
 
 
+def test_supported_keeps_a_faithful_summary_that_drops_a_background_state_word(service):
+    """Catch: 虚构用户说“仪表盘现在没有层次，需要分组颜色和明显的标题”，
+    问“仪表盘展示有什么要求？”；忠实归纳“使用分组颜色与明显标题”省略的是描述
+    现状的背景词，不是规范否定，不得被程序硬拒。"""
+    line = '仪表盘现在没有层次，需要分组颜色和明显的标题。'
+    value = '仪表盘使用分组颜色与明显的标题。'
+    item = candidate(value, question='仪表盘展示有什么要求？', answer=value, quote=line)
+    messages = [{'role': 'user', 'content': line}]
+    answer_support.support(messages, [item], reviewed(
+        {'id': 1, 'verdict': 'supported', 'reason': '忠实归纳需求，只省略了现状描述', 'quote': line}))
+    assert item.learning['answer_support']['verdict'] == 'supported'
+    assert answer_support.check(item.learning) == ''
+    assert plan(service, LegacyExtractionItem(key=item.key, value=item.value, attribute=item.attribute,
+                                              confidence=.95, learning=item.learning),
+                messages)['status'] == 'active'
+
+
+@pytest.mark.parametrize('line,value', [
+    ('保存草稿时禁止上传到云端。', '保存草稿时可以上传到云端。'),
+    ('删除记录时不得跳过二次确认。', '删除记录时跳过二次确认。'),
+    ('浮窗不允许覆盖主操作按钮。', '浮窗覆盖主操作按钮。'),
+])
+def test_supported_still_blocks_a_dropped_normative_prohibition(service, line, value):
+    """Catch: 明确禁止上传/不得跳过/不允许覆盖被答成允许，supported 仍必须硬拦截。"""
+    item = candidate(value, question='这条规则是什么？', answer=value, quote=line)
+    messages = [{'role': 'user', 'content': line}]
+    answer_support.support(messages, [item], reviewed(
+        {'id': 1, 'verdict': 'supported', 'reason': '模型说含义一致', 'quote': line}))
+    assert item.learning['answer_support']['verdict'] == 'review'
+    assert '否定' in item.learning['answer_support']['reason']
+    assert plan(service, LegacyExtractionItem(key=item.key, value=item.value, attribute=item.attribute,
+                                              confidence=.95, learning=item.learning),
+                messages)['status'] == 'candidate'
+
+
 def test_narrow_keeps_a_valid_extractive_fragment_with_its_limit(service):
     """Catch: 合规的抽取式收窄要保留限定词并同步 answer/quote/normalization。"""
     value = '接口报错一般回服务站维修。'
@@ -490,6 +525,25 @@ def test_the_card_example_is_narrowed_to_the_user_fragment():
          'corrected_quote': '设置入口在卡片本身'}))
     assert dropped.learning['answer_support']['verdict'] == 'review'
     assert '否定' in dropped.learning['answer_support']['reason']
+
+
+def test_prompt_requires_the_narrow_fragment_to_answer_and_be_confirmed():
+    """Catch: 虚构“浮窗可以右键或者别的办法打开”回答不了“左右键各自如何分工？”；
+    虚构“设备怎么保养，通常是不是要返厂？”仍在提问。prompt 必须要求 narrow 片段
+    已经正面回答原问题、且表达用户已确认的事实/需求，未采纳备选与疑问保持 review，
+    同时不得只凭句末问号一刀切。"""
+    panel = '浮窗可以右键或者别的办法打开。'
+    upkeep = '设备怎么保养，通常是不是要返厂？'
+    item = candidate(panel, question='左右键各自如何分工？', answer=panel, quote=panel)
+    prompt = answer_support.build_prompt([{'role': 'user', 'content': panel},
+                                          {'role': 'user', 'content': upkeep}], [item])
+    assert '正面回答' in prompt
+    assert '已确认' in prompt and '备选' in prompt
+    assert '疑问' in prompt and '复述' in prompt
+    assert '问号' in prompt
+    # 明确已回答、同条原话连续片段仍可 narrow：原有措辞与判定分支保持。
+    assert '优先收窄' in prompt and '没有任何片段能忠实回答' in prompt
+    assert '连续原话片段' in prompt
 
 
 def test_preview_normalizes_a_wrong_model_project_before_the_review(service):
