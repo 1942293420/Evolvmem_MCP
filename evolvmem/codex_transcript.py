@@ -42,27 +42,14 @@ def workspace_details(rows: list[dict]) -> dict:
     return dict(cwd=cwd, attribution_reason=reason, parent_session_id=parent, subagent=subagent)
 
 
-def parse_transcript(raw: bytes, session_id: str) -> tuple[list[dict], list[dict]]:
-    """Keep original rows; produce extractor messages from complete JSONL only."""
-    if not raw or not raw.endswith(b'\n'):
-        raise LanError('invalid_transcript')
-    try:
-        # JSONL records end at LF. Unicode separators inside JSON strings are
-        # valid content; str.splitlines() would split and corrupt those records.
-        rows = [json.loads(line) for line in raw.decode('utf-8').split('\n') if line.strip()]
-    except (UnicodeError, ValueError):
-        raise LanError('invalid_transcript') from None
-    if not rows or any(not isinstance(row, dict) for row in rows):
-        raise LanError('invalid_transcript')
-    # Only the first session_meta identifies the transcript. Codex Desktop
-    # fork/subagent rollouts start with the session's own meta and then repeat
-    # the thread it was forked from (`forked_from_id`/`parent_thread_id`) as
-    # lineage metadata, so requiring every meta to match would reject every
-    # fork. A parent token registering its child's file still fails here
-    # because that file leads with the child's id.
-    metadata = [row.get('payload') for row in rows if row.get('type') == 'session_meta']
-    if not metadata or not isinstance(metadata[0], dict) or metadata[0].get('id') != session_id:
-        raise LanError('session_id_mismatch')
+def dialogue_messages(rows: list[dict]) -> list[dict]:
+    """Extractor messages for already-parsed rows, in their original order.
+
+    Shared with the incremental local capture so a batch range produces exactly
+    the same messages the whole-transcript parser would: visible user/assistant
+    messages, tool records tagged ``tool``, analysis/summary channels marked,
+    and the native response_item/event_msg mirror collapsed once.
+    """
     messages = []
     previous = None
     for row in rows:
@@ -99,4 +86,28 @@ def parse_transcript(raw: bytes, session_id: str) -> tuple[list[dict], list[dict
             message['recipient'] = payload['recipient']
         messages.append(message)
         previous = (*marker, row.get('type'))
-    return rows, messages
+    return messages
+
+
+def parse_transcript(raw: bytes, session_id: str) -> tuple[list[dict], list[dict]]:
+    """Keep original rows; produce extractor messages from complete JSONL only."""
+    if not raw or not raw.endswith(b'\n'):
+        raise LanError('invalid_transcript')
+    try:
+        # JSONL records end at LF. Unicode separators inside JSON strings are
+        # valid content; str.splitlines() would split and corrupt those records.
+        rows = [json.loads(line) for line in raw.decode('utf-8').split('\n') if line.strip()]
+    except (UnicodeError, ValueError):
+        raise LanError('invalid_transcript') from None
+    if not rows or any(not isinstance(row, dict) for row in rows):
+        raise LanError('invalid_transcript')
+    # Only the first session_meta identifies the transcript. Codex Desktop
+    # fork/subagent rollouts start with the session's own meta and then repeat
+    # the thread it was forked from (`forked_from_id`/`parent_thread_id`) as
+    # lineage metadata, so requiring every meta to match would reject every
+    # fork. A parent token registering its child's file still fails here
+    # because that file leads with the child's id.
+    metadata = [row.get('payload') for row in rows if row.get('type') == 'session_meta']
+    if not metadata or not isinstance(metadata[0], dict) or metadata[0].get('id') != session_id:
+        raise LanError('session_id_mismatch')
+    return rows, dialogue_messages(rows)

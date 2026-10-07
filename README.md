@@ -51,6 +51,8 @@ python -m evolvmem.knowledge_cli POST items/123/assign --file request.json
 
 「处理 Skill」统一为「经验提取与验证」：AI 提取说明、准入说明和可执行条件一次保存。项目归属、数据清洗、提取与验证分别导出三个有效 Skill；旧入库与协作入口标为停用。样例预览不写入，保存候选不代表验证成功。
 
+已通过的资料自动更新检索索引；暂时不可用时保留资料并重试。
+
 历史与经验是并行成果：历史保留原文、清洗稿、会话摘要和项目摘要；经验保存方法、适用条件、来源和实际验证。向量检索保留历史，并只把有独立验证依据的方法作为正式经验；未验证方法保留供人工检查，不参与正式经验检索。普通事实、要求和参考资料保留原分类，不因归类或人工入库被标记为验证成功。
 
 ## 运行环境
@@ -232,9 +234,32 @@ EVOLVMEM_ADAPTER = "codex"
 EVOLVMEM_CONTEXT_MODE = "legacy"
 ```
 
-用 `codex mcp list` 查看注册状态，`codex mcp get evolvmem` 查看该条目；新会话里先调用 `memory_status`。
+用 `codex mcp list` 查看注册状态，`codex mcp get evolvmem` 查看该条目；新会话里先调用 `context_status`，确认可用后使用 `knowledge_recall` / `experience_recall`；原始对话使用 `conversation_read`。
 配置格式以 [Codex 官方 MCP 文档](https://developers.openai.com/codex/mcp/) 为准。
 升级到 Core 后，可按项目需要合并 [AGENTS.memory.md](examples/AGENTS.memory.md)，帮助 Agent 规范查询、保存断点与记录证据。
+
+### Linux 本机 Codex 增量采集
+
+Linux Codex 每个会话会持续写入 `~/.codex/sessions/**/rollout-*.jsonl`；只注册 MCP 不会自动归档这些文件。
+需要让本机 Codex 对话进入自动整理时，在数据目录写一份 `local_codex_capture.json`，由现有后台整理 worker 增量采集，不需要新增服务、模型或依赖：
+
+```json
+{
+  "enabled": true,
+  "sessions_roots": ["/home/you/.codex/sessions"],
+  "since": "2026-10-01T00:00:00Z"
+}
+```
+
+`enabled`、`sessions_roots`（绝对路径）与 `since` 是必填项：缺少配置、路径不是绝对路径、或没有 `since` 时都会停止采集并在状态里报 `config_error`。`since` 是对齐正式启用的时间界线（可用自动整理页记录的 `activation_at`），不能省略，否则首次采集会把全部历史日志一并导入。可选预算项：`poll_seconds`、`batch_bytes`、`batch_lines`、`max_files_per_scan`、`max_lines_per_scan`、`max_seconds_per_scan`、`max_line_bytes`、`restart_changed_files`。
+
+- 缺少该文件、`enabled` 不为 `true`、或自动整理页的“自动处理新资料”关闭时都不采集；界面会区分“未配置 / 已停用 / 已暂停 / 暂无新对话 / 需处理”。
+- 时间门禁按每条记录自己的时间戳判断，优先取记录根的 `timestamp`（`response_item` 也有），其次才是 `payload` 内的时间；`session_meta.payload.timestamp` 表示整个会话开始时间。没有时间戳的记录继承本文件已观察到的最新时间；在观察到有效下界之前一律不导入。
+- 只读新增的完整 LF 记录，半行留到下一轮；每轮有字节、行数、文件数、时间与单行上限，不使用整文件读取。单行超过 `max_line_bytes`（默认 32MiB）时不会伪装成“没有新内容”，而是明确标记该文件需要人工处理，游标停在越界行之前；调大上限后自动从原处继续。
+- 首次采集不会遍历全部旧日志：本采集从未记录过、且文件修改时间早于 `since` 的会话文件不读取正文，只做元数据枚举（目录遍历不受条数上限截断）。之后旧会话只要再次追加，就会被发现并从时间界线开始归档；启用前的内容仍不导入。
+- 归档复用现有加密会话归档与 `save_clean` 清洗；同一“会话 + 源范围 + 内容摘要”的批次标识固定，归档成功才推进消费水位，失败保留游标可重试。文件被截断或被原地改写时默认停止在该文件并标记需要人工处理（不静默追尾、不重复导入历史）；只有显式设置 `"restart_changed_files": true` 才会从文件开头重新扫描，此时内容完全相同的既有批次会被跳过。
+- 采集状态以只读接口 `GET /api/local-capture` 暴露，自动整理页顶部显示“本机采集”的启用、最近成功、已归档批数与错误，便于区分“没有新内容”和“采集失败”。状态只含计数与错误码，不含正文或绝对路径。
+
 
 ### 可信内网的固定双用户 MCP
 
@@ -259,7 +284,7 @@ EVOLVMEM_CONTEXT_MODE = "legacy"
 codex mcp add evolvmem --url http://memory.lan:9378/mcp --bearer-token-env-var EVOLVMEM_KANE_TOKEN
 ```
 
-`SetEnvironmentVariable(..., 'User')` 不会改变已经打开的 PowerShell。执行后关闭并重新打开 PowerShell，再重启 Codex，才可测试连接；也可以在当前窗口额外设置 `$env:EVOLVMEM_KANE_TOKEN`。先用 `codex mcp get evolvmem` 确认条目。新会话依次调用 `memory_status`、`memory_add`、`memory_search`、`continuity_begin`，并只通过 `memory_publish` 明确公开经整理的摘要；Kane 看不到 owner 的 personal namespace。远端 workspace 传非空 `workspace_path` 时必须带稳定 `device_id`；Git snapshot 是客户端报告值。`continuity_bind` 不会擅自切换已有 focus，客户端要用返回的当前 revision 显式 `continuity_checkpoint(action="switch_focus")` 后再恢复其他目标。
+`SetEnvironmentVariable(..., 'User')` 不会改变已经打开的 PowerShell。执行后关闭并重新打开 PowerShell，再重启 Codex，才可测试连接；也可以在当前窗口额外设置 `$env:EVOLVMEM_KANE_TOKEN`。先用 `codex mcp get evolvmem` 确认条目。新会话先调用 `context_status`，再验收 `knowledge_recall`、`experience_recall` 与 `continuity_begin`；新增资料通过自动整理和知识库页面处理，并只通过 `memory_publish` 明确公开经整理的摘要；Kane 看不到 owner 的 personal namespace。远端 workspace 传非空 `workspace_path` 时必须带稳定 `device_id`；Git snapshot 是客户端报告值。`continuity_bind` 不会擅自切换已有 focus，客户端要用返回的当前 revision 显式 `continuity_checkpoint(action="switch_focus")` 后再恢复其他目标。
 
 没有服务或网络不可用时，owner 的本机 stdio 转发返回凭据安全的 `LAN MCP unavailable`；不要把它当作写入失败后可自动重试的信号。Kane 端需要检查服务、地址、环境变量和 token；写请求结果不明时先查记录，确实要手动重试则沿用原 `request_id`，不要生成新 ID。原 Linux 入口可选将 `lan_mcp_client_config` 指向私有 `jiangli-client.json`，设置 `embedding_http_url` 为数值 loopback 基址 `http://127.0.0.1:9378`、`embedding_http_token_file` 为 owner token，及 `lan_shared_vector_cache=true`；完整的四项占位片段见 [lan-owner-config.example.json](examples/lan-owner-config.example.json)，不要把它覆盖进通用 `config.example.json`。改完后重启原生 MCP 和 hooks。LAN runtime 本身不回转发且独占一个可选模型。原本严格的 standalone 向量健康门仍有效，LAN namespace 在共享模型不可用时保留 SQLite/FTS 路径。
 

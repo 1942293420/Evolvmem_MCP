@@ -706,3 +706,172 @@ def test_task_view_shows_a_readable_source_title_not_only_the_key(service):
     assert 'title-session' in task['source_title']
     assert task['source_title'] != task['source_key']
     assert '标题' not in task['source_title']
+
+
+# --- the worker reuses the configured shared HTTP embedding model ------------
+# The LAN model runs in its own process; a fake provider stands in for it, so no
+# network, credential or real model is touched. The engine, the service and the
+# worker wiring are the real ones.
+
+class _FakeHttpProvider:
+    """Deterministic stand-in for the running HTTP embedding model."""
+
+    instances = []
+
+    def __init__(self, config):
+        self.config = config
+        self.dim = config.embedding_dim
+        self.is_loaded = False
+        self.initialize_calls = 0
+        self.close_calls = 0
+        type(self).instances.append(self)
+
+    def initialize(self):
+        self.initialize_calls += 1
+        self.is_loaded = True
+
+    def encode(self, text, kind):
+        if not self.is_loaded:
+            raise RuntimeError('embedding_unavailable')
+        vector = [0.0] * self.dim
+        # Deterministic and kind-independent, so the same text matches itself
+        # across the document and query paths like a real model would.
+        vector[abs(hash(text)) % self.dim] = 1.0
+        return vector
+
+    def close(self):
+        self.is_loaded = False
+        self.close_calls += 1
+
+
+class _UnavailableHttpProvider(_FakeHttpProvider):
+    def initialize(self):
+        self.initialize_calls += 1
+        raise RuntimeError('embedding_unavailable')
+
+
+@pytest.fixture
+def http_model(monkeypatch):
+    from evolvmem import embedding_client
+    _FakeHttpProvider.instances = []
+    _UnavailableHttpProvider.instances = []
+    monkeypatch.setattr(embedding_client, 'HttpEmbeddingProvider', _FakeHttpProvider)
+    return _FakeHttpProvider
+
+
+def _engine_service(config):
+    """A real ContextService over the fake HTTP model, ready to read."""
+    from evolvmem.context_models import ContextMode
+    from evolvmem.context_service import ContextService
+    from evolvmem.embedding import EmbeddingEngine
+    engine = EmbeddingEngine(config)
+    engine.initialize()
+    service = ContextService(config, embedding_engine=engine)
+    service.initialize(mode=ContextMode.SHADOW, adapter='engine-probe')
+    service.vector_index.initialize(dim=config.embedding_dim)
+    return service
+
+
+def _active_l0s(service):
+    return service.store._connection().execute(
+        "SELECT i.id AS id, i.project AS project, l.content AS l0 FROM context_items i "
+        "JOIN context_layers l ON l.item_id=i.id AND l.layer='l0' "
+        "WHERE i.status='active' ORDER BY i.id").fetchall()
+
+
+def test_the_worker_reuses_the_configured_http_model_and_keeps_the_index_clean(service, monkeypatch, http_model):
+    from evolvmem.auto_organization import OrganizationWorker
+    from evolvmem.context_models import ContextMode, ContextSearchRequest
+    service.config.embedding_http_url = 'http://127.0.0.1:9'
+    service.config.embedding_dim = 64
+    service.knowledge().save_project({'project': 'evo', 'display_name': 'Evo 演示项目'})
+    # A clean index exists before the worker writes anything.
+    seed = _engine_service(service.config)
+    seed.knowledge().create({'title': '基线资料', 'body': '基线知识正文，用于建立干净索引。',
+                             'project': 'evo', 'action': 'publish', 'content_type': 'reference'})
+    assert seed.vector_index.is_dirty() is False
+    seed.close()
+
+    # The real background worker writes through its own engine-backed service.
+    source = many_topic_archive(service, session='http-embedding-worker')
+    org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})
+    http_model.instances.clear()
+    use_model(monkeypatch, model_for(service, projects={'evo', 'dsh'}))
+    worker = OrganizationWorker(service.config, mode=ContextMode.SHADOW)
+    worker.start()
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            tasks = worker.tasks()
+            if tasks and all(task['status'] in ('completed', 'review') for task in tasks):
+                break
+            time.sleep(.05)
+        else:
+            raise AssertionError('worker did not settle: ' + str(worker.tasks()))
+        assert http_model.instances, 'the worker must use the configured HTTP model'
+        assert {instance.initialize_calls for instance in http_model.instances} == {1}
+    finally:
+        assert worker.stop() is True
+    # Every client the worker created was initialized once and released; the
+    # remote model itself is a separate process and is never stopped here.
+    assert [instance.close_calls for instance in http_model.instances] == [1] * len(http_model.instances)
+
+    reader = _engine_service(service.config)
+    active = _active_l0s(service)
+    assert reader.vector_index.is_dirty() is False, 'accepted writes must leave the index clean'
+    assert reader.vector_index.count() == len(active), 'the index must match the active rows'
+    newest = active[-1]
+    hits = reader.search(ContextSearchRequest(query=newest['l0'], project=newest['project'] or '',
+                                              top_k=10))
+    assert newest['id'] in [hit.id for hit in hits], (
+        'new knowledge must be recallable: ' + str([(row['id'], row['project']) for row in active]))
+    reader.close()
+
+
+def test_without_an_http_url_the_worker_never_initializes_a_model(service, http_model, monkeypatch):
+    from evolvmem.auto_organization import OrganizationWorker
+    from evolvmem.context_models import ContextMode
+
+    def refuse(self):
+        raise AssertionError('no local model may be loaded without a configured URL')
+
+    monkeypatch.setattr('evolvmem.embedding.EmbeddingEngine.initialize', refuse)
+    worker = OrganizationWorker(service.config, mode=ContextMode.SHADOW)
+    worker_service = worker._connect()
+    assert worker_service.embedding_engine is None
+    assert http_model.instances == []
+    worker.stop()
+
+
+def test_an_unreachable_http_model_keeps_the_worker_writing_and_alive(service, monkeypatch):
+    from evolvmem import embedding_client
+    from evolvmem.auto_organization import OrganizationWorker
+    from evolvmem.context_models import ContextMode
+    _UnavailableHttpProvider.instances = []
+    monkeypatch.setattr(embedding_client, 'HttpEmbeddingProvider', _UnavailableHttpProvider)
+    service.config.embedding_http_url = 'http://127.0.0.1:9'
+    service.config.embedding_dim = 64
+    worker = OrganizationWorker(service.config, mode=ContextMode.SHADOW)
+    worker_service = worker._connect()
+    assert worker_service.embedding_engine is None
+    assert _UnavailableHttpProvider.instances[0].initialize_calls == 1
+
+    source = many_topic_archive(service, session='unreachable-http-worker')
+    org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})
+    use_model(monkeypatch, model_for(service, projects={'evo', 'dsh'}))
+    worker.start()
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            tasks = worker.tasks()
+            if tasks and all(task['status'] in ('completed', 'review', 'failed') for task in tasks):
+                break
+            time.sleep(.05)
+        else:
+            raise AssertionError('worker did not settle: ' + str(worker.tasks()))
+        assert worker._thread.is_alive(), 'an unreachable model must not stop the worker'
+        # The write persisted and the vector cache keeps its retry marker.
+        assert worker_service.vector_index.is_dirty() is True
+        assert _active_l0s(worker_service), 'writes still land without the model'
+    finally:
+        assert worker.stop() is True

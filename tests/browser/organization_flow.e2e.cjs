@@ -14,6 +14,12 @@ try{
  // The card must show a readable source title, not only archive:ID.
  assert.match(await page.locator('.organization-task').first().innerText(),/kimi · organization-/);
  checks.push('任务卡显示可读来源标题与来源标识');
+ // 本机采集状态：一行只读说明，用于区分“没有新内容”和“采集失败”。
+ await page.waitForFunction(()=>{const el=document.querySelector('#org-local-capture-message');return el&&el.textContent.trim()&&el.textContent.trim()!=='本机采集状态读取中。';});
+ const capture=await page.locator('#org-local-capture').innerText();
+ assert.match(capture,/本机采集：/);
+ assert.ok(await page.locator('#org-local-capture-state').count()===1);
+ checks.push('自动整理页显示本机采集状态且不因状态请求失败');
  // Leaving and returning keeps the tasks queryable.
  await click('.history-tabs [data-view="projects"]');await page.waitForSelector('.project-list');
  await click('.history-tabs [data-view="organization"]');await page.waitForSelector('.organization-task');

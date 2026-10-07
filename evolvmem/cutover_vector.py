@@ -20,7 +20,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 import numpy as np
 
@@ -34,6 +34,10 @@ from evolvmem.vector_index import VectorIndex
 _REASON_CODE_PATTERN = re.compile(r"^[a-z0-9_]{1,64}$")
 _MAX_DETAIL_CHARS = 128
 _STAGE_STATUSES = ("staged", "fts_only", "failed")
+
+
+class _SourceChangedDuringRebuild(Exception):
+    """Internal signal: the guard refused the staged snapshot. Never escapes."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,18 +149,29 @@ def rebuild_context_vector_atomically(
     embedding_engine: EmbeddingEngine | None,
     *,
     allow_fts_only: bool = False,
+    commit_guard: Callable[[], bool] | None = None,
 ) -> ContextVectorStageReport:
     """Rebuild the Context L0 vector cache into a temp file and swap it in.
 
-    Failure keeps the old formal bytes and the durable dirty marker; an
-    explicit ``allow_fts_only`` approval records the degraded reason instead
-    of stopping the cutover.
+    The staged image is built and verified outside any lock. The guard, the
+    swap, and the marker commit then happen inside one short SQLite write
+    transaction on the store's own connection: the guard re-reads the truth
+    first, so a write that landed during encoding keeps the old formal bytes
+    and the durable dirty marker, and a new write can never slip between the
+    guard and the clear. No lock is held while models encode.
+
+    ``allow_fts_only`` records an explicit degraded reason instead of stopping
+    the cutover. ``commit_guard`` is the caller's re-read of SQLite truth; it
+    requires the write transaction, because a guard outside one cannot be
+    trusted to represent committed state.
     """
     started = time.monotonic()
     if not isinstance(config, Config):
         raise ContextValidationError("config must be a Config instance")
     if type(allow_fts_only) is not bool:
         raise ContextValidationError("allow_fts_only must be a boolean")
+    if commit_guard is not None and not callable(commit_guard):
+        raise ContextValidationError("commit_guard must be callable")
 
     target = config.context_vector_path.resolve()
     formal_marker = VectorIndex(config, path=config.context_vector_path)
@@ -186,12 +201,15 @@ def rebuild_context_vector_atomically(
         )
 
     document_count = 0
+    staged_ids: list[int] = []
+    swapped = False
     temp_index: VectorIndex | None = None
     temp_path = _unique_temp_path(target)
     try:
+        # ---- unlocked: read truth, encode, build and verify the staged image ----
         documents = store.list_vector_documents()
         document_count = len(documents)
-        ids = [int(document.item_id) for document in documents]
+        staged_ids = [int(document.item_id) for document in documents]
         embeddings = [
             np.asarray(embedding_engine.encode_document(document.l0), dtype=np.float32)
             for document in documents
@@ -201,21 +219,44 @@ def rebuild_context_vector_atomically(
                 raise ValueError("embedding dimension mismatch")
         temp_index = VectorIndex(config, path=temp_path)
         temp_index.initialize(dim=config.embedding_dim)
-        temp_index.rebuild(ids, embeddings)
+        temp_index.rebuild(staged_ids, embeddings)
         temp_index.close()
         temp_index = None
         _fsync_file(temp_path)
-        _verify_index(config, temp_path, ids)
-        os.replace(temp_path, target)
-        _fsync_dir(target.parent)
-        _verify_index(config, target, ids)
+        _verify_index(config, temp_path, staged_ids)
+
+        # ---- locked: guard, swap, marker commit ----
+        # The staged bytes are ours alone and already verified, so the write
+        # lock only covers the guard re-read, the atomic swap, and the marker.
+        with store.transaction():
+            if commit_guard is not None and not commit_guard():
+                raise _SourceChangedDuringRebuild()
+            os.replace(temp_path, target)
+            swapped = True
+            _fsync_dir(target.parent)
+            _verify_index(config, target, staged_ids)
+            formal_marker.clear_dirty()
+    except _SourceChangedDuringRebuild:
+        _remove_temp_artifacts(temp_path)
+        _preserve_formal_dirty(formal_marker)
+        return ContextVectorStageReport(
+            status="failed",
+            document_count=document_count,
+            vector_ready=False,
+            fts_only=False,
+            dirty_cleared=False,
+            reason_codes=("source_changed_during_rebuild",),
+            detail="ContextSourceChanged",
+            duration_ms=_elapsed_ms(started),
+        )
     except Exception as exc:
         if temp_index is not None:
             try:
                 temp_index.close()
             except Exception:
                 pass  # the original failure is the one that matters
-        _remove_temp_artifacts(temp_path)
+        if not swapped:
+            _remove_temp_artifacts(temp_path)
         _preserve_formal_dirty(formal_marker)
         if allow_fts_only:
             return ContextVectorStageReport(
@@ -239,7 +280,6 @@ def rebuild_context_vector_atomically(
             duration_ms=_elapsed_ms(started),
         )
 
-    formal_marker.clear_dirty()
     return ContextVectorStageReport(
         status="staged",
         document_count=document_count,

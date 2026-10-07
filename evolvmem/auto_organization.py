@@ -280,26 +280,68 @@ def enqueue(service, source_keys, *, snapshot=True):
             'rule_revision': policy['revision']}
 
 
+def _mirror_legacy_candidate(service, item_ids):
+    """Mirror this exact downgrade into the mapped legacy projection.
+
+    The legacy ``memories.status`` is part of the formal recall gate, so a
+    downgrade that only edits ``context_items`` leaves ``projection_lag`` behind
+    forever. Only the ids this call actually changed are written, inside the
+    caller's transaction: a legacy row that is not ``active`` is never touched,
+    so an archived or superseded row is never resurrected and a candidate is
+    never re-activated.
+    """
+    ids = sorted({int(item_id) for item_id in item_ids})
+    if not ids or not service.store.legacy_memory_table_exists():
+        return 0
+    conn = service.store._connection()
+    placeholders = ','.join('?' for _ in ids)
+    rows = conn.execute(
+        'SELECT m.id AS legacy_id FROM memories m JOIN legacy_memory_migrations migration '
+        f'ON migration.legacy_memory_id=m.id WHERE migration.context_item_id IN ({placeholders}) '
+        "AND m.status='active'", ids).fetchall()
+    moved = 0
+    for row in rows:
+        conn.execute('UPDATE memories SET status=?,updated_at=? WHERE id=?',
+                     ('candidate', _now_iso(), row['legacy_id']))
+        moved += 1
+    return moved
+
+
 def _mark_outputs_stale(service, source_key, *, current_task):
     """A superseded revision's outputs stop being current but stay as history.
 
     Only purely automatic items are downgraded: a human-confirmed project
-    decision keeps its status. Nothing is deleted.
+    decision keeps its status, and an item a live (non-superseded) task still
+    owns is a current output, so it stays active. The same transaction mirrors
+    the new candidate status onto the exact legacy rows it changed. Nothing is
+    deleted.
     """
     conn = service.store._connection()
     with service.store.transaction():
         rows = conn.execute(
-            "SELECT u.item_id FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id "
-            "WHERE t.source_key=? AND t.status='superseded' AND t.id<? AND u.item_id IS NOT NULL",
+            "SELECT DISTINCT u.item_id FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id "
+            "WHERE t.source_key=? AND t.status='superseded' AND t.id<? AND u.item_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM organization_units live_u JOIN organization_tasks live_t "
+            "ON live_t.id=live_u.task_id WHERE live_u.item_id=u.item_id AND live_t.status!='superseded')",
             (source_key, current_task)).fetchall()
+        downgraded = []
         for row in rows:
             item_id = row['item_id']
             resolution = conn.execute(
                 'SELECT decision_source FROM context_project_resolutions WHERE item_id=?', (item_id,)).fetchone()
             if resolution and resolution['decision_source'] == 'human':
                 continue
-            conn.execute("UPDATE context_items SET status='candidate',updated_at=? "
-                         "WHERE id=? AND status='active'", (_now_iso(), item_id))
+            cursor = conn.execute("UPDATE context_items SET status='candidate',updated_at=? "
+                                  "WHERE id=? AND status='active'", (_now_iso(), item_id))
+            if cursor.rowcount:
+                downgraded.append(item_id)
+        _mirror_legacy_candidate(service, downgraded)
+    if downgraded:
+        # After the commit, drop these exact ids from the active-only Context
+        # vector cache and the legacy index. Otherwise the database says
+        # candidate while the indexes still hold the old ids, and the vector
+        # counts keep disagreeing with the rows.
+        service.knowledge()._sync(downgraded)
 
 
 def _task_row(service, task_id):
@@ -442,6 +484,9 @@ class OrganizationWorker:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._owns_thread = False
+        # Local Codex capture state (poll throttle, cached instance, config stamp).
+        # The capture module itself decides whether it is configured and enabled.
+        self._capture_state = {}
 
     # -- lifecycle --
 
@@ -469,19 +514,49 @@ class OrganizationWorker:
             return ContextMode.SHADOW
         return mode
 
+    def _http_embedding_engine(self):
+        """The already-running shared HTTP model, only when one is configured.
+
+        Returns ``None`` when no ``embedding_http_url`` is set, so an install
+        without the LAN model never loads a second local model. A configured but
+        unreachable service also degrades to ``None``: writes stay archivable and
+        the vector cache keeps its dirty retry marker instead of failing.
+        """
+        if not self.config.embedding_http_url:
+            return None
+        from evolvmem.embedding import EmbeddingEngine
+        engine = EmbeddingEngine(self.config)
+        try:
+            engine.initialize()
+        except Exception:
+            try:
+                engine.close()
+            except Exception:
+                pass
+            return None
+        return engine
+
     def _connect(self):
-        if self._service is None:
+        service = self._service
+        if service is None:
             from evolvmem.context_models import ContextMode
             from evolvmem.context_service import ContextService
             mode = self._resolved_mode()
             if mode in (ContextMode.LEGACY, ContextMode.COMPAT):
                 raise ValueError('organization_needs_context_mode')
-            # No embedding engine is passed: the worker must not load a second
-            # model just to organize text.
-            service = ContextService(self.config)
-            service.initialize(mode=mode, adapter='auto-organization')
-            self._service = service
-        return self._service
+            # Reusing the configured shared model lets an accepted write update
+            # the search index immediately; without one nothing is passed.
+            built = ContextService(self.config, embedding_engine=self._http_embedding_engine())
+            built.initialize(mode=mode, adapter='auto-organization')
+            # ``tasks``/``units`` may reach this from another thread. Whoever
+            # claims the slot first wins and the other build is released at once,
+            # so a second HTTP client can never leak.
+            if self._service is None:
+                self._service = built
+            else:
+                built.close()
+            service = self._service
+        return service
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -529,6 +604,8 @@ class OrganizationWorker:
                     if self._stop.is_set():
                         break
                     worked = self.tick()
+                    if self.capture_once():
+                        worked = True
                     if not worked and not self._stop.is_set():
                         try:
                             from evolvmem.organization_arrival import discover_new
@@ -545,6 +622,22 @@ class OrganizationWorker:
             # Closing here is safe: this is the only thread using the connection.
             self._close_service()
             self._owns_thread = False
+
+    def capture_once(self):
+        """One bounded local Codex capture round; True when it archived a batch.
+
+        Collection is opt-in twice over: the local ``local_codex_capture.json``
+        must be present, valid and enabled, and the existing ``auto_new`` arrival
+        switch must be on. Both checks live in ``local_codex_capture`` so a paused
+        arrival mode stops collection without touching queued work.
+        """
+        from evolvmem import local_codex_capture
+        try:
+            return bool(local_codex_capture.capture_once(self._connect(), self._capture_state))
+        except Exception:
+            # Capture never breaks organization: a failure is visible in the
+            # read-only status view instead.
+            return False
 
     def _restore(self):
         """Interrupted work returns to the queue instead of hanging forever."""
@@ -1153,6 +1246,10 @@ def _unresolve_item(service, item_id, reason):
         conn.execute('UPDATE knowledge_metadata SET ingestion_reason=? WHERE item_id=?', (reason, item_id))
         ProjectStore(conn, service.store._require_transaction, generic_names=()).record_resolution(
             item_id, ProjectResolutionDecision.unresolved('auto-organization.v1', ()))
+        # The unresolved output is a candidate for real, so the legacy projection
+        # moves in the same transaction; the project stays empty and the item is
+        # never re-activated here.
+        _mirror_legacy_candidate(service, [item_id])
     # The item stays a candidate; empty project means unresolved, never global.
     kb._sync([item_id])
 

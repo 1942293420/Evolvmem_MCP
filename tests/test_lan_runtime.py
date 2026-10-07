@@ -420,3 +420,77 @@ def test_strict_config_default_still_reports_missing_context_vectors(tmp_path):
         assert any(item.startswith("context_vector_") for item in status.diagnostics)
     finally:
         service.close()
+
+
+def test_resident_client_sees_recovery_and_regains_vector_retrieval(tmp_path):
+    """A stuck dirty cache must not stay degraded for the resident client.
+
+    The status is re-evaluated per request and the bounded recovery round runs
+    through the same loop the capture worker drives, so the same server object
+    reports real vector health again and hybrid retrieval serves the item.
+    """
+    from evolvmem.context_models import (
+        ContextContentType,
+        ContextItemDraft,
+        ContextLayers,
+        ContextStatus,
+    )
+    from evolvmem.recall_recovery import ContextVectorRecoveryLoop
+
+    class Engine:
+        is_loaded = False
+
+        def __init__(self, dim):
+            self._dim = dim
+
+        def initialize(self):
+            self.is_loaded = True
+
+        def encode_document(self, _text):
+            return [1.0] + [0.0] * (self._dim - 1)
+
+        def encode_query(self, _text):
+            return self.encode_document('')
+
+        def close(self):
+            return None
+
+    runtime = LanRuntime(_settings(tmp_path, embedding_enabled=True), Engine(768))
+    runtime.initialize()
+    try:
+        server = runtime.server_for('jiangli')
+        service = server.context_service
+        item = service.store.create_item(ContextItemDraft(
+            identity_key='lan:resident:recovery',
+            content_type=ContextContentType.FACT,
+            confidence=0.8,
+            layers=ContextLayers(
+                l0='resident recovery marker', l1='d', l2='s', generator='test-suite'),
+            status=ContextStatus.ACTIVE,
+        ))
+        index = service.vector_index
+        index.initialize(dim=service.config.embedding_dim)
+        index.mark_dirty()
+
+        # The same live server object reports the stuck cache and serves no
+        # vector channel, because the dirty marker disables context vectors.
+        degraded = server.handle_tool_call('context_status', {})
+        assert degraded['mode'] == ContextMode.PRIMARY.value
+        assert degraded['context_vector_dirty'] is True
+        assert service.retriever._vector_available() is False
+
+        # A real recovery round through the loop the capture worker drives.
+        loop = ContextVectorRecoveryLoop()
+        reports = loop.tick([service])
+        assert [report.status for report in reports] == ['recovered']
+
+        recovered = server.handle_tool_call('context_status', {})
+        assert recovered['context_vector_dirty'] is False
+        assert recovered['context_vector_ready'] is True
+        assert recovered['reason_codes'] == []
+        assert service.retriever._vector_available() is True
+        assert index.ids() == [item.id]
+        _add(server, 'project:lan:fact:after', 'write after recovery')
+        assert 'write after recovery' in _values(server, 'after')
+    finally:
+        runtime.close()

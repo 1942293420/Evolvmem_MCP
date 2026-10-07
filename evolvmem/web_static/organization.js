@@ -8,6 +8,51 @@
   active = {mount, token};
   const [queue, guidance, settings] = await Promise.all([
     api('organization'), api('organization/guidance'), api('organization/settings')]);
+  // Linux 本机 Codex 采集状态：只读，失败不影响自动整理本身。
+  let localCapture = null;
+  async function loadCapture(){
+    try { localCapture = await (await EvolvAuth.fetch('/api/local-capture', {})).json(); }
+    catch(error) { localCapture = null; }
+    drawCapture();
+  }
+  // 数据库时间是 UTC；界面按访问者本地时区显示，避免误判“刚刚/昨天”。
+  function localTime(value){
+    const parsed = new Date(String(value).replace(' ', 'T') + 'Z');
+    if(isNaN(parsed)) return value;
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(parsed.getMonth()+1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+  }
+  function captureText(){
+    const c = localCapture;
+    if(!c || c.ok === false) return '本机采集状态暂不可用。';
+    if(!c.configured) return '本机采集：未配置（未开启则不采集本机 Codex 会话）。';
+    if(c.error) return '本机采集：配置有误，已停止采集。';
+    if(!c.enabled) return '本机采集：已停用。';
+    // auto_new 关闭时后台不再采集本机新对话，必须与“没有新内容”区分开。
+    if(c.auto_new === false) return '本机采集：已暂停（“自动处理新资料”关闭时不会采集本机新对话）。';
+    const wait = c.pending_bytes > 0 ? ` · 待处理 ${c.pending_bytes} 字节` : '';
+    if(c.needs_review > 0) return `本机采集：${c.needs_review} 个文件需要人工处理，已停止在该文件继续采集${wait}`;
+    const archived = c.archived_batches > 0 ? `已归档 ${c.archived_batches} 批对话` : '';
+    // 只消费了旧字节而没有归档时，绝不能显示成“成功归档 0 批”。
+    const scanned = archived ? archived : '已扫描，暂无新增可见对话';
+    if(!c.last_success_at) return c.sessions.length ? '本机采集：已启用，尚无新增对话。' : '本机采集：已启用，尚未发现会话文件。';
+    const line = `本机采集：${localTime(c.last_success_at)} ${scanned}${wait}`;
+    return c.last_error ? `${line}；最近一次失败：${c.last_error}` : line;
+  }
+  function drawCapture(){
+    // The message and its badge are two separate spans: writing the message into
+    // the paragraph itself would wipe the badge node.
+    const message = $('#org-local-capture-message'), badge = $('#org-local-capture-state');
+    if(!message || !badge) return;
+    message.textContent = captureText();
+    const c = localCapture;
+    badge.innerHTML = (!c || c.ok === false) ? ''
+      : (c.error || c.needs_review > 0 || c.last_error) ? '<span class="badge red">需处理</span>'
+      : !c.enabled ? (c.configured ? '<span class="badge">已停用</span>' : '')
+      : c.auto_new === false ? '<span class="badge amber">已暂停</span>'
+      : c.archived_batches === 0 ? '<span class="badge">暂无新对话</span>'
+      : '<span class="badge green">已归档</span>';
+  }
   let tasks = queue.items, current = new Set(queue.current_task_ids || []), busy = false;
   let guidanceRows = guidance.items, arrival = settings, total = queue.total || 0, page = 1, filter = 'current';
   const counts = queue.counts || {};
@@ -21,6 +66,7 @@
   function notice(t){$('#org-notice').textContent = t;}
   mount.innerHTML = `<section class="panel organization-panel"><div class="section-head"><div><h2>自动整理</h2><p class="hint">后台按来源版本处理：整篇分段 → 项目归属 → 写入项目历史与候选。可以离开本页，稍后回来查看结果。</p></div><div class="actions"><button data-org-action="refresh">刷新</button><button class="write" data-org-action="retry-failed">重试全部失败</button><button class="write" data-org-action="backlog">整理待处理资料</button><a href="#knowledge/cleaning" data-view="cleaning">前往数据清洗 ↗</a></div></div>
   <div class="organization-settings"><label class="extraction-choice"><input type="checkbox" data-org-arrival ${arrival.auto_new?'checked':''}>自动处理新资料（只处理开启后新到的来源，历史存量请用“整理待处理资料”）</label><span class="hint" id="org-arrival-state">${arrival.auto_new?'已开启，后台会持续发现新来源。':'已关闭，排队中的任务不受影响。'}</span></div>
+  <p class="hint" id="org-local-capture" role="status"><span id="org-local-capture-message">本机采集状态读取中。</span> <span id="org-local-capture-state"></span></p>
   <p id="org-notice" role="status"></p><div id="org-tasks"></div>
   <div class="organization-pager"><label for="org-filter">筛选</label><select id="org-filter"><option value="current">当前结果</option><option value="pending">等待处理</option><option value="running">处理中</option><option value="completed">已完成</option><option value="review">待确认</option><option value="failed">失败</option><option value="superseded">已被替代</option><option value="all">全部</option></select><span id="org-page"></span><button data-org-action="previous">上一页</button><button data-org-action="next">下一页</button></div></section>
   <section class="panel organization-guidance"><div class="section-head"><div><h2>我的整理指导</h2><p class="hint">默认“仅本次”；明确选择“以后同类适用”的指导才会应用到后续匹配单元。条件太宽泛的指导会保留为建议，不会自动套用。可随时停用。</p></div></div><div id="org-guidance"></div></section>`;
@@ -101,7 +147,7 @@
   }
   function draw(){
     const focus = focusState();
-    renderTaskList(); drawGuidance(); dirty();
+    renderTaskList(); drawGuidance(); drawCapture(); dirty();
     restoreFocus(focus);
   }
   function snapshot(){return JSON.stringify(tasks.map(t=>[t.id,t.status,t.stage,t.unit_count,t.review_count,t.attempts,t.updated_at,t.error_code,current.has(t.id)]));}
@@ -232,12 +278,14 @@
     finally{busy = false;onBusy(false);}
   };
   draw();
+  await loadCapture();
   let running = false;
   const tick = async () => {
     // Stop cleanly once this view is replaced or detached: no detached timer
     // chain survives navigation.
     if(active?.token !== token || !mount.isConnected){running = false;return;}
     try{await load();}catch(error){}
+    try{await loadCapture();}catch(error){}
     if(active?.token === token && mount.isConnected) setTimeout(tick,4000);else running = false;
   };
   const resume = () => {

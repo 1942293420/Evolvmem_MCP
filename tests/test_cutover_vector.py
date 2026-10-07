@@ -622,3 +622,205 @@ def test_stage_report_public_dict_and_digest_are_stable_and_privacy_safe():
 def test_stage_requires_a_real_config_instance():
     with pytest.raises(ContextValidationError):
         rebuild_context_vector_atomically(object(), None, None)
+
+
+# ---- source-truth guard: encoding a snapshot that then moved is not health ----
+
+
+def test_commit_guard_failure_keeps_the_old_bytes_and_the_dirty_marker(test_config):
+    """A guard that re-reads newer truth must not swap or clear anything."""
+    test_config.embedding_dim = 3
+    formal_bytes = make_formal_index(test_config)
+    engine = DocumentEmbeddingEngine({"l0": [1, 0, 0]})
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("active", l0="l0"))
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, commit_guard=lambda: False
+        )
+
+        assert report.status == "failed"
+        assert report.vector_ready is False
+        assert report.dirty_cleared is False
+        assert report.reason_codes == ("source_changed_during_rebuild",)
+        assert report.document_count == 1
+        assert_formal_state_preserved(test_config, report, formal_bytes)
+
+
+def test_commit_guard_exception_keeps_the_old_bytes_and_preserves_dirty(test_config):
+    test_config.embedding_dim = 3
+    formal_bytes = make_formal_index(test_config)
+    engine = DocumentEmbeddingEngine({"l0": [1, 0, 0]})
+
+    def broken_guard():
+        raise RuntimeError("cannot re-read source truth")
+
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("active", l0="l0"))
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, commit_guard=broken_guard
+        )
+
+        assert report.status == "failed"
+        assert report.detail == "RuntimeError"
+        assert "source truth" not in report.detail
+        assert_formal_state_preserved(test_config, report, formal_bytes)
+
+
+def test_staged_image_never_overwrites_truth_written_during_encoding(test_config):
+    """The exact reported defect: a write mid-build must not be declared clean."""
+    test_config.embedding_dim = 3
+    formal_bytes = make_formal_index(test_config)
+    engine = DocumentEmbeddingEngine({"early l0": [1, 0, 0]})
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("early", l0="early l0"))
+
+        def truth_moved_during_encoding():
+            # The writer commits a new item after the staged image was built.
+            store.create_item(make_draft("late", l0="late l0"))
+            return False
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, commit_guard=truth_moved_during_encoding
+        )
+
+        assert report.status == "failed"
+        assert report.reason_codes == ("source_changed_during_rebuild",)
+        assert_formal_state_preserved(test_config, report, formal_bytes)
+
+        # A later attempt on stable truth does swap and clear.
+        stable = rebuild_context_vector_atomically(
+            test_config, store, engine, commit_guard=lambda: True
+        )
+        assert stable.status == "staged"
+        assert stable.dirty_cleared is True
+        assert not formal_dirty_path(test_config).exists()
+        reopened = VectorIndex(test_config, path=test_config.context_vector_path)
+        reopened.initialize(dim=3)
+        assert reopened.ids() == [doc.item_id for doc in store.list_vector_documents()]
+        reopened.close()
+
+
+def test_commit_guard_runs_inside_a_write_transaction(test_config):
+    """The guard reads committed truth under the same lock as the swap."""
+    from evolvmem.context_store import ContextStore as Store
+
+    test_config.embedding_dim = 3
+    engine = DocumentEmbeddingEngine({"l0": [1, 0, 0]})
+    seen = []
+
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("active", l0="l0"))
+
+        def observing_guard():
+            seen.append(store._transaction_depth > 0)
+            return True
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, commit_guard=observing_guard
+        )
+
+        assert seen == [True]
+        assert report.status == "staged"
+        assert store._transaction_depth == 0
+
+
+def test_commit_guard_passing_still_stages_and_clears(test_config):
+    test_config.embedding_dim = 3
+    engine = DocumentEmbeddingEngine({"l0": [1, 0, 0]})
+    seen = []
+
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("active", l0="l0"))
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine,
+            commit_guard=lambda: (seen.append(True), True)[1],
+        )
+
+        assert seen == [True]
+        assert report.status == "staged"
+        assert report.dirty_cleared is True
+        assert not formal_dirty_path(test_config).exists()
+
+
+def test_commit_guard_must_be_callable(test_config):
+    with ContextStore(test_config) as store:
+        with pytest.raises(ContextValidationError):
+            rebuild_context_vector_atomically(
+                test_config, store, None, commit_guard="not callable"
+            )
+
+
+def test_source_truth_written_during_encoding_never_replaces_the_old_file(test_config):
+    """The reported defect, end to end: a mid-build write keeps the old bytes.
+
+    The writer commits through the same store while the engine is still
+    encoding, which is exactly the sequence that previously let a superseded
+    snapshot be swapped in and reported as synchronized.
+    """
+    test_config.embedding_dim = 3
+    formal_bytes = make_formal_index(test_config)
+    written = []
+    store_ref = {}
+
+    class CommittingEngine:
+        is_loaded = True
+
+        def encode_document(self, text: str) -> list[float]:
+            if not written:
+                # A real second write lands after this first encode.
+                store_ref['store'].create_item(make_draft("late", l0="late l0"))
+                written.append(text)
+            return [1.0, 0.0, 0.0]
+
+    with ContextStore(test_config) as store:
+        store_ref['store'] = store
+        store.create_item(make_draft("early", l0="early l0"))
+        first_snapshot = [document.item_id for document in store.list_vector_documents()]
+
+        def guard():
+            current = [document.item_id for document in store.list_vector_documents()]
+            return current == first_snapshot
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, CommittingEngine(), commit_guard=guard
+        )
+
+        assert report.status == "failed"
+        assert report.reason_codes == ("source_changed_during_rebuild",)
+        assert test_config.context_vector_path.read_bytes() == formal_bytes
+        assert formal_dirty_path(test_config).exists()
+        assert stage_leftovers(test_config) == []
+        # The database truth still holds both records.
+        assert len(store.list_vector_documents()) == 2
+
+
+def test_replace_failure_after_the_guard_keeps_the_old_bytes(test_config, monkeypatch):
+    """The swap happens iff the guard passed, and a failed swap keeps the bytes."""
+    test_config.embedding_dim = 3
+    formal_bytes = make_formal_index(test_config)
+    engine = DocumentEmbeddingEngine({"early l0": [1, 0, 0], "late l0": [0, 1, 0]})
+    index_overwrite_attempts = []
+
+    def failing_replace(src, dst):
+        # The at-risk instant: os.replace is about to overwrite the live file.
+        index_overwrite_attempts.append(Path(dst).read_bytes() == formal_bytes)
+        raise OSError("injected replace failure")
+
+    monkeypatch.setattr(cutover_vector.os, "replace", failing_replace)
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("early", l0="early l0"))
+        store.create_item(make_draft("late", l0="late l0"))
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, commit_guard=lambda: True
+        )
+
+        assert report.status == "failed"
+        assert report.detail == "OSError"
+        assert index_overwrite_attempts == [True], "the old file was still in place"
+        assert test_config.context_vector_path.read_bytes() == formal_bytes
+        assert formal_dirty_path(test_config).exists()
+        assert stage_leftovers(test_config) == []

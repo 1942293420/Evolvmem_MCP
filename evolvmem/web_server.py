@@ -1249,6 +1249,15 @@ def make_handler(service: ContextService):
             if path.startswith('/api/knowledge/'):
                 self._knowledge('GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()})
                 return
+            if path == '/api/local-capture':
+                # Read-only local Codex capture state: counts, timing and error
+                # codes only. Never a payload, a path or any body text.
+                from evolvmem.local_codex_capture import status as capture_status
+                try:
+                    self._send_json(capture_status(service.config, store))
+                except Exception as exc:  # bounded surface, no internal detail
+                    self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
+                return
             if path in ('/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js'):
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 data = asset.read_bytes()

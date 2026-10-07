@@ -11,12 +11,14 @@ from evolvmem.embedding import EmbeddingEngine
 from evolvmem.lan_config import LanSettings
 from evolvmem.lan_daily_rollup import LanDailyRollup
 from evolvmem.mcp_server import MemoryMCPServer
+from evolvmem.recall_recovery import ContextVectorRecoveryLoop
 from evolvmem.workspace_identity import WorkspaceIdentityProvider
 
 
 _USERS = frozenset({"jiangli", "kane"})
 _SPACES = frozenset({"personal", "public"})
 _CAPTURE_POLL_SECONDS = 5.0
+_RECOVERY_POLL_SECONDS = 5.0
 
 
 class _UnavailableEmbeddingEngine:
@@ -96,6 +98,12 @@ class LanRuntime:
         self._closed = False
         self._capture_worker = None
         self._capture_stop = threading.Event()
+        self._vector_recovery = ContextVectorRecoveryLoop()
+        # Content-free reports from the most recent recovery rounds, for
+        # operators and tests; never transcript, memory, or model content.
+        self._vector_recovery_reports: tuple = ()
+        self._recovery_worker = None
+        self._recovery_stop = threading.Event()
 
     def initialize(self) -> None:
         if self._closed:
@@ -126,6 +134,9 @@ class LanRuntime:
         for user, space in (("jiangli", "personal"), ("kane", "personal"),
                             ("jiangli", "public")):
             self._server_for(user, space)
+        # A stuck Context vector cache must recover on its own, without the
+        # operator restarting anything and without delaying capture work.
+        self.start_recovery_worker()
         self._initialized = True
 
     def server_for(self, user: str, space: str = "personal") -> MemoryMCPServer:
@@ -144,11 +155,18 @@ class LanRuntime:
             return
         self._closed = True
         self._capture_stop.set()
+        self._recovery_stop.set()
         if self._capture_worker is not None:
             self._capture_worker.join(timeout=5)
-            if self._capture_worker.is_alive():
-                # The worker owns final cleanup after its bounded provider call.
+        if self._recovery_worker is not None:
+            self._recovery_worker.join(timeout=5)
+            if self._recovery_worker.is_alive():
+                # A long encode is still in flight; it owns final cleanup and
+                # must not race the server shutdown it has not finished with.
                 return
+        if self._capture_worker is not None and self._capture_worker.is_alive():
+            # The worker owns final cleanup after its bounded provider call.
+            return
         self._close_resources()
 
     def _close_resources(self):
@@ -183,6 +201,59 @@ class LanRuntime:
                     self._close_resources()
         self._capture_worker = threading.Thread(target=run, name='evolvmem-session-extraction', daemon=True)
         self._capture_worker.start()
+
+    def start_recovery_worker(self):
+        """One bounded Context-vector recovery thread, separate from capture.
+
+        A rebuild can encode the whole active library, so it must never run on
+        the request thread or delay uploads and extractions. The thread owns no
+        connection, model, or service: it borrows the resident services, which
+        share the one LAN embedding engine and the store's own
+        ``check_same_thread=False`` connection.
+        """
+        if self._recovery_worker is not None:
+            return
+        self._recovery_stop.clear()
+        self._recovery_worker = threading.Thread(
+            target=self._recovery_loop,
+            name='evolvmem-context-vector-recovery',
+            daemon=True,
+        )
+        self._recovery_worker.start()
+
+    def _recovery_loop(self):
+        try:
+            while not self._recovery_stop.wait(_RECOVERY_POLL_SECONDS):
+                try:
+                    # Low frequency and bounded: the loop is due at most once a
+                    # minute, skips clean namespaces, refuses to encode a
+                    # library above its document budget, and shares the one LAN
+                    # engine instead of loading a second model.
+                    reports = self._vector_recovery.tick(self._live_servers())
+                    if reports:
+                        self._vector_recovery_reports = reports
+                except Exception:
+                    # Recovery must never take this thread (or capture) down.
+                    pass
+        finally:
+            if self._closed:
+                # Last thread out owns final cleanup, mirroring the capture worker.
+                self._close_resources()
+
+    def _live_servers(self):
+        """Servers that are fully initialized and safe to touch from the worker."""
+        servers = []
+        for server in set(self._servers.values()):
+            service = getattr(server, 'context_service', None)
+            if service is None:
+                continue
+            config = getattr(service, 'config', None)
+            store = getattr(service, 'store', None)
+            index = getattr(service, 'vector_index', None)
+            if config is None or store is None or index is None:
+                continue
+            servers.append(service)
+        return servers
 
     def _server_for(self, user: str, space: str) -> MemoryMCPServer:
         key = ("public", "public") if space == "public" else (user, "personal")

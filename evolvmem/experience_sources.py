@@ -17,6 +17,12 @@ from evolvmem.extraction_policy import contains_sensitive_text
 
 _TASK_ID = re.compile(r"[A-Za-z0-9_.:-]{1,500}\Z")
 _NATIVE_UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z")
+# The incremental Linux capture names its batches after the rollout filename's
+# session id; only this canonical UUID shape is a trusted holder of that identity.
+_LOCAL_SESSION_ID = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z")
+_LOCAL_SOURCE_KIND = "local_codex_jsonl"
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _CODEX_FILENAME = re.compile(
     r"rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-"
     r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl\Z")
@@ -41,6 +47,17 @@ class ResolvedExperienceSource:
     snapshot: str
     task_id: str | None = None
     archive_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ArchiveSource:
+    """One archive payload whose identity and metadata were fully verified."""
+
+    archive_id: int
+    line: int | None
+    payload: dict
+    task_id: str
+    local: bool
 
 
 class ExperienceSourceResolver:
@@ -108,10 +125,10 @@ class ExperienceSourceResolver:
         """Validate the task binding of a previously resolved source row."""
         if isinstance(source_ref, str) and source_ref.startswith('archive:'):
             try:
-                _, line, payload = self._archive_payload(source_ref, task_id)
+                source = self._archive_payload(source_ref, task_id)
                 for number, raw, aliases in self._canonical_event_lines(
-                        self._archive_lines(payload), 'codex', source_kind):
-                    if line in aliases:
+                        self._archive_lines(source), 'codex', source_kind):
+                    if source.line in aliases:
                         return extraction_version == 'experience-v1:' + hashlib.sha256(raw.encode('utf-8')).hexdigest()
                 return False
             except (ValueError, TypeError):
@@ -127,6 +144,13 @@ class ExperienceSourceResolver:
         return self.task_matches(adapter, path, task_id)
 
     def _archive_payload(self, source_ref, task_id):
+        """Read and fully verify one archive payload before any evidence use.
+
+        The complete Windows client-reported archive keeps its original contract.
+        A locally captured incremental batch is recognised by its explicit
+        ``source.kind`` and only accepted after its immutable batch metadata,
+        per-line original locations, content hash and archive identity all agree.
+        """
         match = re.fullmatch(r'archive:([1-9][0-9]*)(?:#([1-9][0-9]*))?', source_ref)
         if not match or self.archiver is None:
             raise ValueError('archive source unavailable')
@@ -138,20 +162,138 @@ class ExperienceSourceResolver:
             payload = json.loads(raw)
         except (ValueError, TypeError):
             raise ValueError('invalid archive source') from None
-        if (not isinstance(payload, dict) or payload.get('source') != 'client_reported'
-                or any(not isinstance(payload.get(k), str) or not payload[k] for k in ('session_id', 'device_id', 'transcript'))):
+        if not isinstance(payload, dict):
             raise ValueError('invalid archive source')
-        if task_id not in (None, '', 'current', payload['session_id']):
+        source = payload.get('source')
+        if source == 'client_reported':
+            bound, local = self._client_reported_identity(payload), False
+        elif isinstance(source, dict) and source.get('kind') == _LOCAL_SOURCE_KIND:
+            bound, local = self._local_batch_identity(archive_id, payload, source), True
+        else:
+            raise ValueError('invalid archive source')
+        if task_id not in (None, '', 'current', bound):
             raise ValueError('task_id does not match archive')
+        return _ArchiveSource(archive_id, line, payload, bound, local)
+
+    @staticmethod
+    def _client_reported_identity(payload):
+        """The existing Windows archive contract: unchanged and strictly parsed."""
+        if any(not isinstance(payload.get(key), str) or not payload[key]
+               for key in ('session_id', 'device_id', 'transcript')):
+            raise ValueError('invalid archive source')
         from evolvmem.codex_transcript import parse_transcript
         try:
             parse_transcript(payload['transcript'].encode('utf-8'), payload['session_id'])
         except Exception:
             raise ValueError('invalid archive transcript') from None
-        return archive_id, line, payload
+        return payload['session_id']
+
+    def _local_batch_identity(self, archive_id, payload, source):
+        """Derive the bound task only from a fully consistent incremental batch.
+
+        Every check below can only fail closed: a batch whose declared session,
+        content hash, per-line original positions, event ids or archive identity
+        disagree is refused, so cleaned prose or a rewritten meta can never stand
+        in for a native tool or user event.
+        """
+        if source.get('adapter') != 'codex':
+            raise ValueError('invalid archive source')
+        session_id = source.get('session_id')
+        if not isinstance(session_id, str) or not _LOCAL_SESSION_ID.fullmatch(session_id):
+            raise ValueError('invalid archive source')
+        transcript, digest = payload.get('transcript'), payload.get('source_sha256')
+        if (not isinstance(transcript, str) or not transcript.endswith('\n')
+                or not isinstance(digest, str) or not _SHA256.fullmatch(digest)):
+            raise ValueError('invalid archive source')
+        if hashlib.sha256(transcript.encode('utf-8')).hexdigest() != digest:
+            raise ValueError('invalid archive source')
+        name = source.get('file')
+        if not isinstance(name, str) or not name or not os.path.isabs(name):
+            raise ValueError('invalid archive source')
+        lines = transcript[:-1].split('\n')
+        locations = payload.get('line_locations')
+        if not lines or not isinstance(locations, list) or len(locations) != len(lines):
+            raise ValueError('invalid archive source')
+        start_line, end_line = source.get('start_line'), source.get('end_line')
+        start_offset, end_offset = source.get('start_offset'), source.get('end_offset')
+        if (type(start_line) is not int or type(end_line) is not int
+                or type(start_offset) is not int or type(end_offset) is not int
+                or start_line < 1 or end_line < start_line
+                or start_offset < 0 or end_offset <= start_offset):
+            raise ValueError('invalid archive source')
+        event_ids = source.get('event_ids')
+        if not isinstance(event_ids, list) or any(
+                not isinstance(value, str) or not value for value in event_ids):
+            raise ValueError('invalid archive source')
+        previous_line = previous_end = None
+        seen_ids = []
+        for line_text, location in zip(lines, locations):
+            if not isinstance(location, dict) or location.get('malformed') is not False:
+                raise ValueError('invalid archive source')
+            number = location.get('line')
+            begin, finish = location.get('start_offset'), location.get('end_offset')
+            if (type(number) is not int or type(begin) is not int or type(finish) is not int
+                    or number < 1 or begin < 0
+                    or finish != begin + len(line_text.encode('utf-8')) + 1):
+                raise ValueError('invalid archive source')
+            if previous_line is not None and (number <= previous_line or begin < previous_end):
+                raise ValueError('invalid archive source')
+            if location.get('session_id') not in ('', session_id):
+                raise ValueError('invalid archive source')
+            event_id = location.get('event_id')
+            if not isinstance(event_id, str):
+                raise ValueError('invalid archive source')
+            try:
+                row = json.loads(line_text)
+            except (TypeError, ValueError):
+                raise ValueError('invalid archive source') from None
+            if not isinstance(row, dict) or str(row.get('type', '')) != location.get('type'):
+                raise ValueError('invalid archive source')
+            if event_id:
+                seen_ids.append(event_id)
+            previous_line, previous_end = number, finish
+        if locations[0]['line'] != start_line or locations[-1]['line'] != end_line:
+            raise ValueError('invalid archive source')
+        # The declared byte range must cover every located line; the per-line
+        # byte-exact positions above are what actually tie the transcript to the
+        # source file, so a wider read window is allowed but a line outside it is
+        # refused.
+        if (locations[0]['start_offset'] < start_offset
+                or locations[-1]['end_offset'] > end_offset):
+            raise ValueError('invalid archive source')
+        if seen_ids != event_ids:
+            raise ValueError('invalid archive source')
+        row = self._archive_row(archive_id)
+        if row is None or row.get('adapter') != 'codex':
+            raise ValueError('invalid archive source')
+        try:
+            from evolvmem.local_codex_capture import batch_external_id
+        except Exception:
+            raise ValueError('invalid archive source') from None
+        if row.get('external_session_id') != batch_external_id(
+                session_id, start_line, end_line, digest):
+            raise ValueError('invalid archive source')
+        return session_id
+
+    def _archive_row(self, archive_id):
+        getter = getattr(getattr(self.archiver, 'store', None), 'get_session_archive', None)
+        if getter is None:
+            return None
+        try:
+            return getter(archive_id)
+        except Exception:
+            return None
 
     @staticmethod
-    def _archive_lines(payload):
+    def _archive_lines(source):
+        """LF-preserving lines with the real original line numbers when known."""
+        payload = source.payload
+        if source.local:
+            # Verified in _archive_payload: line_locations pairs each record with
+            # its actual position in the source file, so evidence keeps that line.
+            return ((int(location['line']), raw)
+                    for location, raw in zip(payload['line_locations'], io.StringIO(payload['transcript']))
+                    if len(raw.encode('utf-8')) <= _MAX_LINE_BYTES)
         # Preserve JSONL's LF record boundaries and exact evidence line bytes.
         return ((number, raw) for number, raw in enumerate(io.StringIO(payload['transcript']), 1)
                 if len(raw.encode('utf-8')) <= _MAX_LINE_BYTES)
@@ -159,19 +301,19 @@ class ExperienceSourceResolver:
     def _resolve_archive(self, source_kind, source_ref, task_id, quote):
         if source_kind not in ('tool_result', 'user_confirmation'):
             raise ValueError('archive requires native tool or user evidence')
-        archive_id, line, payload = self._archive_payload(source_ref, task_id)
+        source = self._archive_payload(source_ref, task_id)
         matches = []
-        for number, raw, aliases in self._canonical_event_lines(self._archive_lines(payload), 'codex', source_kind):
-            if line is not None and line not in aliases:
+        for number, raw, aliases in self._canonical_event_lines(self._archive_lines(source), 'codex', source_kind):
+            if source.line is not None and source.line not in aliases:
                 continue
             try:
                 result = self._resolve_event(None, number, raw, 'codex', source_kind, quote,
-                    payload['session_id'], source_prefix=f'archive:{archive_id}')
+                    source.task_id, source_prefix=f'archive:{source.archive_id}')
             except ValueError:
-                if line is not None:
+                if source.line is not None:
                     raise
                 continue
-            matches.append(replace(result, archive_id=archive_id))
+            matches.append(replace(result, archive_id=source.archive_id))
         if len(matches) != 1:
             raise ValueError('archive evidence must identify exactly one event')
         return matches[0]
