@@ -123,6 +123,107 @@ def _source_records(service, task, row=None):
     return _source_spans(service, task, None)
 
 
+# ------------------------------------------------- conservative unit coalescing
+
+def _manual_ranges(service, source_key):
+    """Source ranges a human already decided on; a merge must never touch them."""
+    return [(row['source_start'], row['source_end']) for row in service.store._connection().execute(
+        "SELECT u.source_start,u.source_end FROM organization_units u "
+        "JOIN organization_tasks t ON t.id=u.task_id "
+        "WHERE t.source_key=? AND u.decision='manual'", (source_key,))]
+
+
+def _continuation(kb, policy, projects, manual, previous, current, text):
+    """The two locatable quotes when the pair is one continuing same-project task.
+
+    Every condition is program-checked against the real unit text and the real
+    project rules; a model hint never presses a conflicting rule candidate
+    down, and anything uncertain returns ``None`` so the pair stays split.
+    """
+    if previous.get('disposition') != 'keep' or current.get('disposition') != 'keep':
+        return None
+    if current.get('continues_previous') is not True:
+        return None
+    if current['source_start'] < previous['source_end']:
+        # Overlapping or backwards slices are never swallowed into one unit.
+        return None
+    if 'chunk_index' not in previous or previous.get('chunk_index') != current.get('chunk_index'):
+        return None
+    hint = str(previous.get('project_hint') or '')
+    if not hint or hint != str(current.get('project_hint') or ''):
+        return None
+    project = projects.get(hint.casefold())
+    if not project:
+        return None
+    if text[previous['source_end']:current['source_start']].strip():
+        return None
+    if any(start < current['source_end'] and end > previous['source_start'] for start, end in manual):
+        return None
+    previous_quote = topic_segmentation.resolve_evidence_quote(
+        text[previous['source_start']:previous['source_end']], previous.get('evidence_quote'))
+    current_quote = topic_segmentation.resolve_evidence_quote(
+        text[current['source_start']:current['source_end']], current.get('evidence_quote'))
+    if not previous_quote or not current_quote:
+        return None
+    judged = kb.rules.evaluate({'body': previous['text'], 'source': True}, kb.registry(), policy=policy)
+    if [name.casefold() for name in judged['candidates']] != [project.casefold()]:
+        return None
+    judged = kb.rules.evaluate({'body': current['text'], 'source': True}, kb.registry(), policy=policy)
+    if any(name.casefold() != project.casefold() for name in judged['candidates']):
+        return None
+    return previous_quote, current_quote
+
+
+def _join_units(previous, current, text, quote):
+    """One merged unit: the whole original slice, bounded summaries, no upgrade."""
+    start, end = previous['source_start'], current['source_end']
+    cleaned = (str(previous.get('cleaned_text') or '') + '\n'
+               + str(current.get('cleaned_text') or '')).strip()[:2000]
+    category = previous.get('category') if previous.get('category') == current.get('category') else 'reference'
+    return {**previous, 'text': text[start:end], 'source_start': start, 'source_end': end,
+            'title': previous.get('title') or '', 'cleaned_text': cleaned, 'category': category,
+            'evidence_quote': quote, 'start_id': previous.get('start_id'),
+            'end_id': current.get('end_id'), 'disposition': 'keep',
+            'disposition_reason': previous.get('disposition_reason') or ''}
+
+
+def coalesce_units(service, task, units, text, policy):
+    """Join adjacent units that are one continuing, same-project task.
+
+    The merge is deliberately narrow: both units must be ``keep``, the later one
+    must declare ``continues_previous`` as a real boolean true, both must carry
+    the same non-empty registered project hint, the previous group must be the
+    only project its own text names while the current text names no other
+    project, and both must carry a quote that locates in the real text
+    (horizontal whitespace only may differ). A rule-candidate conflict is never
+    pressed down by the hint, a manual decision on the same range blocks the
+    merge, units from different chunks are never joined, and nothing is merged
+    across real gap content. The input list and the merged result are both
+    validated against the whole source, so an existing overlap or gap can never
+    be hidden by a merge. The merged unit keeps the complete original ``text``
+    slice, its start/end offsets and the first verifiable project quote.
+    """
+    # A merge must never hide an existing overlap, gap or invented span, and the
+    # result must still cover the very same source range.
+    topic_segmentation.coverage(text, units)
+    if len(units) < 2:
+        return [dict(unit) for unit in units]
+    kb = service.knowledge()
+    projects = {row['project'].casefold(): row['project'] for row in kb.registry()
+                if row['status'] == 'active'}
+    manual = _manual_ranges(service, task['source_key'])
+    merged: list[dict] = []
+    for unit in units:
+        previous = merged[-1] if merged else None
+        pair = _continuation(kb, policy, projects, manual, previous, unit, text) if previous else None
+        if pair:
+            merged[-1] = _join_units(previous, unit, text, pair[0])
+        else:
+            merged.append(dict(unit))
+    topic_segmentation.coverage(text, merged)
+    return merged
+
+
 def _assert_current(service, task, *, conn=None):
     """Re-read source and rule revisions; a stale task must not write."""
     from evolvmem.knowledge_cleaning import record
@@ -576,6 +677,10 @@ class OrganizationWorker:
         if not self._is_current(service, task):
             self._finish(service, task['id'], 'superseded', 'stale', 'stale_task')
             return
+        # Only a program-verified same-project continuation is joined; the whole
+        # source is re-checked for exact coverage before anything is stored.
+        units = coalesce_units(service, task, units, text, policy)
+        topic_segmentation.coverage(text, units)
         self._store_units(service, row, units)
         self._touch(service, task['id'], 'assignment')
 
@@ -634,38 +739,48 @@ class OrganizationWorker:
                 continue
             if unit['disposition'] == 'set_aside':
                 continue
+            # Only a successfully located quote is replaced by the real source
+            # substring. An unlocatable quote stays exactly as the model wrote
+            # it (``None`` tells ``_update_unit`` to keep the stored value), so
+            # a later automatic pass can never pass for want of evidence.
+            resolved_quote = topic_segmentation.resolve_evidence_quote(
+                unit['text'], unit.get('evidence_quote'))
             if unit['disposition'] == 'review':
                 self._update_unit(service, task['id'], unit['digest'], project=unit['project'] or '',
                                   decision='review', expected_revision=unit,
-                                  reason=unit['disposition_reason'])
+                                  reason=unit['disposition_reason'], evidence_quote=resolved_quote)
                 review += 1
                 continue
             guidance = guidance_store.classify(service, unit)
             if guidance['status'] == 'review':
                 self._update_unit(service, task['id'], unit['digest'], project='', decision='review',
-                                  expected_revision=unit, reason=guidance['reason'])
+                                  expected_revision=unit, reason=guidance['reason'],
+                                  evidence_quote=resolved_quote)
                 review += 1
                 continue
             if guidance['status'] == 'apply':
                 conflict = self._guidance_conflict(service, unit, guidance['project'], policy)
                 if conflict:
                     self._update_unit(service, task['id'], unit['digest'], project='', decision='review',
-                                      expected_revision=unit, reason=conflict)
+                                      expected_revision=unit, reason=conflict,
+                                      evidence_quote=resolved_quote)
                     review += 1
                     continue
                 self._update_unit(service, task['id'], unit['digest'], project=guidance['project'],
-                                  decision='auto', expected_revision=unit, reason=guidance['reason'])
+                                  decision='auto', expected_revision=unit, reason=guidance['reason'],
+                                  evidence_quote=resolved_quote)
                 auto_projects.append(guidance['project'])
                 continue
             if guidance['status'] == 'pending':
                 self._update_unit(service, task['id'], unit['digest'], project='', decision='review',
-                                  expected_revision=unit, reason=guidance['reason'])
+                                  expected_revision=unit, reason=guidance['reason'],
+                                  evidence_quote=resolved_quote)
                 review += 1
                 continue
             hint = unit['project_hint'] if unit['project_hint'] in names else ''
             project, reason, decision = self._decide(service, unit, hint, policy, names)
             self._update_unit(service, task['id'], unit['digest'], project=project, decision=decision,
-                              expected_revision=unit, reason=reason)
+                              expected_revision=unit, reason=reason, evidence_quote=resolved_quote)
             if decision == 'auto':
                 auto_projects.append(project)
             else:
@@ -698,9 +813,12 @@ class OrganizationWorker:
         if not names:
             return '', '没有已登记项目，先登记项目再整理', 'review'
         kb = service.knowledge()
-        evidence_quote = unit.get('evidence_quote', '')
-        if evidence_quote and evidence_quote not in unit['text']:
-            return '', '模型引用的证据不在原文中，需要人工核对', 'review'
+        raw_quote = str(unit.get('evidence_quote') or '')
+        # Only the kind/count of horizontal whitespace may differ from the real
+        # text; the located value is always the actual source substring.
+        evidence_quote = topic_segmentation.resolve_evidence_quote(unit.get('text', ''), raw_quote) or ''
+        if raw_quote and not evidence_quote:
+            return '', '模型引用的证据在原文中定位不到（只允许空白差异），需要人工核对', 'review'
         if not hint:
             evaluated = kb.rules.evaluate({'body': unit['text'], 'source': True}, kb.registry(), policy=policy)
             candidates = evaluated['candidates']
