@@ -556,8 +556,16 @@ class OrganizationWorker:
         projects = [p['project'] + '（' + '、'.join([p['display_name'], *p.get('aliases', [])]) + '）'
                     for p in service.knowledge().registry() if p['status'] == 'active']
         config, call = _load_llm()
+
+        def provider(request):
+            # The same cancellation check guards every provider call, including
+            # the one coverage correction: a stop between them is not ignored.
+            if self._stop.is_set():
+                raise ValueError('worker_stopped')
+            return call(request, config, deadline=time.monotonic() + 90)
+
         units = topic_segmentation.segment(
-            text, lambda prompt: call(prompt, config, deadline=time.monotonic() + 90),
+            text, provider,
             records=records, cleaning_instructions=policy['settings']['cleaning_instructions'],
             projects=projects)
         if self._stop.is_set():

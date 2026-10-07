@@ -23,6 +23,15 @@ CATEGORIES = ('habit', 'project_convention', 'task_requirement', 'environment',
 # keep: normal material; set_aside: no lasting value for this project (kept and
 # restorable, never deleted); review: the model is not sure and a human decides.
 DISPOSITIONS = ('keep', 'set_aside', 'review')
+# Validation failures the model can be asked to fix once, for the same chunk.
+# A malformed answer is not in this set: it is a provider problem, not a
+# coverage mistake, so it keeps its own error instead of a correction call.
+CORRECTABLE_CODES = ('coverage_gap', 'coverage_overlap', 'quote_not_found')
+_CORRECTION_LABELS = {
+    'coverage_gap': '有编号没有被任何单元覆盖',
+    'coverage_overlap': '单元的编号与前一个单元重叠或越界',
+    'quote_not_found': '分段引用的正文无法在原文中逐字定位',
+}
 
 
 class SegmentationError(ValueError):
@@ -77,7 +86,8 @@ def record_windows(spans, *, size: int = RECORD_CHARS) -> list[dict]:
 
 
 def prompt(records: list[dict], index: int, total: int, *, cleaning_instructions: str = '',
-           projects=(), previous: str = '', following: str = '', offset: int = 0) -> str:
+           projects=(), previous: str = '', following: str = '', offset: int = 0,
+           correction: str = '') -> str:
     """Ask for record-id ranges, never for a copy of the source text."""
     numbered = '\n'.join('[%d] %s\uff1a%s' % (position, record['role'] or 'unknown', record['content'])
                          for position, record in enumerate(records, start=1))
@@ -125,7 +135,29 @@ def prompt(records: list[dict], index: int, total: int, *, cleaning_instructions
             '\u4e0d\u6539\u53d8\u7f16\u53f7\uff09\uff1a\n' + instructions + '\n'
             '\u5df2\u767b\u8bb0\u9879\u76ee\uff1a' + registry + '\n'
             '\u3010\u5206\u6bb5 %d/%d \u8d77\u59cb %d\u3011\n' % (index, total, offset)
-            + context + '\u5b8c\u6574\u6b63\u6587\uff1a\n' + numbered)
+            + context + '\u5b8c\u6574\u6b63\u6587\uff1a\n' + numbered + correction)
+
+
+def _correction_request(error: 'SegmentationError', index: int, total: int,
+                        records: list[dict]) -> str:
+    """Bounded feedback for one retry: the error code and position, no raw reply.
+
+    The previous answer is deliberately not quoted back: only the validator's
+    own bounded ``detail`` and the same numbered source already sent are used,
+    so a long malformed reply can never inflate the next request.
+    """
+    detail = str(getattr(error, 'detail', '') or '')[:120]
+    return ('\n\u3010\u672c\u6bb5\u8986\u76d6\u6821\u9a8c\u672a\u901a\u8fc7\uff1a\u9700\u91cd\u7ed9\u7b2c %d/%d \u6bb5\u7684\u5168\u90e8\u5355\u5143\u3011\n'
+            '\u9519\u8bef\u7c7b\u578b\uff1a%s\uff08%s\uff09\n'
+            '\u9519\u8bef\u4f4d\u7f6e\uff1a%s\n'
+            '\u4e0a\u4e00\u6b21\u56de\u7b54\u65e0\u6548\uff0c\u4e0d\u8981\u5728\u65e7\u7ed3\u679c\u4e0a\u4fee\u8865\uff0c'
+            '\u4e5f\u4e0d\u8981\u53ea\u8865\u7f3a\u5931\u7684\u7f16\u53f7\uff1b'
+            '\u8bf7\u91cd\u65b0\u8f93\u51fa\u672c\u6bb5 %d \u4e2a\u7f16\u53f7\u7684\u5b8c\u6574 units\uff1a'
+            '\u7b2c\u4e00\u4e2a\u5355\u5143 start_id=1\uff0c\u6700\u540e\u4e00\u4e2a\u5355\u5143 end_id=%d\uff0c'
+            '\u7f16\u53f7\u8fde\u7eed\u3001\u4e0d\u91cd\u53e0\u3001\u4e0d\u8df3\u53f7\uff0c'
+            'evidence_quote \u5fc5\u987b\u662f\u539f\u6587\u4e2d\u9010\u5b57\u5b58\u5728\u7684\u6700\u77ed\u539f\u8bdd\u3002\n'
+            % (index, total, error.code, _CORRECTION_LABELS.get(error.code, '\u8986\u76d6\u6821\u9a8c\u672a\u901a\u8fc7'),
+               detail or '\u89c1\u9519\u8bef\u7c7b\u578b', len(records), len(records)))
 
 
 def _parse(raw) -> list[dict]:
@@ -246,6 +278,18 @@ def _chunk_records(records: list[dict], size: int):
     return chunks_out
 
 
+def _chunk_units(raw, chunk: list[dict], source: str, base: int, limit: int) -> list[dict]:
+    """Parse and validate one answer against its own chunk slice only."""
+    parsed = _parse(raw)
+    if any('body' in unit for unit in parsed):
+        local_source = source[base:limit]
+        local = locate(local_source, parsed)
+        coverage(local_source, local)
+        return [{**unit, 'source_start': unit['source_start'] + base,
+                 'source_end': unit['source_end'] + base} for unit in local]
+    return _by_id(chunk, parsed, source, base)
+
+
 def segment(source: str, call, *, size: int = SEGMENT_CHARS, records=None,
             cleaning_instructions: str = '', projects=(), window: int = RECORD_CHARS) -> list[dict]:
     """Run the provider over ordered record chunks and return validated units.
@@ -256,6 +300,13 @@ def segment(source: str, call, *, size: int = SEGMENT_CHARS, records=None,
     the whole source is checked once at the end for exact, non-overlapping
     coverage. Responses using the numbered-record protocol and the legacy
     verbatim-``body`` protocol are both accepted.
+
+    A chunk whose answer fails coverage or quote validation gets exactly one
+    correction call with the complete numbering of that same chunk and the
+    validation error code/position. The first answer is discarded rather than
+    patched, coverage is never relaxed, and a chunk that still fails keeps its
+    original ``SegmentationError`` so nothing is partly written. A malformed
+    answer or a provider failure is never retried here.
     """
     if not isinstance(source, str) or not source.strip():
         raise SegmentationError('empty_source')
@@ -265,19 +316,18 @@ def segment(source: str, call, *, size: int = SEGMENT_CHARS, records=None,
     result: list[dict] = []
     for index, chunk in enumerate(groups):
         base, limit = chunk[0]['start'], chunk[-1]['end']
-        raw = call(prompt(chunk, index + 1, len(groups), cleaning_instructions=cleaning_instructions,
-                          projects=projects, offset=base,
-                          previous=source[max(0, base - CONTEXT_CHARS):base],
-                          following=source[limit:limit + CONTEXT_CHARS]))
-        parsed = _parse(raw)
-        if any('body' in unit for unit in parsed):
-            local_source = source[base:limit]
-            local = locate(local_source, parsed)
-            coverage(local_source, local)
-            result.extend([{**unit, 'source_start': unit['source_start'] + base,
-                            'source_end': unit['source_end'] + base} for unit in local])
-        else:
-            result.extend(_by_id(chunk, parsed, source, base))
+        request = dict(cleaning_instructions=cleaning_instructions, projects=projects, offset=base,
+                       previous=source[max(0, base - CONTEXT_CHARS):base],
+                       following=source[limit:limit + CONTEXT_CHARS])
+        try:
+            answer = call(prompt(chunk, index + 1, len(groups), **request))
+            result.extend(_chunk_units(answer, chunk, source, base, limit))
+        except SegmentationError as error:
+            if error.code not in CORRECTABLE_CODES:
+                raise
+            correction = _correction_request(error, index + 1, len(groups), chunk)
+            answer = call(prompt(chunk, index + 1, len(groups), correction=correction, **request))
+            result.extend(_chunk_units(answer, chunk, source, base, limit))
     coverage(source, result, limit=windows[-1]['end'])
     return result
 

@@ -112,6 +112,78 @@ def test_cleaning_removes_agents_header_without_a_for_suffix():
     assert [m['content'] for m in result] == ['去掉注入后，这段真实对话仍要保留。']
 
 
+def test_cleaning_removes_in_app_browser_context_as_a_complete_pair_only():
+    """The real UI injection is transport noise; a naming message is not."""
+    from evolvmem.conversation import clean_messages
+    wrapper = '<in-app-browser-context>\n[{"url":"https://example.invalid/page"}]\n</in-app-browser-context>'
+    messages = [
+        {'role':'user','content':wrapper},
+        {'role':'user','content':wrapper + '\n真实需求：把按钮移到标题右侧。'},
+        {'role':'user','content':'真实需求在前：先核对范围。\n' + wrapper},
+        {'role':'assistant','content':'可以，按核对后的范围推进。'},
+    ]
+    before = json.loads(json.dumps(messages, ensure_ascii=False))
+    result = clean_messages(messages)
+    assert [m['content'] for m in result] == [
+        '真实需求：把按钮移到标题右侧。',
+        '真实需求在前：先核对范围。',
+        '可以，按核对后的范围推进。',
+    ]
+    assert messages == before, 'the raw archive must never be rewritten by cleaning'
+
+
+def test_cleaning_keeps_in_app_browser_context_in_quotes_and_naming_messages():
+    from evolvmem.conversation import clean_messages
+    wrapper = '<in-app-browser-context>{"url":"https://example.invalid"}</in-app-browser-context>'
+    fenced = '示例代码：\n```\n' + wrapper + '\n```\n这段引用必须保留。'
+    inline = '`<in-app-browser-context>` 只是行内引用，保留。'
+    naming = '请说明 in-app-browser-context 这个注入标签在清洗流程里怎样处理。'
+    messages = [
+        {'role':'user','content':fenced},
+        {'role':'user','content':inline},
+        {'role':'user','content':naming},
+    ]
+    before = json.loads(json.dumps(messages, ensure_ascii=False))
+    result = clean_messages(messages)
+    assert [m['content'] for m in result] == [fenced, inline, naming]
+    assert messages == before
+
+
+def test_cleaning_keeps_an_unpaired_in_app_browser_context_wrapper():
+    """A missing closing tag is ambiguous: keep the text instead of guessing."""
+    from evolvmem.conversation import clean_messages
+    unpaired = ('<in-app-browser-context>\n[{"url":"https://example.invalid"}]\n'
+                '真实需求：确认按钮位置。')
+    messages = [
+        {'role':'user','content':unpaired},
+        {'role':'user','content':'<in-app-browser-context>只有开始标签，后面是真实对话。'},
+    ]
+    before = json.loads(json.dumps(messages, ensure_ascii=False))
+    result = clean_messages(messages)
+    assert [m['content'] for m in result] == [unpaired, '<in-app-browser-context>只有开始标签，后面是真实对话。']
+    assert messages == before
+
+
+def test_cleaning_keeps_screenshot_requests_and_image_references():
+    """User screenshots and image references are real material, not noise."""
+    from evolvmem.conversation import clean_messages
+    wrapper = '<in-app-browser-context>{"url":"https://example.invalid"}</in-app-browser-context>'
+    screenshot = '请看这张截图，确认标题栏按钮位置。\n[Image #1]'
+    messages = [
+        {'role':'user','content':screenshot},
+        {'role':'user','content':wrapper + '\n[Image #1] 请核对这张截图里的按钮位置。'},
+        {'role':'assistant','content':'截图中按钮在右上角。'},
+    ]
+    before = json.loads(json.dumps(messages, ensure_ascii=False))
+    result = clean_messages(messages)
+    assert [m['content'] for m in result] == [
+        screenshot,
+        '[Image #1] 请核对这张截图里的按钮位置。',
+        '截图中按钮在右上角。',
+    ]
+    assert messages == before
+
+
 def test_archive_read_returns_only_dialogue_and_enforces_project(service):
     from evolvmem.session_archive import SessionArchiver
     from evolvmem.project_memory import conversation

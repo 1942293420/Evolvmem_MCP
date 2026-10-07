@@ -8,7 +8,7 @@ _MEMORY_BLOCK = re.compile(r'\[BEGIN EVOLVMEM[^\]]*\].*?\[END EVOLVMEM[^\]]*\]',
 # Known client-side injections that arrive as their own wrapped record. Only a
 # complete structural wrapper is removed, so a normal message that merely names
 # these features keeps its text.
-_INJECTED_NAMES = ('recommended_plugins', 'external_codex_apps_open_page')
+_INJECTED_NAMES = ('recommended_plugins', 'external_codex_apps_open_page', 'in-app-browser-context')
 _INJECTED_WRAPPERS = re.compile(r'<(' + '|'.join(_INJECTED_NAMES) + r')\b[^>]*>.*?</\1\s*>', re.I | re.S)
 _AGENTS_HEADER = re.compile(r'^\s*# AGENTS\.md instructions\b[^\n]*(?:\n|$)')
 # Fenced blocks and inline spans quote real text: an injection name inside them
