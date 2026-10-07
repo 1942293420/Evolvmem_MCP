@@ -1,5 +1,16 @@
---- a/evolvmem/lan_capture.py
-+++ b/evolvmem/lan_capture.py
+# ============================================================================
+# 已废弃 / RETIRED —— 请勿应用（DO NOT APPLY）。
+# 本文件是诊断期提出的候选补丁快照：为 session_archive_upload 增加可选参数
+# parent_sha256 作为 “lineage root” 声明，并把 LanCapture._latest 改为按接收时间排序。
+# 该候选从未被采用。现行上传协议是可选字段 source_order / current_sha256，当前快照
+# 由 lan_session_heads 显式指针决定；LanCapture._latest 已不存在。
+# 生成脚本 windows/make_patches.py 已删除；此 .txt 仅作历史问题定位参考，不得应用，
+# 也不得据此生成新补丁。对应的现行回归测试见 windows/test_transcript_fork_repro.py
+# 与 windows/tests/test_lan_capture_lineage.py。
+# 为避免被误应用，下面 diff 头行已注释掉；本文件不是可应用的补丁。
+# ============================================================================
+# --- a/evolvmem/lan_capture.py
+# +++ b/evolvmem/lan_capture.py
 @@ -25,13 +25,16 @@
                'offset': {'type': 'integer', 'minimum': 0},
                'content_b64': {'type': 'string', 'maxLength': 349528},

@@ -70,6 +70,7 @@ Windows 接入包 → 一个远程 EvolvMem MCP → 现有 Linux 记忆核心。
 - 每次真实捕获持久化 source_order 和本地 current_sha256；重试次序不变。升级先确认当前缓存锚点，再补传旧版本；缺少可靠缓存时保留队列并报告迁移失败。
 - 服务端以显式 head 选择当前快照，不按文件体积或到达时间猜测。合法改写及变短可推进；旧版本完整归档但不覆盖当前、不排队提炼。回退到已归档内容时，以严格更高捕获次序重新选择原不可变归档。
 - 当前锚点须收到 archived、自己的摘要和完整长度、archive_id、current=true 及同一 source_order 才确认；历史已归档不等于当前已确认。旧客户端保留追加/分叉校验。
+- 现行协议的测试入口（`windows/` 不在 `tests/` 的收集范围内，需显式指定）：`.venv/bin/python -m pytest windows/test_transcript_fork_repro.py windows/tests/test_lan_capture_lineage.py tests/test_lan_capture.py tests/test_lan_capture_versions.py -q`。`windows/patch-*-lineage-root.patch.txt` 是已废弃候选快照，不得应用；相关历史见 `windows-report.md` 第 5–6 节顶部说明。
 - 每条失败保留稳定 last_error；pending_failed_versions / pending_error_codes 汇总原因。未知服务端文本不写入状态，不丢弃待传。
 - 归档完成后复用现有提炼器；短时连续变化合并提炼最新版本，同一版本的重复触发不重复提交记忆。
 - 输出会话总结并更新项目滚动摘要；未验证经验仍为候选，后台总结不得直接宣布任务完成。

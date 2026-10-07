@@ -1,5 +1,7 @@
 # Windows Codex 后台上传 19 版本停滞 —— 只读排查报告
 
+> 本报告为 2026-09-21 历史诊断，候选补丁已退役，现行协议见 `docs/windows-codex.md`；当前测试结果见下文“历史状态更新（2026-10-08）”。
+
 - 任务目录：`/home/jiangli/hermes-memory-plugin`（诊断产物在 `windows/` 子目录）
 - 执行时间：2026-09-20 16:38–16:50 UTC（本机 2026-09-21 00:38–00:50 CST）
 - 授权范围：源码/队列元数据/回执只读；允许重放同一现有上传块 1 个版本、相同幂等参数
@@ -127,6 +129,14 @@ if complete:                                   # 只有补齐 total_bytes 的最
 
 **量化自洽**：实测单次失败 344 ms × 19 个版本 ≈ 6.5 s，加上扫描/捕获开销 ≈ 9–10 s，与实测周期 9.33–10.12 s 吻合；说明失败是服务端**快速返回错误**，不是超时、不是网络问题。
 
+> **历史状态更新（2026-10-08）：第 5–6 节与第 9 节的候选方案已废弃，不作为现行协议依据。**
+> 本报告记录的 `parent_sha256` “lineage root” 候选补丁从未被采用；现行上传协议是可选字段
+> `source_order` / `current_sha256` 与 `lan_session_heads` 当前指针，`LanCapture._latest` 已不存在。
+> 两处旧诊断测试已迁移到现行协议：`windows/test_transcript_fork_repro.py`（4 passed）与
+> `windows/tests/test_lan_capture_lineage.py`（4 passed）；`windows/make_patches.py` 已删除；
+> 两个补丁改名为 `patch-N-*.patch.txt` 并在文件头声明“请勿应用”（`git apply --check` 与
+> GNU `patch` 均拒绝，已不是可应用的补丁）。以下原文保留为历史问题定位记录。
+
 ## 5. 合成数据复现（`windows/test_transcript_fork_repro.py`，4 passed）
 
 用项目自带的隔离测试运行时（`tests/test_lan_sharing.py` 的 `lan` fixture，tmp_path + `LanRuntime`，**不触碰线上 runtime/DB/cache**）构造同形态数据：
@@ -208,9 +218,9 @@ AND NOT EXISTS (SELECT 1 FROM lan_session_uploads b WHERE ... AND b.total_bytes 
 | `replay-t0.json` | 单块重放结果（`transcript_fork`，344 ms）与两条只读 status 探针 |
 | `hashes.json` | 安装副本哈希/大小/时间（与仓库源码逐字节一致） |
 | `probe-queue.ps1` / `probe-upload.ps1` / `probe-hashes.ps1` / `winrun.sh` | 只读诊断脚本与 SSH+UTF16LE base64 传输封装 |
-| `test_transcript_fork_repro.py` | 合成数据复现 + 修复注入验证（4 passed） |
-| `tests/test_lan_capture_lineage.py` | 建议新增的回归测试（base 4 failed / patched 5 passed） |
-| `patch-1-server-lineage-root.patch` / `patch-2-client-lineage-root.patch` | 最小修复补丁（**未应用**） |
-| `make_patches.py` | 在临时副本上生成补丁的脚本（不触碰源码树） |
+| `test_transcript_fork_repro.py` | 合成数据复现，已迁移到现行协议（未改源码、未猴补候选实现；4 passed） |
+| `tests/test_lan_capture_lineage.py` | 重写版本回归，已迁移到现行协议（4 passed） |
+| `patch-1-server-lineage-root.patch.txt` / `patch-2-client-lineage-root.patch.txt` | **已废弃**的候选补丁快照（不可应用；现行协议与禁止使用说明见文件头） |
+| ~~`make_patches.py`~~ | 已删除；该脚本只能生成上述废弃补丁，Git 保留历史 |
 
 > 源码树未被本任务改动：`evolvmem/lan_capture.py`、`evolvmem/lan_tools.py`、`scripts/windows/evolvmem-codex.ps1` 的 mtime 与内容保持原样（补丁在 `/tmp` 副本上验证）。仓库内其余 `M`（modified）状态是本任务开始前就存在的。
