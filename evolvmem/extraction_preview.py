@@ -52,6 +52,9 @@ def preview(service, body, *, llm=None):
             answer_support.normalize_key(candidate, project)
         _, replacements = answer_support.support(safe, candidates, provider)
         candidates = [replacements.get(id(c), c) for c in candidates]
+        # The same history-only drop as ingestion: an un-adopted assistant
+        # suggestion is not shown as a preview candidate either.
+        candidates = answer_support.drop_history_only(candidates)
         if not any(c.key.strip().upper() == 'SESSION_SUMMARY' for c in candidates):
             raise ValueError('extraction_summary_missing')
         results, seen, writes = [], set(), 0

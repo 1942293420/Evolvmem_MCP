@@ -18,17 +18,34 @@ extracted ``answer`` stayed inside it.  This module adds the missing layer:
   the verdict is additionally bound to the exact reviewed messages plus the
   candidate's key/category/trigger, so a later edit, a different user
   correction or a reused quote cannot ride on an old conclusion.
+
+The same bounded review also answers one narrow question about inferred
+candidates whose claim only the assistant ever voiced (the deterministic
+source screen below): is this an assistant suggestion the user has not adopted
+in this batch? Only a suggestion the reviewer marks ``true`` is recorded as
+``history`` and dropped from the batch — it stays in the raw conversation and
+the encrypted session archive. Everything else keeps its existing verdict and
+handling: a plain assistant fact, an explicit user decision (adopted or
+rejected), a real conflict and an evidence-bearing experience are never
+dropped by this pass, and any missing, malformed or failed judgment keeps the
+candidate.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 from evolvmem.extraction_policy import contains_sensitive_text
 
 SUPPORT_KEY = 'answer_support'
 MODEL_SUPPORT_KEYS = ('answer_support', 'support_check')
 VERDICTS = ('supported', 'narrow', 'review')
+# A separate verdict, produced only for assistant-sourced inferred candidates:
+# the content is an assistant suggestion the user has not adopted, so it stays
+# in the conversation history and never becomes an active item or a candidate.
+HISTORY_VERDICT = 'history'
+HISTORY_REASON = '助手尚未被用户采纳的建议只保留历史，不生成候选'
 REVIEW_REASON = '需独立核对答案是否超出用户原话范围'
 MAX_FRAGMENT = 400
 REVIEW_PROMPT = '独立核对员'
@@ -36,6 +53,12 @@ MAX_BATCH_CHARS = 48000       # bound on the reviewed conversation text
 MAX_BATCH_MESSAGES = 400      # bound on the reviewed message count
 MAX_CANDIDATES = 32           # bound on numbered candidates per call
 MAX_MESSAGE_CHARS = 8000      # a single oversized message is never cut silently
+MAX_SUGGESTIONS = 16          # bound on assistant-suggestion judgments per call
+# Length of the answer run that must appear verbatim in an assistant message
+# (and in no user message) before the suggestion judgment may even be asked.
+# It is source evidence, not a keyword: a paraphrase or a user-voiced line
+# never reaches this pass.
+MIN_SOURCE_OVERLAP = 8
 
 # Limits, alternatives, modality and negations that a *narrowing* correction
 # must not silently drop from the original quoted span. They are read-only
@@ -108,6 +131,71 @@ def user_message(messages, quote):
                 return None
             found = {'index': index, 'content': _text(message.get('content'))}
     return found
+
+
+def _fragments(text, size):
+    """Ordered, de-duplicated ``size``-char fragments of *text*."""
+    body = _text(text)
+    seen, fragments = set(), []
+    for index in range(max(0, len(body) - size + 1)):
+        fragment = body[index:index + size]
+        if fragment not in seen:
+            seen.add(fragment)
+            fragments.append(fragment)
+    return fragments
+
+
+def _voiced_by(messages, role, fragments):
+    """A fragment that a message of *role* contains verbatim, or ``''``."""
+    for message in messages or ():
+        if message.get('role') != role:
+            continue
+        content = _text(message.get('content'))
+        for fragment in fragments:
+            if fragment in content:
+                return fragment
+    return ''
+
+
+def assistant_sourced(data, messages):
+    """A run of the answer that only the assistant ever voiced, or ``''``.
+
+    Source evidence, never a keyword: one ``MIN_SOURCE_OVERLAP``-char run of the
+    answer must appear verbatim in an assistant message and in no user message.
+    A user who adopts, rejects or repeats the plan takes the candidate out of
+    this pass, and a paraphrase shares no such run, so unmatched content is
+    never even screened.
+    """
+    fragments = _fragments(data.get('answer'), MIN_SOURCE_OVERLAP)
+    if not fragments:
+        return ''
+    if _voiced_by(messages, 'user', fragments):
+        return ''
+    return _voiced_by(messages, 'assistant', fragments)
+
+
+def suggestion_reviewable(data, item, messages):
+    """An inferred candidate only the assistant voiced needs the extra judgment.
+
+    Deterministic, conservative screen: it selects the assistant-suggestion
+    judgment, it never decides it. Explicit user decisions, content the user
+    also voiced, quotes that locate a real user line, experience (a method
+    needs its own bound result) and empty answers are all out of scope, so the
+    screen itself never removes a real user requirement, a real conflict or a
+    plain factual answer from the existing rules.
+    """
+    if not isinstance(data, dict):
+        return False
+    if data.get('basis') == 'explicit':
+        return False
+    if data.get('category') == 'experience' or getattr(item, 'attribute', '') == 'experience':
+        return False
+    if not _text(data.get('answer')).strip():
+        return False
+    quote = _text(data.get('quote')).strip()
+    if quote and user_message(messages, quote) is not None:
+        return False
+    return bool(assistant_sourced(data, messages))
 
 
 def normalize_key(item, project):
@@ -241,8 +329,25 @@ def _render_messages(messages):
                      for index, message in enumerate(messages or ()))
 
 
-def build_prompt(messages, items):
-    """One bounded batch review request for explicit candidates only."""
+SUGGESTION_INSTRUCTIONS = (
+    '\n同批的明确候选（basis=explicit）见上面的 <候选>。下面 <助手建议候选> 里的条目没有任何用户原话支持，'
+    '只由助手在对话中说出；它们是同一次复核的一部分，不是新的入库许可。\n'
+    '逐条判断它是不是“助手单方面提出、而用户在这批对话里尚未明确采纳的建议、计划或下一步动作”。'
+    '只有这种尚未被采纳的助手建议才算 suggestion=true，该内容只保留在对话历史，不生成记忆。\n'
+    '以下一律 suggestion=false，仍按原有规则处理：助手回答用户提问或陈述客观事实、'
+    '助手整理用户已经明确要求的内容、用户已经明确采纳或否决的建议、'
+    '与已有知识冲突而需要人工确认的内容，以及带实际验证结果的经验。'
+    '用户随后明确采纳的建议已不再是“未采纳建议”，也写 suggestion=false。\n'
+    '拿不准、编号对不上或缺少依据时写 suggestion=false，宁可保留候选，绝不默认删除。\n'
+    '只要存在 <助手建议候选>，就只输出一个 JSON 对象：'
+    '{"verdicts":[与上面逐条相同的数组],"assistant_suggestions":'
+    '[{"id":编号,"suggestion":true或false,"reason":"说明"}]}；'
+    '没有 <助手建议候选> 时仍只输出 JSON 数组。\n'
+)
+
+
+def build_prompt(messages, items, suggestions=()):
+    """One bounded batch review for explicit candidates and assistant suspects."""
     pending = [item for item in items if reviewable(getattr(item, 'learning', None), item)]
     candidates = [{'编号': number,
                    '引用': _text(item.learning.get('quote')),
@@ -275,20 +380,25 @@ def build_prompt(messages, items):
         '{"id":1,"verdict":"supported","reason":"说明","quote":"逐字用户原话","corrected_quote":""}；'
         '每条必须有 id、verdict、reason、quote，corrected_quote 只在 narrow 时填写。\n'
     )
-    return (instructions + '\n<消息>\n' + _render_messages(messages)
-            + '\n</消息>\n<候选>\n' + json.dumps(candidates, ensure_ascii=False, indent=1)
-            + '\n</候选>')
+    prompt = (instructions + '\n<消息>\n' + _render_messages(messages)
+              + '\n</消息>\n<候选>\n' + json.dumps(candidates, ensure_ascii=False, indent=1)
+              + '\n</候选>')
+    if suggestions:
+        suspects = [{'建议编号': number,
+                     '问题': _text(item.learning.get('question')),
+                     '答案': _text(item.learning.get('answer')),
+                     'value': _text(item.value)}
+                    for number, item in enumerate(suggestions, start=1)]
+        prompt += ('\n<助手建议候选>\n' + json.dumps(suspects, ensure_ascii=False, indent=1)
+                   + '\n</助手建议候选>' + SUGGESTION_INSTRUCTIONS)
+    return prompt
 
 
-def parse_response(raw):
-    """Bounded, fail-closed parse of the reviewer reply."""
-    if not isinstance(raw, str):
-        raise ValueError('empty reviewer response')
-    start, end = raw.find('['), raw.rfind(']')
-    if start < 0 or end <= start:
-        raise ValueError('reviewer response is not a JSON array')
-    data = json.loads(raw[start:end + 1])
-    if not isinstance(data, list) or not 1 <= len(data) <= 64:
+def _parse_verdicts(data, *, allow_empty=False):
+    """Bounded, fail-closed validation of the numbered verdict list."""
+    if not isinstance(data, list):
+        raise ValueError('reviewer response is not a bounded list')
+    if len(data) > 64 or (not data and not allow_empty):
         raise ValueError('reviewer response is not a bounded list')
     verdicts = []
     for entry in data:
@@ -305,6 +415,73 @@ def parse_response(raw):
             raise ValueError('a narrow verdict requires corrected_quote')
         verdicts.append({'id': entry['id'], 'verdict': verdict, 'reason': reason[:300],
                          'quote': quote[:800], 'corrected_quote': corrected[:800]})
+    return verdicts
+
+
+def _parse_suggestions(data):
+    """Per-id suggestion judgments; ``None`` keeps every suspect (fail-closed).
+
+    A malformed interface is never partially applied: a duplicated id (even
+    with the same value, and regardless of which one comes last), a
+    non-positive id, a non-boolean judgment, or a ``true`` without a non-blank
+    string reason invalidates the whole set, so every suspect stays an ordinary
+    candidate. Only a unique, addressable, justified ``true`` may drop one
+    suspect.
+    """
+    if not isinstance(data, list) or len(data) > 64:
+        return None
+    parsed = {}
+    for entry in data:
+        if not isinstance(entry, dict):
+            return None
+        number = entry.get('id')
+        if type(number) is not int or number < 1 or number in parsed:
+            return None
+        suggestion = entry.get('suggestion')
+        if not isinstance(suggestion, bool):
+            return None
+        reason = entry.get('reason')
+        if suggestion and (not isinstance(reason, str) or not reason.strip()):
+            return None
+        parsed[number] = {'suggestion': suggestion,
+                          'reason': reason[:300] if isinstance(reason, str) else ''}
+    return parsed
+
+
+def _parse_review(raw):
+    """Parse one reviewer reply into ``(verdicts, suggestions)``.
+
+    The legacy bare array stays valid and carries no suggestion judgments, so
+    every suspect is kept; the object form is required only when the prompt
+    asked about suspects. Malformed verdicts raise (per-candidate fail-closed);
+    malformed suggestion entries degrade to ``None`` (keep every suspect).
+    """
+    if not isinstance(raw, str):
+        raise ValueError('empty reviewer response')
+    text = raw.strip()
+    fenced = re.search(r'```(?:json)?\s*([\[{].*[\]}])\s*```', text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+    if text.startswith('{'):
+        start, end = text.find('{'), text.rfind('}')
+        try:
+            payload = json.loads(text[start:end + 1]) if end > start else None
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            return (_parse_verdicts(payload.get('verdicts', []), allow_empty=True),
+                    _parse_suggestions(payload.get('assistant_suggestions')))
+    start, end = text.find('['), text.rfind(']')
+    if start < 0 or end <= start:
+        raise ValueError('reviewer response is not a JSON array')
+    return _parse_verdicts(json.loads(text[start:end + 1])), None
+
+
+def parse_response(raw):
+    """Bounded, fail-closed parse of the legacy reviewer reply (bare array)."""
+    verdicts, _ = _parse_review(raw)
+    if not verdicts:
+        raise ValueError('reviewer response is not a bounded list')
     return verdicts
 
 
@@ -396,17 +573,62 @@ def _apply(messages, pending, verdicts):
     return applied, replacements
 
 
+def history_only(data):
+    """True when the review kept this candidate out as history-only."""
+    saved = data.get(SUPPORT_KEY) if isinstance(data, dict) else None
+    return isinstance(saved, dict) and saved.get('verdict') == HISTORY_VERDICT
+
+
+def drop_history_only(items):
+    """The batch without the items the review kept only for the history.
+
+    A caller that persists an extraction batch must use this: the content then
+    stays in the raw conversation / encrypted session archive and never becomes
+    an active item or a review candidate. Items without such a verdict are
+    returned unchanged.
+    """
+    return [item for item in items if not history_only(getattr(item, 'learning', None))]
+
+
+def _history_only(data, reason, *, messages, item=None):
+    """Record that the reviewer kept an un-adopted assistant suggestion out."""
+    note = HISTORY_REASON + ('：' + reason if reason else '')
+    return _record(data, verdict=HISTORY_VERDICT, reason=note, quote=_text(data.get('quote')),
+                   original=data.get('answer'), messages=messages, item=item,
+                   extra={'original_answer': _text(data.get('answer')), 'failed': True})
+
+
+def _apply_suggestions(messages, suspects, parsed):
+    """Mark only an explicit ``suggestion=true``; everything else is kept."""
+    if not parsed:
+        return 0
+    dropped = 0
+    for number, item in enumerate(suspects, start=1):
+        entry = parsed.get(number)
+        if not isinstance(entry, dict) or entry.get('suggestion') is not True:
+            continue
+        _history_only(item.learning, entry.get('reason', ''), messages=messages, item=item)
+        dropped += 1
+    return dropped
+
+
 def verify(messages, items, llm):
     """Run exactly one batch review and apply verdicts in place.
 
     Any raised error is per-candidate fail-closed, never a batch abort.
-    Returns ``(applied, replacements)``.
+    Returns ``(applied, replacements)``. The same single call also carries the
+    assistant-suggestion judgment for the screened inferred suspects; a missing
+    or malformed judgment keeps them untouched.
     """
     pending = [item for item in items
                if reviewable(getattr(item, 'learning', None), item)
                and needs_review(item.learning, item)]
-    if not pending:
-        return {}, {}
+    suspects = [item for item in items
+                if suggestion_reviewable(getattr(item, 'learning', None), item, messages)]
+    if budget_problem(messages):
+        # The reviewer must see the complete batch; an over-budget batch is
+        # never sent, and a suspect stays an ordinary candidate (fail-closed).
+        suspects = []
     if len(pending) > MAX_CANDIDATES:
         applied = {}
         for item in pending:
@@ -414,8 +636,11 @@ def verify(messages, items, llm):
             _fail(item.learning, f'{REVIEW_REASON}：一次核对候选超过 {MAX_CANDIDATES} 条上限，待确认',
                   original=item.learning.get('answer'), messages=messages, item=item)
         return applied, {}
+    suspects = suspects[:MAX_SUGGESTIONS]
+    if not pending and not suspects:
+        return {}, {}
     try:
-        raw = llm(build_prompt(messages, pending))
+        raw = llm(build_prompt(messages, pending, suspects))
     except Exception as error:
         applied = {}
         for item in pending:
@@ -424,7 +649,7 @@ def verify(messages, items, llm):
                   original=item.learning.get('answer'), messages=messages, item=item)
         return applied, {}
     try:
-        verdicts = parse_response(raw)
+        verdicts, suggestions = _parse_review(raw)
     except Exception as error:
         applied = {}
         for item in pending:
@@ -432,7 +657,9 @@ def verify(messages, items, llm):
             _fail(item.learning, f'{REVIEW_REASON}：核对结果无法解析（{type(error).__name__}）',
                   original=item.learning.get('answer'), messages=messages, item=item)
         return applied, {}
-    return _apply(messages, pending, verdicts)
+    applied, replacements = _apply(messages, pending, verdicts)
+    _apply_suggestions(messages, suspects, suggestions)
+    return applied, replacements
 
 
 def check(data, item=None):
@@ -440,11 +667,15 @@ def check(data, item=None):
 
     Returns ``''`` when the candidate may promote and a human-readable reason
     otherwise. A missing, failed, stale or non-supported verdict stays a
-    candidate instead of a silent promote.
+    candidate instead of a silent promote. A ``history`` verdict can never
+    promote either: the batch drop happens before persistence, and this gate is
+    the second line of defence for any caller that persists the item anyway.
     """
     saved = data.get(SUPPORT_KEY)
     if not isinstance(saved, dict):
         return REVIEW_REASON + '：尚未完成独立核对'
+    if saved.get('verdict') == HISTORY_VERDICT:
+        return str(saved.get('reason') or HISTORY_REASON)
     if saved.get('failed') or saved.get('verdict') == 'review':
         return str(saved.get('reason') or REVIEW_REASON)
     if saved.get('verdict') not in ('supported', 'narrow'):

@@ -551,7 +551,15 @@ def _extract_candidates(messages: list[dict[str, str]],
             replacements = {}
         if replacements:
             candidates = [replacements.get(id(c), c) for c in candidates]
-        return candidates
+        # 助手尚未被用户采纳的建议只保留在原始会话/加密归档里：独立复核给出
+        # history 结论后在这里整体剔除，既不生成 active 也不生成 candidate。
+        kept = answer_support.drop_history_only(candidates)
+        if len(kept) != len(candidates):
+            _log(
+                "assistant suggestions kept in history only: "
+                f"{len(candidates) - len(kept)}"
+            )
+        return kept
 
     try:
         return _keep_latest_summary(extract(messages))

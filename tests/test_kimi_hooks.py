@@ -2156,3 +2156,169 @@ class TestSessionEndConsolidationWiring:
 
         assert result.status == "completed"
         assert calls == []
+
+
+class TestAssistantSuggestionHistoryOnly:
+    """A synthetic mixed turn: one confirmed user agreement plus an unadopted AI suggestion."""
+
+    AGREEMENT = "星图验收项目的明确约定：导出清单时保留原始编号，日期统一使用 YYYY-MM-DD 格式。"
+    SUGGESTION = "已了解。我另建议每次导出后自动删除原始清单，这只是建议，尚未得到你的确认。"
+    SUGGESTION_ANSWER = "助手建议每次导出后自动删除原始清单，该建议尚未得到用户确认。"
+
+    @staticmethod
+    def _extraction_reply(*, basis="inferred"):
+        return json.dumps({"memories": [
+            {"key": "project:sampleatlas:convention:export",
+             "value": "星图验收项目导出清单时保留原始编号，日期统一使用 YYYY-MM-DD 格式。",
+             "attribute": "constraint", "confidence": 0.95, "importance": 7, "tier": "normal",
+             "learning": {"category": "project_convention", "basis": "explicit",
+                          "quote": TestAssistantSuggestionHistoryOnly.AGREEMENT,
+                          "question": "星图验收项目导出清单有什么约定？",
+                          "answer": "星图验收项目导出清单时保留原始编号，日期统一使用 YYYY-MM-DD 格式。"}},
+            {"key": "project:sampleatlas:reference:assistant_suggestion",
+             "value": TestAssistantSuggestionHistoryOnly.SUGGESTION_ANSWER,
+             "attribute": "fact", "confidence": 0.8, "importance": 4, "tier": "reference",
+             "learning": {"category": "reference", "basis": basis, "quote": "",
+                          "question": "助手对星图验收项目导出清单提出了什么尚未确认的建议？",
+                          "answer": TestAssistantSuggestionHistoryOnly.SUGGESTION_ANSWER}},
+            {"key": "SESSION_SUMMARY",
+             "value": "星图验收项目确认了导出编号与日期格式约定，助手另提了一条未确认建议。",
+             "attribute": "fact", "tags": ["日志"], "confidence": 0.9, "importance": 5,
+             "tier": "normal"},
+        ]}, ensure_ascii=False)
+
+    @staticmethod
+    def _review_reply(*, suggestion):
+        return json.dumps({
+            "verdicts": [{"id": 1, "verdict": "supported", "reason": "与用户原话一致",
+                          "quote": TestAssistantSuggestionHistoryOnly.AGREEMENT}],
+            "assistant_suggestions": [{"id": 1, "suggestion": suggestion,
+                                       "reason": "助手单方面建议，用户未采纳" if suggestion else "回答用户提问"}],
+        }, ensure_ascii=False)
+
+    def test_mixed_conversation_yields_only_the_confirmed_agreement(
+            self, monkeypatch, test_config):
+        """Catch: 真实复现——助手未采纳建议只留历史，不再生成待审核候选。"""
+        messages = [{"role": "user", "content": self.AGREEMENT},
+                    {"role": "assistant", "content": self.SUGGESTION}]
+        prompts = []
+
+        def fake_call(prompt, *_args, **_kwargs):
+            prompts.append(prompt)
+            if "独立核对员" in prompt:
+                assert "<助手建议候选>" in prompt, "助手建议必须进入同一次有界独立复核"
+                assert self.SUGGESTION_ANSWER in prompt
+                return self._review_reply(suggestion=True)
+            return self._extraction_reply()
+
+        monkeypatch.setattr(hooks, "_call_llm", fake_call)
+
+        candidates = hooks._extract_candidates(
+            messages, _llm_config(), config=test_config, project="sampleatlas")
+
+        assert [c.key for c in candidates] == [
+            "project:sampleatlas:convention:export", "SESSION_SUMMARY"], \
+            "未采纳的助手建议不得以任何 candidate 形式返回"
+        assert all(self.SUGGESTION_ANSWER not in c.value for c in candidates)
+        assert len(prompts) == 2  # 一次提炼 + 一次批量核对，调用预算不变
+
+    def test_a_plain_assistant_fact_is_not_dropped_by_the_same_batch(
+            self, monkeypatch, test_config):
+        """Catch: 同一批里助手普通事实回答仍按原规则保留为候选。"""
+        messages = [{"role": "user", "content": self.AGREEMENT},
+                    {"role": "assistant", "content": self.SUGGESTION}]
+
+        def fake_call(prompt, *_args, **_kwargs):
+            if "独立核对员" in prompt:
+                return self._review_reply(suggestion=False)
+            return self._extraction_reply()
+
+        monkeypatch.setattr(hooks, "_call_llm", fake_call)
+
+        candidates = hooks._extract_candidates(
+            messages, _llm_config(), config=test_config, project="sampleatlas")
+
+        assert [c.key for c in candidates] == [
+            "project:sampleatlas:convention:export",
+            "project:sampleatlas:reference:assistant_suggestion",
+            "SESSION_SUMMARY"]
+
+    def test_an_adoption_in_the_same_batch_leaves_the_item_alone(
+            self, monkeypatch, test_config):
+        """Catch: 用户随后明确采纳的建议不再进入“未采纳建议”通道。"""
+        adoption = "好，就按你说的，导出后自动删除原始清单。"
+        messages = [{"role": "user", "content": self.AGREEMENT},
+                    {"role": "assistant", "content": self.SUGGESTION},
+                    {"role": "user", "content": adoption}]
+        prompts = []
+
+        def fake_call(prompt, *_args, **_kwargs):
+            prompts.append(prompt)
+            if "独立核对员" in prompt:
+                assert "<助手建议候选>" not in prompt, "用户已采纳的内容不得再按未采纳建议筛查"
+                return json.dumps([{"id": 1, "verdict": "supported", "reason": "与用户原话一致",
+                                    "quote": self.AGREEMENT}], ensure_ascii=False)
+            return self._extraction_reply()
+
+        monkeypatch.setattr(hooks, "_call_llm", fake_call)
+
+        candidates = hooks._extract_candidates(
+            messages, _llm_config(), config=test_config, project="sampleatlas")
+
+        assert [c.key for c in candidates] == [
+            "project:sampleatlas:convention:export",
+            "project:sampleatlas:reference:assistant_suggestion",
+            "SESSION_SUMMARY"]
+
+    def test_session_end_keeps_the_suggestion_only_in_the_encrypted_history(
+            self, monkeypatch, tmp_path, test_config):
+        """Catch: 端到端——混合对话只产出明确约定问答，建议保留在历史归档。"""
+        from evolvmem.context_service import ContextService
+        from evolvmem.context_store import ContextStore
+        from evolvmem.session_archive import SessionArchiver
+
+        test_config.context_mode = "shadow"
+        wire = _write_wire(tmp_path, self.AGREEMENT + "这是第一条明确约定。" + "甲" * 200,
+                           self.SUGGESTION + "以上仅为建议。" + "乙" * 200)
+        monkeypatch.setattr(hooks, "_find_wire", lambda _session_id: str(wire))
+        monkeypatch.setattr(Config, "from_file",
+                            classmethod(lambda cls, path=None: test_config))
+        monkeypatch.setattr(hooks, "_load_llm_config", _llm_config)
+        monkeypatch.setattr(hooks, "_project_from_wire", lambda *_: "sampleatlas")
+        monkeypatch.setattr(hooks, "_run_consolidation_best_effort", lambda *_: None)
+        monkeypatch.setattr(ContextService, "_maybe_rollup_project", lambda *_, **__: None)
+        with MemoryStore(test_config):
+            pass
+        from evolvmem.context_models import ContextMode
+        setup = ContextService(test_config)
+        setup.initialize(mode=ContextMode.SHADOW, adapter="test-setup")
+        setup.knowledge().save_project({"project": "sampleatlas", "display_name": "星图验收项目"})
+        setup.close()
+
+        def fake_call(prompt, *_args, **_kwargs):
+            if "独立核对员" in prompt:
+                return self._review_reply(suggestion=True)
+            return self._extraction_reply()
+
+        monkeypatch.setattr(hooks, "_call_llm", fake_call)
+
+        result = hooks.session_end({"session_id": "sampleatlas-mixed"})
+
+        assert result.status == "completed"
+        assert result.persisted == 2, "只写入摘要与明确用户约定"
+        rows = TestSessionEndArchiveLinking._rows(test_config, "context_items")
+        assert len(rows) == 2, "未采纳建议不得生成 active 或 candidate 记录"
+        assert not any("assistant_suggestion" in row["identity_key"] for row in rows)
+        agreed = [row for row in rows if row["identity_key"].startswith("project:sampleatlas:convention:")]
+        assert len(agreed) == 1 and agreed[0]["status"] == "active", agreed
+        answered = [f"{row['question']}{row['answer']}"
+                    for row in TestSessionEndArchiveLinking._rows(test_config, "knowledge_qa")]
+        projected = [row["value"] for row in
+                     TestSessionEndArchiveLinking._rows(test_config, "memories")]
+        assert all(self.SUGGESTION_ANSWER not in text for text in answered + projected)
+
+        archives = TestSessionEndArchiveLinking._rows(test_config, "session_archives")
+        assert len(archives) == 1
+        with ContextStore(test_config) as store:
+            payload = SessionArchiver(test_config, store).read_payload(archives[0]["id"])
+        assert self.SUGGESTION in payload, "助手建议必须保留在加密历史里"

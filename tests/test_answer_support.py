@@ -639,3 +639,246 @@ def test_a_failed_review_never_reuses_the_same_body_old_active_row(service):
     assert reuse.reused and reuse.reused[0].context_id == old_id
     assert reuse.reused[0].changed is False, '合法去重只复用，不新增写入'
     assert service.knowledge().detail(old_id)['status'] == 'active'
+
+
+# ---- assistant suggestions stay in history only ----
+
+AGREEMENT_LINE = '星图验收项目的明确约定：导出清单时保留原始编号，日期统一使用 YYYY-MM-DD 格式。'
+SUGGESTION_LINE = '已了解。我另建议每次导出后自动删除原始清单，这只是建议，尚未得到你的确认。'
+SUGGESTION_ANSWER = '助手建议每次导出后自动删除原始清单，该建议尚未得到用户确认。'
+SUGGESTION_QUESTION = '助手对星图验收项目导出清单提出了什么尚未确认的建议？'
+FACT_LINE = '接口默认超时时间是 30 秒，超过后客户端会重试一次。'
+FACT_ANSWER = '该接口默认超时时间为 30 秒，超时后客户端自动重试一次。'
+
+
+def inferred(value, *, question, answer, key='project:demo:reference:assistant-suggestion',
+             category='reference', attribute='fact', **extra):
+    """A model-marked inference with no user quote, as the extractor emits it."""
+    learning = {'category': category, 'basis': 'inferred', 'quote': '', 'question': question,
+                'answer': answer, **extra}
+    return CandidateMemory(key=key, value=value, attribute=attribute, confidence=.8, learning=learning)
+
+
+def suggestion_reply(*, suggestion, verdicts_=None, reason='助手单方面提出且用户未采纳'):
+    payload = {'verdicts': list(verdicts_ or []),
+               'assistant_suggestions': [{'id': 1, 'suggestion': suggestion, 'reason': reason}]}
+    return json.dumps(payload, ensure_ascii=False)
+
+
+MIXED_MESSAGES = [{'role': 'user', 'content': AGREEMENT_LINE},
+                  {'role': 'assistant', 'content': SUGGESTION_LINE}]
+
+
+def test_an_unadopted_assistant_suggestion_is_kept_only_in_history(service):
+    """Catch: 真实复现——助手“另建议…尚未确认”只保留历史，不生成 active 也不生成 candidate。"""
+    explicit = candidate('星图验收项目导出清单时保留原始编号。',
+                         question='星图验收项目导出清单有什么约定？',
+                         answer='星图验收项目导出清单时保留原始编号。', quote=AGREEMENT_LINE)
+    suggestion = inferred(SUGGESTION_ANSWER, question=SUGGESTION_QUESTION, answer=SUGGESTION_ANSWER)
+    calls = []
+
+    def llm(prompt):
+        calls.append(prompt)
+        assert '<助手建议候选>' in prompt, '助手来源的推断候选必须进入同一次独立复核'
+        return suggestion_reply(
+            suggestion=True,
+            verdicts_=[{'id': 1, 'verdict': 'supported', 'reason': '与用户原话一致',
+                        'quote': AGREEMENT_LINE}])
+
+    answer_support.support(MIXED_MESSAGES, [explicit, suggestion], llm)
+    assert len(calls) == 1, '明确候选与助手建议共用一次有界批量核对'
+    assert explicit.learning['answer_support']['verdict'] == 'supported'
+    assert suggestion.learning['answer_support']['verdict'] == answer_support.HISTORY_VERDICT
+    assert answer_support.check(suggestion.learning).startswith(answer_support.HISTORY_REASON)
+    assert answer_support.history_only(suggestion.learning)
+    assert not answer_support.history_only(explicit.learning)
+    assert answer_support.check(explicit.learning) == ''
+    assert [item.key for item in
+            answer_support.drop_history_only([explicit, suggestion])] == [explicit.key]
+
+
+def test_a_plain_assistant_fact_is_reviewed_but_never_dropped():
+    """Catch: 助手普通事实回答（非建议）不得因同源于助手被程序删除。"""
+    fact = inferred(FACT_ANSWER, question='该接口的默认超时是多少？', answer=FACT_ANSWER)
+    messages = [{'role': 'user', 'content': '这个接口超时怎么算？'},
+                {'role': 'assistant', 'content': FACT_LINE}]
+    assert answer_support.suggestion_reviewable(fact.learning, fact, messages), \
+        '同源于助手的推断候选应交给独立复核判断，而不是程序直接删'
+    answer_support.support(messages, [fact], lambda _p: suggestion_reply(
+        suggestion=False, reason='回答用户提问的事实'))
+    assert not answer_support.history_only(fact.learning)
+    assert answer_support.drop_history_only([fact]) == [fact]
+
+
+def test_a_missing_suggestion_judgment_keeps_the_candidate():
+    """Catch: 复核未给出建议判断（旧数组格式/坏输出）时 fail-closed 保留候选。"""
+    suggestion = inferred(SUGGESTION_ANSWER, question=SUGGESTION_QUESTION, answer=SUGGESTION_ANSWER)
+    answer_support.support(MIXED_MESSAGES, [suggestion],
+                           reviewed({'id': 1, 'verdict': 'review', 'reason': '模型未判断建议',
+                                     'quote': AGREEMENT_LINE}))
+    assert not answer_support.history_only(suggestion.learning)
+    assert answer_support.drop_history_only([suggestion]) == [suggestion]
+
+
+def test_a_reviewer_failure_never_marks_history_only():
+    """Catch: 复核异常不得把候选误判为“只留历史”。"""
+    suggestion = inferred(SUGGESTION_ANSWER, question=SUGGESTION_QUESTION, answer=SUGGESTION_ANSWER)
+
+    def boom(_prompt):
+        raise TimeoutError('review provider down')
+
+    answer_support.support(MIXED_MESSAGES, [suggestion], boom)
+    assert not answer_support.history_only(suggestion.learning)
+    assert answer_support.drop_history_only([suggestion]) == [suggestion]
+
+
+def test_content_the_user_also_said_is_never_screened_as_a_suggestion():
+    """Catch: 含“建议”但为用户要求/明确决策的内容不得进入助手建议通道。"""
+    line = '我要求：以后每次导出都自动删除原始清单，这是明确要求而不是建议。'
+    requirement = inferred('每次导出后自动删除原始清单。', question='导出后要做什么？',
+                           answer='每次导出后自动删除原始清单。',
+                           key='project:demo:task:export-cleanup')
+    messages = [{'role': 'user', 'content': line},
+                {'role': 'assistant', 'content': '已了解，我会按这个要求执行。'}]
+    assert not answer_support.suggestion_reviewable(requirement.learning, requirement, messages)
+    calls = []
+    answer_support.support(messages, [requirement], lambda p: calls.append(p) or verdicts(
+        {'id': 1, 'verdict': 'review', 'reason': '推断待确认', 'quote': line}))
+    assert calls == [], '用户自己也说过的内容不得进入助手建议通道，也不该占用核对调用'
+    assert answer_support.drop_history_only([requirement]) == [requirement]
+
+
+def test_an_adopted_assistant_suggestion_stays_eligible():
+    """Catch: 用户随后明确采纳的建议不能再被当作“未采纳建议”删除。"""
+    adoption = '好，就按你说的，导出后自动删除原始清单。'
+    plan_candidate = inferred('导出后自动删除原始清单。', question='导出后要做什么？',
+                              answer='导出后自动删除原始清单。',
+                              key='project:demo:task:export-cleanup')
+    messages = [*MIXED_MESSAGES, {'role': 'user', 'content': adoption}]
+    assert not answer_support.suggestion_reviewable(plan_candidate.learning, plan_candidate, messages)
+    answer_support.support(messages, [plan_candidate], lambda _p: suggestion_reply(
+        suggestion=False, reason='用户已明确采纳该建议'))
+    assert answer_support.drop_history_only([plan_candidate]) == [plan_candidate]
+
+
+def test_experience_and_explicit_user_decisions_are_never_screened():
+    """Catch: 有证据经验与用户明确决策不能被助手建议筛选误删。"""
+    experience = inferred('导出后用校验和核对编号。', question='怎样核对导出编号？',
+                          answer='导出后用校验和核对编号。', category='experience',
+                          attribute='experience', key='project:demo:experience:checksum')
+    assert not answer_support.suggestion_reviewable(experience.learning, experience, MIXED_MESSAGES)
+    explicit = candidate(AGREEMENT_LINE, question='导出清单有什么约定？', answer=AGREEMENT_LINE,
+                         quote=AGREEMENT_LINE)
+    assert not answer_support.suggestion_reviewable(explicit.learning, explicit, MIXED_MESSAGES)
+    # Even a wrong true verdict cannot drop them: the screen keeps them out of the pass.
+    answer_support.support(MIXED_MESSAGES, [experience],
+                           lambda _p: suggestion_reply(suggestion=True))
+    assert answer_support.drop_history_only([experience]) == [experience]
+    assert not answer_support.history_only(experience.learning)
+
+    # A real conflict is a review item, not an assistant suggestion: the prompt says so.
+    prompt = answer_support.build_prompt(MIXED_MESSAGES, [], [inferred(
+        SUGGESTION_ANSWER, question=SUGGESTION_QUESTION, answer=SUGGESTION_ANSWER)])
+    assert '冲突' in prompt and '经验' in prompt and '事实' in prompt
+    assert '未明确采纳' in prompt
+
+
+def test_the_screen_needs_the_assistant_wording_not_a_keyword():
+    """Catch: 仅凭“建议”一词不得触发删除；来源证据要求助手原话的连续片段。"""
+    keyword_only = inferred('助手建议把导出编号保留下来。', question='导出编号怎么处理？',
+                            answer='助手建议把导出编号保留下来。')
+    messages = [{'role': 'user', 'content': AGREEMENT_LINE},
+                {'role': 'assistant', 'content': '好的，我会整理这份清单。'}]
+    assert not answer_support.suggestion_reviewable(keyword_only.learning, keyword_only, messages)
+    assert not answer_support.history_only(keyword_only.learning)
+
+
+def test_the_history_verdict_can_never_promote_through_the_shared_gate():
+    """Catch: 即使调用方仍把条目送去入库，history 结论也不得放行成 active。"""
+    suggestion = inferred(SUGGESTION_ANSWER, question=SUGGESTION_QUESTION, answer=SUGGESTION_ANSWER)
+    answer_support.support(MIXED_MESSAGES, [suggestion],
+                           lambda _p: suggestion_reply(suggestion=True))
+    reason = answer_support.check_binding(suggestion.learning, MIXED_MESSAGES,
+                                          key=suggestion.key.casefold())
+    assert reason.startswith(answer_support.HISTORY_REASON)
+
+
+def test_preview_drops_an_unadopted_assistant_suggestion_like_ingestion(service):
+    """Catch: 预览与正式入库一致——未采纳建议在两处都不作为候选展示。"""
+    from evolvmem.extraction_preview import preview
+
+    extraction = json.dumps({'memories': [
+        {'key': 'SESSION_SUMMARY', 'value': '星图验收项目确认了导出约定，助手另提了一条建议。'},
+        {'key': 'project:demo:convention:export', 'value': '导出清单时保留原始编号。',
+         'attribute': 'constraint', 'confidence': .95,
+         'learning': {'category': 'project_convention', 'basis': 'explicit', 'quote': AGREEMENT_LINE,
+                      'question': '导出清单有什么约定？', 'answer': '导出清单时保留原始编号。'}},
+        {'key': 'project:demo:reference:assistant_suggestion', 'value': SUGGESTION_ANSWER,
+         'attribute': 'fact', 'confidence': .8,
+         'learning': {'category': 'reference', 'basis': 'inferred', 'quote': '',
+                      'question': SUGGESTION_QUESTION, 'answer': SUGGESTION_ANSWER}}]},
+        ensure_ascii=False)
+
+    def llm(prompt):
+        if '独立核对员' in prompt:
+            assert '<助手建议候选>' in prompt
+            return suggestion_reply(suggestion=True, verdicts_=[
+                {'id': 1, 'verdict': 'supported', 'reason': '与用户原话一致', 'quote': AGREEMENT_LINE}])
+        return extraction
+
+    result = preview(service, {'project': 'demo', 'messages': MIXED_MESSAGES}, llm=llm)['current']
+    bodies = [candidate['body'] for candidate in result['candidates']]
+    assert SUGGESTION_ANSWER not in bodies, '预览不得显示未采纳建议'
+    assert '导出清单时保留原始编号。' in bodies
+
+
+MALFORMED_SUGGESTIONS = [
+    # 同一 id 先 true 后 false：矛盾
+    [{'id': 1, 'suggestion': True, 'reason': '助手建议'},
+     {'id': 1, 'suggestion': False, 'reason': '其实是回答用户提问'}],
+    # 同一 id 先 false 后 true：矛盾（取最后一条会误删候选）
+    [{'id': 1, 'suggestion': False, 'reason': '回答用户提问'},
+     {'id': 1, 'suggestion': True, 'reason': '助手建议'}],
+    # 同一 id 重复且取值相同：仍然是不可寻址的编号接口
+    [{'id': 1, 'suggestion': True, 'reason': '助手建议'},
+     {'id': 1, 'suggestion': True, 'reason': '助手建议'}],
+    # 非正 id
+    [{'id': 0, 'suggestion': True, 'reason': '助手建议'}],
+    [{'id': -1, 'suggestion': True, 'reason': '助手建议'}],
+    # 合法 id 旁边夹带非正 id：整组编号不可信，不得只采纳 id=1
+    [{'id': 0, 'suggestion': True, 'reason': '助手建议'},
+     {'id': 1, 'suggestion': True, 'reason': '助手建议'}],
+    # suggestion=true 但理由缺失、空白或非字符串
+    [{'id': 1, 'suggestion': True}],
+    [{'id': 1, 'suggestion': True, 'reason': '   '}],
+    [{'id': 1, 'suggestion': True, 'reason': None}],
+    [{'id': 1, 'suggestion': True, 'reason': 7}],
+]
+
+
+@pytest.mark.parametrize('entries', MALFORMED_SUGGESTIONS)
+def test_a_malformed_suggestion_judgment_keeps_every_candidate(entries):
+    """Catch: 重复/矛盾 id、非正 id、true 缺理由等坏输出必须整体保留候选。"""
+    assert answer_support._parse_suggestions(entries) is None, '坏输出必须整体判为不可用'
+    suggestion = inferred(SUGGESTION_ANSWER, question=SUGGESTION_QUESTION, answer=SUGGESTION_ANSWER)
+    reply = json.dumps({'verdicts': [], 'assistant_suggestions': entries}, ensure_ascii=False)
+    answer_support.support(MIXED_MESSAGES, [suggestion], lambda _p: reply)
+    assert not answer_support.history_only(suggestion.learning)
+    assert answer_support.drop_history_only([suggestion]) == [suggestion]
+
+
+def test_a_well_formed_suggestion_judgment_still_applies():
+    """Catch: 严格校验不得改变合法结果——带理由的 true 仍剔除，false 仍保留。"""
+    def judge(entries):
+        item = inferred(SUGGESTION_ANSWER, question=SUGGESTION_QUESTION, answer=SUGGESTION_ANSWER)
+        reply = json.dumps({'verdicts': [], 'assistant_suggestions': entries}, ensure_ascii=False)
+        answer_support.support(MIXED_MESSAGES, [item], lambda _p: reply)
+        return answer_support.history_only(item.learning)
+
+    assert answer_support._parse_suggestions(
+        [{'id': 1, 'suggestion': True, 'reason': '助手单方面建议，用户未采纳'}]) == {
+            1: {'suggestion': True, 'reason': '助手单方面建议，用户未采纳'}}
+    assert judge([{'id': 1, 'suggestion': True, 'reason': '助手单方面建议，用户未采纳'}]) is True
+    assert judge([{'id': 1, 'suggestion': False, 'reason': '回答用户提问的事实'}]) is False
+    # false 只会保留候选，没有理由也无需作废整组判断
+    assert judge([{'id': 1, 'suggestion': False}]) is False
