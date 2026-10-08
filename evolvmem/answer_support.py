@@ -204,13 +204,16 @@ def normalize_key(item, project):
     The model may emit a placeholder or a wrong project segment; the ingestion
     contract resolves it to the selected project. Normalizing here (and never
     after the review) keeps the stored binding usable by the later write, so an
-    already-reviewed item cannot turn stale for a bookkeeping reason.
+    already-reviewed item cannot turn stale for a bookkeeping reason. The root
+    comparison is case-insensitive because the later namespace gate reads the
+    casefolded key: ``PROJECT:<wrong>:...`` must be resolved here too, or the
+    key would still change after the verdict was recorded.
     """
     key = _text(getattr(item, 'key', '')).strip()
     if not key or key.upper() == 'SESSION_SUMMARY' or not project:
         return key
     parts = key.split(':')
-    if len(parts) >= 4 and parts[0] == 'project':
+    if len(parts) >= 4 and parts[0].casefold() == 'project':
         parts[1] = project
         key = ':'.join(parts)
     key = key.casefold()

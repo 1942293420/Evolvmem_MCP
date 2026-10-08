@@ -395,8 +395,11 @@ def test_segmentation_prompt_merges_one_tasks_advice_and_keeps_a_real_switch():
     assert '真正切换' in rendered
     # A short insertion about another project is not swallowed by its neighbour.
     assert '短插入' in rendered and '独立成单元' in rendered
-    # Ownership is never inherited or inferred: only a directly named project counts.
-    assert '不继承上一单元的项目' in rendered and '不推断' in rendered
+    # Ownership inside one batch is never inherited or inferred: only a directly
+    # named project counts, and the only allowed cross-batch source is the
+    # explicitly supplied same-session background.
+    assert '绝不能把同一批次内上一单元的项目顺势继承' in rendered
+    assert '也不得推断正文与前文都没有出现过的项目' in rendered
     assert 'project_hint（仅当正文直接点名' in rendered
     # The existing validation rules stay exact.
     assert '不重叠、不遗漏、不跳号' in rendered

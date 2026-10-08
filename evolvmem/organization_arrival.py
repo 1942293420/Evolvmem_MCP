@@ -78,8 +78,49 @@ def backlog(service, body=None):
 
 
 def _pending_sources(service):
-    """Unassigned sources without a current task, newest first; never derived items."""
+    """Unassigned sources without a current task; never derived items.
+
+    Newest first, except that the incremental batches of one session are handed
+    over in line order (see :func:`ordered_sources`).
+    """
     from evolvmem.history_organization import source_refs
-    return source_refs(service)
+    return ordered_sources(source_refs(service))
+
+
+def ordered_sources(pending):
+    """Enqueue same-session incremental batches in line order.
+
+    The backlog and the discovery tick both take the newest sources first. Within
+    one Codex session that would let a later batch be organized before the earlier
+    batch it continues, so a continuation that no longer repeats the project name
+    would find no predecessor. Only this enqueue list is reordered: identity,
+    revisions, the visible listing and the per-source handling stay unchanged.
+    Anything that is not a verified incremental batch keeps its position.
+    """
+    from evolvmem.session_identity import is_incremental_batch
+    slots, buckets = [], {}
+    for ref in pending:
+        value = str(ref.get('external') or '')
+        if ref.get('adapter') == 'codex' and is_incremental_batch(value):
+            head = value.split(':')[0]
+            if head not in buckets:
+                buckets[head] = {'slot': len(slots), 'items': []}
+                slots.append(None)
+            buckets[head]['items'].append(ref)
+        else:
+            slots.append([ref])
+    for bucket in buckets.values():
+        slots[bucket['slot']] = sorted(bucket['items'], key=_batch_start_line)
+    ordered = []
+    for slot in slots:
+        ordered.extend(slot)
+    return ordered
+
+
+def _batch_start_line(ref):
+    try:
+        return int(str(ref['external']).split(':')[1].split('-')[0])
+    except (ValueError, IndexError):
+        return 0
 
 

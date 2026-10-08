@@ -96,6 +96,8 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
         decision TEXT NOT NULL DEFAULT 'review',
         reason TEXT NOT NULL DEFAULT '',
         evidence_quote TEXT NOT NULL DEFAULT '',
+        continues_context INTEGER NOT NULL DEFAULT 0,
+        context_basis TEXT NOT NULL DEFAULT '',
         revision INTEGER NOT NULL DEFAULT 1,
         item_id INTEGER,
         created_at TEXT NOT NULL,
@@ -115,6 +117,27 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
     )""",
     """CREATE INDEX IF NOT EXISTS idx_unit_derivations_digest
         ON unit_derivations(unit_digest, item_id)""",
+    """CREATE TABLE IF NOT EXISTS organization_context_basis (
+        unit_task_id INTEGER NOT NULL,
+        unit_digest TEXT NOT NULL,
+        prior_task_id INTEGER NOT NULL,
+        prior_digest TEXT NOT NULL,
+        prior_source_key TEXT NOT NULL DEFAULT '',
+        prior_archive_id INTEGER NOT NULL DEFAULT 0,
+        prior_start_line INTEGER NOT NULL DEFAULT 0,
+        prior_end_line INTEGER NOT NULL DEFAULT 0,
+        prior_revision INTEGER NOT NULL DEFAULT 0,
+        prior_source_revision TEXT NOT NULL DEFAULT '',
+        prior_payload_sha256 TEXT NOT NULL DEFAULT '',
+        prior_cleaning_revision INTEGER NOT NULL DEFAULT 0,
+        project TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(unit_task_id, unit_digest)
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_organization_context_basis_prior
+        ON organization_context_basis(prior_task_id, prior_digest)""",
     """CREATE TABLE IF NOT EXISTS organization_guidance (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         scope TEXT NOT NULL DEFAULT 'batch' CHECK(scope IN ('batch','future')),
@@ -610,6 +633,7 @@ class ContextStore:
         additions["organization_tasks"] = {
             "source_snapshot": "TEXT NOT NULL DEFAULT ''",
             "source_title": "TEXT NOT NULL DEFAULT ''",
+            "context_basis": "TEXT NOT NULL DEFAULT ''",
         }
         additions["organization_units"] = {
             "role": "TEXT NOT NULL DEFAULT ''",
@@ -619,10 +643,18 @@ class ContextStore:
             "extraction_stage": "TEXT NOT NULL DEFAULT 'pending'",
             "extraction_error": "TEXT NOT NULL DEFAULT ''",
             "extraction_signature": "TEXT NOT NULL DEFAULT ''",
+            "continues_context": "INTEGER NOT NULL DEFAULT 0",
+            "context_basis": "TEXT NOT NULL DEFAULT ''",
         }
         additions["organization_guidance"] = {
             "state": "TEXT NOT NULL DEFAULT 'reusable'",
             "revision": "INTEGER NOT NULL DEFAULT 1",
+        }
+        additions["organization_context_basis"] = {
+            "prior_revision": "INTEGER NOT NULL DEFAULT 0",
+            "prior_source_revision": "TEXT NOT NULL DEFAULT ''",
+            "prior_payload_sha256": "TEXT NOT NULL DEFAULT ''",
+            "prior_cleaning_revision": "INTEGER NOT NULL DEFAULT 0",
         }
         additions["organization_settings"] = {
             "baseline_id": "INTEGER NOT NULL DEFAULT 0",

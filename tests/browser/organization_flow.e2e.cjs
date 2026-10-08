@@ -12,7 +12,7 @@ try{
  await go('#knowledge/organization','#organization-panel');
  await page.waitForSelector('.organization-task');
  // The card must show a readable source title, not only archive:ID.
- assert.match(await page.locator('.organization-task').first().innerText(),/kimi · organization-/);
+ assert.match(await page.locator('.organization-task').filter({hasText:'organization-demo'}).first().innerText(),/kimi · organization-/);
  checks.push('任务卡显示可读来源标题与来源标识');
  // 本机采集状态：一行只读说明，用于区分“没有新内容”和“采集失败”。
  await page.waitForFunction(()=>{const el=document.querySelector('#org-local-capture-message');return el&&el.textContent.trim()&&el.textContent.trim()!=='本机采集状态读取中。';});
@@ -92,15 +92,30 @@ try{
  assert.match(await page.locator('#org-page').innerText(),/共 \d+ 个任务 · 第 1 \/ \d+ 页/);
  assert.ok(await page.locator('#org-filter option').count()>=7);
  checks.push('任务队列有分页、筛选与计数');
- // The product diagram documents the shipped background flow.
+ // The product diagram documents the shipped background flow in user wording.
  await go('#principles','.product-diagram svg');
  await click('[data-principle="organization"]');
  assert.match(await page.locator('#principle-title').innerText(),/整篇自动整理/);
- assert.ok((await page.locator('.product-diagram svg').innerHTML()).includes('单个有界工作线程'));
+ const diagram=await page.locator('.product-diagram svg').innerHTML();
+ assert.ok(diagram.includes('系统自动处理'),'the system lane stays in user wording');
+ assert.ok(diagram.includes('同会话增量续写沿用前批已确认项目'),'the cross-batch context rule is documented');
+ assert.ok(diagram.includes('前文依据显示来源批次与范围'),'the visible evidence is documented');
  assert.ok(await page.locator('.product-diagram svg').evaluate(svg=>{const b=svg.getBBox(),v=svg.viewBox.baseVal;return b.x>=0&&b.x+b.width<=v.width;}),'all diagram content fits its viewBox');
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'organization diagram overflow 1440');
  await page.screenshot({path:'/tmp/evo-product-organization.png',fullPage:true});
  checks.push('自动整理活动图同步实际行为且不溢出');
+ // A real incremental continuation shows the same-session evidence it used.
+ await go('#knowledge/organization','#organization-panel');
+ await page.waitForSelector('.organization-task');
+ const ctxCard=page.locator('.organization-task').filter({hasText:'继续刚才的报表整理'}).first();
+ await ctxCard.locator('button[data-org-action="toggle"]').click();
+ await page.waitForSelector(`.organization-task[data-org-task="${await ctxCard.getAttribute('data-org-task')}"] .organization-context`);
+ const ctxText=await page.locator('.organization-context').first().innerText();
+ assert.match(ctxText,/同会话前文依据：archive:\d+/);
+ assert.match(ctxText,/已确认 Evo 演示项目/);
+ assert.match(ctxText,/原话「.+/);
+ checks.push('同会话前文依据（来源批次、行号、项目与原话）在任务单元可见');
+ await page.screenshot({path:'/tmp/evo-organization-context.png',fullPage:true});
  await page.setViewportSize({width:390,height:1000});
  await go('#knowledge/organization','#organization-panel');
  await page.waitForSelector('.organization-task');

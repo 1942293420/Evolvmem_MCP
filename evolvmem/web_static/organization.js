@@ -96,9 +96,11 @@
     const key = `${unit.task_id}:${unit.digest}`, draft = drafts.get(key);
     const applied = typeof draft?.guidance === 'string' ? draft.guidance : '';
     const aside = unit.disposition === 'set_aside';
+    const ctx = unit.context && unit.context.state === 'ready' ? unit.context : null;
     return `<div class="organization-unit ${unit.decision==='manual'?'is-manual':''} ${aside?'is-aside':''}" data-org-unit="${esc(unit.digest)}">
    <div class="section-head"><div><label class="extraction-choice"><input type="checkbox" data-org-select-unit="${key}" ${selected.has(key)?'checked':''} aria-label="选择 ${esc(unit.title)}"> <strong>${esc(unit.title)}</strong></label> <small>${esc(({habit:'长期习惯',project_convention:'项目约定',task_requirement:'任务要求',environment:'环境事实',decision:'决策依据',experience:'技术经验',reference:'参考资料'})[unit.category]||unit.category)} · ${unit.decision==='manual'?'人工已确认':unit.decision==='auto'?'自动归属':'待确认'} · 提炼：${extractionText[unit.extraction_stage]||esc(unit.extraction_stage)}${unit.extraction_error?'（'+esc(unit.extraction_error)+'）':''} · 位置 ${unit.source_start}-${unit.source_end}</small>${aside?' <span class="badge">已暂存，不进入当前历史</span>':''}</div><span>${esc(unit.project?name(unit.project):'未归属')}</span></div>
    <p class="organization-reason">${esc(unit.reason)}</p>
+   ${ctx?`<p class="organization-reason organization-context">同会话前文依据：${esc(ctx.source_key)}（第 ${esc(String(ctx.start_line))}-${esc(String(ctx.end_line))} 行）已确认 ${esc(name(ctx.project))}，原话「${esc(ctx.quote||'')}」；本批引用仍只取本批正文。</p>`:''}
    <blockquote class="organization-quote">${esc(unit.evidence_quote||unit.text.slice(0,120))}</blockquote>
    <details><summary>查看原文片段（${unit.source_end-unit.source_start} 字）</summary><pre class="organization-text">${esc(unit.text)}</pre></details>
    <div class="organization-correct">

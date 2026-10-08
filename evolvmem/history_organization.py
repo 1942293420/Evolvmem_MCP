@@ -139,7 +139,10 @@ def source_refs(service):
     deleted = _deleted_sources(service)
     excluded = _excluded_archive_ids(service)
     archives = _unassigned_archives(service)
-    refs = [{'key':f'archive:{r["id"]}', 'created_at':r['created_at']} for r in archives]
+    # ``adapter``/``external`` stay on the ref so the bounded backlog ordering can
+    # recognize same-session incremental batches without re-reading any body.
+    refs = [{'key':f'archive:{r["id"]}', 'created_at':r['created_at'],
+             'adapter':r['adapter'], 'external':r['external_session_id']} for r in archives]
     refs.extend({'key':f'item:{r["id"]}', 'created_at':r['created_at']} for r in conn.execute(
         "SELECT id,created_at FROM context_items WHERE project='' AND scope!='global' "
         "AND status IN ('active','candidate') AND identity_key NOT LIKE 'organization:%'"))

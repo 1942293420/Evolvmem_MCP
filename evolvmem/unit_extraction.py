@@ -28,11 +28,15 @@ EVIDENCE_ROLES = ('tool',)
 
 
 def signature(unit, project, rule_revision) -> str:
-    """What an extraction result depends on; a change means re-extract."""
+    """What an extraction result depends on; a change means re-extract.
+
+    The unit's same-session context basis is part of the signature: the same
+    text attributed by a different predecessor is a different result.
+    """
     return hashlib.sha256(json.dumps(
         [unit.get('digest'), unit.get('text'), unit.get('cleaned_text'), unit.get('title'),
-         unit.get('category'), project, rule_revision], ensure_ascii=False,
-        sort_keys=True).encode()).hexdigest()[:32]
+         unit.get('category'), project, rule_revision, unit.get('context_basis') or ''],
+        ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:32]
 
 
 def _summary_item(unit, project, digest) -> LegacyExtractionItem:
@@ -129,6 +133,23 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
                 (task['id'], unit['digest'])).fetchone()
             if current is None or _unit_revision(current) != before or rows(service) != guidance_before:
                 return {'stage': 'stale', 'item_ids': [], 'candidates': 0, 'error': 'unit_changed'}
+            # An inherited project must still rest on a live predecessor at the
+            # moment the model's answer is written, not only when it was asked.
+            inherited = _decode_context(current['context_basis'])
+            if inherited and not _context_current(service, inherited):
+                # The predecessor changed while the provider was answering. The
+                # answer is discarded and the unit goes back to review inside the
+                # same transaction, so the task settles instead of being retried
+                # forever against a dead context.
+                conn = service.store._connection()
+                conn.execute(
+                    "UPDATE organization_units SET decision='review',project='',context_basis='',"
+                    "reason=?,revision=revision+1,updated_at=? WHERE task_id=? AND digest=?",
+                    ('前文依据已变化，退回核对', _now_iso(), task['id'], unit['digest']))
+                from evolvmem.organization_context import clear_dependency
+                clear_dependency(service, task['id'], unit['digest'], conn=conn)
+                return {'stage': 'stale', 'item_ids': [], 'candidates': 0,
+                        'error': 'context_basis_changed'}
             request = _with_history_summary(request, task, unit)
             result = service.persist_legacy_extraction(
                 request, source_archive_id=_archive_id(task), source_messages=messages)
@@ -162,6 +183,20 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
         _set_stage(service, task['id'], unit['digest'], 'failed', want, 'extraction_failed')
         return {'stage': 'failed', 'item_ids': [], 'candidates': 0, 'error': 'extraction_failed'}
     return {'stage': 'done', 'item_ids': item_ids, 'candidates': len(item_ids), 'error': ''}
+
+
+def _decode_context(raw):
+    from evolvmem.organization_context import decode
+    return decode(raw)
+
+
+def _context_current(service, basis):
+    from evolvmem.organization_context import validate
+    try:
+        return validate(service, basis, depth=1)
+    except Exception:
+        # An unreadable predecessor is not proof that the context is live.
+        return False
 
 
 def _with_history_summary(request, task, unit):

@@ -97,7 +97,10 @@ def model(prompt, *a, **kw):
         units=[{'start_id':g['start'],'end_id':g['end'],'title':g['title'],
                 'cleaned_summary':g['title'][:180],'category':g['category'],
                 'project_hint':g['hint'] if g['hint'] in PROJECTS else '',
-                'evidence_quote':g['title'][:20],'disposition':'keep','disposition_reason':''}
+                'evidence_quote':g['title'][:20],'disposition':'keep','disposition_reason':'',
+                # The model explicitly judges the cross-batch continuation from
+                # the supplied same-session background.
+                'continues_context':'继续刚才的报表整理' in g['title']}
                for g in groups]
         return json.dumps({'units':units},ensure_ascii=False)
     if '长期记忆提炼器' in prompt and '[user]:' in prompt:
@@ -191,6 +194,39 @@ if _auto:
     knowledge_dispatch(s,'POST','cleaning/save',{'items':[{'key':_review_full['key'],
         'expected_revision':_review_full['expected_revision'],'cleaned_text':_review_full['body'],'category':'reference'}]})
     knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{_review.id}'}]})
+    # Two real incremental batches of one Linux Codex session: the second keeps
+    # working on the same project without repeating its name, so its unit must
+    # show the same-session prior evidence it inherited from.
+    import hashlib
+    from evolvmem.local_codex_capture import batch_external_id
+    _session='01a0fb28-893d-7250-9445-1a2c2fe6a0ab'
+    def _incremental(start,end,text,answer):
+        _stamp='2026-06-01T00:00:00.000Z'
+        def _line(kind,payload):
+            return json.dumps({'type':kind,'timestamp':_stamp,'payload':payload},
+                              ensure_ascii=False,separators=(',',':'))+'\n'
+        transcript=''.join([
+            _line('session_meta',{'id':_session,'cwd':'/home/u/demo'}),
+            _line('response_item',{'type':'message','role':'user','id':'evt-user',
+                                   'content':[{'type':'input_text','text':text}]}),
+            _line('response_item',{'type':'message','role':'assistant','id':'evt-ai',
+                                   'content':[{'type':'output_text','text':answer}]})])
+        digest=hashlib.sha256(transcript.encode()).hexdigest()
+        payload=json.dumps({'conversation':[{'role':'user','content':text},
+                                            {'role':'assistant','content':answer}],
+            'transcript':transcript,'project':'','source_sha256':digest,
+            'source':{'kind':'local_codex_jsonl','adapter':'codex','session_id':_session,
+                      'file':f'/tmp/{_session}.jsonl','start_offset':0,
+                      'end_offset':len(transcript.encode()),'start_line':start,
+                      'end_line':end,'event_ids':[]},'line_locations':[]},ensure_ascii=False)
+        return _Archiver(config,s.store).archive_session(
+            '','codex',batch_external_id(_session,start,end,digest),payload)
+    for _batch in (_incremental(1,3,'Evo 演示项目：报表导出必须保留原始编号。','已记录要求。'),
+                   _incremental(4,6,'继续刚才的报表整理，已经完成日期格式的修改。','已按编号保留完成修改。')):
+        _entry=knowledge_dispatch(s,'GET','cleaning/detail',{'key':f'archive:{_batch.id}'})
+        knowledge_dispatch(s,'POST','cleaning/save',{'items':[{'key':_entry['key'],
+            'expected_revision':_entry['expected_revision'],'cleaned_text':_entry['body'],'category':'reference'}]})
+        knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{_batch.id}'}]})
 _worker=OrganizationWorker(config,mode=ContextMode.SHADOW).start() if _auto else None
 print('Temporary browser fixture ready',flush=True)
 try:server.serve_forever()

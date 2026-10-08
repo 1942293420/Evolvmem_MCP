@@ -13,6 +13,8 @@ import time
 
 ENVELOPE = re.compile(r'^\[(\d+)\] ([\w]+)：(.*)$', re.M)
 EXTRACTION_LINE = re.compile(r'^\[(user|assistant|tool|unknown)\]: (.*)$', re.M)
+# The bounded, explicitly-labelled same-session background block.
+CONTEXT_MARKER = '同会话前文'
 TOPICS = [
     ('用户要求', 'evo', 'task_requirement'),
     ('中间这段', 'dsh', 'project_convention'),
@@ -46,8 +48,8 @@ class UnitProvider:
             raise AssertionError('segmentation prompt has no numbered records')
         units, current = [], None
         for pos, role, content in records:
-            marker = next(((text, hint, category) for text, hint, category in self.topics
-                           if text in content), None)
+            # A 4th element, when present, marks a same-session continuation.
+            marker = next((item for item in self.topics if item[0] in content), None)
             if marker is not None:
                 if current:
                     units.append(current)
@@ -55,12 +57,13 @@ class UnitProvider:
                            'cleaned_summary': content[:180], 'category': marker[2],
                            'project_hint': marker[1] if marker[1] in self.projects else '',
                            'evidence_quote': marker[0], 'disposition': 'keep',
-                           'disposition_reason': ''}
+                           'disposition_reason': '',
+                           'continues_context': bool(marker[3]) if len(marker) > 3 else False}
             elif current is None:
                 current = {'start_id': pos, 'end_id': pos, 'title': content[:40],
                            'cleaned_summary': content[:180], 'category': 'reference',
                            'project_hint': '', 'evidence_quote': '', 'disposition': 'keep',
-                           'disposition_reason': ''}
+                           'disposition_reason': '', 'continues_context': False}
             else:
                 current['end_id'] = pos
         if current:

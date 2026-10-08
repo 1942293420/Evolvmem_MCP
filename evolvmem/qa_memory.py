@@ -196,6 +196,13 @@ def list_items(service, params=None):
         if project == '__global__':
             where.append("scope='global'")
     rows = service.store._connection().execute('SELECT id FROM context_items WHERE ' + ' AND '.join(where) + ' ORDER BY updated_at DESC,id DESC', args).fetchall()
+    # A knowledge item whose organization unit is no longer a current, confirmed
+    # source has left current use and must not keep appearing as this project's
+    # knowledge. ``currently_backed`` is the single canonical rule (it keeps an
+    # item backed by another current unit, another source or a human decision),
+    # so nothing is deleted and no row is rewritten here.
+    from evolvmem.unit_derivations import currently_backed
+    rows = [r for r in rows if currently_backed(service.store, r['id'])]
     items, groups = [], {}
     for r in rows:
         item = detail(service, r['id'])

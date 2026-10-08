@@ -180,7 +180,18 @@ _ALLOWED_ATTRIBUTES = frozenset({
     "playbook",
 })
 _ALLOWED_TIERS = frozenset({"pinned", "normal", "reference"})
-_STABLE_KEY_RE = re.compile(r"[\w\u3400-\u9fff-]+(?::[\w\u3400-\u9fff-]+){3}")
+# A stable key keeps the historical four-segment form and additionally accepts
+# a bounded multi-level topic tail, e.g.
+# ``project:<p>:constraint:report_export:row_order``. The project/user
+# namespace, the per-segment charset (no empty segment, no separator other than
+# ``:``) and the overall length bound are unchanged, so a real hierarchical
+# topic is no longer rejected as invalid metadata while an unbounded or
+# malformed path still is.
+_KEY_SEGMENT = r"[\w\u3400-\u9fff-]+"
+_MAX_KEY_SEGMENTS = 8
+_STABLE_KEY_RE = re.compile(
+    rf"{_KEY_SEGMENT}(?::{_KEY_SEGMENT}){{3,{_MAX_KEY_SEGMENTS - 1}}}"
+)
 _TAG_RE = re.compile(r"[^,\r\n\x00-\x1f\x7f]{1,64}")
 _MAX_KEY_CHARS = 200
 _MAX_TAGS = 8

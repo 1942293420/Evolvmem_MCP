@@ -24,6 +24,7 @@ import time
 from evolvmem.context_store import _now_iso
 from evolvmem.knowledge_cleaning import SourceNoDialogue
 from evolvmem.project_store import ProjectStoreError
+from evolvmem import organization_context
 from evolvmem import organization_guidance as guidance_store
 from evolvmem import topic_segmentation
 
@@ -34,6 +35,9 @@ PAGE_SIZE = 20
 RECONCILE_LIMIT = 20
 # A single claim never spins on more than this many retired candidate rows.
 CLAIM_PREFLIGHT_LIMIT = 5
+# A single claim pass examines at most this many pending rows, so deferring a
+# batch that waits for its own same-session predecessor stays bounded.
+CLAIM_SCAN_LIMIT = 20
 # A valid archive with no dialogue is a truthful skip, not a provider failure.
 NO_DIALOGUE_CODE = 'source_no_dialogue'
 SUBJECT_LABELS = {'habit': '长期习惯', 'project_convention': '项目约定', 'task_requirement': '任务要求',
@@ -64,7 +68,8 @@ def _unit_revision(row) -> str:
     if isinstance(row, sqlite3.Row):
         row = dict(row)
     return hashlib.sha256(_canonical({k: row.get(k) for k in
-        ('revision', 'project', 'decision', 'reason', 'disposition', 'evidence_quote', 'cleaned_text')}).encode()).hexdigest()[:16]
+        ('revision', 'project', 'decision', 'reason', 'disposition', 'evidence_quote', 'cleaned_text',
+         'continues_context', 'context_basis')}).encode()).hexdigest()[:16]
 
 
 def _load_llm():
@@ -470,6 +475,7 @@ def _task_row(service, task_id):
 def task_view(service, task_id):
     view = _task_row(service, task_id)
     view.pop('source_snapshot', None)
+    view['context'] = organization_context.decode(view.get('context_basis'))
     view['source_current'] = _source_current(service, view)
     return view
 
@@ -941,7 +947,7 @@ def reconcile_sources(service, *, limit=RECONCILE_LIMIT):
     """
     conn = service.store._connection()
     summary = {'superseded': 0, 'no_dialogue': 0, 'excluded': 0, 'linked': 0,
-               'examined': 0, 'model_calls': 0}
+               'examined': 0, 'model_calls': 0, 'context_invalidated': 0}
     if not _table_exists(conn, 'organization_tasks'):
         return summary
     summary['linked'] += _link_superseded_successors(service)
@@ -960,6 +966,10 @@ def reconcile_sources(service, *, limit=RECONCILE_LIMIT):
             summary[verdict] += 1
     # A successor task created in the same discovery pass gets its link now.
     summary['linked'] += _link_superseded_successors(service)
+    # Bounded, model-free dependency re-check: an automatic unit whose inherited
+    # predecessor changed, was withdrawn or retired goes back to review.
+    summary['context_invalidated'] += organization_context.invalidate_dependents(
+        service, limit=limit)['invalidated']
     return summary
 
 
@@ -981,13 +991,15 @@ def task_detail(service, task_id):
     if row is None:
         raise ValueError('task_not_found')
     task = {k: v for k, v in dict(row).items() if k != 'source_snapshot'}
+    task['context'] = organization_context.decode(row['context_basis'])
     return {**task, 'source_text': row['source_snapshot'], 'units': unit_views(service, task_id)}
 
 
 def unit_views(service, task_id):
     rows = service.store._connection().execute(
         'SELECT * FROM organization_units WHERE task_id=? ORDER BY ordinal', (task_id,)).fetchall()
-    return [{**dict(row), 'revision': _unit_revision(row)} for row in rows]
+    return [{**dict(row), 'revision': _unit_revision(row),
+             'context': organization_context.decode(row['context_basis'])} for row in rows]
 
 
 def find_unit(service, task_id, digest):
@@ -1059,6 +1071,10 @@ class OrganizationWorker:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._owns_thread = False
+        # Cross-tick rotation of the bounded claim scan. A run of tasks that all
+        # wait for a predecessor outside the first window must not stall the
+        # queue forever, and the window must never be widened to the whole table.
+        self._claim_offset = 0
         # Local Codex capture state (poll throttle, cached instance, config stamp).
         # The capture module itself decides whether it is configured and enabled.
         self._capture_state = {}
@@ -1233,30 +1249,64 @@ class OrganizationWorker:
         return True
 
     def _claim(self, service):
-        """Claim the oldest pending task, never one whose source is ineligible.
+        """Claim the oldest claimable pending task.
 
         The eligibility preflight runs before the claim, so a verified system
         source, an empty session or a retired version is settled without spending
-        an attempt or a model call. It is the race-safe twin of the idle
-        discovery reconcile and is bounded per tick.
+        an attempt or a model call. A batch whose own same-session predecessor is
+        still being organized is *deferred* inside this bounded scan instead of
+        being failed, reviewed or retried: it keeps ``pending``, spends no
+        attempt, and the predecessor is claimed in the same pass.
+
+        The scan is one bounded page, and a page that only waits rotates to the
+        next page on the next tick (see ``_claim_page``). A run of waiting tasks
+        longer than the page therefore still reaches the real predecessor that
+        sorts after it, without widening the page to the whole table and without
+        ever marking a waiting task finished.
         """
         conn = service.store._connection()
         for _ in range(CLAIM_PREFLIGHT_LIMIT):
-            row = conn.execute(
-                "SELECT id,source_key FROM organization_tasks WHERE status='pending' ORDER BY id LIMIT 1").fetchone()
-            if row is None:
+            rows = self._claim_page(conn)
+            if not rows:
                 return None
-            if settle_ineligible_source(service, row['id'], row['source_key']):
-                continue
-            with service.store.transaction():
-                cursor = conn.execute(
-                    "UPDATE organization_tasks SET status='running',attempts=attempts+1,started_at=?,updated_at=? "
-                    "WHERE id=? AND status='pending'",
-                    (_now_iso(), _now_iso(), row['id']))
-                if cursor.rowcount != 1:
+            settled = False
+            for row in rows:
+                if settle_ineligible_source(service, row['id'], row['source_key']):
+                    settled = True
+                    break
+                if organization_context.awaiting_predecessor(service, row['source_key']):
                     continue
-            return task_view(service, row['id'])
+                with service.store.transaction():
+                    cursor = conn.execute(
+                        "UPDATE organization_tasks SET status='running',attempts=attempts+1,"
+                        "started_at=?,updated_at=? WHERE id=? AND status='pending'",
+                        (_now_iso(), _now_iso(), row['id']))
+                    if cursor.rowcount != 1:
+                        continue
+                # A claim always restarts from the oldest pending task, so the
+                # normal fifo order is never disturbed by the rotation.
+                self._claim_offset = 0
+                return task_view(service, row['id'])
+            if not settled:
+                # Every pending task in this window is waiting for its own
+                # predecessor (or was taken by another worker). Rotate the window
+                # for the next tick instead of reporting an empty queue, so a
+                # predecessor that sorts after the window is still reachable.
+                self._claim_offset += len(rows)
+                if len(rows) < CLAIM_SCAN_LIMIT:
+                    self._claim_offset = 0
+                return None
         return None
+
+    def _claim_page(self, conn):
+        """One bounded page of pending tasks, rotating across ticks."""
+        sql = ("SELECT id,source_key FROM organization_tasks WHERE status='pending' "
+               'ORDER BY id LIMIT ? OFFSET ?')
+        rows = conn.execute(sql, (CLAIM_SCAN_LIMIT, self._claim_offset)).fetchall()
+        if not rows and self._claim_offset:
+            self._claim_offset = 0
+            rows = conn.execute(sql, (CLAIM_SCAN_LIMIT, 0)).fetchall()
+        return rows
 
     def _is_current(self, service, task):
         """A newer task for the same source owns the result; stale work stops."""
@@ -1344,6 +1394,17 @@ class OrganizationWorker:
         projects = [p['project'] + '（' + '、'.join([p['display_name'], *p.get('aliases', [])]) + '）'
                     for p in service.knowledge().registry() if p['status'] == 'active']
         config, call = _load_llm()
+        # The same-session predecessor is frozen before the model call and
+        # re-validated afterwards, so a basis that breaks mid-call can never
+        # produce a stored inherited assignment.
+        basis = organization_context.build_basis(service, task)
+        stored_basis = organization_context.encode(basis)
+        with service.store.transaction():
+            service.store._connection().execute(
+                'UPDATE organization_tasks SET context_basis=?,updated_at=? WHERE id=?',
+                (stored_basis, _now_iso(), task['id']))
+        context_prompt = organization_context.basis_prompt(
+            basis, organization_context.tail_text(service, basis['source_key']) if basis else '')
 
         def provider(request):
             # The same cancellation check guards every provider call, including
@@ -1355,7 +1416,7 @@ class OrganizationWorker:
         units = topic_segmentation.segment(
             text, provider,
             records=records, cleaning_instructions=policy['settings']['cleaning_instructions'],
-            projects=projects)
+            projects=projects, context=context_prompt)
         if self._stop.is_set():
             raise ValueError('worker_stopped')
         # After the model calls, the source and rules must still be the ones the
@@ -1364,6 +1425,16 @@ class OrganizationWorker:
         if not self._is_current(service, task):
             self._finish(service, task['id'], 'superseded', 'stale', 'stale_task')
             return
+        basis, basis_changed = organization_context.refresh(service, basis)
+        if basis_changed:
+            # The predecessor changed while the model was answering: nothing may
+            # be written from the old context. The units are kept for review.
+            for unit in units:
+                unit['continues_context'] = False
+            with service.store.transaction():
+                service.store._connection().execute(
+                    "UPDATE organization_tasks SET context_basis='',updated_at=? WHERE id=?",
+                    (_now_iso(), task['id']))
         # Only a program-verified same-project continuation is joined; the whole
         # source is re-checked for exact coverage before anything is stored.
         units = coalesce_units(service, task, units, text, policy)
@@ -1384,6 +1455,9 @@ class OrganizationWorker:
                 "SELECT u.* FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id "
                 "WHERE t.source_key=? AND u.decision='manual' ORDER BY t.id", (task['source_key'],))}
             conn.execute('DELETE FROM organization_units WHERE task_id=?', (task['id'],))
+            # Re-segmentation replaces every unit of this task, so a dependency
+            # recorded against an old digest must not survive as a live link.
+            organization_context.clear_task_dependencies(service, task['id'], conn=conn)
             for ordinal, unit in enumerate(units):
                 digest = unit_digest(task['source_key'], unit['source_start'], unit['source_end'], unit['text'])
                 role = next((span['role'] for span in spans
@@ -1394,12 +1468,13 @@ class OrganizationWorker:
                 conn.execute(
                     'INSERT INTO organization_units(task_id,ordinal,digest,title,text,cleaned_text,source_start,'
                     "source_end,category,role,disposition,disposition_reason,project_hint,project,decision,reason,"
-                    "evidence_quote,extraction_stage,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'','review','',?,'pending',?,?)",
+                    "evidence_quote,continues_context,context_basis,extraction_stage,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'','review','',?,?,'','pending',?,?)",
                     (task['id'], ordinal, digest, unit['title'], unit['text'],
                      unit.get('cleaned_text') or unit['text'], unit['source_start'], unit['source_end'],
                      unit['category'], role, disposition, unit.get('disposition_reason', ''),
-                     unit['project_hint'], unit.get('evidence_quote', ''), _now_iso(), _now_iso()))
+                     unit['project_hint'], unit.get('evidence_quote', ''),
+                     1 if unit.get('continues_context') is True else 0, _now_iso(), _now_iso()))
                 old = prior.get(digest)
                 if old:
                     conn.execute("UPDATE organization_units SET project=?,decision='manual',reason=?,"
@@ -1419,6 +1494,7 @@ class OrganizationWorker:
         if not units:
             raise topic_segmentation.SegmentationError('coverage_gap', '没有可归属的单元')
         names = set(project_names(service))
+        basis = self._valid_basis(service, task)
         auto_projects, review = [], 0
         for unit in units:
             if unit['decision'] == 'manual':
@@ -1434,40 +1510,45 @@ class OrganizationWorker:
                 unit['text'], unit.get('evidence_quote'))
             if unit['disposition'] == 'review':
                 self._update_unit(service, task['id'], unit['digest'], project=unit['project'] or '',
-                                  decision='review', expected_revision=unit,
+                                  decision='review', expected_revision=unit, context_basis='',
                                   reason=unit['disposition_reason'], evidence_quote=resolved_quote)
                 review += 1
                 continue
             guidance = guidance_store.classify(service, unit)
             if guidance['status'] == 'review':
                 self._update_unit(service, task['id'], unit['digest'], project='', decision='review',
-                                  expected_revision=unit, reason=guidance['reason'],
-                                  evidence_quote=resolved_quote)
+                                  expected_revision=unit, context_basis='',
+                                  reason=guidance['reason'], evidence_quote=resolved_quote)
                 review += 1
                 continue
             if guidance['status'] == 'apply':
                 conflict = self._guidance_conflict(service, unit, guidance['project'], policy)
                 if conflict:
                     self._update_unit(service, task['id'], unit['digest'], project='', decision='review',
-                                      expected_revision=unit, reason=conflict,
-                                      evidence_quote=resolved_quote)
+                                      expected_revision=unit, context_basis='',
+                                      reason=conflict, evidence_quote=resolved_quote)
                     review += 1
                     continue
                 self._update_unit(service, task['id'], unit['digest'], project=guidance['project'],
-                                  decision='auto', expected_revision=unit, reason=guidance['reason'],
-                                  evidence_quote=resolved_quote)
+                                  decision='auto', expected_revision=unit, context_basis='',
+                                  reason=guidance['reason'], evidence_quote=resolved_quote)
                 auto_projects.append(guidance['project'])
                 continue
             if guidance['status'] == 'pending':
                 self._update_unit(service, task['id'], unit['digest'], project='', decision='review',
-                                  expected_revision=unit, reason=guidance['reason'],
-                                  evidence_quote=resolved_quote)
+                                  expected_revision=unit, context_basis='',
+                                  reason=guidance['reason'], evidence_quote=resolved_quote)
                 review += 1
                 continue
             hint = unit['project_hint'] if unit['project_hint'] in names else ''
-            project, reason, decision = self._decide(service, unit, hint, policy, names)
+            used = {}
+            project, reason, decision = self._decide(service, unit, hint, policy, names, basis, used)
+            inherited = decision == 'auto' and used.get('context') is True
             self._update_unit(service, task['id'], unit['digest'], project=project, decision=decision,
-                              expected_revision=unit, reason=reason, evidence_quote=resolved_quote)
+                              expected_revision=unit, reason=reason, evidence_quote=resolved_quote,
+                              context_basis=organization_context.unit_context(basis) if inherited else '')
+            if inherited:
+                self._record_dependency(service, task['id'], unit['digest'], basis)
             if decision == 'auto':
                 auto_projects.append(project)
             else:
@@ -1486,6 +1567,25 @@ class OrganizationWorker:
         return [dict(r) for r in service.store._connection().execute(
             'SELECT * FROM organization_units WHERE task_id=? ORDER BY ordinal', (task_id,))]
 
+    def _valid_basis(self, service, task):
+        """The task's stored same-session basis, re-validated before use.
+
+        A basis that a human change, a withdrawal or a retired source has since
+        broken is dropped here, so this pass can never inherit a dead context.
+        """
+        stored = organization_context.decode(_task_row(service, task['id']).get('context_basis'))
+        basis, _changed = organization_context.refresh(service, stored)
+        if stored and not basis:
+            with service.store.transaction():
+                service.store._connection().execute(
+                    "UPDATE organization_tasks SET context_basis='',updated_at=? WHERE id=?",
+                    (_now_iso(), task['id']))
+        return basis
+
+    def _record_dependency(self, service, task_id, digest, basis):
+        with service.store.transaction():
+            organization_context.record_dependency(service, task_id, digest, basis)
+
     def _guidance_conflict(self, service, unit, project, policy):
         """Guidance never overrides conflicting project evidence in the unit."""
         kb = service.knowledge()
@@ -1495,39 +1595,98 @@ class OrganizationWorker:
             return '你的指导与这段正文里的其他项目线索冲突（' + '、'.join(others) + '），需要人工确认'
         return ''
 
-    def _decide(self, service, unit, hint, policy, names):
-        """Program validation decides; the model hint alone is never the gate."""
+    def _decide(self, service, unit, hint, policy, names, basis=None, used=None):
+        """Program validation decides; the model hint alone is never the gate.
+
+        A validated same-session basis can carry a unit that names no project at
+        all, but only when the model explicitly judged this batch a continuation
+        and the current batch offers no decisive competing project evidence. A
+        name that only appears as a delegation to a tool -- by its registered id,
+        display name or alias ("交给 DSH 执行", "使用 Kimi 运行") -- is not a
+        project switch; a real switch ("修改 DSH 项目") always wins.
+
+        When the model names exactly the project the validated predecessor
+        established, the program accepts it even though this batch's own text
+        does not repeat the name: that is precisely the case a model reaches by
+        reading the supplied background.
+
+        ``used``, when a dict is passed, records whether the returned project
+        actually rests on that basis, so a dependency is never recorded for a
+        unit whose own text already names the project.
+        """
+        if used is not None:
+            used['context'] = False
         if not names:
             return '', '没有已登记项目，先登记项目再整理', 'review'
-        kb = service.knowledge()
         raw_quote = str(unit.get('evidence_quote') or '')
         # Only the kind/count of horizontal whitespace may differ from the real
         # text; the located value is always the actual source substring.
         evidence_quote = topic_segmentation.resolve_evidence_quote(unit.get('text', ''), raw_quote) or ''
         if raw_quote and not evidence_quote:
             return '', '模型引用的证据在原文中定位不到（只允许空白差异），需要人工核对', 'review'
+        _evaluated, decisive, tool_only = organization_context.project_candidates(
+            service, unit['text'], policy)
+        inherited = (unit.get('continues_context') in (1, True) and isinstance(basis, dict)
+                     and basis.get('state') == organization_context.STATE_READY
+                     and basis.get('project') in names)
+        tool_names = {name.casefold() for name in tool_only}
+        decisive_names = {name.casefold() for name in decisive}
+
+        def carried(project, reason):
+            if used is not None:
+                used['context'] = True
+            return project, reason, 'auto'
+
+        def by_text(reason):
+            """The batch's own decisive project evidence decides."""
+            if len(decisive) == 1:
+                return decisive[0], reason, 'auto'
+            if len(decisive) > 1:
+                return '', '正文点名多个项目，需要人工拆分', 'review'
+            return None
+
         if not hint:
-            evaluated = kb.rules.evaluate({'body': unit['text'], 'source': True}, kb.registry(), policy=policy)
-            candidates = evaluated['candidates']
-            if len(candidates) == 1:
-                return candidates[0], '正文只点名一个已登记项目，按规则自动归属', 'auto'
-            return '', ('正文点名多个项目，需要人工拆分' if candidates
-                        else '正文没有明确项目线索，等待人工选择'), 'review'
-        evaluated = kb.rules.evaluate({'body': unit['text'], 'source': True},
-                                      kb.registry(), policy=policy)
-        if hint.casefold() not in {p.casefold() for p in evaluated['candidates']}:
-            return '', '模型建议缺少正文项目证据，等待人工确认', 'review'
-        candidates = [name for name in evaluated['candidates'] if name.casefold() != hint.casefold()]
-        if len(candidates) > 1:
-            return '', '项目线索冲突，不能覆盖其他项目归属', 'review'
-        if not candidates:
-            return hint, '正文与已登记项目一致，按规则自动归属', 'auto'
-        if evidence_quote and evidence_quote in unit['text'] and candidates[0] in evidence_quote:
-            return candidates[0], '引用原话指向另一个已登记项目，按证据归属', 'auto'
-        return '', '这段同时提到' + '、'.join(candidates) + '与' + hint + '，需要人工拆分', 'review'
+            decided = by_text('正文只点名一个已登记项目，按规则自动归属')
+            if decided:
+                return decided
+            if inherited:
+                return carried(basis['project'], organization_context.reason_for(basis))
+            if tool_only:
+                return '', ('正文只把' + '、'.join(tool_only) +
+                            '当作工具提及，缺少业务项目依据，等待人工确认'), 'review'
+            return '', '正文没有明确项目线索，等待人工选择', 'review'
+        hinted = hint.casefold()
+        if hinted in tool_names:
+            # The hint only rests on a tool gesture ("交给 DSH 执行"). It is
+            # never a project switch, so any real project this batch names wins;
+            # otherwise the validated same-session project continues.
+            decided = by_text('正文点名一个已登记项目，工具提及不构成项目切换')
+            if decided:
+                return decided
+            if inherited:
+                return carried(basis['project'], organization_context.reason_for(basis))
+            return '', '模型建议只来自工具提及，缺少项目依据，等待人工确认', 'review'
+        if hinted in decisive_names:
+            competitors = [name for name in decisive if name.casefold() != hinted]
+            if len(competitors) > 1:
+                return '', '项目线索冲突，不能覆盖其他项目归属', 'review'
+            if not competitors:
+                return hint, '正文与已登记项目一致，按规则自动归属', 'auto'
+            if evidence_quote and evidence_quote in unit['text'] and competitors[0] in evidence_quote:
+                return competitors[0], '引用原话指向另一个已登记项目，按证据归属', 'auto'
+            return '', '这段同时提到' + '、'.join(competitors) + '与' + hint + '，需要人工拆分', 'review'
+        if inherited and hinted == str(basis['project']).casefold() and not decisive:
+            # The model named exactly the validated predecessor's project and the
+            # batch itself offers no competing decisive evidence: this is the
+            # continuation the background was supplied for.
+            return carried(basis['project'], organization_context.reason_for(basis))
+        decided = by_text('正文点名一个已登记项目，按规则自动归属')
+        if decided:
+            return decided
+        return '', '模型建议缺少正文项目证据，等待人工确认', 'review'
 
     def _update_unit(self, service, task_id, digest, *, project, decision, expected_revision=None,
-                     reason='', evidence_quote=None):
+                     reason='', evidence_quote=None, context_basis=None):
         """CAS inside the transaction; a manual decision is never overwritten."""
         with service.store.transaction():
             conn = service.store._connection()
@@ -1541,10 +1700,15 @@ class OrganizationWorker:
                 raise ValueError('revision_conflict')
             conn.execute(
                 'UPDATE organization_units SET project=?,decision=?,reason=?,evidence_quote=?,'
-                'revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
+                'context_basis=?,revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
                 (project, decision, str(reason or '')[:600],
                  str(row['evidence_quote'] if evidence_quote is None else evidence_quote)[:300],
+                 str(row['context_basis'] if context_basis is None else context_basis),
                  _now_iso(), task_id, digest))
+            if context_basis == '':
+                # The unit no longer rests on a predecessor: drop the dependency
+                # so the reconciliation pass cannot report it as live.
+                organization_context.clear_dependency(service, task_id, digest, conn=conn)
             return True
 
     # -- stage 3: ingestion through the existing extraction paths --
@@ -1703,9 +1867,15 @@ def correct_one(service, body, *, record_guidance=True):
         changed_project = project != row['project']
         conn.execute(
             'UPDATE organization_units SET project=?,decision=?,reason=?,revision=revision+1,'
-            "extraction_stage=CASE WHEN ? THEN 'pending' ELSE extraction_stage END,updated_at=? "
+            "extraction_stage=CASE WHEN ? THEN 'pending' ELSE extraction_stage END,"
+            "context_basis=CASE WHEN ? THEN '' ELSE context_basis END,updated_at=? "
             'WHERE task_id=? AND digest=?',
-            (project, decision, reason, 1 if changed_project else 0, _now_iso(), task_id, digest))
+            (project, decision, reason, 1 if changed_project else 0,
+             1 if changed_project else 0, _now_iso(), task_id, digest))
+        if changed_project:
+            # The human decision now owns this unit's project; the inherited
+            # basis no longer explains it and must not stay a live dependency.
+            organization_context.clear_dependency(service, task_id, digest, conn=conn)
     refreshed = find_unit(service, task_id, digest)
     if project:
         item_id = _ensure_unit_item(service, task, refreshed)
@@ -1723,6 +1893,9 @@ def correct_one(service, body, *, record_guidance=True):
     if changed_project:
         _follow_derived(service, task_id, digest, project, reason)
     _refresh_task_state(service, task_id)
+    # A correction to this unit is exactly the event that must send units
+    # inheriting from it back to review; the scan is bounded and model-free.
+    organization_context.invalidate_dependents(service, limit=RECONCILE_LIMIT)
     refreshed = find_unit(service, task_id, digest)
     return {'ok': True, 'unit': {**refreshed, 'revision': _unit_revision(refreshed)},
             'guidance': stored, 'scope': (stored or {}).get('scope', 'batch'),
@@ -1894,6 +2067,9 @@ def set_disposition(service, body):
             'revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
             (disposition, reason, stage, _now_iso(), task_id, digest))
     _refresh_task_state(service, task_id)
+    # Setting a unit aside withdraws it as a predecessor: anything that inherited
+    # from it returns to review in the same bounded, model-free pass.
+    organization_context.invalidate_dependents(service, limit=RECONCILE_LIMIT)
     refreshed = find_unit(service, task_id, digest)
     return {'ok': True, 'unit': {**refreshed, 'revision': _unit_revision(refreshed)}}
 
