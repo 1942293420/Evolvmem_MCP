@@ -69,7 +69,7 @@ def _unit_revision(row) -> str:
         row = dict(row)
     return hashlib.sha256(_canonical({k: row.get(k) for k in
         ('revision', 'project', 'decision', 'reason', 'disposition', 'evidence_quote', 'cleaned_text',
-         'continues_context', 'context_basis')}).encode()).hexdigest()[:16]
+         'continues_context', 'context_basis', 'applied_guidance_id')}).encode()).hexdigest()[:16]
 
 
 def _load_llm():
@@ -472,15 +472,15 @@ def _task_row(service, task_id):
     return dict(row)
 
 
-def task_view(service, task_id):
+def task_view(service, task_id, *, visible=None):
     view = _task_row(service, task_id)
     view.pop('source_snapshot', None)
     view['context'] = organization_context.decode(view.get('context_basis'))
-    view['source_current'] = _source_current(service, view)
+    view['source_current'] = _source_current(service, view, visible=visible)
     return view
 
 
-def _source_current(service, task):
+def _source_current(service, task, *, visible=None):
     """False when the stored source revision is no longer the latest one.
 
     A task whose source changed but has not been re-enqueued yet must not be
@@ -491,7 +491,7 @@ def _source_current(service, task):
         return False
     try:
         from evolvmem.knowledge_cleaning import record
-        return record(service, task['source_key'])['expected_revision'] == task['source_revision']
+        return record(service, task['source_key'], visible=visible)['expected_revision'] == task['source_revision']
     except (ValueError, KeyError, OSError):
         return False
 
@@ -996,9 +996,15 @@ def task_detail(service, task_id):
 
 
 def unit_views(service, task_id):
+    from evolvmem.organization_diagnostics import describe
+    feedback = {r['digest']: dict(r) for r in service.store._connection().execute(
+        'SELECT * FROM organization_review_feedback WHERE task_id=?', (task_id,))}
     rows = service.store._connection().execute(
         'SELECT * FROM organization_units WHERE task_id=? ORDER BY ordinal', (task_id,)).fetchall()
     return [{**dict(row), 'revision': _unit_revision(row),
+             'diagnostic_text': describe(row['extraction_diagnostic']),
+             'feedback': feedback.get(row['digest'], {}).get('verdict', '')
+                         if feedback.get(row['digest'], {}).get('unit_revision') == _unit_revision(row) else '',
              'context': organization_context.decode(row['context_basis'])} for row in rows]
 
 
@@ -1347,9 +1353,11 @@ class OrganizationWorker:
                         'organization_needs_context_mode'):
                 self._fail(service, task_id, 'review' if code == 'revision_conflict' else 'failed', code, '')
             else:
-                self._fail(service, task_id, 'failed', 'organization_failed', code)
+                from evolvmem.organization_diagnostics import capture, describe
+                self._fail(service, task_id, 'failed', 'organization_failed', describe(capture(error, task['stage'])))
         except Exception as error:  # provider or storage failure; task stays visible
-            self._fail(service, task_id, 'failed', 'organization_failed', type(error).__name__)
+            from evolvmem.organization_diagnostics import capture, describe
+            self._fail(service, task_id, 'failed', 'organization_failed', describe(capture(error, task['stage'])))
 
     def _fail(self, service, task_id, status, code, detail):
         task = task_view(service, task_id)
@@ -1465,6 +1473,16 @@ class OrganizationWorker:
                 disposition = unit.get('disposition') or 'keep'
                 if disposition not in topic_segmentation.DISPOSITIONS:
                     disposition = 'review'
+                if disposition == 'history_only':
+                    # The provider suggests purpose; original structural roles
+                    # and project conflicts are checked by the program.
+                    real = topic_segmentation.unit_messages(unit, spans)
+                    signals = service.knowledge().rules.evaluate(
+                        {'body': unit['text'], 'source': True}, service.knowledge().registry())
+                    if not real or any(m['role'] != 'assistant' for m in real) or \
+                            unit['category'] != 'reference' or len(signals['candidates']) > 1:
+                        disposition = 'review'
+                        unit['disposition_reason'] = '不能按纯助手进度处理：原文含其他角色、重要类别或项目冲突，保留待核对'
                 conn.execute(
                     'INSERT INTO organization_units(task_id,ordinal,digest,title,text,cleaned_text,source_start,'
                     "source_end,category,role,disposition,disposition_reason,project_hint,project,decision,reason,"
@@ -1515,6 +1533,12 @@ class OrganizationWorker:
                 review += 1
                 continue
             guidance = guidance_store.classify(service, unit)
+            if unit['disposition'] == 'history_only' and guidance['status'] == 'review':
+                with service.store.transaction():
+                    service.store._connection().execute(
+                        "UPDATE organization_units SET disposition='review',disposition_reason=?,revision=revision+1 "
+                        "WHERE task_id=? AND digest=?", (guidance['reason'], task['id'], unit['digest']))
+                unit = find_unit(service, task['id'], unit['digest'])
             if guidance['status'] == 'review':
                 self._update_unit(service, task['id'], unit['digest'], project='', decision='review',
                                   expected_revision=unit, context_basis='',
@@ -1531,6 +1555,7 @@ class OrganizationWorker:
                     continue
                 self._update_unit(service, task['id'], unit['digest'], project=guidance['project'],
                                   decision='auto', expected_revision=unit, context_basis='',
+                                  guidance_id=guidance['id'],
                                   reason=guidance['reason'], evidence_quote=resolved_quote)
                 auto_projects.append(guidance['project'])
                 continue
@@ -1686,7 +1711,7 @@ class OrganizationWorker:
         return '', '模型建议缺少正文项目证据，等待人工确认', 'review'
 
     def _update_unit(self, service, task_id, digest, *, project, decision, expected_revision=None,
-                     reason='', evidence_quote=None, context_basis=None):
+                     reason='', evidence_quote=None, context_basis=None, guidance_id=0):
         """CAS inside the transaction; a manual decision is never overwritten."""
         with service.store.transaction():
             conn = service.store._connection()
@@ -1700,11 +1725,11 @@ class OrganizationWorker:
                 raise ValueError('revision_conflict')
             conn.execute(
                 'UPDATE organization_units SET project=?,decision=?,reason=?,evidence_quote=?,'
-                'context_basis=?,revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
+                'context_basis=?,applied_guidance_id=?,revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
                 (project, decision, str(reason or '')[:600],
                  str(row['evidence_quote'] if evidence_quote is None else evidence_quote)[:300],
                  str(row['context_basis'] if context_basis is None else context_basis),
-                 _now_iso(), task_id, digest))
+                 guidance_id, _now_iso(), task_id, digest))
             if context_basis == '':
                 # The unit no longer rests on a predecessor: drop the dependency
                 # so the reconciliation pass cannot report it as live.
@@ -2024,10 +2049,13 @@ def _unresolve_item(service, item_id, reason):
 def _refresh_task_state(service, task_id):
     units = [dict(r) for r in service.store._connection().execute(
         'SELECT * FROM organization_units WHERE task_id=? ORDER BY ordinal', (task_id,))]
-    pending = [unit for unit in units if unit['disposition'] != 'set_aside']
+    pending = [unit for unit in units if unit['disposition'] not in ('set_aside', 'history_only')]
     review = sum(1 for unit in pending if unit['decision'] == 'review' or not unit['project'])
     assigned = [u for u in pending if u['project'] and u['decision'] != 'review']
     failed = any(u['extraction_stage'] == 'failed' for u in assigned)
+    from evolvmem.organization_diagnostics import describe
+    failure_detail = next((describe(u.get('extraction_diagnostic', '')) for u in assigned
+                           if u['extraction_stage'] == 'failed' and u.get('extraction_diagnostic')), '')
     unfinished = any(u['extraction_stage'] in ('pending', 'running') for u in assigned)
     status, stage, error = ('failed', 'extraction', 'extraction_failed') if failed else (
         ('pending', 'extraction', '') if unfinished else
@@ -2035,9 +2063,9 @@ def _refresh_task_state(service, task_id):
     with service.store.transaction():
         conn = service.store._connection()
         if units:
-            conn.execute('UPDATE organization_tasks SET review_count=?,status=?,stage=?,error_code=?,'
+            conn.execute('UPDATE organization_tasks SET review_count=?,status=?,stage=?,error_code=?,error_detail=?,'
                          'finished_at=?,updated_at=? WHERE id=? AND status!=?',
-                         (review, status, stage, error, None if unfinished else _now_iso(),
+                         (review, status, stage, error, failure_detail, None if unfinished else _now_iso(),
                           _now_iso(), task_id, 'superseded'))
     return task_view(service, task_id)
 
@@ -2088,6 +2116,23 @@ def guidance_update(service, body):
 
 
 def dispatch(service, method, route, body):
+    if route == '/metrics':
+        from evolvmem.organization_metrics import metrics
+        return metrics(service)
+    if method == 'POST' and route == '/feedback':
+        from evolvmem.organization_metrics import feedback
+        return feedback(service, body)
+    if route == '/progress':
+        from evolvmem.organization_progress import list_progress
+        return list_progress(service, body)
+    if route.startswith('/groups'):
+        from evolvmem import organization_review
+        if route == '/groups':
+            return organization_review.groups(service, body)
+        if method == 'POST' and route == '/groups/preview':
+            return organization_review.preview(service, body)
+        if method == 'POST' and route == '/groups/apply':
+            return organization_review.apply(service, body)
     if route == '':
         return list_tasks(service, body)
     if route == '/detail':

@@ -114,10 +114,12 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
     from evolvmem.organization_guidance import rows
     before = _unit_revision(unit)
     guidance_before = rows(service)
+    phase = 'related_lookup'
     try:
         from evolvmem.learning_extraction import related
         from evolvmem.session_extraction import prepare_extraction
         peers = related(service, unit['project'], messages)
+        phase = 'model_parse'
         request = prepare_extraction(
             service.config, unit['project'], f'{task["source_key"]}#{unit["digest"]}', messages,
             llm_config, reviewed_cleaning=unit.get('cleaned_text') or None, related_context=peers)
@@ -126,6 +128,7 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
         # A correction or re-assignment during the model call invalidates this
         # unit's result: the stale answer must not be written under the new state.
         from evolvmem.auto_organization import _assert_current
+        phase = 'persistence'
         with service.store.transaction():
             _assert_current(service, task)
             current = service.store._connection().execute(
@@ -175,12 +178,14 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
                 _bind_experience(service, item_id, messages, archive_id=_archive_id(task))
             _set_stage(service, task['id'], unit['digest'], 'done', want, '')
     except Exception as error:  # provider/parse/persistence failure is visible per unit
+        from evolvmem.organization_diagnostics import capture
+        diagnostic = capture(error, phase)
         code = str(error) if isinstance(error, ValueError) else type(error).__name__
         if code in ('extraction_provider_unavailable', 'extraction_summary_missing',
                     'extraction_summary_rejected'):
-            _set_stage(service, task['id'], unit['digest'], 'failed', want, code)
+            _set_stage(service, task['id'], unit['digest'], 'failed', want, code, diagnostic)
             return {'stage': 'failed', 'item_ids': [], 'candidates': 0, 'error': code}
-        _set_stage(service, task['id'], unit['digest'], 'failed', want, 'extraction_failed')
+        _set_stage(service, task['id'], unit['digest'], 'failed', want, 'extraction_failed', diagnostic)
         return {'stage': 'failed', 'item_ids': [], 'candidates': 0, 'error': 'extraction_failed'}
     return {'stage': 'done', 'item_ids': item_ids, 'candidates': len(item_ids), 'error': ''}
 
@@ -206,18 +211,18 @@ def _with_history_summary(request, task, unit):
     return replace(request, summary=summary)
 
 
-def _set_stage(service, task_id, digest, stage, want, error):
+def _set_stage(service, task_id, digest, stage, want, error, diagnostic=''):
     with service.store.transaction():
         service.store._connection().execute(
             'UPDATE organization_units SET extraction_stage=?,extraction_signature=?,extraction_error=?,'
-            'updated_at=? WHERE task_id=? AND digest=?',
-            (stage, want, str(error or '')[:300], _now_iso(), task_id, digest))
+            'extraction_diagnostic=?,updated_at=? WHERE task_id=? AND digest=?',
+            (stage, want, str(error or '')[:300], diagnostic, _now_iso(), task_id, digest))
 
 
 def pending_units(service, task_id):
     return [dict(row) for row in service.store._connection().execute(
         "SELECT * FROM organization_units WHERE task_id=? AND project!='' AND decision!='review' "
-        "AND disposition!='set_aside' AND extraction_stage IN ('pending','running','failed') "
+        "AND disposition NOT IN ('set_aside','history_only') AND extraction_stage IN ('pending','running','failed') "
         'ORDER BY ordinal', (task_id,))]
 
 

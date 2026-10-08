@@ -258,7 +258,8 @@ def test_successful_stage_fsyncs_replaces_and_clears_dirty_in_order(
         report = rebuild_context_vector_atomically(test_config, store, engine)
 
         assert report.status == "staged"
-        replace_events = [event for event in events if event[0] == "replace"]
+        replace_events = [event for event in events if event[0] == "replace"
+                          and event[1].endswith('->context_vectors.usearch')]
         assert len(replace_events) == 1
         src_name, dst_name = replace_events[0][1].split("->")
         assert dst_name == "context_vectors.usearch"
@@ -268,7 +269,9 @@ def test_successful_stage_fsyncs_replaces_and_clears_dirty_in_order(
         fsync_dir_at = next(i for i, event in enumerate(events) if event[0] == "fsync_dir")
         formal_clear_at = events.index(("clear_dirty", "context_vectors.usearch"))
         assert fsync_file_at < replace_at < fsync_dir_at < formal_clear_at
-        assert events[-1] == ("clear_dirty", "context_vectors.usearch")
+        assert events[formal_clear_at] == ("clear_dirty", "context_vectors.usearch")
+        assert all(event[0] == 'replace' and event[1].endswith('->context_vectors.recovery.json')
+                   for event in events[formal_clear_at+1:])
         assert not formal_dirty_path(test_config).exists()
         assert decoy.read_bytes() == b"stale decoy"
         assert stage_leftovers(test_config) == [decoy]
@@ -1177,9 +1180,12 @@ def test_a_write_that_lands_at_the_transaction_boundary_is_not_published(
                     store.create_item(make_draft("boundary", l0="boundary l0"))
             return real_transaction()
 
+        original_replace = os.replace
         def recording_replace(src, dst):
-            replace_attempts.append(str(dst))
-            raise AssertionError("the swap must not run against stale truth")
+            if str(dst).endswith('.usearch'):
+                replace_attempts.append(str(dst))
+                raise AssertionError("the swap must not run against stale truth")
+            return original_replace(src, dst)
 
         monkeypatch.setattr(store, "transaction", boundary_transaction)
         monkeypatch.setattr(cutover_vector.os, "replace", recording_replace)

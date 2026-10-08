@@ -210,6 +210,14 @@ class VectorIndex:
 
     # ---- status ----
 
+    def vector_copy(self, item_id: int):
+        """Internal recovery copy; never exposed in diagnostics or HTTP output."""
+        self._ensure_initialized()
+        if self._shared_cache is not None:
+            self._shared_cache.refresh()
+        value = self._index.get(int(item_id))
+        return None if value is None else np.asarray(value, dtype=np.float32).copy()
+
     def count(self) -> int:
         self._ensure_initialized()
         if self._shared_cache is not None:

@@ -90,8 +90,10 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
         disposition_reason TEXT NOT NULL DEFAULT '',
         extraction_stage TEXT NOT NULL DEFAULT 'pending',
         extraction_error TEXT NOT NULL DEFAULT '',
+        extraction_diagnostic TEXT NOT NULL DEFAULT '',
         extraction_signature TEXT NOT NULL DEFAULT '',
         project_hint TEXT NOT NULL DEFAULT '',
+        applied_guidance_id INTEGER NOT NULL DEFAULT 0,
         project TEXT NOT NULL DEFAULT '',
         decision TEXT NOT NULL DEFAULT 'review',
         reason TEXT NOT NULL DEFAULT '',
@@ -106,6 +108,14 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
     )""",
     """CREATE INDEX IF NOT EXISTS idx_organization_units_digest
         ON organization_units(task_id, digest)""",
+    """CREATE TABLE IF NOT EXISTS organization_review_feedback (
+        task_id INTEGER NOT NULL,
+        digest TEXT NOT NULL,
+        unit_revision TEXT NOT NULL,
+        verdict TEXT NOT NULL CHECK(verdict IN ('correct','incorrect')),
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(task_id,digest)
+    )""",
     """CREATE TABLE IF NOT EXISTS unit_derivations (
         unit_task_id INTEGER NOT NULL,
         unit_digest TEXT NOT NULL,
@@ -636,12 +646,14 @@ class ContextStore:
             "context_basis": "TEXT NOT NULL DEFAULT ''",
         }
         additions["organization_units"] = {
+            "applied_guidance_id": "INTEGER NOT NULL DEFAULT 0",
             "role": "TEXT NOT NULL DEFAULT ''",
             "cleaned_text": "TEXT NOT NULL DEFAULT ''",
             "disposition": "TEXT NOT NULL DEFAULT 'keep'",
             "disposition_reason": "TEXT NOT NULL DEFAULT ''",
             "extraction_stage": "TEXT NOT NULL DEFAULT 'pending'",
             "extraction_error": "TEXT NOT NULL DEFAULT ''",
+            "extraction_diagnostic": "TEXT NOT NULL DEFAULT ''",
             "extraction_signature": "TEXT NOT NULL DEFAULT ''",
             "continues_context": "INTEGER NOT NULL DEFAULT 0",
             "context_basis": "TEXT NOT NULL DEFAULT ''",

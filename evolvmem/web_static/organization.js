@@ -62,14 +62,19 @@
   const statusText = {pending:'等待处理',running:'处理中',completed:'已完成',review:'待确认',failed:'失败',superseded:'已被新版本替代'};
   const stageText = {queued:'排队',cleaning:'清洗',segmentation:'分段',assignment:'归属',extraction:'提取问答与经验',done:'完成',stale:'过期',retired:'已退出'};
   const errorText = e => ({revision_conflict:'任务或来源已变化，请刷新后重试。',cleaning_source_deleted:'来源已被永久删除。',cleaning_source_unavailable:'原文暂不可读取。',source_no_dialogue:'这次会话没有对话内容，无需审核，也不进入整理。',source_superseded:'旧快照已退出当前队列，原始归档仍保留；最新版本会正常整理。',source_excluded:'系统子会话已自动排除，不进入整理。',extraction_provider_unavailable:'尚未配置整理模型。',coverage_coverage_gap:'有段落未被处理，已停止；请核对原文后重试。',coverage_coverage_overlap:'分段位置重叠，已停止；请核对原文后重试。',coverage_quote_not_found:'模型引用的原话在原文中找不到，已停止。',units_need_review:'部分单元需要人工确认。',organization_failed:'整理失败，可重试。',organization_needs_context_mode:'当前服务模式不写入知识库，无法自动整理。',task_superseded:'任务已被新版本替代。',resegment_manual_review_required:'这份资料已有人工确认，不能重新分段覆盖；请在现有单元中修改。',guidance_not_found:'这条指导已不存在。',invalid_guidance:'请填写 1–1000 字的指导。',invalid_guidance_scope:'适用范围不正确。'})[e]||e;
-  const dirty = () => onDirty(drafts.size > 0);
+  let groupDirty = false;
+  const dirty = () => onDirty(drafts.size > 0 || groupDirty);
   function notice(t){$('#org-notice').textContent = t;}
   mount.innerHTML = `<section class="panel organization-panel"><div class="section-head"><div><h2>自动整理</h2><p class="hint">后台按来源版本处理：整篇分段 → 项目归属 → 写入项目历史与候选。可以离开本页，稍后回来查看结果。</p></div><div class="actions"><button data-org-action="refresh">刷新</button><button class="write" data-org-action="retry-failed">重试全部失败</button><button class="write" data-org-action="backlog">整理待处理资料</button><a href="#knowledge/cleaning" data-view="cleaning">前往数据清洗 ↗</a></div></div>
   <div class="organization-settings"><label class="extraction-choice"><input type="checkbox" data-org-arrival ${arrival.auto_new?'checked':''}>自动处理新资料（只处理开启后新到的来源，历史存量请用“整理待处理资料”）</label><span class="hint" id="org-arrival-state">${arrival.auto_new?'已开启，后台会持续发现新来源。':'已关闭，排队中的任务不受影响。'}</span></div>
   <p class="hint" id="org-local-capture" role="status"><span id="org-local-capture-message">本机采集状态读取中。</span> <span id="org-local-capture-state"></span></p>
-  <p id="org-notice" role="status"></p><div id="org-tasks"></div>
+  <div id="org-metrics"></div><div id="org-review-groups"></div><p id="org-notice" role="status"></p><div id="org-tasks"></div>
   <div class="organization-pager"><label for="org-filter">筛选</label><select id="org-filter"><option value="current">当前结果</option><option value="pending">等待处理</option><option value="running">处理中</option><option value="completed">已完成</option><option value="review">待确认</option><option value="failed">失败</option><option value="superseded">已被替代</option><option value="all">全部</option></select><span id="org-page"></span><button data-org-action="previous">上一页</button><button data-org-action="next">下一页</button></div></section>
   <section class="panel organization-guidance"><div class="section-head"><div><h2>我的整理指导</h2><p class="hint">默认“仅本次”；明确选择“以后同类适用”的指导才会应用到后续匹配单元。条件太宽泛的指导会保留为建议，不会自动套用。可随时停用。</p></div></div><div id="org-guidance"></div></section>`;
+  await EvolvReviewGroups.render({mount:$('#org-review-groups'),api,esc,projects,onBusy,
+    onDirty:value=>{groupDirty=value;dirty();},onSaved:async()=>{guidanceRows=(await api('organization/guidance')).items;await load();drawGuidance();}});
+  async function loadMetrics(){try{$('#org-metrics').innerHTML=EvolvOrganizationMetrics.html(await api('organization/metrics'),esc);}catch(error){$('#org-metrics').textContent='整理效果暂不可用，可刷新重试。';}}
+  await loadMetrics();
   function taskCard(task){
     const stale = !current.has(task.id), rows = open.get(task.id) || [];
     const failed = task.status === 'failed';
@@ -83,9 +88,9 @@
   }
   function unitGroups(task,rows){
     // Grouping is only a convenience: every item keeps its own decision and save.
-    const order = [['review','待确认（需要你决定）'],['auto','自动归属'],['manual','人工已确认'],['aside','已暂存（可恢复）']];
+    const order = [['review','待确认（需要你决定）'],['auto','自动归属'],['manual','人工已确认'],['aside','已暂存（可恢复）'],['history','仅留历史（可恢复处理）']];
     return order.map(([decision,label]) => {
-      const group = rows.filter(unit => decision==='aside' ? unit.disposition==='set_aside' : unit.disposition!=='set_aside' && (decision==='review' ? unit.decision==='review'||!unit.project : unit.decision===decision&&unit.project));
+      const group = rows.filter(unit => decision==='history' ? unit.disposition==='history_only' : decision==='aside' ? unit.disposition==='set_aside' : !['set_aside','history_only'].includes(unit.disposition) && (decision==='review' ? unit.decision==='review'||!unit.project : unit.decision===decision&&unit.project));
       if(!group.length) return '';
       const heading = `<div class="organization-group-head"><strong>${label} · ${group.length} 条</strong>${decision==='review'?`<span class="actions"><label>批量选择项目<select data-org-group-project="${task.id}"><option value="">不批量改</option>${projects.filter(p=>p.status==='active').map(p=>`<option value="${esc(p.project)}">${esc(p.display_name||p.project)}</option>`).join('')}</select></label><button class="write" data-org-action="stage-group" data-id="${task.id}">应用到本组所选</button><label class="extraction-choice"><input type="checkbox" data-org-select-group="${task.id}">选择本组全部</label></span>`:''}</div>`;
       return `<section class="organization-group" data-org-group="${decision}">${heading}${group.map(unitRow).join('')}</section>`;
@@ -95,11 +100,13 @@
   function unitRow(unit){
     const key = `${unit.task_id}:${unit.digest}`, draft = drafts.get(key);
     const applied = typeof draft?.guidance === 'string' ? draft.guidance : '';
-    const aside = unit.disposition === 'set_aside';
+    const aside = unit.disposition === 'set_aside', historyOnly = unit.disposition === 'history_only';
     const ctx = unit.context && unit.context.state === 'ready' ? unit.context : null;
     return `<div class="organization-unit ${unit.decision==='manual'?'is-manual':''} ${aside?'is-aside':''}" data-org-unit="${esc(unit.digest)}">
-   <div class="section-head"><div><label class="extraction-choice"><input type="checkbox" data-org-select-unit="${key}" ${selected.has(key)?'checked':''} aria-label="选择 ${esc(unit.title)}"> <strong>${esc(unit.title)}</strong></label> <small>${esc(({habit:'长期习惯',project_convention:'项目约定',task_requirement:'任务要求',environment:'环境事实',decision:'决策依据',experience:'技术经验',reference:'参考资料'})[unit.category]||unit.category)} · ${unit.decision==='manual'?'人工已确认':unit.decision==='auto'?'自动归属':'待确认'} · 提炼：${extractionText[unit.extraction_stage]||esc(unit.extraction_stage)}${unit.extraction_error?'（'+esc(unit.extraction_error)+'）':''} · 位置 ${unit.source_start}-${unit.source_end}</small>${aside?' <span class="badge">已暂存，不进入当前历史</span>':''}</div><span>${esc(unit.project?name(unit.project):'未归属')}</span></div>
+   <div class="section-head"><div><label class="extraction-choice"><input type="checkbox" data-org-select-unit="${key}" ${selected.has(key)?'checked':''} aria-label="选择 ${esc(unit.title)}"> <strong>${esc(unit.title)}</strong></label> <small>${esc(({habit:'长期习惯',project_convention:'项目约定',task_requirement:'任务要求',environment:'环境事实',decision:'决策依据',experience:'技术经验',reference:'参考资料'})[unit.category]||unit.category)} · ${historyOnly?'仅留历史':unit.decision==='manual'?'人工已确认':unit.decision==='auto'?'自动归属':'待确认'} · 提炼：${historyOnly?'无需提炼，可恢复':extractionText[unit.extraction_stage]||esc(unit.extraction_stage)}${unit.extraction_error?'（'+esc(unit.extraction_error)+'）':''} · 位置 ${unit.source_start}-${unit.source_end}</small>${aside?' <span class="badge">已暂存，不进入当前历史</span>':''}</div><span>${esc(unit.project?name(unit.project):'未归属')}</span></div>
    <p class="organization-reason">${esc(unit.reason)}</p>
+   ${unit.diagnostic_text?`<p class="error">${esc(unit.diagnostic_text)}</p>`:''}
+   <div class="actions"><small>抽检本条整理判断${unit.feedback?` · 已标记${unit.feedback==='correct'?'正确':'有误'}`:''}</small><button data-org-action="feedback" data-verdict="correct" data-key="${key}" data-revision="${esc(unit.revision)}">判断正确</button><button data-org-action="feedback" data-verdict="incorrect" data-key="${key}" data-revision="${esc(unit.revision)}">判断有误</button></div>
    ${ctx?`<p class="organization-reason organization-context">同会话前文依据：${esc(ctx.source_key)}（第 ${esc(String(ctx.start_line))}-${esc(String(ctx.end_line))} 行）已确认 ${esc(name(ctx.project))}，原话「${esc(ctx.quote||'')}」；本批引用仍只取本批正文。</p>`:''}
    <blockquote class="organization-quote">${esc(unit.evidence_quote||unit.text.slice(0,120))}</blockquote>
    <details><summary>查看原文片段（${unit.source_end-unit.source_start} 字）</summary><pre class="organization-text">${esc(unit.text)}</pre></details>
@@ -108,7 +115,7 @@
     <label>整理指导（普通语言）<input data-org-guidance="${key}" maxlength="200" placeholder="例如：这类导出要求属于 Evo 项目" value="${esc(applied)}"></label>
     <label>适用范围<select data-org-scope="${key}" aria-label="适用范围"><option value="batch" ${draft?.scope!=='future'?'selected':''}>仅本次</option><option value="future" ${draft?.scope==='future'?'selected':''}>以后同类适用</option></select></label>
     ${draft?.scope==='future'?`<label>适用条件<input data-org-condition="${key}" maxlength="200" placeholder="例如：讨论导出时（条件太宽泛只会保存为建议）" value="${esc(draft?.condition||'')}"></label><label>例外<input data-org-exceptions="${key}" maxlength="200" placeholder="例如：已登记其他项目时除外；多条例外用 | 分隔，任一命中待确认" value="${esc(draft?.exceptions||'')}"></label><label class="extraction-choice"><input type="checkbox" data-org-negative="${key}" ${draft?.negative?'checked':''}>这是反例：以后遇到类似内容不要套用</label>`:''}
-    <span class="actions"><button class="write" data-org-action="correct" data-key="${key}">保存这一条</button>${`<button class="write" data-org-action="disposition" data-key="${key}" data-value="${aside?'keep':'set_aside'}" data-revision="${esc(unit.revision)}">${aside?'恢复处理':'暂存（不删除）'}</button>`}</span>
+    <span class="actions"><button class="write" data-org-action="correct" data-key="${key}">保存这一条</button>${`<button class="write" data-org-action="disposition" data-key="${key}" data-value="${aside||historyOnly?'keep':'set_aside'}" data-revision="${esc(unit.revision)}">${aside||historyOnly?'恢复处理':'暂存（不删除）'}</button>`}</span>
     ${errors.has(key)?`<p class="error" role="alert">${esc(errors.get(key))}</p>`:''}
     ${draft?`<p class="hint">${draft.scope==='future'?'明确条件的指导可用于后续匹配单元；条件过宽则只保存为建议。':'保存后仅修正这一条，不影响其他单元。'}</p>`:''}
    </div></div>`;
@@ -168,7 +175,7 @@
       const detail = await api('organization/detail?'+new URLSearchParams({task_id:id}));
       if(JSON.stringify(open.get(id)) !== JSON.stringify(detail.units)){open.set(id,detail.units||[]);changed=true;}
     }
-    if(changed) draw(); else { updatePager(); dirty(); }
+    if(changed) {draw();await loadMetrics();} else { updatePager(); dirty(); }
   }
   async function openTask(id){
     if(open.has(id)){open.delete(id);draw();return;}
@@ -243,7 +250,12 @@
     try{
       if(action==='correct') await saveKeys([button.dataset.key]);
       else if(action==='correct-selected') await saveKeys([...selected]);
-      else if(action==='refresh') await load();
+      else if(action==='refresh') {await load();await loadMetrics();}
+      else if(action==='feedback'){
+        const [id,digest]=button.dataset.key.split(':');
+        await api('organization/feedback',{task_id:Number(id),digest,expected_revision:button.dataset.revision,verdict:button.dataset.verdict});
+        notice('已记录本条抽检反馈；需要修正时可在下方保存项目或恢复处理。');await load();await loadMetrics();
+      }
       else if(action==='retry'||action==='retry-failed'||action==='resegment'){
         const targets = action==='retry'||action==='resegment' ? [Number(button.dataset.id)] : tasks.filter(t=>t.status==='failed').map(t=>t.id);
         if(!targets.length) throw Error('没有可重试的失败任务。');

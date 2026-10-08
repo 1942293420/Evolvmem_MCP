@@ -429,3 +429,5 @@
 .answer-support{margin-top:8px}
 .answer-support .struck{color:var(--muted);text-decoration:line-through}
 .answer-support blockquote{margin:4px 0}
+
+.organization-metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:12px;margin:16px 0}.organization-metric{display:flex;flex-direction:column;gap:8px;padding:16px;border:1px solid #dce2e5;border-radius:8px;overflow-wrap:anywhere}.organization-metric strong{font-size:22px}.organization-metric small{color:#566573}.organization-settings{flex-wrap:wrap}#org-review-groups input,#org-review-groups select{max-width:100%}#org-review-groups blockquote{overflow-wrap:anywhere;margin:12px 0}#org-review-groups blockquote small{display:block}

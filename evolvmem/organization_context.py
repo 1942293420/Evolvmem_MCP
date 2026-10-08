@@ -511,7 +511,7 @@ def build_basis(service, task):
     if live is None or str(prior_task['source_revision'] or '') != live:
         return {}
     unit = _prior_tail_unit(service, prior_task['id'])
-    if unit is None or unit['disposition'] != 'keep' \
+    if unit is None or unit['disposition'] not in ('keep', 'history_only') \
             or unit['decision'] not in ('auto', 'manual') or not unit['project']:
         return {}
     if not _prior_project_verified(service, unit):
@@ -588,7 +588,7 @@ def validate(service, basis, *, depth=1):
     if row is None:
         return False
     unit = dict(row)
-    if unit['project'] != project or unit['disposition'] != 'keep' \
+    if unit['project'] != project or unit['disposition'] not in ('keep', 'history_only') \
             or unit['decision'] not in ('auto', 'manual'):
         return False
     task_row = conn.execute('SELECT * FROM organization_tasks WHERE id=?', (task_id,)).fetchone()
@@ -685,7 +685,7 @@ JOIN organization_units u ON u.task_id=b.unit_task_id AND u.digest=b.unit_digest
 WHERE b.state='active' AND u.decision='auto'
   AND (p.task_id IS NULL OR pt.id IS NULL OR pt.status='superseded'
        OR sa.id IS NULL OR sa.state<>'available'
-       OR p.project<>b.project OR p.decision NOT IN ('auto','manual') OR p.disposition<>'keep'
+       OR p.project<>b.project OR p.decision NOT IN ('auto','manual') OR p.disposition NOT IN ('keep','history_only')
        OR p.revision<>b.prior_revision OR pt.source_revision<>b.prior_source_revision
        OR sa.payload_sha256<>b.prior_payload_sha256
        OR COALESCE(cr.revision,0)<>b.prior_cleaning_revision)

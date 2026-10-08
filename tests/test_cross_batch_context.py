@@ -1090,6 +1090,38 @@ def test_observably_damaged_batch_bytes_are_never_background(
 
 # ==================================== J: assistant progress vs a tool mention
 
+def test_history_only_progress_preserves_project_continuation_and_withdrawal(
+        service, config, tmp_path, monkeypatch):
+    """Routing progress away from extraction must not erase its verified project."""
+    path = rollout(service, config, tmp_path)
+    provider = model_for(service, projects={'demo','other'}, topics=[
+        ('用户要求：demo 项目先明确验收条件。','','task_requirement'),
+        ('正在检查上一轮的按钮','','reference',True),
+        ('继续刚才的任务，原始行号必须保留','','task_requirement',True)])
+    segment = provider.segment
+    def tagged(prompt):
+        result = json.loads(segment(prompt))
+        for unit in result['units']:
+            if '正在检查上一轮的按钮' in unit['title']:
+                unit.update(disposition='history_only', disposition_reason='只有助手进度')
+        return json.dumps(result,ensure_ascii=False)
+    monkeypatch.setattr(provider,'segment',tagged)
+    append(path,turn('用户要求：demo 项目先明确验收条件。'));scan(service)
+    a=enqueue(service,latest(service,SESSION));run_worker(service,monkeypatch,provider)
+    append(path,[line('response_item',{'type':'message','role':'assistant','id':'progress',
+        'content':[{'type':'output_text','text':'正在检查上一轮的按钮，接下来继续核对。'}]})]);scan(service)
+    b=enqueue(service,latest(service,SESSION));run_worker(service,monkeypatch,provider)
+    assert units(service,b)[0]['disposition']=='history_only'
+    assert units(service,b)[0]['project']=='demo'
+    append(path,turn('继续刚才的任务，原始行号必须保留。'));scan(service)
+    c=enqueue(service,latest(service,SESSION));run_worker(service,monkeypatch,provider)
+    assert units(service,c)[0]['project']=='demo'
+    first=units(service,a)[0]
+    org(service,'/correct',{'task_id':a,'digest':first['digest'],
+        'expected_revision':first['revision'],'project':'other'})
+    for _ in range(3):org(service,'/repair',{})
+    assert units(service,c)[0]['decision']=='review'
+
 def test_an_assistant_progress_report_continues_the_business_project(
         service, config, tmp_path, monkeypatch):
     """The synthetic shape of the real-model regression: completed work + tool."""

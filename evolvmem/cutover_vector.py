@@ -50,6 +50,7 @@ from evolvmem.context_store import ContextStore
 from evolvmem.cutover_models import validate_public_summary
 from evolvmem.embedding import EmbeddingEngine
 from evolvmem.vector_index import VectorIndex
+from evolvmem import vector_provenance
 
 _REASON_CODE_PATTERN = re.compile(r"^[a-z0-9_]{1,64}$")
 _MAX_DETAIL_CHARS = 128
@@ -163,7 +164,38 @@ class ContextVectorStageReport:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def rebuild_context_vector_atomically(
+def rebuild_context_vector_atomically(config, store, embedding_engine, **options):
+    """Run the atomic builder and keep one content-free measured outcome."""
+    from evolvmem.context_store import _now_iso
+    if not isinstance(config, Config):
+        raise ContextValidationError('config must be a Config instance')
+    started = time.time()
+    marker = config.context_vector_path.with_suffix(config.context_vector_path.suffix + '.dirty')
+    try:
+        pending_since = marker.stat().st_mtime
+    except OSError:
+        pending_since = started
+
+    class MeasuredEngine:
+        calls = 0
+        @property
+        def is_loaded(self):
+            return embedding_engine.is_loaded
+        def encode_document(self, text):
+            self.calls += 1
+            return embedding_engine.encode_document(text)
+
+    measured = MeasuredEngine() if embedding_engine is not None else None
+    report = _rebuild_context_vector_atomically(config, store, measured, **options)
+    vector_provenance.recovery_status(config, {
+        'status': report.status, 'occurred_at': _now_iso(), 'document_count': report.document_count,
+        'encoded_operations': measured.calls if measured else 0, 'duration_ms': report.duration_ms,
+        'pending_ms': max(0, (time.time()-pending_since)*1000),
+        'reason_codes': list(report.reason_codes), 'exception_type': report.detail})
+    return report
+
+
+def _rebuild_context_vector_atomically(
     config: Config,
     store: ContextStore,
     embedding_engine: EmbeddingEngine | None,
@@ -241,6 +273,7 @@ def rebuild_context_vector_atomically(
 
     document_count = 0
     staged: dict[int, _StagedDocument] = {}
+    proofs = {}
     swapped = False
     temp_index: VectorIndex | None = None
     temp_path = _unique_temp_path(target)
@@ -257,6 +290,7 @@ def rebuild_context_vector_atomically(
             staged = outcome.staged
             document_count = outcome.document_count
             temp_index = outcome.index
+            proofs = outcome.proofs
         else:
             documents = store.list_vector_documents()
             document_count = len(documents)
@@ -275,6 +309,8 @@ def rebuild_context_vector_atomically(
                 )
                 for document in documents
             }
+            proofs = {str(d.item_id): vector_provenance.entry(d.l0, v)
+                      for d, v in zip(documents, embeddings)}
         temp_index.close()
         temp_index = None
         _fsync_file(temp_path)
@@ -293,6 +329,7 @@ def rebuild_context_vector_atomically(
             swapped = True
             _fsync_dir(target.parent)
             _verify_index(config, target, sorted(staged))
+            vector_provenance.save(config, proofs)
             formal_marker.clear_dirty()
     except _SourceChangedDuringRebuild:
         _remove_temp_artifacts(temp_path)
@@ -379,6 +416,7 @@ class _BoundedRebuildOutcome:
     staged: dict[int, _StagedDocument]
     document_count: int
     index: VectorIndex
+    proofs: dict
 
 
 def _encode_texts(
@@ -417,7 +455,18 @@ def _rebuild_with_bounded_catch_up(
     """
     staged: dict[int, _StagedDocument] = {}
     temp_index: VectorIndex | None = None
+    proofs = {}
     try:
+        # Seed only vectors whose actual bytes and L0 digest still match a
+        # prior successful encode. Unknown writers or a changed model contract
+        # cannot silently reuse an unproven embedding.
+        reusable = vector_provenance.reusable(config, store.list_vector_documents())
+        if reusable:
+            temp_index = VectorIndex(config, path=temp_path)
+            temp_index.initialize(dim=config.embedding_dim)
+            temp_index.rebuild([d.item_id for d, _ in reusable], [v for _, v in reusable])
+            staged = {int(d.item_id): _StagedDocument(d.l0, _l0_digest(d.l0)) for d, _ in reusable}
+            proofs = {str(d.item_id): vector_provenance.entry(d.l0, v) for d, v in reusable}
         for round_index in range(rounds + 1):
             documents = store.list_vector_documents()
             current = {
@@ -439,9 +488,10 @@ def _rebuild_with_bounded_catch_up(
                     temp_index.rebuild([], [])
                 for item_id in remove_ids:
                     temp_index.remove(item_id)
+                    proofs.pop(str(item_id), None)
                 temp_index.save()
                 return _BoundedRebuildOutcome(
-                    staged=current, document_count=len(current), index=temp_index
+                    staged=current, document_count=len(current), index=temp_index, proofs=proofs
                 )
             if round_index >= rounds:
                 raise _CatchUpBudgetExhausted()
@@ -462,6 +512,10 @@ def _rebuild_with_bounded_catch_up(
                 for item_id, embedding in zip(encode_ids, embeddings):
                     temp_index.add(item_id, embedding)
             staged = current
+            for item_id in remove_ids:
+                proofs.pop(str(item_id), None)
+            for item_id, vector in zip(encode_ids, embeddings):
+                proofs[str(item_id)] = vector_provenance.entry(current[item_id].l0, vector)
             temp_index.save()
         raise _CatchUpBudgetExhausted()
     except BaseException:

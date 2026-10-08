@@ -22,7 +22,7 @@ CATEGORIES = ('habit', 'project_convention', 'task_requirement', 'environment',
               'decision', 'experience', 'reference')
 # keep: normal material; set_aside: no lasting value for this project (kept and
 # restorable, never deleted); review: the model is not sure and a human decides.
-DISPOSITIONS = ('keep', 'set_aside', 'review')
+DISPOSITIONS = ('keep', 'set_aside', 'review', 'history_only')
 # Validation failures the model can be asked to fix once, for the same chunk.
 # A malformed answer is not in this set: it is a provider problem, not a
 # coverage mistake, so it keeps its own error instead of a correction call.
@@ -149,7 +149,11 @@ def prompt(records: list[dict], index: int, total: int, *, cleaning_instructions
         neighbours += str(context).strip() + '\n'
     registry = '\u3001'.join(str(p) for p in projects) if projects else '\uff08\u6682\u65e0\u5df2\u767b\u8bb0\u9879\u76ee\uff09'
     instructions = (cleaning_instructions or '\uff08\u672a\u4fdd\u5b58\u989d\u5916\u7684\u6e05\u6d17\u8bf4\u660e\uff09').strip()
-    return ('\u4f60\u662f\u6574\u7406\u5206\u6bb5\u52a9\u624b\u3002\u8f93\u5165\u662f\u5e26\u7f16\u53f7\u7684\u539f\u59cb\u6d88\u606f\uff0c'
+    return ('你是整理分段助手。纯助手执行进度（如正在检查、接下来处理），且没有新的用户要求、'
+            '决策、环境事实、可复用结论或工具证据时，category=reference、disposition=history_only，'
+            '填写具体 disposition_reason，仅留历史不提炼。含用户消息、未知角色、工具结果或真实项目冲突时禁止 history_only；'
+            '普通助手答复不能一律当进度。不确定则 review。未采纳建议按已有规则保留历史，不能当用户决定。'
+            '\u8f93\u5165\u662f\u5e26\u7f16\u53f7\u7684\u539f\u59cb\u6d88\u606f\uff0c'
             '\u7f16\u53f7\u7531\u7a0b\u5e8f\u751f\u6210\u3002\u628a\u5168\u90e8\u7f16\u53f7\u6309\u8bdd\u9898\u62c6\u6210\u76f8\u4e92\u72ec\u7acb\u7684\u6574\u7406\u5355\u5143\uff0c'
             '\u5fc5\u987b\u5b8c\u6574\u3001\u8fde\u7eed\u5730\u8986\u76d6\u6240\u6709\u7f16\u53f7\uff1a\u7b2c\u4e00\u4e2a\u5355\u5143\u4ece 1 \u53f7\u5f00\u59cb\uff0c'
             '\u6700\u540e\u4e00\u4e2a\u5355\u5143\u5230\u6700\u540e\u7f16\u53f7\u7ed3\u675f\uff0c\u4e0d\u91cd\u53e0\u3001\u4e0d\u9057\u6f0f\u3001\u4e0d\u8df3\u53f7\u3002'

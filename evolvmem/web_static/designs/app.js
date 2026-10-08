@@ -117,7 +117,7 @@
     }
     if(location.hash!==targetHash)history[replace?'replaceState':'pushState'](null,'',targetHash);
     window.scrollTo({top:0,behavior:'instant'});
-    if(page==='home') requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));
+    if(page==='home') {requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));refreshOrganizationMetrics(state.boot);}
   }
   function countUp(el,value) {
     if(typeof value!=='number') {el.textContent='—';return;}
@@ -127,12 +127,18 @@
     const tick=now=>{if(!el.isConnected)return;const t=Math.min(1,(now-start)/650);el.textContent=Math.round(value*(1-(1-t)**3)).toLocaleString('en-US');if(t<1)requestAnimationFrame(tick);};
     requestAnimationFrame(tick);
   }
+  function refreshOrganizationMetrics(token){
+    if(!window.EvolvOrganizationMetrics)return;
+    get('/api/knowledge/organization/metrics').then(m=>{if(token===state.boot)$$('[data-slot="organization-metrics"]').forEach(el=>el.innerHTML=EvolvOrganizationMetrics.html(m,esc));})
+      .catch(()=>{if(token===state.boot)$$('[data-slot="organization-metrics"]').forEach(el=>el.textContent='整理效果暂不可用，可刷新重试。');});
+  }
   async function boot(refreshBrowser=true) {
     const token=++state.boot;
     $$('[data-data-status]').forEach(el=>el.textContent='正在连接记忆库…');
     const urls=['/api/stats','/api/insights','/api/projects','/api/memories?status=active&page_size=200&sort=access_count','/api/experiences?status=verified&page_size=3','/api/workstreams?status=unfinished&page_size=3','/api/memories?status=active&sort=created_at&order=desc&page_size=3','/api/knowledge/qa?state=active&page_size=1','/api/knowledge/projects'];
     const responses=await Promise.allSettled(urls.map(get));
     if(token!==state.boot) return;
+    refreshOrganizationMetrics(token);
     const [stats,insights,projects,memories,experiences,tasks,recent,qa,knowledge]=responses.map(r=>r.status==='fulfilled'?r.value:null);
     state.stats=stats;state.insights=insights;state.projects=projects?.projects || insights?.projects || [];
     memories?.rows.forEach(row=>memoryCache.set(String(row.id),row));

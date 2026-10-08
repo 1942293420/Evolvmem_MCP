@@ -8,6 +8,7 @@ from evolvmem.config import Config
 from evolvmem.context_store import ContextStore
 from evolvmem.embedding import EmbeddingEngine
 from evolvmem.vector_index import VectorIndex
+from evolvmem import vector_provenance
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +63,8 @@ class ContextVectorSynchronizer:
             self.vector_index.rebuild(
                 [document.item_id for document in documents], embeddings
             )
+            vector_provenance.save(self.config, {str(d.item_id): vector_provenance.entry(d.l0, v)
+                                                  for d, v in zip(documents, embeddings)})
         except Exception as exc:
             self.vector_index.preserve_dirty()
             return ContextVectorSyncReport(
@@ -112,6 +115,7 @@ class ContextVectorSynchronizer:
                 raise ValueError("embedding dimension mismatch")
             self.vector_index.add(item_id, embedding)
             self.vector_index.save()
+            vector_provenance.record(self.config, item_id, l0, embedding)
         except Exception as exc:
             self.vector_index.preserve_dirty()
             return ContextVectorSyncReport("failed", 1, exc.__class__.__name__)

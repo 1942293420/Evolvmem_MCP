@@ -9,6 +9,8 @@ from evolvmem.web_server import make_handler
 import re
 from evolvmem import kimi_hooks
 HINTS={'Evo 演示项目':'evo','dsh-a':'dsh-a','DSH 备用项目':'dsh-b','其余内容':'','导出':'dsh-a','未归属事项':''}
+HINTS['审核条目']=''
+HINTS['纯进度演示']=''
 PROJECTS={'evo','dsh-a','dsh-b'}
 config=Config(data_dir=Path(tempfile.mkdtemp(prefix='evo-p1-browser-')))
 s=_make_service(config,mode=ContextMode.SHADOW)
@@ -102,6 +104,9 @@ def model(prompt, *a, **kw):
                 # the supplied same-session background.
                 'continues_context':'继续刚才的报表整理' in g['title']}
                for g in groups]
+        for unit in units:
+            if '纯进度演示' in unit['title']:
+                unit.update(disposition='history_only',category='reference',disposition_reason='只是助手执行进度')
         return json.dumps({'units':units},ensure_ascii=False)
     if '长期记忆提炼器' in prompt and '[user]:' in prompt:
         # Real extraction contract for one unit: concise QA grounded in the unit.
@@ -227,6 +232,12 @@ if _auto:
         knowledge_dispatch(s,'POST','cleaning/save',{'items':[{'key':_entry['key'],
             'expected_revision':_entry['expected_revision'],'cleaned_text':_entry['body'],'category':'reference'}]})
         knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{_batch.id}'}]})
+if os.environ.get('EVOLVMEM_EFFICIENCY_FIXTURE')=='1':
+    for session,messages in [
+        ('集中审核演示',[{'role':'user','content':f'审核条目{i:02d}：编号处理必须保留原始编号。'+('跨平台条件需要另行核对。' if i>=10 else '')} for i in range(12)]),
+        ('进度历史演示',[{'role':'assistant','content':'纯进度演示：正在核对上一轮测试，接下来继续检查界面。'}])]:
+        source=_Archiver(config,s.store).archive_session('','kimi',session,json.dumps({'messages':messages},ensure_ascii=False))
+        knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{source.id}'}]})
 _worker=OrganizationWorker(config,mode=ContextMode.SHADOW).start() if _auto else None
 print('Temporary browser fixture ready',flush=True)
 try:server.serve_forever()
