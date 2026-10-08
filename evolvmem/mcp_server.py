@@ -181,8 +181,11 @@ class MemoryMCPServer:
         config: Config | None = None,
         context_service=None,
         embedding_engine=_DEFAULT_EMBEDDING_ENGINE,
+        *,
+        rebuild_legacy_vectors_on_start: bool = True,
     ):
         self.config = config if config is not None else Config.from_file()
+        self._rebuild_legacy_vectors_on_start = rebuild_legacy_vectors_on_start
         self.adapter = self.config.adapter or "mcp"
         try:
             self.context_mode: ContextMode | None = ContextMode(
@@ -270,7 +273,13 @@ class MemoryMCPServer:
         # Check USearch vs SQLite consistency (needs engine for rebuild)
         sqlite_count = len(facade.all_ids())
         if not self.vidx.check_consistency(sqlite_count):
-            self._rebuild_under_lock()
+            if self._rebuild_legacy_vectors_on_start:
+                self._rebuild_under_lock()
+            else:
+                # LAN serves the primary Context index and recovers it in the
+                # background. A legacy backlog must not block its HTTP listener.
+                self.vidx.mark_dirty()
+                self.vidx.preserve_dirty()
 
         self.retriever = Retriever(self.config, facade, self.vidx, self.engine)
         self.conflict_detector = ConflictDetector(facade)

@@ -494,3 +494,45 @@ def test_resident_client_sees_recovery_and_regains_vector_retrieval(tmp_path):
         assert 'write after recovery' in _values(server, 'after')
     finally:
         runtime.close()
+
+
+def test_lan_startup_does_not_encode_legacy_backlog_before_serving(tmp_path, monkeypatch):
+    """Primary LAN startup must not block the listener on the compatibility cache."""
+    settings = _settings(tmp_path)
+    first = LanRuntime(settings)
+    first.initialize()
+    try:
+        _add(first.server_for('jiangli'), 'startup:marker', 'startup marker remains searchable')
+    finally:
+        first.close()
+
+    class Engine:
+        is_loaded = True
+        documents = []
+
+        def initialize(self):
+            pass
+
+        def encode_document(self, text):
+            self.documents.append(text)
+            return [1.0] + [0.0] * 767
+
+        def encode_query(self, text):
+            return [1.0] + [0.0] * 767
+
+        def close(self):
+            pass
+
+    engine = Engine()
+    runtime = LanRuntime(_settings(tmp_path, embedding_enabled=True), engine)
+    # Test the synchronous startup boundary separately from later recovery work.
+    monkeypatch.setattr(runtime, 'start_recovery_worker', lambda: None)
+    runtime.initialize()
+    try:
+        assert engine.documents == [], 'legacy re-encoding must not delay the listener'
+        server = runtime.server_for('jiangli')
+        assert server.vidx.is_dirty(), 'do not pretend the old cache is synchronized'
+        assert server.handle_tool_call('context_status', {})['ready'] is True
+        assert 'startup marker remains searchable' in _values(server, 'startup')
+    finally:
+        runtime.close()

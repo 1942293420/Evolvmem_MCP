@@ -265,6 +265,7 @@ class LanRuntime:
         server = MemoryMCPServer(
             config=self._namespace_config(namespace),
             embedding_engine=self._shared_engine,
+            rebuild_legacy_vectors_on_start=False,
         )
         server.initialize()
         server._init_done.set()
