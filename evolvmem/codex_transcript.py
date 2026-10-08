@@ -7,6 +7,10 @@ import posixpath
 
 from evolvmem.lan_sharing import LanError
 
+# Attribution reason for a native system sub-session (``source={"subagent": ...}``).
+# It is metadata-only; body keyword matching is never used.
+SUBAGENT_SESSION_REASON = 'subagent_session'
+
 
 def same_client_workspace(root: str, child: str) -> bool:
     """Compare client paths lexically; never probe a Windows path on Linux."""
@@ -21,7 +25,7 @@ def same_client_workspace(root: str, child: str) -> bool:
 
 
 def workspace_details(rows: list[dict]) -> dict:
-    cwd, reason, parent, subagent = '', '', '', False
+    cwd, reason, parent, subagent, native = '', '', '', False, False
     for row in rows:
         payload = row.get('payload')
         if not isinstance(payload, dict):
@@ -29,7 +33,13 @@ def workspace_details(rows: list[dict]) -> dict:
         if row.get('type') == 'session_meta':
             parent = str(payload.get('parent_thread_id') or parent)
             source = payload.get('source')
-            subagent = subagent or bool(parent) or isinstance(source, dict) and 'subagent' in source
+            # ``source={"subagent": {...}}`` is the native system sub-session
+            # marker; ``parent_thread_id`` marks a real child thread. Both are the
+            # same predicate the local collector uses (``subagent_session``),
+            # while a plain ``forked_from_id`` user fork keeps neither marker and
+            # stays an ordinary session.
+            native = native or isinstance(source, dict) and 'subagent' in source
+            subagent = subagent or bool(parent) or native
         if row.get('type') in ('session_meta', 'turn_context'):
             current = payload.get('cwd')
             if isinstance(current, str) and current:
@@ -39,7 +49,10 @@ def workspace_details(rows: list[dict]) -> dict:
                     cwd = current
     if not cwd or not same_client_workspace(cwd, cwd):
         reason = 'workspace_unknown'
-    return dict(cwd=cwd, attribution_reason=reason, parent_session_id=parent, subagent=subagent)
+    if subagent:
+        reason = SUBAGENT_SESSION_REASON
+    return dict(cwd=cwd, attribution_reason=reason, parent_session_id=parent,
+                subagent=subagent, native_subagent=native)
 
 
 def dialogue_messages(rows: list[dict]) -> list[dict]:

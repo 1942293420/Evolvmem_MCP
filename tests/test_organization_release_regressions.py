@@ -47,6 +47,11 @@ def _unit_item_ids(service, task_id):
         (task_id,)).fetchall()]
 
 
+def _derivation_item_ids(service, task_id):
+    return [row['item_id'] for row in service.store._connection().execute(
+        'SELECT item_id FROM unit_derivations WHERE unit_task_id=?', (task_id,)).fetchall()]
+
+
 def _projection_lag(service):
     from evolvmem.cutover_checks import check_projection_lag
     return check_projection_lag(service.config, service.store).projection_lag
@@ -83,9 +88,14 @@ def test_superseded_outputs_mirror_candidate_status_into_the_legacy_projection(s
     assert successor != task_id
     from evolvmem.auto_organization import _mark_outputs_stale
     _mark_outputs_stale(service, f'archive:{source.id}', current_task=successor)
-    downgraded = [item_id for item_id in item_ids
+    # Both output kinds settle: the unit history item and the knowledge
+    # derivation of the retired task. Every id that actually flipped must reach
+    # the sync, exactly.
+    stale = sorted({*_unit_item_ids(service, task_id), *_derivation_item_ids(service, task_id)})
+    assert stale
+    downgraded = [item_id for item_id in stale
                   if service.store.get_item(item_id).status is ContextStatus.CANDIDATE]
-    assert downgraded
+    assert downgraded == stale, downgraded
     for item_id in downgraded:
         assert _legacy_status(service, item_id) == 'candidate'
     assert sorted(downgraded) in synced, 'the changed ids must reach the vector sync'

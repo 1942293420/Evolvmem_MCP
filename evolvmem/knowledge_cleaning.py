@@ -10,7 +10,17 @@ from evolvmem import history_organization as organization
 from evolvmem.conversation import clean_messages, from_payload, render
 from evolvmem.extraction_policy import redact_messages
 from evolvmem.memory_learning import CATEGORIES
+from evolvmem.session_archive import SessionArchiver
 from evolvmem.session_identity import logical_identity
+
+
+class SourceNoDialogue(ValueError):
+    """A readable archive whose cleaned dialogue is empty: skip, never retry.
+
+    It subclasses ``ValueError`` so every existing ``except ValueError`` caller
+    keeps working, while the organization queue can tell it apart from a
+    genuinely unreadable source (payload missing or undecryptable).
+    """
 
 
 def review(service, key):
@@ -28,7 +38,94 @@ def record(service, key, **kwargs):
     row['cleaning_ready']=bool(saved and saved['state']=='ready' and saved['source_revision']==row['source_revision'])
     row['cleaned_text']=saved['cleaned_text'] if row['cleaning_ready'] else ''
     row['category']=saved['category'] if row['cleaning_ready'] else 'reference'
+    row['dialogue_available']=row['kind']!='archive' or _archive_dialogue_available(service,row)
     return row
+
+
+def archive_dialogue_state(service,archive_id):
+    """``readable`` / ``empty`` / ``unavailable`` for one archived source.
+
+    ``empty`` is claimed only when the stored cleaned dialogue is empty *and*
+    the encrypted payload still decrypts to an empty dialogue. An ``available``
+    row whose ciphertext is missing or corrupt stays ``unavailable``: it is a
+    real error, never a silent "no dialogue" success. A non-empty cleaned body is
+    already readable text and is never re-decrypted here, so a scan only pays for
+    genuinely empty candidates.
+    """
+    try:
+        identity=int(archive_id)
+    except (TypeError,ValueError):
+        return 'unavailable'
+    archive=service.store.get_session_archive(identity)
+    if archive is None or archive['state']!='available':
+        return 'unavailable'
+    stored=service.store._connection().execute(
+        'SELECT body FROM conversation_history WHERE archive_id=?',(identity,)).fetchone()
+    if stored is not None and str(stored['body'] or '').strip():
+        return 'readable'
+    payload=SessionArchiver(service.config,service.store).read_payload(identity)
+    if payload is None:
+        return 'unavailable'
+    try:
+        text=render(from_payload(payload,policy=service.knowledge().rules.read()))
+    except (ValueError,KeyError,TypeError):
+        return 'unavailable'
+    return 'readable' if text.strip() else 'empty'
+
+
+def _archive_dialogue_available(service,row):
+    """False only for a verified readable archive with no dialogue at all."""
+    try:
+        archive_id=int(row['key'].split(':')[1])
+    except (ValueError,TypeError,IndexError):
+        return True
+    return archive_dialogue_state(service,archive_id)!='empty'
+
+
+def source_readable(service,row):
+    """Whether the source's own content can actually be read.
+
+    A missing or undecryptable archive is not readable, so a cleaned snapshot
+    that is empty for another reason keeps the ``cleaning_source_unavailable``
+    error instead of becoming a successful-looking skip.
+    """
+    if row['kind']!='archive':
+        return bool(str(row.get('body') or '').strip())
+    try:
+        archive_id=int(row['key'].split(':')[1])
+    except (ValueError,TypeError,IndexError):
+        return False
+    return archive_dialogue_state(service,archive_id)!='unavailable'
+
+
+def source_revision(service,key):
+    """The stored revision of any source, ignoring the queue-visibility filter.
+
+    Reconciliation must be able to reason about a version that is no longer the
+    visible current one; ``record`` deliberately refuses that for the manual
+    queue. The revision is computed exactly like ``_source_record`` does, only
+    without the visibility oracle.
+    """
+    text=str(key)
+    if not text.startswith('archive:'):
+        return record(service,key)['expected_revision']
+    identity=int(text.split(':')[1])
+    archive=service.store.get_session_archive(identity)
+    if archive is None:
+        raise ValueError('classification_source_changed')
+    clean=service.store._connection().execute(
+        'SELECT body FROM conversation_history WHERE archive_id=?',(identity,)).fetchone()
+    body=clean['body'] if clean else ''
+    if not clean:
+        payload=SessionArchiver(service.config,service.store).read_payload(identity)
+        if payload:
+            try:
+                messages,_=redact_messages(from_payload(payload,policy=service.knowledge().rules.read()))
+                body=render(messages)
+            except (ValueError,KeyError,TypeError):
+                pass
+    return hashlib.sha256(json.dumps([archive['payload_sha256'],archive['state'],body],
+                                     ensure_ascii=False).encode()).hexdigest()
 
 
 def prepared(service,key,**kwargs):

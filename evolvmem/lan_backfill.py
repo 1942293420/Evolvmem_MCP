@@ -75,8 +75,10 @@ def process_backfill(capture, *, now=None):
         result = _import(capture, row)
     except Exception:
         result = dict(code='candidate', reason='backfill_unavailable')
+    # A verified system sub-session may never become backfill work.
+    status = 'excluded' if result.get('reason') == 'subagent_session' else result['code']
     with capture.store.transaction():
         capture.conn.execute('''UPDATE lan_session_uploads SET backfill_status=?,backfill_result=?
             WHERE device_id=? AND session_id=? AND sha256=?''',
-            (result['code'], json.dumps(result), row['device_id'], row['session_id'], row['sha256']))
+            (status, json.dumps(result), row['device_id'], row['session_id'], row['sha256']))
     return 1

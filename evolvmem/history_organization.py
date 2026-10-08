@@ -16,6 +16,31 @@ def _has_uploads(service):
         "SELECT 1 FROM sqlite_master WHERE name='lan_session_uploads'").fetchone() is not None
 
 
+def _excluded_archive_ids(service):
+    """Archives whose upload recorded a verified system source. Never organized.
+
+    Only the native attribution reason decides; the archived body is never read
+    here. A store without LAN uploads has no such source, and an unreadable
+    state degrades to "nothing excluded" instead of breaking discovery.
+    """
+    from evolvmem.lan_capture import EXCLUDED_REASONS
+    if not _has_uploads(service) or not EXCLUDED_REASONS:
+        return set()
+    placeholders = ','.join('?' for _ in EXCLUDED_REASONS)
+    try:
+        return {int(row[0]) for row in service.store._connection().execute(
+            f'SELECT DISTINCT archive_id FROM lan_session_uploads WHERE archive_id IS NOT NULL '
+            f'AND attribution_reason IN ({placeholders})', tuple(sorted(EXCLUDED_REASONS)))}
+    except sqlite3.Error:
+        return set()
+
+
+def source_excluded(service, key):
+    """True when this source key is a verified system source, at any stage."""
+    match = re.fullmatch(r'archive:([1-9][0-9]*)', str(key))
+    return bool(match) and int(match[1]) in _excluded_archive_ids(service)
+
+
 def _unassigned_archives(service):
     """Deduplicate across all projects so assigning a head never exposes an old version.
 
@@ -29,6 +54,7 @@ def _unassigned_archives(service):
         ignored = {r[0] for r in conn.execute('SELECT u.archive_id FROM lan_session_uploads u '
             'JOIN lan_session_heads h ON h.device_id=u.device_id AND h.session_id=u.session_id '
             'WHERE h.sha256 IS NOT u.sha256 AND u.archive_id IS NOT NULL')}
+    ignored |= _excluded_archive_ids(service)
     rows, seen = [], set()
     for row in conn.execute('SELECT id,project,adapter,external_session_id,created_at FROM session_archives ORDER BY created_at DESC,id DESC'):
         if row['id'] in ignored:
@@ -111,12 +137,15 @@ def source_refs(service):
     conn = service.store._connection()
     handled = _handled_sources(service)
     deleted = _deleted_sources(service)
+    excluded = _excluded_archive_ids(service)
     archives = _unassigned_archives(service)
     refs = [{'key':f'archive:{r["id"]}', 'created_at':r['created_at']} for r in archives]
     refs.extend({'key':f'item:{r["id"]}', 'created_at':r['created_at']} for r in conn.execute(
         "SELECT id,created_at FROM context_items WHERE project='' AND scope!='global' "
         "AND status IN ('active','candidate') AND identity_key NOT LIKE 'organization:%'"))
-    refs = [ref for ref in refs if ref['key'] not in handled and ref['key'] not in deleted]
+    refs = [ref for ref in refs if ref['key'] not in handled and ref['key'] not in deleted
+            and not (ref['key'].startswith('archive:')
+                     and int(ref['key'].split(':')[1]) in excluded)]
     refs.sort(key=lambda r:(r['created_at'], r['key']), reverse=True)
     return refs
 

@@ -22,6 +22,7 @@ import threading
 import time
 
 from evolvmem.context_store import _now_iso
+from evolvmem.knowledge_cleaning import SourceNoDialogue
 from evolvmem.project_store import ProjectStoreError
 from evolvmem import organization_guidance as guidance_store
 from evolvmem import topic_segmentation
@@ -29,6 +30,12 @@ from evolvmem import topic_segmentation
 MAX_ATTEMPTS = 3
 POLL_SECONDS = 2
 PAGE_SIZE = 20
+# Bounded per-index work for one background discovery/reconcile tick.
+RECONCILE_LIMIT = 20
+# A single claim never spins on more than this many retired candidate rows.
+CLAIM_PREFLIGHT_LIMIT = 5
+# A valid archive with no dialogue is a truthful skip, not a provider failure.
+NO_DIALOGUE_CODE = 'source_no_dialogue'
 SUBJECT_LABELS = {'habit': '长期习惯', 'project_convention': '项目约定', 'task_requirement': '任务要求',
                   'environment': '环境事实', 'decision': '决策依据', 'experience': '技术经验',
                   'reference': '参考资料'}
@@ -82,12 +89,22 @@ def source_snapshot(service, source_key):
     drop-lines and duplicate collapsing applied, credentials redacted) so the
     raw source never needs a human confirmation first. Noise is set aside, never
     deleted: the archive and its payload stay available for verification.
+
+    A readable archive whose cleaned dialogue is empty raises
+    ``SourceNoDialogue``: it is a truthful skip instead of three provider
+    retries. The same holds when a saved cleaning policy legitimately filters a
+    readable source down to nothing. A missing or undecryptable archive keeps
+    the existing ``cleaning_source_unavailable`` error.
     """
-    from evolvmem.knowledge_cleaning import _clean_input, record
+    from evolvmem.knowledge_cleaning import _clean_input, record, source_readable
     row = record(service, source_key)
+    if not row.get('dialogue_available', True):
+        raise SourceNoDialogue(NO_DIALOGUE_CODE)
     policy = service.knowledge().rules.read()
     text = _clean_input(service, row, policy)
     if not isinstance(text, str) or not text.strip():
+        if source_readable(service, row):
+            raise SourceNoDialogue(NO_DIALOGUE_CODE)
         raise ValueError('cleaning_source_unavailable')
     return row, text
 
@@ -240,11 +257,19 @@ def _assert_current(service, task, *, conn=None):
 # ---------------------------------------------------------------- task records
 
 def enqueue(service, source_keys, *, snapshot=True):
-    """Create one task per source and rule revision; repeated requests reuse it."""
+    """Create one task per source and rule revision; repeated requests reuse it.
+
+    A verified system source is never queued at all, and a readable archive with
+    no dialogue is recorded once as a completed skip instead of a pending task
+    that would spend three provider attempts. Both keep their raw archive.
+    """
+    from evolvmem.history_organization import source_excluded
     from evolvmem.knowledge_cleaning import record
     policy = service.knowledge().rules.read()
     created, duplicates, items = 0, 0, []
     for source_key in source_keys:
+        if source_excluded(service, source_key):
+            continue
         row = record(service, source_key)
         revision = row['expected_revision']
         existing = service.store._connection().execute(
@@ -258,6 +283,11 @@ def enqueue(service, source_keys, *, snapshot=True):
         if snapshot:
             try:
                 text = source_snapshot(service, source_key)[1]
+            except SourceNoDialogue:
+                item = _record_skip(service, source_key, revision, policy['revision'], NO_DIALOGUE_CODE)
+                created += 1
+                items.append(item)
+                continue
             except (ValueError, KeyError, OSError):
                 text = ''
         title = _source_title(service, source_key, text) if text else source_key
@@ -278,6 +308,23 @@ def enqueue(service, source_keys, *, snapshot=True):
         items.append(task_view(service, self_task))
     return {'items': items, 'created': created, 'duplicates': duplicates,
             'rule_revision': policy['revision']}
+
+
+def _record_skip(service, source_key, revision, rule_revision, code):
+    """One completed, attempt-free task recording why no provider work is due."""
+    with service.store.transaction():
+        conn = service.store._connection()
+        cursor = conn.execute(
+            'INSERT INTO organization_tasks(source_key,source_revision,rule_revision,source_snapshot,'
+            "source_title,stage,status,error_code,attempts,created_at,updated_at,finished_at) "
+            "VALUES(?,?,?,'',?,'done','completed',?,0,?,?,?)",
+            (source_key, revision, rule_revision, source_key, code, _now_iso(), _now_iso(), _now_iso()))
+        task_id = cursor.lastrowid
+        conn.execute("UPDATE organization_tasks SET status='superseded',superseded_by=?,finished_at=?,updated_at=? "
+                     "WHERE source_key=? AND status!='superseded' AND id!=?",
+                     (task_id, _now_iso(), _now_iso(), source_key, task_id))
+    _mark_outputs_stale(service, source_key, current_task=task_id)
+    return task_view(service, task_id)
 
 
 def _mirror_legacy_candidate(service, item_ids):
@@ -307,29 +354,96 @@ def _mirror_legacy_candidate(service, item_ids):
     return moved
 
 
+def _own_archive_ids(source_key):
+    try:
+        return {int(str(source_key).split(':')[1])} if str(source_key).startswith('archive:') else set()
+    except (ValueError, IndexError):
+        return set()
+
+
+def _has_live_output_owner(conn, item_id):
+    """True while a non-superseded task still owns this item.
+
+    Both output kinds count: the unit history item link and the knowledge
+    derivation row.
+    """
+    if conn.execute(
+            "SELECT 1 FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id "
+            "WHERE u.item_id=? AND t.status!='superseded' LIMIT 1", (int(item_id),)).fetchone():
+        return True
+    return conn.execute(
+        "SELECT 1 FROM unit_derivations d JOIN organization_tasks t ON t.id=d.unit_task_id "
+        "WHERE d.item_id=? AND t.status!='superseded' LIMIT 1", (int(item_id),)).fetchone() is not None
+
+
+def _independent_source_link(conn, item_id, *, own_keys, own_archives):
+    """True when a source link outside this source's own provenance backs the item.
+
+    Own provenance is an ``organization``/``session`` link whose ref or archive
+    is this source (``archive:N#digest@start-end``, ``archive:N`` or the archive
+    id itself). A link to another archive, a manual/experience/migration entry or
+    an organization link from another source is independent backing, so shared
+    history stays active. An ``extraction`` companion ref only counts as
+    independent when the item has no own-archive link at all, so the same
+    pipeline is never mistaken for corroboration.
+    """
+    rows = conn.execute('SELECT source_kind,archive_id,source_ref FROM context_sources WHERE item_id=?',
+                        (int(item_id),)).fetchall()
+    linked_to_own_archive = any(
+        row['archive_id'] is not None and int(row['archive_id']) in own_archives for row in rows)
+    for row in rows:
+        kind = str(row['source_kind'] or '')
+        ref = str(row['source_ref'] or '')
+        archive = int(row['archive_id']) if row['archive_id'] is not None else None
+        if archive is not None and archive in own_archives:
+            continue
+        if any(ref == key or ref.startswith(key + '#') for key in own_keys):
+            continue
+        if kind == 'extraction' and linked_to_own_archive:
+            continue
+        return True
+    return False
+
+
 def _mark_outputs_stale(service, source_key, *, current_task):
     """A superseded revision's outputs stop being current but stay as history.
 
-    Only purely automatic items are downgraded: a human-confirmed project
-    decision keeps its status, and an item a live (non-superseded) task still
-    owns is a current output, so it stays active. The same transaction mirrors
-    the new candidate status onto the exact legacy rows it changed. Nothing is
-    deleted.
+    Candidates are every output the retired tasks of this source produced: their
+    unit history item (``organization_units.item_id``) and their knowledge
+    derivations (``unit_derivations``). Only purely automatic items are
+    downgraded: a human-confirmed project decision keeps its status, an item a
+    live (non-superseded) task still owns is a current output, and an item an
+    independent source link backs is shared history. A source-only output with no
+    other backing never stays active. The same transaction mirrors the new
+    candidate status onto the exact legacy rows it changed. Nothing is deleted.
     """
     conn = service.store._connection()
+    retired = [dict(row) for row in conn.execute(
+        "SELECT id FROM organization_tasks WHERE source_key=? AND status='superseded' AND id<?",
+        (source_key, current_task))]
+    if not retired:
+        return
+    own_keys, own_archives = {str(source_key)}, _own_archive_ids(source_key)
     with service.store.transaction():
-        rows = conn.execute(
-            "SELECT DISTINCT u.item_id FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id "
-            "WHERE t.source_key=? AND t.status='superseded' AND t.id<? AND u.item_id IS NOT NULL "
-            "AND NOT EXISTS (SELECT 1 FROM organization_units live_u JOIN organization_tasks live_t "
-            "ON live_t.id=live_u.task_id WHERE live_u.item_id=u.item_id AND live_t.status!='superseded')",
-            (source_key, current_task)).fetchall()
+        candidates = set()
+        for task in retired:
+            for row in conn.execute(
+                    'SELECT item_id FROM organization_units WHERE task_id=? AND item_id IS NOT NULL',
+                    (task['id'],)):
+                candidates.add(int(row['item_id']))
+            for row in conn.execute(
+                    'SELECT item_id FROM unit_derivations WHERE unit_task_id=?', (task['id'],)):
+                candidates.add(int(row['item_id']))
         downgraded = []
-        for row in rows:
-            item_id = row['item_id']
+        for item_id in sorted(candidates):
+            if _has_live_output_owner(conn, item_id):
+                continue
             resolution = conn.execute(
-                'SELECT decision_source FROM context_project_resolutions WHERE item_id=?', (item_id,)).fetchone()
+                'SELECT decision_source FROM context_project_resolutions WHERE item_id=?',
+                (item_id,)).fetchone()
             if resolution and resolution['decision_source'] == 'human':
+                continue
+            if _independent_source_link(conn, item_id, own_keys=own_keys, own_archives=own_archives):
                 continue
             cursor = conn.execute("UPDATE context_items SET status='candidate',updated_at=? "
                                   "WHERE id=? AND status='active'", (_now_iso(), item_id))
@@ -364,9 +478,10 @@ def _source_current(service, task):
     """False when the stored source revision is no longer the latest one.
 
     A task whose source changed but has not been re-enqueued yet must not be
-    presented as the current result.
+    presented as the current result. A recorded no-dialogue skip is likewise not
+    a current organization result.
     """
-    if task['status'] == 'superseded':
+    if task['status'] == 'superseded' or task.get('error_code') == NO_DIALOGUE_CODE:
         return False
     try:
         from evolvmem.knowledge_cleaning import record
@@ -380,13 +495,17 @@ def list_tasks(service, options=None):
     conn = service.store._connection()
     where, args = ['1=1'], []
     status = options.get('status')
+    # A recorded no-dialogue skip is not a current organization result.
+    current_only = "status!='superseded' AND (error_code IS NULL OR error_code<>?)"
     if status == 'current':
-        where.append("status!='superseded'")
+        where.append(current_only)
+        args.append(NO_DIALOGUE_CODE)
     elif status and status != 'all':
         where.append('status=?')
         args.append(status)
     if options.get('current'):
-        where.append("status!='superseded'")
+        where.append(current_only)
+        args.append(NO_DIALOGUE_CODE)
     page = max(1, int(options.get('page', 1) or 1))
     rows = conn.execute('SELECT id FROM organization_tasks WHERE ' + ' AND '.join(where) +
                         ' ORDER BY id DESC', args).fetchall()
@@ -398,6 +517,462 @@ def list_tasks(service, options=None):
     return {'items': views, 'total': len(rows), 'page': page,
             'page_size': PAGE_SIZE, 'counts': counts,
             'current_task_ids': [r['id'] for r in views if r['source_current']]}
+
+
+# ------------------------------------------------- source eligibility reconcile
+
+def _table_exists(conn, name):
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                        (name,)).fetchone() is not None
+
+
+def _archive_row(service, archive_id):
+    conn = service.store._connection()
+    return conn.execute('SELECT * FROM session_archives WHERE id=?', (int(archive_id),)).fetchone()
+
+
+def _dialogue_state(service, archive_id):
+    """'readable' / 'empty' / 'unavailable' for one archive.
+
+    Delegates to the shared cleaning helper so the queue verdict and the
+    organization verdict can never disagree. A non-empty cleaned body never
+    triggers a decryption; only a genuinely empty candidate pays for one, and an
+    available row whose ciphertext is missing or corrupt stays 'unavailable'.
+    """
+    from evolvmem.knowledge_cleaning import archive_dialogue_state
+    return archive_dialogue_state(service, archive_id)
+
+
+def _head_archive_map(service):
+    """(device_id, session_id) -> the archive the head pointer selects, or None."""
+    conn = service.store._connection()
+    if not _table_exists(conn, 'lan_session_heads') or not _table_exists(conn, 'lan_session_uploads'):
+        return {}
+    rows = conn.execute(
+        'SELECT h.device_id,h.session_id,u.archive_id FROM lan_session_heads h '
+        'LEFT JOIN lan_session_uploads u ON u.device_id=h.device_id AND u.session_id=h.session_id '
+        'AND u.sha256=h.sha256 WHERE h.sha256 IS NOT NULL').fetchall()
+    return {(row['device_id'], row['session_id']):
+            (int(row['archive_id']) if row['archive_id'] is not None else None) for row in rows}
+
+
+def _upload_families(service, archive_id):
+    """The (device_id, session_id) upload families one archive belongs to."""
+    conn = service.store._connection()
+    if not _table_exists(conn, 'lan_session_uploads'):
+        return []
+    return [(row['device_id'], row['session_id']) for row in conn.execute(
+        'SELECT DISTINCT device_id,session_id FROM lan_session_uploads WHERE archive_id=?',
+        (int(archive_id),))]
+
+
+def _newest_family_sibling(service, archive):
+    """Newest archive id of the same logical family, if any.
+
+    The logical family is filtered in SQL before the bound, so unrelated archive
+    rows between two versions of one family never hide the newer one. Only
+    bounded metadata is read; no body is decrypted.
+    """
+    from evolvmem.session_identity import SQL_LOGICAL_IDENTITY, logical_identity
+    rows = service.store._connection().execute(
+        'SELECT sa.id FROM session_archives sa WHERE sa.adapter=? AND sa.id>? AND '
+        + SQL_LOGICAL_IDENTITY.format(alias='sa') + '=? ORDER BY sa.id DESC LIMIT 1',
+        (archive['adapter'], int(archive['id']),
+         logical_identity(archive['adapter'], archive['external_session_id']))).fetchone()
+    return int(rows['id']) if rows is not None else None
+
+
+def _newest_readable_sibling(service, archive):
+    """Newest same-family archive whose dialogue is actually readable, if any.
+
+    Family rows are selected in SQL first (newest first) and only those are
+    checked for readability, so an unrelated row can never crowd the window and
+    only a genuinely empty candidate pays for a decryption.
+    """
+    from evolvmem.session_identity import SQL_LOGICAL_IDENTITY, logical_identity
+    rows = service.store._connection().execute(
+        'SELECT sa.id FROM session_archives sa WHERE sa.adapter=? AND sa.id>? AND '
+        + SQL_LOGICAL_IDENTITY.format(alias='sa') + '=? ORDER BY sa.id DESC LIMIT ?',
+        (archive['adapter'], int(archive['id']),
+         logical_identity(archive['adapter'], archive['external_session_id']),
+         RECONCILE_LIMIT)).fetchall()
+    for row in rows:
+        if _dialogue_state(service, row['id']) == 'readable':
+            return int(row['id'])
+    return None
+
+
+def _version_state(service, archive_id):
+    """(is_authoritative_current, successor_archive_id) for one archived version.
+
+    Uploaded snapshots follow ``lan_session_heads``: a history-only upload that
+    arrives later never displaces the head, and re-capturing an earlier archive
+    with a newer ``source_order`` restores it as current. A family without a head
+    row keeps the legacy rule used by the visibility oracle (the newest archive
+    of the same logical family is current). Independent local incremental batches
+    are always their own current version. The successor is only returned when it
+    is genuinely known and readable.
+    """
+    from evolvmem.session_identity import is_incremental_batch
+    archive = _archive_row(service, archive_id)
+    if archive is None:
+        return True, None
+    if is_incremental_batch(archive['external_session_id']):
+        return True, None
+    heads = _head_archive_map(service)
+    for family in _upload_families(service, archive_id):
+        if family not in heads:
+            continue
+        head_archive = heads[family]
+        if head_archive is None or int(head_archive) == int(archive_id):
+            return True, None
+        successor = int(head_archive) if _dialogue_state(service, head_archive) == 'readable' else None
+        return False, successor
+    sibling = _newest_family_sibling(service, archive)
+    if sibling is None or int(sibling) <= int(archive_id):
+        return True, None
+    return False, _newest_readable_sibling(service, archive)
+
+
+def _successor_task_id(service, successor_archive_id):
+    if successor_archive_id is None:
+        return None
+    row = service.store._connection().execute(
+        'SELECT id FROM organization_tasks WHERE source_key=? ORDER BY id DESC',
+        (f'archive:{successor_archive_id}',)).fetchone()
+    return row['id'] if row else None
+
+
+def _archive_id_sql(alias='t'):
+    return f"CAST(substr({alias}.source_key,9) AS INTEGER)"
+
+
+def _head_mismatch_sql(archive_id_sql):
+    """SQL: this archive's family has a head that selects another version."""
+    return (f"EXISTS (SELECT 1 FROM lan_session_uploads u JOIN lan_session_heads h "
+            f"ON h.device_id=u.device_id AND h.session_id=u.session_id "
+            f"JOIN lan_session_uploads c ON c.device_id=h.device_id AND c.session_id=h.session_id "
+            f"AND c.sha256=h.sha256 WHERE u.archive_id={archive_id_sql} AND h.sha256 IS NOT NULL "
+            f"AND c.archive_id IS NOT NULL AND c.archive_id<>u.archive_id)")
+
+
+def _head_absent_sql(archive_id_sql):
+    return (f"NOT EXISTS (SELECT 1 FROM lan_session_uploads lu2 JOIN lan_session_heads h2 "
+            f"ON h2.device_id=lu2.device_id AND h2.session_id=lu2.session_id "
+            f"WHERE lu2.archive_id={archive_id_sql})")
+
+
+def _legacy_sibling_sql(archive_id_sql, joins='', projection='1'):
+    """SQL: a newer archive of the same logical family exists.
+
+    Identity equality happens in SQL before any bound, so unrelated archives
+    between two versions cannot hide the newer one, and independent incremental
+    batches never match each other.
+    """
+    from evolvmem.session_identity import SQL_LOGICAL_IDENTITY
+    left = SQL_LOGICAL_IDENTITY.format(alias='sa')
+    right = SQL_LOGICAL_IDENTITY.format(alias='sb')
+    return (f"EXISTS (SELECT {projection} FROM session_archives sa JOIN session_archives sb "
+            f"ON sb.adapter=sa.adapter AND sb.id>sa.id AND {right}={left} {joins} "
+            f"WHERE sa.id={archive_id_sql})")
+
+
+def _successor_task_exists_sql(service, archive_id_sql):
+    """SQL: a task already exists for the version that supersedes this archive."""
+    conn = service.store._connection()
+    if not _table_exists(conn, 'lan_session_uploads'):
+        return _legacy_sibling_sql(
+            archive_id_sql, joins="JOIN organization_tasks st ON st.source_key='archive:'||sb.id")
+    head_link = (f"EXISTS (SELECT 1 FROM lan_session_uploads u JOIN lan_session_heads h "
+                 f"ON h.device_id=u.device_id AND h.session_id=u.session_id "
+                 f"JOIN lan_session_uploads c ON c.device_id=h.device_id AND c.session_id=h.session_id "
+                 f"AND c.sha256=h.sha256 JOIN organization_tasks st ON st.source_key='archive:'||c.archive_id "
+                 f"WHERE u.archive_id={archive_id_sql} AND h.sha256 IS NOT NULL "
+                 f"AND c.archive_id IS NOT NULL AND c.archive_id<>u.archive_id)")
+    if not _table_exists(conn, 'lan_session_heads'):
+        return _legacy_sibling_sql(
+            archive_id_sql, joins="JOIN organization_tasks st ON st.source_key='archive:'||sb.id")
+    legacy_link = _legacy_sibling_sql(
+        archive_id_sql, joins="JOIN organization_tasks st ON st.source_key='archive:'||sb.id")
+    return f"({head_link} OR ({_head_absent_sql(archive_id_sql)} AND {legacy_link}))"
+
+
+def _link_superseded_successors(service):
+    """Point already-superseded automatic tasks at their version's task, if any.
+
+    A reconciliation tick can retire a version before its successor has a task
+    (the successor arrives in the same discovery pass). Only rows whose known
+    successor **already has a task** are selected, in SQL, so a bound of
+    unlinkable rows can never starve a later link; each linked row then leaves
+    the set. A row whose version is current again is left untouched.
+    """
+    conn = service.store._connection()
+    if not _table_exists(conn, 'organization_tasks'):
+        return 0
+    eligible = _successor_task_exists_sql(service, _archive_id_sql('t'))
+    rows = conn.execute(
+        "SELECT t.id FROM organization_tasks t WHERE t.status='superseded' "
+        "AND t.superseded_by IS NULL AND t.source_key LIKE 'archive:%' AND "
+        + eligible + " ORDER BY t.id LIMIT ?", (RECONCILE_LIMIT,)).fetchall()
+    linked = 0
+    for row in rows:
+        task = conn.execute('SELECT source_key FROM organization_tasks WHERE id=?',
+                            (int(row['id']),)).fetchone()
+        if task is None:
+            continue
+        try:
+            current, successor = _version_state(service, int(task['source_key'].split(':')[1]))
+        except (ValueError, TypeError, IndexError):
+            continue
+        if current:
+            continue
+        task_id = _successor_task_id(service, successor)
+        if task_id is None:
+            continue
+        with service.store.transaction():
+            conn.execute('UPDATE organization_tasks SET superseded_by=?,updated_at=? WHERE id=?',
+                         (task_id, _now_iso(), row['id']))
+        linked += 1
+    return linked
+
+
+def _has_manual_units(conn, task_id):
+    """A human decision on any unit protects its whole task, at any status."""
+    return conn.execute(
+        "SELECT 1 FROM organization_units WHERE task_id=? AND decision='manual' LIMIT 1",
+        (int(task_id),)).fetchone() is not None
+
+
+def _downgrade_superseded_outputs(service, source_key, *, before_id):
+    """Existing stale-output policy: downgrade automatic outputs below a boundary.
+
+    Thin wrapper over ``_mark_outputs_stale`` that keeps its current-task
+    semantics for the enqueue path while letting a retirement settle the retired
+    task itself (``before_id`` is exclusive).
+    """
+    _mark_outputs_stale(service, source_key, current_task=before_id)
+
+
+def _retire_task(service, task_id, *, status, reason, successor=None):
+    """Retire one automatic task; a human decision is never touched.
+
+    The task keeps its attempt count, gets a truthful terminal status, and only
+    a ``superseded`` verdict settles its own outputs through the existing
+    stale-output policy (candidate + legacy mirror + vector sync). Nothing is
+    published or deleted.
+    """
+    if task_id is None:
+        return False
+    with service.store.transaction():
+        conn = service.store._connection()
+        row = conn.execute('SELECT * FROM organization_tasks WHERE id=?', (int(task_id),)).fetchone()
+        if row is None or row['status'] == 'superseded':
+            return False
+        if _has_manual_units(conn, task_id):
+            # A human decided units of this source: keep the visible result and
+            # its units exactly as they are, whatever the task status is.
+            return False
+        conn.execute('UPDATE organization_tasks SET status=?,error_code=?,error_detail=?,superseded_by=?,'
+                     'finished_at=?,updated_at=? WHERE id=?',
+                     (status, reason, '', successor, _now_iso(), _now_iso(), int(task_id)))
+        source_key = row['source_key']
+    if status == 'superseded' and isinstance(source_key, str):
+        _downgrade_superseded_outputs(service, source_key, before_id=int(task_id) + 1)
+    # Only finish retirement after output settlement succeeds. Shared outputs
+    # intentionally stay active; they must not keep this retired task scanning.
+    with service.store.transaction():
+        conn.execute('UPDATE organization_tasks SET stage=?,updated_at=? WHERE id=?',
+                     ('retired' if status == 'superseded' else 'done', _now_iso(), int(task_id)))
+    return True
+
+
+def _reconcile_candidates(service, *, limit):
+    """Bounded, fair candidate list for source reconciliation.
+
+    Candidates are chosen by an actionable predicate, never by raw id order
+    alone, so unrelated pending/review rows can never starve a later stale
+    source. Every candidate is one ``_settle_ineligible`` can genuinely settle
+    (or leave as a real error), and a settled row leaves the set on the next
+    tick, so repeated bounded scans keep advancing through the table. Completed
+    tasks are included while they still own an active automatic output of a
+    retired source; a task with any manual unit is never a candidate.
+    """
+    conn = service.store._connection()
+    archive_id_sql = _archive_id_sql('t')
+    not_manual = ("NOT EXISTS (SELECT 1 FROM organization_units mu WHERE mu.task_id=t.id "
+                  "AND mu.decision='manual')")
+    human_guard = ""
+    if _table_exists(conn, 'context_project_resolutions'):
+        human_guard = (" AND NOT EXISTS (SELECT 1 FROM context_project_resolutions r "
+                       "WHERE r.item_id=i.id AND r.decision_source='human')")
+    # The task's own live output. ``lt.id<>t.id`` is essential: a completed task
+    # owns its own item, so counting itself as a live owner would exclude exactly
+    # the obsolete completed automatic rows this pass must settle.
+    own_active_parts = [
+        "EXISTS (SELECT 1 FROM organization_units u JOIN context_items i ON i.id=u.item_id "
+        "WHERE u.task_id=t.id AND i.status='active' "
+        "AND NOT EXISTS (SELECT 1 FROM organization_units lu JOIN organization_tasks lt "
+        "ON lt.id=lu.task_id WHERE lu.item_id=u.item_id AND lt.status!='superseded' "
+        "AND lt.id<>t.id)" + human_guard + ")"]
+    if _table_exists(conn, 'unit_derivations'):
+        # Knowledge derivations are outputs too, not only the unit history item.
+        own_active_parts.append(
+            "EXISTS (SELECT 1 FROM unit_derivations d JOIN context_items i ON i.id=d.item_id "
+            "WHERE d.unit_task_id=t.id AND i.status='active' "
+            "AND NOT EXISTS (SELECT 1 FROM unit_derivations ld JOIN organization_tasks lt "
+            "ON lt.id=ld.unit_task_id WHERE ld.item_id=d.item_id AND lt.status!='superseded' "
+            "AND lt.id<>t.id)" + human_guard + ")")
+    own_active = "(" + " OR ".join(own_active_parts) + ")"
+    unsettled = "t.status IN ('pending','running','failed','review')"
+    params, branches = [], []
+    # A readable archive with no dialogue: one cheap one-shot skip, never a
+    # provider retry loop. Readability (ciphertext present) is re-verified by the
+    # settle step before this becomes a success.
+    branches.append(
+        f"(t.status='pending' AND t.attempts=0 AND EXISTS (SELECT 1 FROM conversation_history ch "
+        f"JOIN session_archives sav ON sav.id=ch.archive_id WHERE ch.archive_id={archive_id_sql} "
+        f"AND sav.state='available' AND trim(ch.body)=''))")
+    if _table_exists(conn, 'lan_session_uploads'):
+        from evolvmem.lan_capture import EXCLUDED_REASONS
+        excluded = ','.join('?' for _ in sorted(EXCLUDED_REASONS))
+        branches.append(
+            f"(EXISTS (SELECT 1 FROM lan_session_uploads a WHERE a.archive_id={archive_id_sql} "
+            f"AND a.attribution_reason IN ({excluded})) AND ({unsettled} OR {own_active}))")
+        params.extend(sorted(EXCLUDED_REASONS))
+        if _table_exists(conn, 'lan_session_heads'):
+            # The head pointer, not the largest archive id, decides the version.
+            branches.append(f"({_head_mismatch_sql(archive_id_sql)} AND ({unsettled} OR {own_active}))")
+        head_absent = _head_absent_sql(archive_id_sql)
+    else:
+        head_absent = "1=1"
+    # Legacy (head-less) families: the same newest-family rule the visibility
+    # oracle uses. Identity equality in SQL keeps independent incremental batches
+    # out of this branch entirely.
+    branches.append(
+        f"({head_absent} AND {_legacy_sibling_sql(archive_id_sql)} "
+        f"AND ({unsettled} OR {own_active}))")
+    sql = ("SELECT t.id,t.source_key FROM organization_tasks t WHERE t.source_key LIKE 'archive:%' "
+           "AND NOT (t.status='superseded' AND t.stage='retired') "
+           "AND " + not_manual + " AND (" + " OR ".join(branches) + ") ORDER BY t.id LIMIT ?")
+    rows = conn.execute(sql, (*params, max(1, int(limit)))).fetchall()
+    return [(row['id'], row['source_key']) for row in rows]
+
+
+def _settle_ineligible(service, task_id, source_key):
+    """Settle one task whose source is excluded, empty or superseded.
+
+    Returns ``'excluded'``, ``'no_dialogue'``, ``'superseded'`` or ``None`` when
+    the task must stay exactly as it is (manual decision, source still current,
+    or a genuinely unavailable source that remains an error). A task that is
+    already ``superseded`` only has its own automatic outputs settled, so an old
+    verdict never keeps an output eligible forever.
+    """
+    from evolvmem.history_organization import source_excluded
+    conn = service.store._connection()
+    if task_id is None or not isinstance(source_key, str) or not source_key.startswith('archive:'):
+        return None
+    row = conn.execute('SELECT id,status,stage,source_key FROM organization_tasks WHERE id=?',
+                       (int(task_id),)).fetchone()
+    if row is None:
+        return None
+    if _has_manual_units(conn, task_id):
+        # A human decided units of this source: the task, its units and its
+        # outputs all stay exactly as they are, whatever the task status is.
+        return None
+    if row['status'] == 'superseded' and row['stage'] == 'retired':
+        return None
+    try:
+        archive_id = int(source_key.split(':')[1])
+    except (ValueError, IndexError):
+        return None
+    retired = reason_for_retirement(service, source_key)
+    if row['status'] == 'superseded':
+        if retired is not None:
+            _downgrade_superseded_outputs(service, source_key, before_id=int(task_id) + 1)
+            with service.store.transaction():
+                conn.execute("UPDATE organization_tasks SET stage='retired',updated_at=? WHERE id=?",
+                             (_now_iso(), int(task_id)))
+        return None
+    if retired == 'excluded':
+        return 'excluded' if _retire_task(
+            service, task_id, status='superseded', reason='source_excluded') else None
+    if retired == 'superseded':
+        _, successor = _version_state(service, archive_id)
+        return 'superseded' if _retire_task(
+            service, task_id, status='superseded', reason='source_superseded',
+            successor=_successor_task_id(service, successor)) else None
+    if _dialogue_state(service, archive_id) == 'empty':
+        return 'no_dialogue' if _retire_task(
+            service, task_id, status='completed', reason=NO_DIALOGUE_CODE) else None
+    return None
+
+
+def reason_for_retirement(service, source_key):
+    """``'excluded'``/``'superseded'`` when this source must leave the queue."""
+    from evolvmem.history_organization import source_excluded
+    if source_excluded(service, source_key):
+        return 'excluded'
+    try:
+        archive_id = int(str(source_key).split(':')[1])
+    except (ValueError, IndexError):
+        return None
+    current, _ = _version_state(service, archive_id)
+    return None if current else 'superseded'
+
+
+def settle_ineligible_source(service, task_id, source_key):
+    """Public, model-free preflight: settle a task whose source is not eligible."""
+    try:
+        return _settle_ineligible(service, task_id, source_key) is not None
+    except Exception:
+        # A preflight failure never blocks normal organization work.
+        return False
+
+
+def reconcile_sources(service, *, limit=RECONCILE_LIMIT):
+    """Retire automatic tasks whose source is excluded, empty or superseded.
+
+    Safe and model-free: it only re-reads indexed state (and decrypts only a
+    verified-empty candidate). It is bounded per tick and its candidate
+    predicate is actionable, so repeated ticks keep covering later rows. Raw
+    archives and payloads are never deleted, a manual unit decision is never
+    overwritten, and a source that merely changed for another reason is left
+    alone.
+    """
+    conn = service.store._connection()
+    summary = {'superseded': 0, 'no_dialogue': 0, 'excluded': 0, 'linked': 0,
+               'examined': 0, 'model_calls': 0}
+    if not _table_exists(conn, 'organization_tasks'):
+        return summary
+    summary['linked'] += _link_superseded_successors(service)
+    try:
+        candidates = _reconcile_candidates(service, limit=limit)
+    except sqlite3.Error:
+        candidates = []
+    summary['examined'] = len(candidates)
+    for task_id, source_key in candidates:
+        try:
+            verdict = _settle_ineligible(service, task_id, source_key)
+        except Exception:
+            # Reconciliation is best effort: one bad source never stops the tick.
+            continue
+        if verdict in summary:
+            summary[verdict] += 1
+    # A successor task created in the same discovery pass gets its link now.
+    summary['linked'] += _link_superseded_successors(service)
+    return summary
+
+
+def link_superseded_successors(service):
+    """Public wrapper: fill in successors of already-retired source versions."""
+    return _link_superseded_successors(service)
+
+
+def repair_sources(service, *, limit=RECONCILE_LIMIT):
+    """Bounded root-controlled repair of existing automatic state; no model call."""
+    if service is None:
+        return {'skipped': 'context_mode_required', 'model_calls': 0}
+    return reconcile_sources(service, limit=limit)
 
 
 def task_detail(service, task_id):
@@ -658,19 +1233,30 @@ class OrganizationWorker:
         return True
 
     def _claim(self, service):
+        """Claim the oldest pending task, never one whose source is ineligible.
+
+        The eligibility preflight runs before the claim, so a verified system
+        source, an empty session or a retired version is settled without spending
+        an attempt or a model call. It is the race-safe twin of the idle
+        discovery reconcile and is bounded per tick.
+        """
         conn = service.store._connection()
-        with service.store.transaction():
+        for _ in range(CLAIM_PREFLIGHT_LIMIT):
             row = conn.execute(
-                "SELECT id FROM organization_tasks WHERE status='pending' ORDER BY id LIMIT 1").fetchone()
+                "SELECT id,source_key FROM organization_tasks WHERE status='pending' ORDER BY id LIMIT 1").fetchone()
             if row is None:
                 return None
-            cursor = conn.execute(
-                "UPDATE organization_tasks SET status='running',attempts=attempts+1,started_at=?,updated_at=? "
-                "WHERE id=? AND status='pending'",
-                (_now_iso(), _now_iso(), row['id']))
-            if cursor.rowcount != 1:
-                return None
-        return task_view(service, row['id'])
+            if settle_ineligible_source(service, row['id'], row['source_key']):
+                continue
+            with service.store.transaction():
+                cursor = conn.execute(
+                    "UPDATE organization_tasks SET status='running',attempts=attempts+1,started_at=?,updated_at=? "
+                    "WHERE id=? AND status='pending'",
+                    (_now_iso(), _now_iso(), row['id']))
+                if cursor.rowcount != 1:
+                    continue
+            return task_view(service, row['id'])
+        return None
 
     def _is_current(self, service, task):
         """A newer task for the same source owns the result; stale work stops."""
@@ -684,6 +1270,10 @@ class OrganizationWorker:
         try:
             if not self._is_current(service, task):
                 self._finish(service, task_id, 'superseded', 'stale', 'stale_task')
+            elif settle_ineligible_source(service, task_id, task['source_key']):
+                # A race that changed eligibility after the claim: settle it
+                # truthfully instead of calling the model.
+                return
             elif task['stage'] in ('queued', 'cleaning', 'segmentation'):
                 self._segment(service, task)
             elif task['stage'] == 'assignment':
@@ -692,13 +1282,17 @@ class OrganizationWorker:
                 self._extract_units(service, task)
             else:
                 self._finish(service, task_id, 'completed', 'done')
+        except SourceNoDialogue:
+            # No dialogue at all is a truthful skip, never a provider failure.
+            self._finish(service, task_id, 'completed', 'done', NO_DIALOGUE_CODE)
         except topic_segmentation.SegmentationError as error:
             self._fail(service, task_id, 'review', 'coverage_' + error.code if error.code in
                        ('coverage_gap', 'coverage_overlap', 'quote_not_found') else error.code,
                        error.detail)
         except ValueError as error:
             code = str(error)
-            if code in ('revision_conflict', 'cleaning_source_deleted', 'classification_no_longer_unassigned',
+            if code in ('revision_conflict', 'cleaning_source_deleted', 'cleaning_source_unavailable',
+                        'classification_no_longer_unassigned',
                         'classification_source_changed', 'invalid_items', 'extraction_provider_unavailable',
                         'organization_needs_context_mode'):
                 self._fail(service, task_id, 'review' if code == 'revision_conflict' else 'failed', code, '')
@@ -1346,6 +1940,9 @@ def dispatch(service, method, route, body):
         return correct(service, body)
     if method == 'POST' and route == '/disposition':
         return set_disposition(service, body)
+    if method == 'POST' and route == '/repair':
+        # Root-controlled bounded repair of existing automatic state; no model call.
+        return repair_sources(service, limit=min(RECONCILE_LIMIT, max(1, int(body.get('limit', RECONCILE_LIMIT) or RECONCILE_LIMIT))))
     raise LookupError('route_not_found')
 
 

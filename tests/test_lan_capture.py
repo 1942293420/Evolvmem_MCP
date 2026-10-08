@@ -392,7 +392,10 @@ def test_forked_rollout_lineage_meta_is_not_a_session_mismatch(lan):
     assert details['cwd'] == r'C:\work\demo'
     assert details['parent_session_id'] == 'parent-1'
     assert details['subagent'] is True
-    assert details['attribution_reason'] == ''
+    # A native ``source={"subagent": ...}`` session is now marked for exclusion
+    # from automatic organization instead of looking like an ordinary archive.
+    assert details['attribution_reason'] == 'subagent_session'
+    assert details['native_subagent'] is True
 
 
 def test_forked_rollout_archives_and_a_parent_still_cannot_claim_it(lan):

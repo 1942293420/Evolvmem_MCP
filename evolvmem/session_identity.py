@@ -42,3 +42,23 @@ def identity_key(adapter, external_session_id):
     """Adapter-scoped logical identity, for dedup and visibility oracles."""
     value = '' if external_session_id is None else str(external_session_id)
     return (adapter, logical_identity(adapter, value))
+
+
+# SQL mirror of :func:`logical_identity`, for candidate filtering only. SQLite
+# has no regex, so the incremental-batch shape is recognized structurally
+# (exactly two colons, a 32-character head, a range dash, and a final colon
+# before the 16-character digest). It is deliberately conservative in the safe
+# direction: what it classifies as an independent batch is never retired, and
+# anything it cannot classify keeps the session-head rule.
+SQL_LOGICAL_IDENTITY = (
+    "CASE "
+    "WHEN {alias}.adapter='codex' "
+    "AND (length({alias}.external_session_id)-length(replace({alias}.external_session_id,':','')))=2 "
+    "AND instr({alias}.external_session_id,':')=33 "
+    "AND instr(substr({alias}.external_session_id,34),'-')>0 "
+    "AND substr({alias}.external_session_id,-17,1)=':' "
+    "THEN {alias}.external_session_id "
+    "WHEN {alias}.adapter='codex' "
+    "THEN substr({alias}.external_session_id,1,instr({alias}.external_session_id||':',':')-1) "
+    "ELSE {alias}.external_session_id END"
+)

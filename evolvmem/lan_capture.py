@@ -8,12 +8,20 @@ import os
 import re
 import time
 
-from evolvmem.codex_transcript import parse_transcript, workspace_details
+from evolvmem.codex_transcript import SUBAGENT_SESSION_REASON, parse_transcript, workspace_details
 from evolvmem.lan_sharing import LanError
 from evolvmem.session_archive import SessionArchiver, AESGCM
 
 
 CAPTURE_TOOLS = frozenset({'session_archive_upload', 'session_archive_status', 'session_archive_retry', 'session_archive_assign'})
+# Attribution reasons that exclude a source from automatic organization. Only
+# native metadata decides; the archived body is never scanned for keywords.
+EXCLUDED_REASONS = frozenset({SUBAGENT_SESSION_REASON})
+
+
+def _excluded_sql():
+    """Quoted reason list for the ``attribution_reason NOT IN (...)`` guards."""
+    return ', '.join("'" + reason.replace("'", "''") + "'" for reason in sorted(EXCLUDED_REASONS)) or "''"
 
 
 def capture_specs():
@@ -213,19 +221,26 @@ class LanCapture:
             result['payload_state'] = archive['state'] if archive else 'unavailable'
         return result
 
+    @staticmethod
+    def source_excluded(row):
+        """True for a verified system sub-session: archive it, never organize it."""
+        return bool(row) and row['attribution_reason'] in EXCLUDED_REASONS
+
     def claim_pending(self):
         row = self.conn.execute('''SELECT a.* FROM lan_session_uploads a
             JOIN lan_session_heads h ON h.device_id=a.device_id AND h.session_id=a.session_id
             WHERE a.sha256=h.sha256 AND a.extraction_status='pending' AND a.archive_id IS NOT NULL
-            ORDER BY a.rowid LIMIT 1''').fetchone()
+              AND a.attribution_reason NOT IN ({})
+            ORDER BY a.rowid LIMIT 1'''.format(_excluded_sql())).fetchone()
         if row is None:
             row = self.conn.execute('''SELECT a.* FROM lan_session_uploads a
                 WHERE a.extraction_status='pending' AND a.archive_id IS NOT NULL
+                AND a.attribution_reason NOT IN ({})
                 AND NOT EXISTS (SELECT 1 FROM lan_session_heads h WHERE h.device_id=a.device_id
                     AND h.session_id=a.session_id)
                 AND NOT EXISTS (SELECT 1 FROM lan_session_uploads b WHERE b.device_id=a.device_id
                     AND b.session_id=a.session_id AND b.archive_id IS NOT NULL AND b.total_bytes>a.total_bytes)
-                ORDER BY a.rowid LIMIT 1''').fetchone()
+                ORDER BY a.rowid LIMIT 1'''.format(_excluded_sql())).fetchone()
         if row is None:
             return None
         with self.store.transaction():
@@ -239,22 +254,26 @@ class LanCapture:
             JOIN lan_session_heads h ON h.device_id=a.device_id AND h.session_id=a.session_id
             WHERE a.sha256=h.sha256 AND a.archive_id IS NOT NULL
               AND a.backfill_status='pending' AND a.received_at<=?
-            ORDER BY a.rowid LIMIT 1''', (before,)).fetchone()
+              AND a.attribution_reason NOT IN ({})
+            ORDER BY a.rowid LIMIT 1'''.format(_excluded_sql()), (before,)).fetchone()
         if row is not None:
             return row
         return self.conn.execute('''SELECT a.* FROM lan_session_uploads a
             WHERE a.archive_id IS NOT NULL AND a.backfill_status='pending' AND a.received_at<=?
+            AND a.attribution_reason NOT IN ({})
             AND NOT EXISTS (SELECT 1 FROM lan_session_heads h WHERE h.device_id=a.device_id
                 AND h.session_id=a.session_id)
             AND NOT EXISTS (SELECT 1 FROM lan_session_uploads b WHERE b.device_id=a.device_id
                 AND b.session_id=a.session_id AND b.archive_id IS NOT NULL AND b.total_bytes>a.total_bytes)
-            ORDER BY a.rowid LIMIT 1''', (before,)).fetchone()
+            ORDER BY a.rowid LIMIT 1'''.format(_excluded_sql()), (before,)).fetchone()
 
     def retry(self, args):
         identity = self._identity(args)
         row = self._current_row(identity)
         if row is None:
             raise LanError('archive_not_found')
+        if self.source_excluded(row):
+            raise LanError('archive_source_excluded')
         if not row['project']:
             raise LanError('archive_project_unassigned')
         with self.store.transaction():
@@ -268,12 +287,15 @@ class LanCapture:
     def assign(self, args):
         identity = self._identity(args)
         project = args['project']
-        known = self.conn.execute("SELECT 1 FROM context_project_registry WHERE project=? AND status='active'", (project,)).fetchone()
-        if known is None:
-            raise LanError('project_not_registered')
         row = self._current_row(identity)
         if row is None:
             raise LanError('archive_not_found')
+        if self.source_excluded(row):
+            # Exclusion is decided by the source itself, before project checks.
+            raise LanError('archive_source_excluded')
+        known = self.conn.execute("SELECT 1 FROM context_project_registry WHERE project=? AND status='active'", (project,)).fetchone()
+        if known is None:
+            raise LanError('project_not_registered')
         if row['project'] == project:
             return self.status(args)
         if row['project'] or row['extraction_status'] == 'processing':
@@ -292,6 +314,24 @@ class LanCapture:
                 (status, json.dumps(result or {}), error,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
                  row['device_id'], row['session_id'], row['sha256']))
+
+    def _clear_auto_project(self, archive_id):
+        """Blank an automatically assigned project on an excluded source.
+
+        A human-saved cleaning draft or classification (state ready/assigned) is
+        the manual decision for an archive, so it is never overwritten. Only the
+        archive project is touched; the upload row is handled by the caller.
+        """
+        if archive_id is None:
+            return False
+        saved = self.conn.execute(
+            'SELECT state FROM knowledge_cleaning_reviews WHERE source_key=?',
+            (f'archive:{archive_id}',)).fetchone()
+        if saved is not None and saved['state'] in ('ready', 'assigned'):
+            return False
+        with self.store.transaction():
+            self.conn.execute("UPDATE session_archives SET project='' WHERE id=?", (archive_id,))
+        return True
 
     def upload(self, args):
         identity = self._identity(args)
@@ -349,8 +389,9 @@ class LanCapture:
                 raise LanError('transcript_hash_mismatch')
             parsed, _ = parse_transcript(raw, identity[1])
             details = workspace_details(parsed)
-            reason = details['attribution_reason']
+            reason = details['attribution_reason'] or reason
             if reason and not archive_id:
+                # An unverifiable or system source is never attributed by default.
                 project = ''
             current = self._current_row(identity, head=head)
             if order is None:
@@ -409,6 +450,12 @@ class LanCapture:
             archive_id = archive.id
         extraction = row['extraction_status'] if row is not None else 'not_requested'
         backfill = row['backfill_status'] if row is not None else 'pending'
+        # A verified system sub-session keeps its raw archive and receipt but is
+        # never queued for extraction, backfill or unassigned classification, and
+        # its project stays blank so archive-based recall is never polluted.
+        excluded = complete and reason in EXCLUDED_REASONS
+        if excluded:
+            project = ''
         if complete and becomes_current:
             if extraction == 'superseded':
                 extraction = 'not_requested'
@@ -427,6 +474,13 @@ class LanCapture:
             extraction = 'pending' if project else 'unassigned'
         if complete and not project and extraction == 'pending':
             extraction = 'unassigned'
+        if excluded:
+            extraction, backfill = 'excluded', 'excluded'
+            # A known archive that already carried an automatic attribution keeps
+            # no project once the source is verified as a system sub-session; a
+            # human-saved cleaning decision is preserved.
+            if archive_id:
+                self._clear_auto_project(archive_id)
         with self.store.transaction():
             if order is not None and head is None:
                 # First contact with the new protocol anchors the head at the legacy
