@@ -824,3 +824,376 @@ def test_replace_failure_after_the_guard_keeps_the_old_bytes(test_config, monkey
         assert test_config.context_vector_path.read_bytes() == formal_bytes
         assert formal_dirty_path(test_config).exists()
         assert stage_leftovers(test_config) == []
+
+
+# ---- bounded catch-up: small writes during encoding are reconciled --------
+#
+# A full re-encode of a large L0 library takes minutes; continuous capture keeps
+# writing. The explicit bounded catch-up mode re-reads the eligible truth after
+# the first pass and encodes only the delta, for a bounded number of rounds. The
+# caller's snapshot guard is retired inside this mode: correctness comes from the
+# exact ID/L0 re-read that happens in the same short write transaction as the
+# swap, so the index is published only when it is byte-equivalent to committed
+# truth. Over budget, a model error, or an unstable transaction boundary keeps
+# the previous formal bytes and the durable dirty marker.
+
+
+class MutatingEngine:
+    """Deterministic encoder that commits one synthetic write on first use."""
+
+    is_loaded = True
+
+    def __init__(self, store, mutate):
+        self.store = store
+        self.mutate = mutate
+        self.documents: list[str] = []
+        self.mutated = False
+
+    def encode_document(self, text: str) -> list[float]:
+        self.documents.append(text)
+        if not self.mutated:
+            self.mutated = True
+            with self.store.transaction():
+                self.mutate(self.store)
+        vector = np.zeros(3, dtype=np.float32)
+        vector[sum(text.encode("utf-8")) % 3] = 1.0
+        return vector
+
+
+def _set_l0(store, item_id: int, l0: str) -> None:
+    with store.transaction():
+        store._connection().execute(
+            "UPDATE context_layers SET content=? WHERE item_id=? AND layer='l0'",
+            (l0, item_id),
+        )
+
+
+def _reopen_ids(test_config) -> list[int]:
+    reopened = VectorIndex(test_config, path=test_config.context_vector_path)
+    reopened.initialize(dim=test_config.embedding_dim)
+    try:
+        return reopened.ids()
+    finally:
+        reopened.close()
+
+
+def test_catch_up_encodes_an_item_added_during_the_first_encoding_pass(test_config):
+    """The reported defect: one late write no longer discards the whole rebuild."""
+    test_config.embedding_dim = 3
+
+    def add_late(store):
+        store.create_item(make_draft("late", l0="late l0"))
+
+    with ContextStore(test_config) as store:
+        early = store.create_item(make_draft("early", l0="early l0"))
+        engine = MutatingEngine(store, add_late)
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, catch_up_rounds=3
+        )
+
+        late_id = next(
+            int(document.item_id) for document in store.list_vector_documents()
+            if int(document.item_id) != early.id
+        )
+        assert report.status == "staged"
+        assert report.dirty_cleared is True
+        assert report.document_count == 2
+        assert sorted(engine.documents) == ["early l0", "late l0"]
+        assert engine.documents.count("early l0") == 1, "unchanged text is never re-encoded"
+        assert _reopen_ids(test_config) == sorted([early.id, late_id])
+        assert not formal_dirty_path(test_config).exists()
+        assert stage_leftovers(test_config) == []
+
+
+def test_catch_up_applies_a_changed_l0_and_drops_a_newly_archived_item(test_config):
+    """Changed text is re-encoded; an item that left eligibility is removed."""
+    test_config.embedding_dim = 3
+
+    def change_and_archive(store):
+        changed = store.get_by_identity("changed")[0]
+        archived = store.get_by_identity("archived")[0]
+        _set_l0(store, changed.id, "changed l0 v2")
+        store.set_item_status(archived.id, ContextStatus.ARCHIVED)
+
+    with ContextStore(test_config) as store:
+        changed = store.create_item(make_draft("changed", l0="changed l0 v1"))
+        store.create_item(make_draft("archived", l0="archived l0"))
+        engine = MutatingEngine(store, change_and_archive)
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, catch_up_rounds=3
+        )
+
+        assert report.status == "staged"
+        assert report.document_count == 1
+        assert engine.documents == ["changed l0 v1", "archived l0", "changed l0 v2"]
+        assert engine.documents.count("changed l0 v1") == 1, "unchanged rows are not re-encoded"
+        assert _reopen_ids(test_config) == [changed.id]
+        assert not formal_dirty_path(test_config).exists()
+
+
+def test_catch_up_reuses_unchanged_vectors_across_two_writes(test_config):
+    """Two separate late writes cost two extra encodes, not two full rebuilds."""
+    test_config.embedding_dim = 3
+    writes = 0
+
+    class TwoWriteEngine:
+        is_loaded = True
+
+        def __init__(self, store):
+            self.store = store
+            self.documents: list[str] = []
+
+        def encode_document(self, text: str) -> list[float]:
+            nonlocal writes
+            self.documents.append(text)
+            if writes < 2:
+                writes += 1
+                with self.store.transaction():
+                    self.store.create_item(make_draft(
+                        f"late{writes}", l0=f"late l0 {writes}"))
+            vector = np.zeros(3, dtype=np.float32)
+            vector[sum(text.encode("utf-8")) % 3] = 1.0
+            return vector
+
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("stable", l0="stable l0"))
+        engine = TwoWriteEngine(store)
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, catch_up_rounds=5
+        )
+
+        assert report.status == "staged"
+        assert report.document_count == 3
+        assert engine.documents.count("stable l0") == 1
+        assert sorted(engine.documents) == ["late l0 1", "late l0 2", "stable l0"]
+        assert _reopen_ids(test_config) == sorted(
+            int(document.item_id) for document in store.list_vector_documents()
+        )
+
+
+@pytest.mark.parametrize("drop_all", [False, True])
+@pytest.mark.parametrize("shared_cache", [False, True])
+def test_catch_up_removes_archived_rows_without_any_new_encoding(test_config, drop_all, shared_cache):
+    test_config.embedding_dim = 3
+    test_config.lan_shared_vector_cache = shared_cache
+    mark_formal_dirty(test_config)
+    with ContextStore(test_config) as store:
+        keep = store.create_item(make_draft("keep", l0="keep l0"))
+        drop = store.create_item(make_draft("drop", l0="drop l0"))
+
+        def archive_only(current_store):
+            current_store.set_item_status(drop.id, ContextStatus.ARCHIVED)
+            if drop_all:
+                current_store.set_item_status(keep.id, ContextStatus.ARCHIVED)
+
+        engine = MutatingEngine(store, archive_only)
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, catch_up_rounds=1
+        )
+        assert report.status == "staged"
+        assert _reopen_ids(test_config) == ([] if drop_all else [keep.id])
+        assert len(engine.documents) == 2
+        assert report.document_count == (0 if drop_all else 1)
+        assert not formal_dirty_path(test_config).exists()
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_bounded_single_pass_accepts_stable_or_empty_truth(test_config, empty):
+    test_config.embedding_dim = 3
+    with ContextStore(test_config) as store:
+        expected = [] if empty else [store.create_item(make_draft("one", l0="one")).id]
+        engine = DocumentEmbeddingEngine({"one": [1, 0, 0]})
+        report = rebuild_context_vector_atomically(test_config, store, engine, catch_up_rounds=1)
+        assert report.status == "staged"
+        assert _reopen_ids(test_config) == expected
+
+
+@pytest.mark.parametrize("failure", ["budget", "model"])
+def test_bounded_failure_releases_the_temporary_index(test_config, monkeypatch, failure):
+    test_config.embedding_dim = 3
+    formal_bytes = make_formal_index(test_config)
+    mark_formal_dirty(test_config)
+    created = []
+    real_index = VectorIndex
+
+    class TrackedIndex(real_index):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            if ".stage-" in str(self.path):
+                created.append(self)
+
+    monkeypatch.setattr(cutover_vector, "VectorIndex", TrackedIndex)
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("first", l0="first"))
+
+        class FailingEngine:
+            is_loaded = True
+            calls = 0
+
+            def encode_document(self, text):
+                self.calls += 1
+                if self.calls == 2 and failure == "model":
+                    raise RuntimeError("model unavailable")
+                store.create_item(make_draft(f"late-{self.calls}", l0=f"late {self.calls}"))
+                return [1, 0, 0]
+
+        report = rebuild_context_vector_atomically(test_config, store, FailingEngine(), catch_up_rounds=2)
+        assert_formal_state_preserved(test_config, report, formal_bytes)
+        assert created
+        assert all(index._index is None for index in created)
+
+
+def test_bounded_mode_retires_the_caller_guard_and_verifies_in_the_transaction(
+    test_config, monkeypatch
+):
+    """The outer snapshot guard is replaced by the in-transaction exact check.
+
+    The bounded mode never accepts a caller guard, and the swap still runs
+    inside one write transaction, so the exact re-read is what licenses the
+    marker clear.
+    """
+    test_config.embedding_dim = 3
+    formal_bytes = make_formal_index(test_config)
+    mark_formal_dirty(test_config)
+    engine = DocumentEmbeddingEngine({"l0": [1, 0, 0]})
+    transaction_depths: list[int] = []
+
+    with ContextStore(test_config) as store:
+        item = store.create_item(make_draft("active", l0="l0"))
+        real_mismatch = cutover_vector._current_staged_mismatch
+
+        def observing_mismatch(inner_store, staged, *, expected_count=None):
+            transaction_depths.append(inner_store._transaction_depth)
+            return real_mismatch(inner_store, staged, expected_count=expected_count)
+
+        monkeypatch.setattr(
+            cutover_vector, "_current_staged_mismatch", observing_mismatch
+        )
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, catch_up_rounds=1
+        )
+
+        assert report.status == "staged"
+        assert report.dirty_cleared is True
+        assert transaction_depths[-1] > 0, "the exact check runs inside the transaction"
+        assert _reopen_ids(test_config) == [item.id]
+        assert test_config.context_vector_path.read_bytes() != formal_bytes
+        assert not formal_dirty_path(test_config).exists()
+
+
+def test_bounded_mode_refuses_to_keep_a_caller_snapshot_guard(test_config):
+    """A guard pinned to the first snapshot can only refuse; the modes are exclusive."""
+    with ContextStore(test_config) as store:
+        with pytest.raises(ContextValidationError):
+            rebuild_context_vector_atomically(
+                test_config,
+                store,
+                None,
+                commit_guard=lambda: True,
+                catch_up_rounds=3,
+            )
+
+
+def test_bounded_mode_rejects_a_non_positive_round_budget(test_config):
+    with ContextStore(test_config) as store:
+        with pytest.raises(ContextValidationError):
+            rebuild_context_vector_atomically(
+                test_config, store, None, catch_up_rounds=0
+            )
+        with pytest.raises(ContextValidationError):
+            rebuild_context_vector_atomically(
+                test_config, store, None, catch_up_rounds=-1
+            )
+        with pytest.raises(ContextValidationError):
+            rebuild_context_vector_atomically(
+                test_config, store, None, catch_up_rounds=True
+            )
+
+
+def test_unstable_catch_up_budget_keeps_the_old_file_and_dirty(test_config):
+    """Every round sees a new write: bounded failure, never a stale publish."""
+    test_config.embedding_dim = 3
+    formal_bytes = make_formal_index(test_config)
+    mark_formal_dirty(test_config)
+
+    class AlwaysWritingEngine:
+        is_loaded = True
+
+        def __init__(self, store):
+            self.store = store
+            self.rounds = 0
+            self.documents: list[str] = []
+
+        def encode_document(self, text: str) -> list[float]:
+            self.documents.append(text)
+            self.rounds += 1
+            with self.store.transaction():
+                self.store.create_item(make_draft(f"churn{self.rounds}", l0=f"churn l0 {self.rounds}"))
+            return [1.0, 0.0, 0.0]
+
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("early", l0="early l0"))
+        engine = AlwaysWritingEngine(store)
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, catch_up_rounds=3
+        )
+
+        assert report.status == "failed"
+        assert report.reason_codes == ("catch_up_rounds_exhausted",)
+        assert report.vector_ready is False
+        assert report.dirty_cleared is False
+        assert test_config.context_vector_path.read_bytes() == formal_bytes
+        assert formal_dirty_path(test_config).exists()
+        assert stage_leftovers(test_config) == []
+        assert len(engine.documents) == 3, "the budget bounds the encode rounds"
+
+
+def test_a_write_that_lands_at_the_transaction_boundary_is_not_published(
+    test_config, monkeypatch
+):
+    """The final transaction re-reads truth: a new row there aborts the swap."""
+    test_config.embedding_dim = 3
+    formal_bytes = make_formal_index(test_config)
+    mark_formal_dirty(test_config)
+    engine = DocumentEmbeddingEngine({"early l0": [1, 0, 0]})
+    replace_attempts: list[str] = []
+
+    with ContextStore(test_config) as store:
+        store.create_item(make_draft("early", l0="early l0"))
+        real_transaction = store.transaction
+        injected = [False]
+
+        def boundary_transaction():
+            # The narrow window the final transaction must close: a legal write
+            # commits after the last unlocked read but before the swap's read.
+            if not injected[0]:
+                injected[0] = True
+                with real_transaction():
+                    store.create_item(make_draft("boundary", l0="boundary l0"))
+            return real_transaction()
+
+        def recording_replace(src, dst):
+            replace_attempts.append(str(dst))
+            raise AssertionError("the swap must not run against stale truth")
+
+        monkeypatch.setattr(store, "transaction", boundary_transaction)
+        monkeypatch.setattr(cutover_vector.os, "replace", recording_replace)
+
+        report = rebuild_context_vector_atomically(
+            test_config, store, engine, catch_up_rounds=3
+        )
+
+        assert replace_attempts == [], "a stale image must never reach os.replace"
+        assert report.status == "failed"
+        assert report.reason_codes == ("source_changed_during_rebuild",)
+        assert report.dirty_cleared is False
+        assert test_config.context_vector_path.read_bytes() == formal_bytes
+        assert formal_dirty_path(test_config).exists()
+        assert stage_leftovers(test_config) == []
+        # The database truth still holds both records.
+        assert len(store.list_vector_documents()) == 2

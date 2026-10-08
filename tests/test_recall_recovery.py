@@ -667,45 +667,181 @@ def test_recovery_rejects_an_index_pointing_at_the_legacy_cache(test_config):
         legacy_index.close()
 
 
-def test_recovery_keeps_dirty_when_sqlite_truth_moves_during_encoding(test_config):
-    """A write during encoding invalidates the snapshot that was encoded."""
+def test_recovery_catches_up_a_small_write_that_lands_during_encoding(service):
+    """The reported blockage: one late write no longer wastes the whole rebuild.
+
+    Continuous capture keeps committing while a large L0 library is encoded.
+    The bounded catch-up re-reads truth, encodes only the new row, and publishes
+    once the final transaction agrees with SQLite — so the durable dirty marker
+    clears instead of staying stuck forever. The new row is then actually
+    retrievable through the same serving path that was blocked.
+    """
+    from evolvmem.context_models import ContextMode, ContextSearchRequest
     from evolvmem.recall_recovery import recover_context_vector
 
-    test_config.embedding_dim = 3
+    store = service.store
 
     class WritingEngine(CountingEngine):
         def __init__(self, store):
-            super().__init__()
+            super().__init__(dim=service.config.embedding_dim)
             self.store = store
 
         def encode_document(self, text):
             if not self.documents:
                 # The first encode reproduces "a new write lands mid-rebuild".
                 _make_store_item(
-                    test_config, self.store, identity_key='late:writer', l0='late l0')
+                    service.config, self.store, identity_key='late:writer',
+                    l0='late writer l0', project='evo')
                 # The writer also updates its own Context vector, as production
                 # does after a commit: the marker stays until a rebuild agrees.
             return super().encode_document(text)
 
+    early = _make_store_item(
+        service.config, store, identity_key='early:one', l0='early recovery l0',
+        project='evo')
+    service.embedding_engine = CountingEngine(dim=service.config.embedding_dim)
+    service.retriever.embedding_engine = service.embedding_engine
+    index = service.vector_index
+    index.initialize(dim=service.config.embedding_dim)
+    index.mark_dirty()
+    engine = WritingEngine(store)
+
+    report = recover_context_vector(service.config, store, index, engine)
+
+    late_id = next(
+        doc.item_id for doc in store.list_vector_documents()
+        if doc.item_id != early.id)
+    assert report.status == 'recovered'
+    assert report.dirty is False
+    assert report.document_count == 2
+    assert index.is_dirty() is False
+    assert index.ids() == sorted([early.id, late_id])
+    assert engine.documents.count('early recovery l0') == 1, 'unchanged rows are not re-encoded'
+
+    # The catch-up row is served, not merely indexed.
+    service._mode = ContextMode.PRIMARY
+    service._refresh_health()
+    results = service.search(ContextSearchRequest(
+        query='late writer l0', project='evo'))
+    assert late_id in {result.id for result in results}
+
+
+def test_recovery_re_encodes_only_the_changed_l0_and_drops_the_archived_item(
+        service):
+    """Unchanged documents are reused; changed and archived rows are fixed."""
+    from evolvmem.recall_recovery import recover_context_vector
+
+    store = service.store
+    original_l0 = 'reconcile l0'
+
+    class ReconcileEngine(CountingEngine):
+        def __init__(self, store, changed_id, archived_id):
+            super().__init__(dim=service.config.embedding_dim)
+            self.store = store
+            self.changed_id = changed_id
+            self.archived_id = archived_id
+
+        def encode_document(self, text):
+            if not self.documents:
+                # A second writer changes one row and archives another while the
+                # first pass is still encoding.
+                with self.store.transaction():
+                    self.store._connection().execute(
+                        "UPDATE context_layers SET content=? "
+                        "WHERE item_id=? AND layer='l0'",
+                        ('reconcile l0 v2', self.changed_id))
+                    self.store.set_item_status(self.archived_id, ContextStatus.ARCHIVED)
+            return super().encode_document(text)
+
+    changed = _make_store_item(
+        service.config, store, identity_key='reconcile:changed', l0=original_l0,
+        project='evo')
+    archived = _make_store_item(
+        service.config, store, identity_key='reconcile:archived', l0='archived l0',
+        project='evo')
+    index = service.vector_index
+    index.initialize(dim=service.config.embedding_dim)
+    index.mark_dirty()
+    engine = ReconcileEngine(store, changed.id, archived.id)
+
+    report = recover_context_vector(service.config, store, index, engine)
+
+    assert report.status == 'recovered'
+    assert report.document_count == 1
+    assert engine.documents == [original_l0, 'archived l0', 'reconcile l0 v2']
+    assert engine.documents.count('archived l0') == 1, 'only the changed row is re-encoded'
+    assert index.ids() == [changed.id]
+    assert archived.id not in index.ids()
+
+
+def test_recovery_bounded_catch_up_keeps_dirty_when_the_budget_is_exhausted(
+        test_config):
+    """Truth that keeps moving through every round fails bounded and visible."""
+    from evolvmem.recall_recovery import recover_context_vector
+
+    test_config.embedding_dim = 3
+
+    class AlwaysWritingEngine(CountingEngine):
+        def __init__(self, store):
+            super().__init__()
+            self.store = store
+
+        def encode_document(self, text):
+            if not self.documents:
+                # Seed the very first item through the same path the caller uses.
+                _make_store_item(
+                    test_config, self.store, identity_key='churn:seed', l0='seed l0')
+            else:
+                _make_store_item(
+                    test_config, self.store,
+                    identity_key=f'churn:{len(self.documents)}',
+                    l0=f'churn l0 {len(self.documents)}')
+            return super().encode_document(text)
+
     with ContextStore(test_config) as store:
-        _make_store_item(test_config, store, identity_key='early:one', l0='early l0')
+        _make_store_item(test_config, store, identity_key='churn:initial', l0='initial l0')
+        index = VectorIndex(test_config, path=test_config.context_vector_path)
+        index.initialize(dim=3)
+        index.add(999, np.array([1.0, 0.0, 0.0], dtype=np.float32))
+        index.save()
+        index.clear_dirty()
+        index.mark_dirty()
+        engine = AlwaysWritingEngine(store)
+
+        report = recover_context_vector(
+            test_config, store, index, engine, catch_up_rounds=3)
+
+        assert report.status == 'failed'
+        assert report.reason_codes == ('catch_up_rounds_exhausted',)
+        assert report.dirty is True
+        assert report.attempted is True
+        assert index.is_dirty() is True
+        assert index.ids() == [999], 'the previous usable cache must survive'
+        assert len(engine.documents) == 3, 'the budget bounds the encode rounds'
+
+        reopened = VectorIndex(test_config, path=test_config.context_vector_path)
+        reopened.initialize(dim=3)
+        assert reopened.ids() == [999]
+        reopened.close()
+        index.close()
+
+
+def test_recovery_rejects_a_non_positive_catch_up_budget(test_config):
+    from evolvmem.recall_recovery import recover_context_vector
+
+    test_config.embedding_dim = 3
+    with ContextStore(test_config) as store:
+        _make_store_item(test_config, store, identity_key='budget:one', l0='budget l0')
         index = VectorIndex(test_config, path=test_config.context_vector_path)
         index.initialize(dim=3)
         index.mark_dirty()
 
-        report = recover_context_vector(test_config, store, index, WritingEngine(store))
-
-        assert report.status == 'failed'
-        assert report.reason_codes == ('source_changed_during_rebuild',)
-        assert report.dirty is True
-        assert index.is_dirty() is True
-
-        # The next attempt sees stable truth and finally recovers.
-        stable = recover_context_vector(test_config, store, index, CountingEngine())
-        assert stable.status == 'recovered'
-        assert index.is_dirty() is False
-        assert index.ids() == sorted(
-            doc.item_id for doc in store.list_vector_documents())
+        with pytest.raises(ValueError):
+            recover_context_vector(
+                test_config, store, index, CountingEngine(), catch_up_rounds=0)
+        with pytest.raises(ValueError):
+            recover_context_vector(
+                test_config, store, index, CountingEngine(), catch_up_rounds=True)
         index.close()
 
 

@@ -18,8 +18,12 @@ Two independent, opt-in repairs live here:
   embedding engine was not loaded when a legal write landed keeps
   ``context_vector_dirty`` until something rebuilds the cache. A bounded,
   low-frequency loop reuses the shared engine and the existing atomic staging
-  rebuild, and only clears the marker when the SQLite snapshot it encoded is
-  still the current one.
+  rebuild in its bounded catch-up mode: after the first full pass, small writes
+  that landed while the model was encoding are reconciled by encoding only the
+  added or changed L0 documents, and the marker is cleared only when the exact
+  encoded ID/L0 set still matches committed SQLite truth inside the swap
+  transaction. A budget exhausted by continuous change stays a visible failure
+  and keeps the marker.
 
 Neither path adds a service, a dependency, or a second model. SQLite stays the
 truth; vector files stay disposable caches.
@@ -396,6 +400,11 @@ def apply_projection_status_recovery(
 
 # ---- stuck Context vector dirty marker ---------------------------------------
 
+# How many total encode passes (including the full first pass) may reconcile rows
+# that land while the model encodes. Small enough to stay a bounded repair, large
+# enough to absorb the writes of a continuously capturing service.
+_DEFAULT_CATCH_UP_ROUNDS = 3
+
 
 @dataclass(frozen=True, slots=True)
 class VectorSourceSnapshot:
@@ -470,16 +479,27 @@ def recover_context_vector(
     embedding_engine,
     *,
     force: bool = False,
+    catch_up_rounds: int = _DEFAULT_CATCH_UP_ROUNDS,
 ) -> VectorRecoveryReport:
-    """Rebuild one Context vector cache behind a truth-snapshot guard.
+    """Rebuild one Context vector cache with a bounded catch-up.
 
-    The rebuild reuses the atomic stager: a new image is built beside the
-    formal file and swapped only after exact verification. The dirty marker is
-    cleared only when the encoded snapshot is still the current SQLite truth;
-    a mid-rebuild write or an encode failure keeps the marker and the previous
-    readable image so the next bounded attempt can retry.
+    The rebuild reuses the atomic stager in its bounded catch-up mode: a new
+    image is built beside the formal file, small writes that land while the
+    model encodes are reconciled by bounded delta rounds, and the image is
+    published only after the exact encoded ID/L0 set is re-read inside the same
+    short write transaction as the swap. The dirty marker is cleared only when
+    that transaction agrees with SQLite; an exhausted catch-up budget or an
+    encode failure keeps the marker and the previous readable image so the next
+    bounded attempt can retry.
+
+    A guard pinned to the first snapshot is deliberately not passed here: it
+    could only ever refuse the whole rebuild once continuous capture writes.
+    ``catch_up_rounds`` bounds total encode passes, including the first; it must be a
+    positive integer.
     """
     _validate(config, store)
+    if type(catch_up_rounds) is not int or catch_up_rounds < 1:
+        raise ValueError("catch_up_rounds must be a positive integer")
     if index.path != config.context_vector_path.resolve():
         return VectorRecoveryReport(
             status="failed",
@@ -512,12 +532,11 @@ def recover_context_vector(
             reason_codes=("engine_unavailable",),
         )
 
-    snapshot = snapshot_vector_documents(store)
     stage = rebuild_context_vector_atomically(
         config,
         store,
         embedding_engine,
-        commit_guard=lambda: source_snapshot_unchanged(store, snapshot),
+        catch_up_rounds=catch_up_rounds,
     )
     if stage.status == "staged":
         # When this object is not backed by the shared cache, release its stale
