@@ -156,6 +156,11 @@ def test_owner_login_retains_editing_and_logout_revokes_session(protected_web):
     me = browser.login()
     assert me["can_write"] is True and me["role"] == "owner"
     assert me["name"] == "本人"
+    for path, expected_type in (("/workflow.css", "text/css"),
+                                ("/workflow-overview.js", "javascript")):
+        status, asset_headers, body = browser.request(path)
+        assert status == 200 and expected_type in asset_headers["Content-Type"]
+        assert "<html" not in body.lower()
     assert "test-secret" not in json.dumps(me) and "access_token" not in me
     headers = {"X-CSRF-Token": me["csrf_token"]}
     assert browser.request(f"/api/memory/{ids['warm']}/update", "POST",
