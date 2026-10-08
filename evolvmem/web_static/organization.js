@@ -3,7 +3,7 @@
   // One live instance at a time. A detach invalidates the old polling chain, so
   // navigating between views cannot leave detached timers or stale drafts.
   let active = null;
-  window.EvolvOrganization = {async render({mount, api, esc, toast, projects, onDirty, onBusy}) {
+  window.EvolvOrganization = {async render({mount, api, esc, toast, projects, onDirty, onBusy, initialTab="review", onTab=()=>{}}) {
   const token = {};
   active = {mount, token};
   const [queue, guidance, settings] = await Promise.all([
@@ -54,7 +54,9 @@
       : '<span class="badge green">已归档</span>';
   }
   let tasks = queue.items, current = new Set(queue.current_task_ids || []), busy = false;
-  let guidanceRows = guidance.items, arrival = settings, total = queue.total || 0, page = 1, filter = 'current';
+  let guidanceRows = guidance.items, arrival = settings, total = queue.total || 0, page = 1, filter = 'review';
+  let tab='review', loadSequence=0;
+  const tabs={review:'待你判断',failed:'系统问题',completed:'已完成',history:'进度历史',guidance:'我的指导',all:'运行记录'};
   const counts = queue.counts || {};
   const open = new Map(), drafts = new Map(), errors = new Map(), selected = new Set();
   const $ = s => mount.querySelector(s);
@@ -65,13 +67,30 @@
   let groupDirty = false;
   const dirty = () => onDirty(drafts.size > 0 || groupDirty);
   function notice(t){$('#org-notice').textContent = t;}
-  mount.innerHTML = `<section class="panel organization-panel"><div class="section-head"><div><h2>自动整理</h2><p class="hint">后台按来源版本处理：整篇分段 → 项目归属 → 写入项目历史与候选。可以离开本页，稍后回来查看结果。</p></div><div class="actions"><button data-org-action="refresh">刷新</button><button class="write" data-org-action="retry-failed">重试全部失败</button><button class="write" data-org-action="backlog">整理待处理资料</button><a href="#knowledge/cleaning" data-view="cleaning">前往数据清洗 ↗</a></div></div>
-  <div class="organization-settings"><label class="extraction-choice"><input type="checkbox" data-org-arrival ${arrival.auto_new?'checked':''}>自动处理新资料（只处理开启后新到的来源，历史存量请用“整理待处理资料”）</label><span class="hint" id="org-arrival-state">${arrival.auto_new?'已开启，后台会持续发现新来源。':'已关闭，排队中的任务不受影响。'}</span></div>
-  <p class="hint" id="org-local-capture" role="status"><span id="org-local-capture-message">本机采集状态读取中。</span> <span id="org-local-capture-state"></span></p>
-  <div id="org-metrics"></div><div id="org-review-groups"></div><p id="org-notice" role="status"></p><div id="org-tasks"></div>
-  <div class="organization-pager"><label for="org-filter">筛选</label><select id="org-filter"><option value="current">当前结果</option><option value="pending">等待处理</option><option value="running">处理中</option><option value="completed">已完成</option><option value="review">待确认</option><option value="failed">失败</option><option value="superseded">已被替代</option><option value="all">全部</option></select><span id="org-page"></span><button data-org-action="previous">上一页</button><button data-org-action="next">下一页</button></div></section>
-  <section class="panel organization-guidance"><div class="section-head"><div><h2>我的整理指导</h2><p class="hint">默认“仅本次”；明确选择“以后同类适用”的指导才会应用到后续匹配单元。条件太宽泛的指导会保留为建议，不会自动套用。可随时停用。</p></div></div><div id="org-guidance"></div></section>`;
-  await EvolvReviewGroups.render({mount:$('#org-review-groups'),api,esc,projects,onBusy,
+  mount.innerHTML = `<section class="panel organization-panel">
+  <div class="organization-topbar"><span id="org-arrival-state">${arrival.auto_new?'自动处理已开启':'自动处理已暂停'}</span><div class="actions"><button data-org-action="refresh">刷新状态</button><details class="organization-options"><summary>处理设置</summary><div class="organization-settings"><label class="extraction-choice"><input type="checkbox" data-org-arrival ${arrival.auto_new?'checked':''}>自动处理新资料</label><button class="write" data-org-action="backlog">补跑存量资料（每次 20 份）</button></div></details></div></div>
+  <nav class="organization-tabs" role="tablist" aria-label="整理工作区">${Object.entries(tabs).map(([key,label])=>`<button role="tab" id="org-tab-${key}" aria-controls="org-pane-${key}" aria-selected="${key==='review'}" data-org-tab="${key}">${label}</button>`).join('')}</nav>
+  <p id="org-notice" role="status"></p>
+  <section data-org-pane="review" id="org-pane-review" role="tabpanel" aria-labelledby="org-tab-review"><div class="review-decision-notice"><strong>只处理系统无法确定的资料</strong><div class="actions"><a href="#knowledge/qa">问答内容核对 →</a><a href="#knowledge/intake">存量资料待确认 →</a></div></div><div id="org-review-groups"></div></section>
+  <section data-org-pane="failed" id="org-pane-failed" role="tabpanel" aria-labelledby="org-tab-failed" hidden><div class="review-decision-notice"><strong>处理失败，无需重新判断项目</strong><button class="write" data-org-action="retry-failed">重试本页失败任务</button></div></section>
+  <section data-org-pane="completed" id="org-pane-completed" role="tabpanel" aria-labelledby="org-tab-completed" hidden><div class="actions"><strong>结果已保存，无需再次审核</strong><a href="#knowledge/projects">查看项目历史 →</a><a href="#knowledge/qa">查看可用知识 →</a></div></section>
+  <section data-org-pane="history" id="org-pane-history" role="tabpanel" aria-labelledby="org-tab-history" hidden><div id="org-history-mount"></div></section>
+  <section data-org-pane="guidance" id="org-pane-guidance" role="tabpanel" aria-labelledby="org-tab-guidance" hidden><section class="organization-guidance"><h2>我的整理指导</h2><div id="org-guidance"></div></section></section>
+  <section data-org-pane="all" id="org-pane-all" role="tabpanel" aria-labelledby="org-tab-all" hidden><p id="org-local-capture" role="status"><span id="org-local-capture-message">读取采集状态…</span> <span id="org-local-capture-state"></span></p><details><summary>效果与抽检</summary><div id="org-metrics"></div></details></section>
+  <details class="organization-detail-tools" id="org-task-region"><summary id="org-task-summary">逐条判断</summary><div id="org-tasks"></div><div class="organization-pager"><label for="org-filter">状态</label><select id="org-filter"><option value="current">当前记录</option><option value="pending">排队中</option><option value="running">处理中</option><option value="completed">已完成</option><option value="review">待判断</option><option value="failed">处理失败</option><option value="superseded">已替代</option><option value="all">全部记录</option></select><span id="org-page"></span><button data-org-action="previous">上一页</button><button data-org-action="next">下一页</button></div></details></section>`;
+  async function selectTab(value){
+    const next=Object.hasOwn(tabs,value)?value:'review';tab=next;
+    mount.querySelectorAll('[data-org-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.orgTab===tab)));
+    mount.querySelectorAll('[data-org-pane]').forEach(p=>p.hidden=p.dataset.orgPane!==tab);
+    $('#org-task-region').hidden=['history','guidance'].includes(tab);
+    $('#org-task-region').open=tab!=='review'||open.size>0;
+    $('#org-task-summary').textContent=tab==='review'?'逐条判断与修改':'处理记录';
+    filter=({review:'review',failed:'failed',completed:'completed'})[tab]||'current';page=1;
+    onTab(tab);await load();
+  }
+  mount.addEventListener('click',e=>{const b=e.target.closest('[data-org-tab]');if(!b||busy)return;e.preventDefault();selectTab(b.dataset.orgTab).catch(error=>notice(errorText(error.message)));});
+  const groupHandle=await EvolvReviewGroups.render({mount:$('#org-review-groups'),historyMount:$('#org-history-mount'),api,esc,projects,onBusy,
+    onTask:async id=>{await selectTab('review');const detail=await api('organization/detail?'+new URLSearchParams({task_id:id}));if(!tasks.some(t=>t.id===id))tasks.unshift(detail);if(detail.source_current)current.add(id);else current.delete(id);open.set(id,detail.units||[]);draw();$('#org-task-region').open=true;$(`[data-org-task="${id}"]`)?.scrollIntoView({block:'start',behavior:'smooth'});},
     onDirty:value=>{groupDirty=value;dirty();},onSaved:async()=>{guidanceRows=(await api('organization/guidance')).items;await load();drawGuidance();}});
   async function loadMetrics(){try{$('#org-metrics').innerHTML=EvolvOrganizationMetrics.html(await api('organization/metrics'),esc);}catch(error){$('#org-metrics').textContent='整理效果暂不可用，可刷新重试。';}}
   await loadMetrics();
@@ -80,8 +99,9 @@
     const failed = task.status === 'failed';
     const pendingDrafts = rows.filter(u => drafts.has(`${task.id}:${u.digest}`) && selected.has(`${task.id}:${u.digest}`)).length;
     return `<article class="organization-task ${stale?'is-stale':''}" data-org-task="${task.id}" data-org-review="${task.review_count}">
-   <div class="section-head"><div><strong>${esc(task.source_title || task.source_key)}</strong> <span class="badge ${task.status==='completed'?'green':task.status==='review'?'amber':task.status==='failed'?'red':''}">${statusText[task.status]||esc(task.status)}</span> <small>${esc(task.source_key)} · 阶段：${stageText[task.stage]||esc(task.stage)} · 单元 ${task.unit_count} · 待确认 ${task.review_count} · 尝试 ${task.attempts}</small></div><div class="actions">${open.has(task.id)&&pendingDrafts?`<button class="primary write" data-org-action="correct-selected" data-id="${task.id}">保存所选 ${pendingDrafts} 条</button>`:''}<button data-org-action="toggle" data-id="${task.id}">${open.has(task.id)?'收起':'查看单元'}</button>${failed?`<button class="write" data-org-action="retry" data-id="${task.id}">重试</button><button data-org-action="resegment" data-id="${task.id}">重新分段</button>`:''}</div></div>
-   ${task.error_code?`<p class="error" role="alert">${esc(errorText(task.error_code))}${task.error_detail?'：'+esc(task.error_detail):''}</p>`:''}
+   <div class="section-head"><div><strong>${esc(task.source_title || '未命名资料')}</strong> <span class="badge ${task.status==='completed'?'green':task.status==='review'?'amber':task.status==='failed'?'red':''}">${statusText[task.status]||esc(task.status)}</span> <span class="task-stage">${stageText[task.stage]||esc(task.stage)} · ${task.unit_count} 个片段${task.review_count?` · ${task.review_count} 个待判断`:''}</span></div><div class="actions">${open.has(task.id)&&pendingDrafts?`<button class="primary write" data-org-action="correct-selected" data-id="${task.id}">保存所选 ${pendingDrafts} 条</button>`:''}<button data-org-action="toggle" data-id="${task.id}">${open.has(task.id)?'收起':'查看结果'}</button>${failed?`<button class="write" data-org-action="retry" data-id="${task.id}">重试</button><button data-org-action="resegment" data-id="${task.id}">重新分段</button>`:''}</div></div>
+   ${task.error_code?`<p class="error" role="alert">${esc(({extraction_failed:'知识提炼未完成',extraction_summary_missing:'提炼结果缺少摘要'})[task.error_code]||errorText(task.error_code))}</p>`:''}
+   <details class="task-diagnostics"><summary>来源与处理详情</summary><p>${esc(task.source_key)} · 尝试 ${task.attempts} 次</p>${task.error_detail?`<p>${esc(task.error_detail)}</p>`:''}</details>
    ${stale?'<p class="hint">这是旧版本结果，仅供参考；最新结果见当前列表中的任务。</p>':''}
    ${open.has(task.id)?`<div class="organization-units">${rows.length?unitGroups(task,rows):'<p class="hint">暂无单元。</p>'}</div>`:''}
   </article>`;
@@ -90,10 +110,10 @@
     // Grouping is only a convenience: every item keeps its own decision and save.
     const order = [['review','待确认（需要你决定）'],['auto','自动归属'],['manual','人工已确认'],['aside','已暂存（可恢复）'],['history','仅留历史（可恢复处理）']];
     return order.map(([decision,label]) => {
-      const group = rows.filter(unit => decision==='history' ? unit.disposition==='history_only' : decision==='aside' ? unit.disposition==='set_aside' : !['set_aside','history_only'].includes(unit.disposition) && (decision==='review' ? unit.decision==='review'||!unit.project : unit.decision===decision&&unit.project));
+      const group = rows.filter(unit => decision==='history' ? unit.disposition==='history_only' : decision==='aside' ? unit.disposition==='set_aside' : !['set_aside','history_only'].includes(unit.disposition) && (decision==='review' ? unit.decision==='review'||unit.disposition==='review'||!unit.project : unit.disposition!=='review'&&unit.decision===decision&&unit.project));
       if(!group.length) return '';
       const heading = `<div class="organization-group-head"><strong>${label} · ${group.length} 条</strong>${decision==='review'?`<span class="actions"><label>批量选择项目<select data-org-group-project="${task.id}"><option value="">不批量改</option>${projects.filter(p=>p.status==='active').map(p=>`<option value="${esc(p.project)}">${esc(p.display_name||p.project)}</option>`).join('')}</select></label><button class="write" data-org-action="stage-group" data-id="${task.id}">应用到本组所选</button><label class="extraction-choice"><input type="checkbox" data-org-select-group="${task.id}">选择本组全部</label></span>`:''}</div>`;
-      return `<section class="organization-group" data-org-group="${decision}">${heading}${group.map(unitRow).join('')}</section>`;
+      return decision==='review'?`<section class="organization-group" data-org-group="${decision}">${heading}${group.map(unitRow).join('')}</section>`:`<details class="organization-group" data-org-group="${decision}"><summary>${label} · ${group.length} 条</summary>${group.map(unitRow).join('')}</details>`;
     }).join('');
   }
   const extractionText={pending:'待提炼',running:'提炼中',done:'已提炼',skipped:'无需重复提炼',failed:'提炼失败'};
@@ -103,26 +123,26 @@
     const aside = unit.disposition === 'set_aside', historyOnly = unit.disposition === 'history_only';
     const ctx = unit.context && unit.context.state === 'ready' ? unit.context : null;
     return `<div class="organization-unit ${unit.decision==='manual'?'is-manual':''} ${aside?'is-aside':''}" data-org-unit="${esc(unit.digest)}">
-   <div class="section-head"><div><label class="extraction-choice"><input type="checkbox" data-org-select-unit="${key}" ${selected.has(key)?'checked':''} aria-label="选择 ${esc(unit.title)}"> <strong>${esc(unit.title)}</strong></label> <small>${esc(({habit:'长期习惯',project_convention:'项目约定',task_requirement:'任务要求',environment:'环境事实',decision:'决策依据',experience:'技术经验',reference:'参考资料'})[unit.category]||unit.category)} · ${historyOnly?'仅留历史':unit.decision==='manual'?'人工已确认':unit.decision==='auto'?'自动归属':'待确认'} · 提炼：${historyOnly?'无需提炼，可恢复':extractionText[unit.extraction_stage]||esc(unit.extraction_stage)}${unit.extraction_error?'（'+esc(unit.extraction_error)+'）':''} · 位置 ${unit.source_start}-${unit.source_end}</small>${aside?' <span class="badge">已暂存，不进入当前历史</span>':''}</div><span>${esc(unit.project?name(unit.project):'未归属')}</span></div>
-   <p class="organization-reason">${esc(unit.reason)}</p>
-   ${unit.diagnostic_text?`<p class="error">${esc(unit.diagnostic_text)}</p>`:''}
-   <div class="actions"><small>抽检本条整理判断${unit.feedback?` · 已标记${unit.feedback==='correct'?'正确':'有误'}`:''}</small><button data-org-action="feedback" data-verdict="correct" data-key="${key}" data-revision="${esc(unit.revision)}">判断正确</button><button data-org-action="feedback" data-verdict="incorrect" data-key="${key}" data-revision="${esc(unit.revision)}">判断有误</button></div>
-   ${ctx?`<p class="organization-reason organization-context">同会话前文依据：${esc(ctx.source_key)}（第 ${esc(String(ctx.start_line))}-${esc(String(ctx.end_line))} 行）已确认 ${esc(name(ctx.project))}，原话「${esc(ctx.quote||'')}」；本批引用仍只取本批正文。</p>`:''}
-   <blockquote class="organization-quote">${esc(unit.evidence_quote||unit.text.slice(0,120))}</blockquote>
+   <div class="section-head"><div><label class="extraction-choice"><input type="checkbox" data-org-select-unit="${key}" ${selected.has(key)?'checked':''} aria-label="选择 ${esc(unit.title)}"> <strong>${esc(unit.title)}</strong></label> <span class="unit-category">${esc(({habit:'长期习惯',project_convention:'项目约定',task_requirement:'任务要求',environment:'环境事实',decision:'决策依据',experience:'技术经验',reference:'参考资料'})[unit.category]||unit.category)} · ${historyOnly?'仅留历史':unit.decision==='manual'?'人工已确认':unit.decision==='auto'?'自动归属':'待确认'} · 提炼：${historyOnly?'无需提炼，可恢复':extractionText[unit.extraction_stage]||esc(unit.extraction_stage)}${unit.extraction_error?'（'+esc(unit.extraction_error)+'）':''}</span>${aside?' <span class="badge">已暂存，不进入当前历史</span>':''}</div><span>${esc(unit.project?name(unit.project):'未归属')}</span></div>
+   <div class="review-evidence-grid"><section><span class="review-question-label">${unit.decision==='review'||unit.disposition==='review'?'为什么需要你':'整理依据'}</span><p class="organization-reason">${esc(unit.disposition==='review'?unit.disposition_reason||unit.reason:unit.reason)}</p></section><section><span class="review-question-label">当前判断</span><p>${esc(unit.project?name(unit.project):'尚未确定所属项目')}</p></section></div>
+   ${unit.diagnostic_text?`<details><summary>查看失败详情</summary><p class="error">${esc(unit.diagnostic_text)}</p></details>`:''}
+   <details class="optional-check"><summary>抽检反馈（可选）</summary><div class="actions"><span>整理判断${unit.feedback?` · 已标记${unit.feedback==='correct'?'正确':'有误'}`:''}</span><button data-org-action="feedback" data-verdict="correct" data-key="${key}" data-revision="${esc(unit.revision)}">判断正确</button><button data-org-action="feedback" data-verdict="incorrect" data-key="${key}" data-revision="${esc(unit.revision)}">判断有误</button></div></details>
+   ${ctx?`<p class="organization-reason organization-context">前文已确认项目：${esc(name(ctx.project))}，原话「${esc(ctx.quote||'')}」</p>`:''}
+   <span class="review-example-label">关键原话</span><blockquote class="organization-quote">${esc(unit.evidence_quote||unit.text.slice(0,120))}</blockquote>
    <details><summary>查看原文片段（${unit.source_end-unit.source_start} 字）</summary><pre class="organization-text">${esc(unit.text)}</pre></details>
-   <div class="organization-correct">
-    <label>改为项目<select data-org-project="${key}" aria-label="改为项目">${'<option value="">保持未归属</option>'+projects.filter(p=>p.status==='active').map(p=>`<option value="${esc(p.project)}" ${p.project===(draft?.project??unit.project)?'selected':''}>${esc(p.display_name||p.project)}</option>`).join('')}</select></label>
-    <label>整理指导（普通语言）<input data-org-guidance="${key}" maxlength="200" placeholder="例如：这类导出要求属于 Evo 项目" value="${esc(applied)}"></label>
+   <details class="unit-decision" ${unit.decision==='review'||unit.disposition==='review'?'open':''}><summary>${unit.decision==='review'||unit.disposition==='review'?'你的决定':'修改整理结果'}</summary><div class="organization-correct">
+    <label>所属项目<select data-org-project="${key}" aria-label="所属项目">${'<option value="">保持未归属</option>'+projects.filter(p=>p.status==='active').map(p=>`<option value="${esc(p.project)}" ${p.project===(draft?.project??unit.project)?'selected':''}>${esc(p.display_name||p.project)}</option>`).join('')}</select></label>
+    <label>补充指导（可选）<input data-org-guidance="${key}" maxlength="200" placeholder="例如：这类导出要求属于 Evo 项目" value="${esc(applied)}"></label>
     <label>适用范围<select data-org-scope="${key}" aria-label="适用范围"><option value="batch" ${draft?.scope!=='future'?'selected':''}>仅本次</option><option value="future" ${draft?.scope==='future'?'selected':''}>以后同类适用</option></select></label>
-    ${draft?.scope==='future'?`<label>适用条件<input data-org-condition="${key}" maxlength="200" placeholder="例如：讨论导出时（条件太宽泛只会保存为建议）" value="${esc(draft?.condition||'')}"></label><label>例外<input data-org-exceptions="${key}" maxlength="200" placeholder="例如：已登记其他项目时除外；多条例外用 | 分隔，任一命中待确认" value="${esc(draft?.exceptions||'')}"></label><label class="extraction-choice"><input type="checkbox" data-org-negative="${key}" ${draft?.negative?'checked':''}>这是反例：以后遇到类似内容不要套用</label>`:''}
-    <span class="actions"><button class="write" data-org-action="correct" data-key="${key}">保存这一条</button>${`<button class="write" data-org-action="disposition" data-key="${key}" data-value="${aside||historyOnly?'keep':'set_aside'}" data-revision="${esc(unit.revision)}">${aside||historyOnly?'恢复处理':'暂存（不删除）'}</button>`}</span>
+    ${draft?.scope==='future'?`<label>适用条件<input data-org-condition="${key}" maxlength="200" placeholder="填写具体适用短语" value="${esc(draft?.condition||'')}"></label><label>例外<input data-org-exceptions="${key}" maxlength="200" placeholder="例如：其他平台 | 其他店铺" value="${esc(draft?.exceptions||'')}"></label><label class="extraction-choice"><input type="checkbox" data-org-negative="${key}" ${draft?.negative?'checked':''}>这是反例：以后遇到类似内容不要套用</label>`:''}
+    <span class="actions"><button class="write" data-org-action="correct" data-key="${key}">保存决定</button>${unit.disposition==='review'?`<button class="write primary" data-org-action="disposition" data-key="${key}" data-value="keep" data-revision="${esc(unit.revision)}">保留并继续提炼</button>`:''}${`<button class="write" data-org-action="disposition" data-key="${key}" data-value="${aside||historyOnly?'keep':'set_aside'}" data-revision="${esc(unit.revision)}">${aside||historyOnly?'恢复处理':'稍后处理'}</button>`}</span>
     ${errors.has(key)?`<p class="error" role="alert">${esc(errors.get(key))}</p>`:''}
-    ${draft?`<p class="hint">${draft.scope==='future'?'明确条件的指导可用于后续匹配单元；条件过宽则只保存为建议。':'保存后仅修正这一条，不影响其他单元。'}</p>`:''}
-   </div></div>`;
+    ${draft?`<p class="review-outcome">保存后：${draft.scope==='future'?'按条件处理以后同类资料':'仅修改当前资料'}</p>`:''}
+   </div></details></div>`;
   }
   function renderTaskList(){
     const ordered = [...tasks].sort((a,b) => (current.has(b.id)-current.has(a.id)) || b.id-a.id);
-    $('#org-tasks').innerHTML = ordered.length ? ordered.map(taskCard).join('') : '<div class="empty">当前筛选下没有任务。到“数据清洗”勾选资料后点“开始自动整理”，或用上方“整理待处理资料”。</div>';
+    $('#org-tasks').innerHTML = ordered.length ? ordered.map(taskCard).join('') : `<div class="empty">${tab==='failed'?'当前没有处理失败':tab==='completed'?'暂无完成记录':tab==='review'?'当前没有需要逐条判断的任务':'暂无处理记录'}</div>`;
     updatePager();
   }
   // Polling only refreshes the counters: rewriting the list would collapse an
@@ -133,7 +153,8 @@
     $('[data-org-action="previous"]').disabled = busy || page <= 1;
     $('[data-org-action="next"]').disabled = busy || page * PAGE >= total;
     $('[data-org-arrival]').checked = !!arrival.auto_new;
-    $('#org-arrival-state').textContent=arrival.auto_new?'已开启，后台会持续发现新来源。':'已关闭，排队中的任务不受影响。';
+    $('#org-arrival-state').dataset.enabled=String(!!arrival.auto_new);
+    $('#org-arrival-state').textContent=arrival.auto_new?'自动处理已开启':'自动处理已暂停';
   }
   const PAGE = queue.page_size || 20;
   function drawGuidance(){
@@ -162,7 +183,9 @@
   function snapshot(){return JSON.stringify(tasks.map(t=>[t.id,t.status,t.stage,t.unit_count,t.review_count,t.attempts,t.updated_at,t.error_code,current.has(t.id)]));}
   function snapshotFor(result){return JSON.stringify(result.items.map(t=>[t.id,t.status,t.stage,t.unit_count,t.review_count,t.attempts,t.updated_at,t.error_code,(result.current_task_ids||[]).includes(t.id)]));}
   async function load(){
+    const sequence=++loadSequence;
     const result = await api('organization?' + new URLSearchParams({page:String(page),status:filter}));
+    if(sequence!==loadSequence)return;
     const previous = snapshot();
     const next = snapshotFor(result);
     tasks = result.items; current = new Set(result.current_task_ids||[]);
@@ -173,6 +196,7 @@
     let changed = next !== previous;
     for(const id of open.keys()){
       const detail = await api('organization/detail?'+new URLSearchParams({task_id:id}));
+      if(sequence!==loadSequence)return;
       if(JSON.stringify(open.get(id)) !== JSON.stringify(detail.units)){open.set(id,detail.units||[]);changed=true;}
     }
     if(changed) {draw();await loadMetrics();} else { updatePager(); dirty(); }
@@ -211,7 +235,7 @@
     }
     guidanceRows = (await api('organization/guidance')).items;
     notice(`已保存 ${saved} 条，失败 ${failed} 条。${failed?'失败项保留修改，可核对后重试。':''}${future?`其中 ${future} 条指导会在后续匹配单元中沿用。`:''}`);
-    await load(); draw();
+    await load();await groupHandle.refresh();draw();
   }
   mount.oninput = e => {const el = e.target;
     if(el.dataset.orgGuidance){const d = drafts.get(el.dataset.orgGuidance)||{};drafts.set(el.dataset.orgGuidance,{...d,guidance:el.value});dirty();}
@@ -250,7 +274,7 @@
     try{
       if(action==='correct') await saveKeys([button.dataset.key]);
       else if(action==='correct-selected') await saveKeys([...selected]);
-      else if(action==='refresh') {await load();await loadMetrics();}
+      else if(action==='refresh') {await load();await loadMetrics();await groupHandle.refresh();}
       else if(action==='feedback'){
         const [id,digest]=button.dataset.key.split(':');
         await api('organization/feedback',{task_id:Number(id),digest,expected_revision:button.dataset.revision,verdict:button.dataset.verdict});
@@ -274,8 +298,8 @@
         const result = await api('organization/disposition', payload);
         const id = Number(button.dataset.key.split(':')[0]);
         open.set(id, (open.get(id)||[]).map(u => u.digest === result.unit.digest ? {...result.unit, revision: result.unit.revision} : u));
-        notice(value === 'set_aside' ? '已暂存这一条：不再进入当前项目历史，可随时恢复，原文未删除。' : '已恢复到当前项目历史。');
-        draw();
+        notice(value === 'set_aside' ? '已暂存这一条：不再进入当前项目历史，可随时恢复，原文未删除。' : '已保留；项目明确的内容会继续提炼。');
+        await load();await groupHandle.refresh();draw();
       }
       else if(action==='backlog'){const result = await api('organization/backlog',{limit:20});notice(`已排队 ${result.created} 条，队列剩 ${result.remaining} 条（本次共 ${result.queue_total} 条待整理）。`);await load();}
       else if(action==='toggle-guidance'){
@@ -291,14 +315,14 @@
     }catch(error){notice(errorText(error.message));toast(errorText(error.message));}
     finally{busy = false;onBusy(false);}
   };
-  draw();
+  await selectTab(initialTab);draw();
   await loadCapture();
   let running = false;
   const tick = async () => {
     // Stop cleanly once this view is replaced or detached: no detached timer
     // chain survives navigation.
     if(active?.token !== token || !mount.isConnected){running = false;return;}
-    try{await load();}catch(error){}
+    try{if(!busy)await load();}catch(error){notice('任务状态读取失败，请刷新重试。');}
     try{await loadCapture();}catch(error){}
     if(active?.token === token && mount.isConnected) setTimeout(tick,4000);else running = false;
   };
@@ -309,6 +333,6 @@
   };
   running = true;
   setTimeout(tick,4000);
-  return {resume};
+  return {resume,selectTab};
   }};
 })();

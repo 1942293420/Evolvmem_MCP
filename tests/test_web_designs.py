@@ -45,7 +45,9 @@ def test_knowledge_management_shares_the_main_workbench(http_server):
     assert 'data-page-panel="progress"' in html
     assert '>项目历史</a>' in html
     assert '>经验知识</a>' in html
-    assert '>资料整理</a>' in html
+    assert '>存量资料</a>' in html
+    assert 'src="/workflow-overview.js"' in html
+    assert 'href="/workflow.css"' in html
     assert 'href="/organize"' not in html
     assert 'href="#principles"' in html
     assert 'data-page-panel="principles"' in html

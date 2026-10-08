@@ -1,3 +1,4 @@
+async function revealRule(page,selector){await page.waitForSelector(selector,{state:'attached'});const rule=page.locator('.history-rules');if(await rule.count()&&!await rule.evaluate(el=>el.open))await rule.locator(':scope > summary').click();await page.waitForSelector(selector);}
 const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 (async()=>{
@@ -13,7 +14,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const items=[];
   for(const [title,discard] of [['保存 A',false],['删除 B',true],['未勾选删除 C',true],['未勾选保存 D',false],['仅删除 E',true],['改为保留 F',true],['冲突删除 G',true]])items.push(await api('items',{title,body:discard?'无用测试资料，没有明确事项。':'Evo 演示项目先核对再保存的业务要求。',action:'draft'}));
   const [a,b,c,d,e,f,g]=items;
-  await page.goto(base+'/#knowledge/cleaning');await page.waitForSelector('#clean-instructions');await done();
+  await page.goto(base+'/#knowledge/cleaning');await revealRule(page,'#clean-instructions');await done();
   for(const item of items)await select(item.id).check();
   await click('[data-clean-action="preview"]');
   for(const item of [c,d,e,f,g])await select(item.id).uncheck();

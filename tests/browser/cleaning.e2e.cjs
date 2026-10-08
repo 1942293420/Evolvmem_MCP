@@ -1,3 +1,4 @@
+async function revealRule(page,selector){await page.waitForSelector(selector,{state:'attached'});const rule=page.locator('.history-rules');if(await rule.count()&&!await rule.evaluate(el=>el.open))await rule.locator(':scope > summary').click();await page.waitForSelector(selector);}
 const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 (async()=>{
@@ -12,8 +13,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const b=await api('items',{title:'待清洗 B',body:'这是一条准备永久删除的无用测试资料。','action':'draft'});
   const c=await api('items',{title:'建议弃用但选择保留 C',body:'无用测试资料，用户可以改为保留。',action:'draft'});
   const d=await api('items',{title:'手动删除 D',body:'未经 AI 预览也能单条手动删除的测试资料。',action:'draft'});
-  await page.goto(base+'/#knowledge/cleaning');await page.waitForSelector('#clean-instructions');await done();
-  const nav=await page.locator('.signal-nav a').allTextContents();assert.equal(nav[nav.indexOf('项目历史')-1],'数据清洗');
+  await page.goto(base+'/#knowledge/cleaning');await revealRule(page,'#clean-instructions');await done();
+  assert.ok(await page.locator('.signal-nav [data-knowledge-view="cleaning"]').isVisible());assert.ok(await page.locator('.signal-nav [data-knowledge-view="organization"]').isVisible());
   assert.equal((await api('history/organization')).items.some(r=>r.key===`item:${a.id}`),false);
   await page.locator('#clean-instructions').fill((await page.locator('#clean-instructions').inputValue())+'\n保留处理顺序，不把助手说法当作用户决定。');
   await page.locator(`[data-clean-select="item:${a.id}"]`).check();assert.ok(await page.locator('[data-clean-action="preview"]').isDisabled());
@@ -40,7 +41,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const prepared=(await api('history/organization')).items.find(r=>r.key===`item:${a.id}`);assert.match(prepared.body,/人工核对/);assert.equal(prepared.category,'decision');
   await page.locator(`[data-clean-select="item:${b.id}"]`).check();page.once('dialog',d=>d.dismiss());await click(`[data-clean-action="delete-row"][data-key="item:${b.id}"]`);assert.equal(await page.locator(`[data-clean-row="item:${b.id}"]`).count(),1);
   page.once('dialog',d=>d.accept());await click(`[data-clean-action="delete-row"][data-key="item:${b.id}"]`);assert.match(await page.locator('#clean-notice').innerText(),/永久删除：成功 1 条/);assert.equal(await page.locator(`[data-clean-row="item:${b.id}"]`).count(),0);
-  await page.locator('[data-view="unassigned"]').click();await page.waitForSelector('#history-instructions');await done();
+  await page.locator('[data-view="unassigned"]').click();await revealRule(page,'#history-instructions');await done();
   await page.locator(`[data-history-select="item:${a.id}"]`).check();await click('[data-history-action="preview"]');await click(`[data-history-action="save-row"][data-key="item:${a.id}"]`);
   const saved=await api('items/'+a.id);assert.equal(saved.project,'evo');assert.match(saved.body,/人工核对/);assert.equal(saved.learning.category,'decision');
   assert.deepEqual(errors,[]);console.log('PASS: cleaning navigation, saved rules, AI preview, manual text/category, batch save, stage gate, AI discard question/highlight, bulk-save leaves unchecked, retain override, isolated row delete cancel/confirm, project classification uses reviewed draft, mobile');

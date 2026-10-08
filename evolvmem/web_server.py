@@ -1258,7 +1258,7 @@ def make_handler(service: ContextService):
                 except Exception as exc:  # bounded surface, no internal detail
                     self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
                 return
-            if path in ('/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/review-groups.js', '/organization-metrics.js'):
+            if path in ('/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/review-groups.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js'):
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 data = asset.read_bytes()
                 self.send_response(200)

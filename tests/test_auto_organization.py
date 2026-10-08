@@ -43,6 +43,7 @@ def test_multi_project_source_keeps_middle_units_and_exact_spans(service, monkey
     detail = org(service, '/detail', {'task_id': task_id})
     stored = service.store._connection().execute(
         'SELECT text,source_start,source_end,project FROM organization_units WHERE task_id=? ORDER BY ordinal', (task_id,)).fetchall()
+    assert detail['source_current'] is True
     original = detail['source_text']
     for row in stored:
         assert original[row['source_start']:row['source_end']] == row['text']

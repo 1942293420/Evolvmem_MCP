@@ -9,10 +9,10 @@ const done=async()=>{await page.waitForLoadState('networkidle');await page.waitF
 const go=async(hash,selector)=>{await page.goto(base+'/'+hash);await page.waitForSelector(selector);await done();};
 const click=async s=>{await page.locator(s).first().click();await done();};
 try{
- await go('#knowledge/organization','#organization-panel');
- await page.waitForSelector('.organization-task');
+ await go('#knowledge/organization?tab=all','#organization-panel');
+ await page.waitForSelector('article.organization-task');
  // The card must show a readable source title, not only archive:ID.
- assert.match(await page.locator('.organization-task').filter({hasText:'organization-demo'}).first().innerText(),/kimi · organization-/);
+ assert.match(await page.locator('article.organization-task').filter({hasText:'organization-demo'}).first().innerText(),/kimi · organization-/);
  checks.push('任务卡显示可读来源标题与来源标识');
  // 本机采集状态：一行只读说明，用于区分“没有新内容”和“采集失败”。
  await page.waitForFunction(()=>{const el=document.querySelector('#org-local-capture-message');return el&&el.textContent.trim()&&el.textContent.trim()!=='本机采集状态读取中。';});
@@ -21,8 +21,8 @@ try{
  assert.ok(await page.locator('#org-local-capture-state').count()===1);
  checks.push('自动整理页显示本机采集状态且不因状态请求失败');
  // Leaving and returning keeps the tasks queryable.
- await click('.history-tabs [data-view="projects"]');await page.waitForSelector('.project-list');
- await click('.history-tabs [data-view="organization"]');await page.waitForSelector('.organization-task');
+ await click('.signal-nav [data-knowledge-view="projects"]');await page.waitForSelector('.project-list');
+ await click('.signal-nav [data-knowledge-view="organization"]');await page.waitForSelector('article.organization-task');
  assert.equal(errors.length,0,'page errors after navigation: '+errors.join('; '));
  checks.push('后台任务页可离开再返回，任务仍可查询');
  // Open the two-unit review task once and inspect its grouped decisions.
@@ -43,8 +43,8 @@ try{
  checks.push('组内便捷选择只预填所选条目，未选项不受影响');
  // Drafts survive a view switch exactly like the cleaning page.
  await page.locator('[data-org-guidance]').first().fill('没有项目线索时按 Evo 演示项目处理');
- await click('.history-tabs [data-view="projects"]');await page.waitForSelector('.project-list');
- await click('.history-tabs [data-view="organization"]');await page.waitForSelector('.organization-task');
+ await click('.signal-nav [data-knowledge-view="projects"]');await page.waitForSelector('.project-list');
+ await click('.signal-nav [data-knowledge-view="organization"]');await page.waitForSelector('article.organization-task');
  const taskId=await reviewTask.getAttribute('data-org-task');
  const stableTask=`.organization-task[data-org-task="${taskId}"]`;
  const backTask=page.locator(stableTask);
@@ -56,40 +56,40 @@ try{
  await backTask.locator('[data-org-exceptions]').first().fill('已登记其他项目时除外');
  await click(stableTask+' [data-org-action="correct-selected"]');
  assert.match(await page.locator('#org-notice').innerText(),/已保存 1 条，失败 0 条/);
- assert.match(await page.locator('.organization-guidance').innerText(),/以后同类适用/);
- assert.match(await page.locator('.organization-guidance').innerText(),/讨论导出时/);
+ assert.match(await page.locator('.organization-guidance').textContent(),/以后同类适用/);
+ assert.match(await page.locator('.organization-guidance').textContent(),/讨论导出时/);
  // A future rule without a narrow condition is stored as a suggestion only.
  await backTask.locator('[data-org-group="review"] [data-org-guidance]').first().fill('资料都要整理');
  await backTask.locator('[data-org-group="review"] [data-org-scope]').first().selectOption('future');
  await backTask.locator('[data-org-group="review"] [data-org-condition]').first().fill('资料');
  await click(stableTask+' [data-org-group="review"] [data-org-action="correct"]');
  await page.waitForFunction(()=>document.querySelector('#org-notice')?.textContent.includes('已保存 1 条'));
- assert.match(await page.locator('.organization-guidance').innerText(),/条件太宽，仅作建议/);
+ assert.match(await page.locator('.organization-guidance').textContent(),/条件太宽，仅作建议/);
  checks.push('批量保存所选；过宽条件只作为建议保存');
  // The correction persists across a real reload and stays a manual decision.
  await page.reload();await page.waitForSelector('#organization-panel');await done();
- await page.waitForSelector('.organization-task');
+ await page.waitForSelector('article.organization-task');
  await page.locator(stableTask+' button[data-org-action="toggle"]').click();
- await page.waitForSelector(stableTask+' .organization-unit.is-manual');
+ await page.locator(stableTask+' [data-org-group="manual"] > summary').click();await page.waitForSelector(stableTask+' .organization-unit.is-manual');
  assert.match(await page.locator('.organization-unit.is-manual').first().innerText(),/人工已确认/);
  checks.push('修正与指导读回；人工决定标记保留');
  // Guidance can be disabled and the boolean is not inverted.
- const enabledBefore=await page.locator('.organization-guidance [data-enabled="1"]').count();
+ await page.locator('[data-org-tab="guidance"]').click();const enabledBefore=await page.locator('.organization-guidance [data-enabled="1"]').count();
  assert.ok(enabledBefore>=1,'an enabled guidance row is expected');
  await page.locator('.organization-guidance [data-org-action="toggle-guidance"]').first().click();
  await page.waitForFunction(()=>document.querySelector('#org-notice')?.textContent.includes('已停用'));
  assert.equal(await page.locator('.organization-guidance [data-enabled="0"]').count(),1);
  checks.push('指导可停用（布尔值不反向）');
  // Arrival mode toggles independently of queued work.
- await page.locator('[data-org-arrival]').check();
+ await page.locator('.organization-options > summary').click();await page.locator('[data-org-arrival]').check();
  await page.waitForFunction(()=>document.querySelector('#org-notice')?.textContent.includes('已开启'));
  assert.match(await page.locator('#org-arrival-state').innerText(),/已开启/);
  await page.locator('[data-org-arrival]').uncheck();
  await page.waitForFunction(()=>document.querySelector('#org-notice')?.textContent.includes('已关闭'));
- assert.ok(await page.locator('.organization-task').count()>=1,'queued work survives pausing');
+ assert.ok(await page.locator('article.organization-task').count()>=1,'queued work survives pausing');
  checks.push('可开启/暂停新资料自动处理，已排队任务不受影响');
  // Paging and counts are usable for a larger backlog.
- assert.match(await page.locator('#org-page').innerText(),/共 \d+ 个任务 · 第 1 \/ \d+ 页/);
+ await page.locator('[data-org-tab="all"]').click();assert.match(await page.locator('#org-page').innerText(),/共 \d+ 个任务 · 第 1 \/ \d+ 页/);
  assert.ok(await page.locator('#org-filter option').count()>=7);
  checks.push('任务队列有分页、筛选与计数');
  // The product diagram documents the shipped background flow in user wording.
@@ -98,27 +98,27 @@ try{
  assert.match(await page.locator('#principle-title').innerText(),/整篇自动整理/);
  const diagram=await page.locator('.product-diagram svg').innerHTML();
  assert.ok(diagram.includes('系统自动处理'),'the system lane stays in user wording');
- assert.ok(diagram.includes('同会话增量续写沿用前批已确认项目'),'the cross-batch context rule is documented');
- assert.ok(diagram.includes('前文依据显示来源批次与范围'),'the visible evidence is documented');
+ assert.ok(diagram.includes('同会话续写可参考前文已确认项目'),'the cross-batch context rule is documented');
+ assert.ok(diagram.includes('原因、关键原话、前文项目依据'),'the visible evidence is documented');
  assert.ok(await page.locator('.product-diagram svg').evaluate(svg=>{const b=svg.getBBox(),v=svg.viewBox.baseVal;return b.x>=0&&b.x+b.width<=v.width;}),'all diagram content fits its viewBox');
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'organization diagram overflow 1440');
  await page.screenshot({path:'/tmp/evo-product-organization.png',fullPage:true});
  checks.push('自动整理活动图同步实际行为且不溢出');
  // A real incremental continuation shows the same-session evidence it used.
- await go('#knowledge/organization','#organization-panel');
- await page.waitForSelector('.organization-task');
- const ctxCard=page.locator('.organization-task').filter({hasText:'继续刚才的报表整理'}).first();
+ await go('#knowledge/organization?tab=all','#organization-panel');
+ await page.waitForSelector('article.organization-task');
+ const ctxCard=page.locator('article.organization-task').filter({hasText:'继续刚才的报表整理'}).first();
  await ctxCard.locator('button[data-org-action="toggle"]').click();
- await page.waitForSelector(`.organization-task[data-org-task="${await ctxCard.getAttribute('data-org-task')}"] .organization-context`);
+ await ctxCard.locator('[data-org-group="auto"] > summary').click();await page.waitForSelector(`.organization-task[data-org-task="${await ctxCard.getAttribute('data-org-task')}"] .organization-context`);
  const ctxText=await page.locator('.organization-context').first().innerText();
- assert.match(ctxText,/同会话前文依据：archive:\d+/);
- assert.match(ctxText,/已确认 Evo 演示项目/);
+ assert.match(ctxText,/前文已确认项目/);
+ assert.match(ctxText,/Evo 演示项目/);
  assert.match(ctxText,/原话「.+/);
  checks.push('同会话前文依据（来源批次、行号、项目与原话）在任务单元可见');
  await page.screenshot({path:'/tmp/evo-organization-context.png',fullPage:true});
  await page.setViewportSize({width:390,height:1000});
- await go('#knowledge/organization','#organization-panel');
- await page.waitForSelector('.organization-task');
+ await go('#knowledge/organization?tab=all','#organization-panel');
+ await page.waitForSelector('article.organization-task');
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'organization overflow 390');
  await page.screenshot({path:'/tmp/evo-organization-mobile.png',fullPage:true});
  await page.setViewportSize({width:1440,height:1000});

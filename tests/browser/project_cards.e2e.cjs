@@ -1,3 +1,4 @@
+async function revealRule(page,selector){await page.waitForSelector(selector,{state:'attached'});const rule=page.locator('.history-rules');if(await rule.count()&&!await rule.evaluate(el=>el.open))await rule.locator(':scope > summary').click();await page.waitForSelector(selector);}
 // Run against knowledge_fixture.py with EVOLVMEM_CARD_FIXTURE=1 (synthetic data).
 const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
@@ -7,7 +8,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  const base=process.env.EVOLVMEM_TEST_URL||'http://127.0.0.1:39478',errors=[],checks=[];
  page.on('pageerror',e=>errors.push(e.message));
  const done=async()=>{await page.waitForLoadState('networkidle');await page.waitForFunction(()=>!document.querySelector('#content')?.inert&&document.querySelector('.knowledge-workspace')?.getAttribute('aria-busy')!=='true');};
- const go=async(hash,selector)=>{await page.goto(base+'/'+hash);await page.waitForSelector(selector);await done();};
+ const go=async(hash,selector)=>{await page.goto(base+'/'+hash);if(['#clean-instructions','#history-instructions'].includes(selector))await revealRule(page,selector);else await page.waitForSelector(selector);await done();};
  const click=async selector=>{await page.locator(selector).first().click();await done();};
  const ids=()=>page.locator('[data-project-card]').evaluateAll(xs=>xs.map(x=>x.dataset.projectCard));
  try{
@@ -33,9 +34,9 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(await page.locator('.knowledge-flow span,.knowledge-flow p,#content>.intro').count(),0);
   assert.equal(await page.locator('.intake-actionbar button').count(),2);assert.equal((await page.locator('[data-action="organize-page"]').innerText()).trim(),'✦ AI 整理');
   await click('[data-action="organize-page"]');await page.waitForSelector('.proposals');assert.match(await page.locator('#dialog-content').innerText(),/整理结果预览/);await click('#dialog [data-action="close"]');
-  await click('.intake-actionbar [data-view="skill"]');await page.waitForSelector('#stage-instructions');checks.push('项目编辑和待确认入口独立可点；AI 整理先预览；Skill 按钮可跳转；说明小字移除');
+  await click('.intake-actionbar [data-view="unassigned"]');await revealRule(page,'#history-instructions');checks.push('项目编辑和待确认入口独立可点；AI 整理先预览；Skill 按钮可跳转；说明小字移除');
   await go('#knowledge/projects','#project-search');await click('.project-utilities [data-project="__global__"]');await page.waitForSelector('.project-document');assert.ok(page.url().includes('__global__'));
-  await go('#knowledge/projects','#project-search');await click('.project-utilities [data-view="unassigned"]');await page.waitForSelector('#history-instructions');await go('#knowledge/library','#search');
+  await go('#knowledge/projects','#project-search');await click('.project-utilities [data-view="unassigned"]');await revealRule(page,'#history-instructions');await go('#knowledge/library','#search');
   for(const [view,selector] of [['library','#search'],['rules','#min-confidence'],['skill','#stage-instructions'],['intake','#filter-queue']]){
    await click(`.knowledge-tabs [data-view="${view}"]`);await page.waitForSelector(selector);assert.equal(await page.locator(`.knowledge-tabs [data-view="${view}"]`).getAttribute('aria-current'),'page');
   }checks.push('全局与未归属辅助入口、四个顶部导航按钮及选中状态');
@@ -47,7 +48,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    await page.screenshot({path:`/tmp/evo-project-cards-${width}.png`,fullPage:true});
    await go('#knowledge/intake','#filter-queue');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),`intake overflow ${width}`);
    const tab=page.locator('.knowledge-tabs [data-view="intake"]');assert.notEqual(await tab.evaluate(e=>getComputedStyle(e).backgroundColor),'rgba(0, 0, 0, 0)');
-   await click('.intake-actionbar [data-view="skill"]');await page.waitForSelector('#stage-instructions');await click('.knowledge-tabs [data-view="intake"]');await page.waitForSelector('#filter-queue');
+   await click('.intake-actionbar [data-view="unassigned"]');await revealRule(page,'#history-instructions');await page.locator('.signal-nav [data-knowledge-view="intake"]').click();await page.waitForSelector('#filter-queue');
    await page.screenshot({path:`/tmp/evo-intake-${width}.png`,fullPage:true});
   }checks.push('四种屏宽的卡片列数、导航与操作按钮、无页面横向溢出');
   // Narrow desktop columns must also fit real-world larger totals and long names.

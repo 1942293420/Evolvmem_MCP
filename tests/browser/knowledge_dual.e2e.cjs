@@ -36,7 +36,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  assert.equal(hist.qa.length,0);assert.ok(hist.history.length);assert.equal(qa.history.length,0);assert.ok(qa.qa.length);
  for(const width of [390,768,1024]){await page.setViewportSize({width,height:900});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));await tab('历史记录').click();await tab('经验问答').click();if(width===390)await page.screenshot({path:'/tmp/evo-dual-qa-mobile.png',fullPage:true});}
  await page.waitForSelector('.knowledge-workspace[aria-busy="false"]');await page.goto(base+'/#knowledge/rules');await page.getByRole('button',{name:'2 · 试运行效果',exact:true}).click();await page.locator('#extraction-project').selectOption('evo');
- await page.getByRole('button',{name:'比较提炼结果',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#extraction-result')?.textContent.includes('问：修改界面时先明确什么'));
+ await page.getByRole('button',{name:'比较提炼结果',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#extraction-result')?.textContent.includes('答：以后，修改界面时先明确操作目标和验收条件。'));
  assert.match(await page.locator('#extraction-result').innerText(),/答：以后/);
  assert.deepEqual(errors,[]);console.log(JSON.stringify({history_database_migration:true,clean_dialogue:true,separate_qa:true,edit_publish:true,conflict_review_and_replace:true,two_lane_recall:true,qa_extraction_preview:true,viewports:[390,768,1024,1440],page_errors:errors}));
  } finally {await browser.close();}

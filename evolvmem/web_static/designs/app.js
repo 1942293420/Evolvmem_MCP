@@ -111,6 +111,7 @@
       }
       if(query!==undefined) controller.query=query;
       if(knowledgeView!==undefined)controller.view=knowledgeView;
+      if(knowledgeView==='organization'&&replace)controller.organizationTab=new URLSearchParams(location.hash.split('?')[1]||'').get('tab')||'review';
       if(page==='memories'&&replace){const params=new URLSearchParams(location.hash.split('?')[1]||'');controller.lane=params.get('lane')||'overview';controller.projectSort=params.get('sort')||'recent';}
       targetHash=controller.hash?.()||targetHash;
       controller.page=1;controller.draw();controller.load();
@@ -127,11 +128,18 @@
     const tick=now=>{if(!el.isConnected)return;const t=Math.min(1,(now-start)/650);el.textContent=Math.round(value*(1-(1-t)**3)).toLocaleString('en-US');if(t<1)requestAnimationFrame(tick);};
     requestAnimationFrame(tick);
   }
-  function refreshOrganizationMetrics(token){
+  let overviewRequest=0;
+  async function refreshOrganizationMetrics(token){
     if(!window.EvolvOrganizationMetrics)return;
-    get('/api/knowledge/organization/metrics').then(m=>{if(token===state.boot)$$('[data-slot="organization-metrics"]').forEach(el=>el.innerHTML=EvolvOrganizationMetrics.html(m,esc));})
-      .catch(()=>{if(token===state.boot)$$('[data-slot="organization-metrics"]').forEach(el=>el.textContent='整理效果暂不可用，可刷新重试。');});
+    const request=++overviewRequest;
+    const routes=['organization/metrics','organization?status=current','organization/settings'];
+    const responses=await Promise.allSettled(routes.map(r=>get('/api/knowledge/'+r)));
+    if(token!==state.boot||request!==overviewRequest)return;
+    const [metrics,queue,settings]=responses.map(r=>r.status==='fulfilled'?r.value:null);
+    $$('[data-slot="organization-metrics"]').forEach(el=>el.innerHTML=metrics?EvolvOrganizationMetrics.html(metrics,esc):'<p class="ui-error">统计暂不可用，请刷新重试。</p>');
+    if(window.EvolvWorkflowOverview)$$('[data-workflow-overview]').forEach(el=>el.innerHTML=EvolvWorkflowOverview.html({metrics,queue,settings},esc));
   }
+  setInterval(()=>{if(state.ready&&state.page==='home'&&!document.hidden)refreshOrganizationMetrics(state.boot);},15000);
   async function boot(refreshBrowser=true) {
     const token=++state.boot;
     $$('[data-data-status]').forEach(el=>el.textContent='正在连接记忆库…');
@@ -150,9 +158,9 @@
       $$('[data-count]',el).forEach(n=>countUp(n,numbers[n.dataset.count]));
     });
     $$('[data-slot=featured-experiences]').forEach(el=>{el.innerHTML=experiences?(experiences.rows.length?experiences.rows.map(caseCard).join(''):'<div class="ui-empty">验证过的经验会在这里积累。</div>'):errorBox();});
-    $$('[data-slot=project-list]').forEach(el=>{el.innerHTML=projects?projects.projects.filter(p=>p.status==='active').sort((a,b)=>b.active_items-a.active_items).slice(0,5).map((p,i)=>`<button class="ui-row" data-project="${esc(p.project)}"><span><span class="ui-row-title">${esc(p.display_name||p.project)}</span><span class="ui-row-meta">${esc(p.project)}</span></span><span class="ui-row-meta">查看历史 →</span></button>`).join(''):errorBox();if(projects&&!el.innerHTML)el.innerHTML='<div class="ui-empty">暂无已归属项目的记忆。</div>';});
+    $$('[data-slot=project-list]').forEach(el=>{el.innerHTML=projects?projects.projects.filter(p=>p.status==='active').sort((a,b)=>b.active_items-a.active_items).slice(0,5).map((p,i)=>`<button class="ui-row" data-project="${esc(p.project)}"><span><span class="ui-row-title">${esc(p.display_name||p.project)}</span></span><span class="ui-row-meta">查看历史 →</span></button>`).join(''):errorBox();if(projects&&!el.innerHTML)el.innerHTML='<div class="ui-empty">暂无已归属项目的记忆。</div>';});
     $$('[data-slot=recent-memories]').forEach(el=>{el.innerHTML=recent?recent.rows.map(row=>`<button class="ui-row" data-detail="memory" data-id="${row.id}"><span><span class="ui-row-title">${esc(row.value.slice(0,90))}</span><span class="ui-row-meta">${esc(name(row.project))} · ${esc(shortDate(row.created_at))}</span></span><span class="ui-row-arrow">↗</span></button>`).join(''):errorBox();if(recent&&!el.innerHTML)el.innerHTML='<div class="ui-empty">暂无活跃记忆。</div>';});
-    $$('[data-slot=task-list]').forEach(el=>{el.innerHTML=tasks?(tasks.rows.length?tasks.rows.map(r=>progressCard(r,'workstream')).join(''):'<div class="ui-empty"><strong>当前没有未完成的任务</strong><span>新的任务断点会在与助手协作时保存。</span><button class="ui-button" data-page-link="progress">查看项目进展 ↗</button></div>'):errorBox();});
+    $$('[data-slot=task-list]').forEach(el=>{el.innerHTML=tasks?(tasks.rows.length?tasks.rows.map(r=>progressCard(r,'workstream')).join(''):'<div class="ui-empty"><strong>当前没有未完成的任务</strong><button class="ui-button" data-page-link="progress">查看项目进展 ↗</button></div>'):errorBox();});
     $$('[data-galaxy]').forEach(el=>{
       $('.galaxy-error',el)?.remove();
       if(projects&&memories) window.EvolvGalaxy.mount(el,{projects:projects.projects,memories:memories.rows,total:stats?.total_active});
@@ -178,7 +186,7 @@
     c.draw=()=>{
       mount.innerHTML=`${kind==='experiences'&&EvolvAuth.canWrite&&window.EvolvProjects?'<div class="section-head"><p>案例与问答共用项目登记。</p><button class="ui-button write" data-case-project-new>＋ 新增项目</button></div>':''}
       <div class="ui-toolbar"><label class="ui-filter-label">搜索<input class="ui-search" data-filter="query" type="search" maxlength="500" placeholder="${kind==='experiences'?'搜索问题、步骤或条件':'搜索记录内容'}" value="${esc(c.query)}"></label><label class="ui-filter-label">项目<select class="ui-select" data-filter="project">${projectOptions(c.project)}</select></label><label class="ui-filter-label">状态<select class="ui-select" data-filter="status">${options(statuses(),c.status)}</select></label></div>
-      <div class="ui-result-info"><span data-results-info role="status">正在读取…</span><span>${kind==='experiences'?'成功 / 失败为独立结果记录数':'点击内容查看详情'}</span></div><div data-results aria-busy="true"></div><div class="ui-pager" data-pager></div>`;
+      <div class="ui-result-info"><span data-results-info role="status">正在读取…</span>${kind==='experiences'?'<span>按实际验证结果计数</span>':''}</div><div data-results aria-busy="true"></div><div class="ui-pager" data-pager></div>`;
       $$('[data-filter]',mount).forEach(el=>{
         const run=()=>{c[el.dataset.filter]=el.value;c.page=1;c.load();};
         if(el.dataset.filter==='query')el.oninput=()=>{++c.request;clearTimeout(c.timer);c.timer=setTimeout(run,220);};else el.onchange=run;

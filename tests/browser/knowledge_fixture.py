@@ -105,6 +105,8 @@ def model(prompt, *a, **kw):
                 'continues_context':'继续刚才的报表整理' in g['title']}
                for g in groups]
         for unit in units:
+            if '保留价值演示' in unit['title']:
+                unit.update(disposition='review',disposition_reason='是否有长期价值需要用户决定')
             if '纯进度演示' in unit['title']:
                 unit.update(disposition='history_only',category='reference',disposition_reason='只是助手执行进度')
         return json.dumps({'units':units},ensure_ascii=False)
@@ -238,6 +240,13 @@ if os.environ.get('EVOLVMEM_EFFICIENCY_FIXTURE')=='1':
         ('进度历史演示',[{'role':'assistant','content':'纯进度演示：正在核对上一轮测试，接下来继续检查界面。'}])]:
         source=_Archiver(config,s.store).archive_session('','kimi',session,json.dumps({'messages':messages},ensure_ascii=False))
         knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{source.id}'}]})
+if os.environ.get('EVOLVMEM_WORKSPACE_FIXTURE')=='1':
+    for title,failed in [('保留价值演示',False),('重试失败演示',True)]:
+        source=_Archiver(config,s.store).archive_session('','kimi',title,json.dumps({'messages':[{'role':'user','content':'Evo 演示项目：'+title+'，导出必须保留编号与日期。'}]},ensure_ascii=False))
+        task=knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{source.id}'}]})['items'][0]
+        if failed:
+            with s.store.transaction():
+                s.store._connection().execute("UPDATE organization_tasks SET status='failed',stage='extraction',error_code='extraction_failed' WHERE id=?",(task['id'],))
 _worker=OrganizationWorker(config,mode=ContextMode.SHADOW).start() if _auto else None
 print('Temporary browser fixture ready',flush=True)
 try:server.serve_forever()

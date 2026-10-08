@@ -1,3 +1,4 @@
+async function revealRule(page,selector){await page.waitForSelector(selector,{state:'attached'});const rule=page.locator('.history-rules');if(await rule.count()&&!await rule.evaluate(el=>el.open))await rule.locator(':scope > summary').click();await page.waitForSelector(selector);}
 // Real fixture HTTP: rule drafts and partial batch results remain reviewable.
 const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
@@ -12,12 +13,12 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const a=await api('items',{title:'并发核对 A',body:'Evo 演示项目资料 A，需要分类后核对。',scope:'project',action:'draft'});
   const b=await api('items',{title:'批量确认 B',body:'Evo 演示项目资料 B，需要分类后核对。',scope:'project',action:'draft'});
   const raw=await api('cleaning');await api('cleaning/save',{items:raw.items.filter(r=>[a.id,b.id].some(id=>r.key===`item:${id}`)).map(r=>({...r,cleaned_text:r.body,category:'reference'}))});
-  await page.goto(base+'/#knowledge/intake');await page.waitForSelector('.intake-skill-button');await done();await click('.intake-skill-button');await page.waitForSelector('#history-instructions');await done();assert.ok(page.url().endsWith('#knowledge/unassigned'));
+  await page.goto(base+'/#knowledge/intake');await page.waitForSelector('.intake-skill-button');await done();await click('.intake-skill-button');await revealRule(page,'#history-instructions');await done();assert.ok(page.url().endsWith('#knowledge/unassigned'));
   const pick=id=>`[data-history-project="item:${id}"]`;
   await page.locator(`[data-history-select="item:${a.id}"]`).check();await page.locator(`[data-history-select="item:${b.id}"]`).check();
   await page.locator('#history-instructions').fill((await page.locator('#history-instructions').inputValue())+'\n先核对原话。');
   assert.equal(await page.locator('[data-history-action="preview"]').isDisabled(),true);
-  page.once('dialog',d=>d.dismiss());await click('.history-tabs [data-view="projects"]');assert.ok(page.url().endsWith('#knowledge/unassigned'));
+  page.once('dialog',d=>d.dismiss());await click('.signal-nav [data-knowledge-view="projects"]');assert.ok(page.url().endsWith('#knowledge/unassigned'));
   await click('[data-history-action="rules-save"]');await click('[data-history-action="preview"]');assert.equal(await page.locator(pick(a.id)).inputValue(),'evo');
   await page.locator(pick(a.id)).selectOption('dsh-a');
   await page.locator('#history-instructions').fill((await page.locator('#history-instructions').inputValue())+'\n多个项目待确认。');await click('[data-history-action="rules-save"]');

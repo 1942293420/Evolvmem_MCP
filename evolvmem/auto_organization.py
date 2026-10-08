@@ -992,7 +992,8 @@ def task_detail(service, task_id):
         raise ValueError('task_not_found')
     task = {k: v for k, v in dict(row).items() if k != 'source_snapshot'}
     task['context'] = organization_context.decode(row['context_basis'])
-    return {**task, 'source_text': row['source_snapshot'], 'units': unit_views(service, task_id)}
+    return {**task, 'source_current': _source_current(service, task),
+            'source_text': row['source_snapshot'], 'units': unit_views(service, task_id)}
 
 
 def unit_views(service, task_id):
