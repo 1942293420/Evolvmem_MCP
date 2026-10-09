@@ -39,7 +39,7 @@ window.EvolvPrinciples={render(mount){
   arrow('M775 566V610')+box(650,610,275,80,['保存指导 · 后续符合时复用','不符合或有冲突仍待判断'],'warm')+
   arrow('M925 655H950V180H280V205')+
   arrow('M280 285V355','完成',321,329)+box(105,355,350,80,['历史与知识自动保存','自动结果可抽检，无需全部复核'])+
-  arrow('M280 435V485')+box(105,485,350,80,['自动核对并更新检索','检索模型变化后重新建立索引'])+
+  arrow('M280 435V485')+box(105,485,350,80,['按资料用途同步更新检索','检索模型变化后重新建立索引'])+
   box(105,795,820,70,['临时故障自动重试；仍未完成的在「系统问题」处理'],'accent'));
  const diagrams={modules:moduleMap,flow,activity,organization};
  const titles={modules:'各页面负责什么',flow:'新资料自动成为历史与知识',activity:'什么时候需要你参与',organization:'整篇自动整理，指导一次后续复用'};

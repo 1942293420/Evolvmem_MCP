@@ -68,6 +68,13 @@ def write_history(service, task, unit, messages) -> int | None:
     _link_provenance(service, item_id, archive_id, task, unit)
     record_derivation(service, task['id'], unit['digest'], item_id, kind='history',
                       project=unit['project'])
+    # Persistence runs before the unit provenance exists. A history-only unit
+    # can therefore have been indexed while it still looked independently
+    # backed. Reconcile after attaching the source, without re-encoding valid
+    # history or waiting for the whole-cache recovery interval.
+    from evolvmem.memory_eligibility import eligible
+    if not eligible(service.store, item_id):
+        service._sync_context_vector_aftermath((), (item_id,))
     return item_id
 
 

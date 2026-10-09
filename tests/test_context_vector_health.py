@@ -9,6 +9,30 @@ from tests.test_history_qa_memory import service as base_service
 from tests.test_recall_recovery import _add_task, _add_unit, _make_store_item
 
 
+@pytest.mark.parametrize('disposition', ['history_only', 'keep'])
+def test_history_provenance_does_not_leave_ineligible_vectors_disabling_recall(service, disposition):
+    from evolvmem.unit_extraction import write_history
+    kept, changing = seed(service)
+    task_id = _add_task(service, status='completed')
+    _add_unit(service, task_id, None, ordinal=0)
+    text = '页面必须保留查询条件和未保存的草稿，不能切换页面后丢失。'
+    with service.store.transaction():
+        service.store._connection().execute(
+            'UPDATE organization_units SET disposition=?,text=?,cleaned_text=? WHERE task_id=?',
+            (disposition, text, text, task_id))
+    task = dict(service.store._connection().execute('SELECT * FROM organization_tasks WHERE id=?', (task_id,)).fetchone())
+    unit = dict(service.store._connection().execute('SELECT * FROM organization_units WHERE task_id=?', (task_id,)).fetchone())
+
+    item_id = write_history(service, task, unit, [{'role': 'user', 'content': text}])
+
+    assert item_id is not None
+    assert service.store.get_item(item_id).status.value == 'active', 'retain the original history'
+    expected = {kept.id, changing.id} | ({item_id} if disposition == 'keep' else set())
+    assert set(service.vector_index.ids()) == expected
+    assert service.status().context_vector_ready is True
+    assert service.retriever._vector_available() is True
+
+
 def test_one_new_vector_cannot_certify_remaining_vectors_from_an_old_contract(service):
     import json
     from evolvmem import vector_provenance
