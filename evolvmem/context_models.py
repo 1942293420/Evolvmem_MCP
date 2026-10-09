@@ -27,6 +27,7 @@ _CONTEXT_SERVICE_ERROR_CODES = frozenset(
         # 允许经 ContextServiceStatus.reason_codes / ContextServiceError 承载
         "continuity_not_ready",
         "workspace_key_missing",
+        "context_vector_partial",
     }
 )
 

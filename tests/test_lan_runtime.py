@@ -354,9 +354,9 @@ def test_optional_lan_vectors_do_not_hide_database_invariant_failures(tmp_path):
 
 
 @pytest.mark.parametrize("condition", ("absent", "dirty", "count_mismatch"))
-def test_optional_lan_vector_problems_disable_vector_queries_but_keep_fts(
+def test_optional_lan_vector_problems_keep_proven_vectors_and_fts(
         tmp_path, condition):
-    """A bad optional vector cache must fall back to real FTS rather than serving stale ANN hits."""
+    """Pending updates retain proven ANN hits; absent vectors still use real FTS."""
     class Engine:
         is_loaded = False
 
@@ -403,7 +403,10 @@ def test_optional_lan_vector_problems_disable_vector_queries_but_keep_fts(
 
         engine.query_count = 0
         assert "vector cache fallback uses real FTS marker" in _values(server, "fallback")
-        assert engine.query_count == 0
+        assert engine.query_count == (0 if condition == 'absent' else 1)
+        status = service.status()
+        assert status.context_vector_ready == (condition != 'absent')
+        assert ('context_vector_partial' in status.reason_codes) == (condition != 'absent')
     finally:
         runtime.close()
 

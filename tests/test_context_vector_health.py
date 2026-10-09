@@ -9,6 +9,61 @@ from tests.test_history_qa_memory import service as base_service
 from tests.test_recall_recovery import _add_task, _add_unit, _make_store_item
 
 
+def test_partial_search_expands_past_unusable_nearest_neighbor(service):
+    from evolvmem import vector_provenance
+    kept, changing = seed(service)
+    vector = np.zeros(service.config.embedding_dim, dtype=np.float32)
+    vector[:2] = [0.6, 0.8]
+    service.vector_index.remove(kept.id)
+    service.vector_index.add(kept.id, vector)
+    service.vector_index.save()
+    vector_provenance.record(service.config, kept.id, 'kept original constraint', vector)
+    with service.store.transaction():
+        service.store._connection().execute(
+            "UPDATE context_items SET expires_at='2000-01-01 00:00:00' WHERE id=?", (changing.id,))
+    hits = service.retriever._vector_candidates('unrelated paraphrase', 1)
+    assert [h['id'] for h in hits] == [kept.id]
+
+
+def test_dirty_cache_without_provenance_cannot_offer_partial_vectors(service):
+    from evolvmem import vector_provenance
+    seed(service)
+    vector_provenance.path(service.config).unlink()
+    service.vector_index.mark_dirty()
+    assert service.status().context_vector_ready is False
+    assert service.retriever._vector_candidates('unrelated paraphrase', 5) == []
+
+
+@pytest.mark.parametrize('drift', ['missing', 'changed', 'unproved_vector'])
+def test_pending_updates_keep_only_proven_unchanged_vectors_searchable(service, drift):
+    kept, changing = seed(service)
+    if drift == 'missing':
+        service.vector_index.remove(changing.id)
+        service.vector_index.save()
+    elif drift == 'changed':
+        with service.store.transaction():
+            service.store._connection().execute(
+                "UPDATE context_layers SET content='changed text' WHERE item_id=? AND layer='l0'", (changing.id,))
+    else:
+        service.vector_index.remove(changing.id)
+        vector = np.zeros(service.config.embedding_dim, dtype=np.float32)
+        vector[1] = 1.0
+        service.vector_index.add(changing.id, vector)
+        service.vector_index.save()
+    service.vector_index.mark_dirty()
+    service.vector_index.preserve_dirty()
+
+    assert service.status().context_vector_ready is True
+    assert service.status().context_vector_dirty is True
+    assert 'context_vector_partial' in service.status().reason_codes
+    hits = service.search(ContextSearchRequest(query='unrelated paraphrase', project='evo'))
+    assert [h.id for h in hits] == [kept.id]
+    assert hits[0].match_types == (ContextMatchType.VECTOR,)
+    assert ContextVectorRecoveryLoop().tick([service])[0].status == 'recovered'
+    assert service.status().context_vector_dirty is False
+    assert 'context_vector_partial' not in service.status().reason_codes
+
+
 @pytest.mark.parametrize('disposition', ['history_only', 'keep'])
 def test_history_provenance_does_not_leave_ineligible_vectors_disabling_recall(service, disposition):
     from evolvmem.unit_extraction import write_history
@@ -130,10 +185,11 @@ def test_clean_extra_is_reported_then_automatically_removed_without_reencoding(s
             record_derivation(service, task_id, 'synthetic-digest', changing.id, project='evo')
 
     assert service.vector_index.is_dirty() is False
-    assert service.status().context_vector_ready is False
+    assert service.status().context_vector_ready is True
+    assert 'context_vector_partial' in service.status().reason_codes
     assert service.status().ready is True, 'optional vectors must not disable lexical reads'
-    assert service.retriever._vector_available() is False
-    # Optional-vector degradation still serves exact lexical knowledge.
+    assert service.retriever._vector_available() is True
+    assert [h.id for h in service.search(ContextSearchRequest(query='unrelated paraphrase', project='evo'))] == [kept.id]
     assert kept.id in {r.id for r in service.search(ContextSearchRequest(query='kept', project='evo'))}
 
     reports = ContextVectorRecoveryLoop().tick([service])
@@ -156,8 +212,10 @@ def test_equal_counts_do_not_hide_a_missing_id_and_an_extra_id(service):
     index.save()
     assert index.count() == 2 and not index.is_dirty()
 
-    assert service.retriever._vector_available() is False
-    assert service.status().context_vector_ready is False
+    assert service.retriever._vector_available() is True
+    assert service.status().context_vector_ready is True
+    assert 'context_vector_partial' in service.status().reason_codes
+    assert [h.id for h in service.search(ContextSearchRequest(query='unrelated paraphrase', project='evo'))] == [kept.id]
     reports = ContextVectorRecoveryLoop().tick([service])
 
     assert [r.status for r in reports] == ['recovered']
@@ -174,8 +232,10 @@ def test_clean_l0_change_is_detected_and_only_changed_document_is_encoded(servic
             (changing.id,))
 
     assert not service.vector_index.is_dirty()
-    assert service.retriever._vector_available() is False
-    assert service.status().context_vector_ready is False
+    assert service.retriever._vector_available() is True
+    assert service.status().context_vector_ready is True
+    assert 'context_vector_partial' in service.status().reason_codes
+    assert [h.id for h in service.search(ContextSearchRequest(query='unrelated paraphrase', project='evo'))] == [kept.id]
     reports = ContextVectorRecoveryLoop().tick([service])
 
     assert [r.status for r in reports] == ['recovered']
@@ -212,7 +272,8 @@ def test_failed_recovery_of_clean_drift_keeps_previous_cache_and_retry_marker(se
     assert [r.status for r in reports] == ['failed']
     assert service.config.context_vector_path.read_bytes() == before
     assert service.vector_index.is_dirty() is True
-    assert service.status().context_vector_ready is False
+    assert service.status().context_vector_ready is True
+    assert 'context_vector_partial' in service.status().reason_codes
 
 
 @pytest.mark.parametrize('fail', [False, True])

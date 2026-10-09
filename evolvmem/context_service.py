@@ -166,6 +166,7 @@ _HEALTH_LOG_CODES = frozenset(
         "context_vector_ids_mismatch",
         "context_vector_content_mismatch",
         "context_vector_contract_mismatch",
+        "context_vector_partial",
         "degraded_legacy",
     }
 )
@@ -410,6 +411,9 @@ class ContextService:
         context_state = inspect_context_vector(self.config, self.store, self.vector_index)
         context_ready = context_state.available(self.embedding_engine)
         context_dirty = context_state.dirty
+        reason_codes = self._reason_codes
+        if context_ready and context_state.reason:
+            reason_codes = tuple(dict.fromkeys((*reason_codes, 'context_vector_partial')))
         legacy_ready, legacy_dirty = self._vector_flags(self._legacy_vector_index())
         return ContextServiceStatus(
             mode=self._mode,
@@ -423,7 +427,7 @@ class ContextService:
             legacy_vector_ready=legacy_ready,
             legacy_vector_dirty=legacy_dirty,
             diagnostics=self._diagnostics,
-            reason_codes=self._reason_codes,
+            reason_codes=reason_codes,
         )
 
     def _ensure_dependencies(self) -> None:

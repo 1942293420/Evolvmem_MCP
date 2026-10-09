@@ -275,13 +275,23 @@ class ContextRetriever:
 
     def _vector_candidates(self, query: str, pool_size: int) -> list[dict]:
         """Return raw ANN neighbors, degrading to none on any vector failure."""
-        if not self._vector_available():
+        from evolvmem.context_vector_health import inspect_context_vector
+        state = inspect_context_vector(self.config, self.store, self.vector_index)
+        if not state.available(self.embedding_engine):
             return []
         try:
             embedding = np.asarray(
                 self.embedding_engine.encode_query(query), dtype=np.float32
             )
-            return self.vector_index.search(embedding, pool_size)
+            limit = pool_size
+            while True:
+                hits = self.vector_index.search(embedding, limit)
+                if state.verified_ids is None:
+                    return hits
+                valid = [h for h in hits if int(h['id']) in state.verified_ids]
+                if len(valid) >= pool_size or len(hits) < limit or limit >= state.count:
+                    return valid[:pool_size]
+                limit = min(state.count, limit * 2)
         except Exception:
             return []  # gracefully degrade to FTS-only on encoding/index failure
 

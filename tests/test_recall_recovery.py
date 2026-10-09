@@ -1467,7 +1467,8 @@ def test_real_mcp_initialization_recovers_the_gate_without_a_restart(test_config
         degraded = server.handle_tool_call('context_status', {})
         assert degraded['ready'] is False
         assert degraded['context_vector_dirty'] is True
-        assert degraded['reason_codes'] == ['degraded_legacy']
+        assert degraded['reason_codes'] == ['degraded_legacy', 'context_vector_partial']
+        assert degraded['context_vector_ready'] is True
         assert service._ready is False, 'the live re-check must update the service flag'
         blocked_tools = tool_names()
         assert blocked_tools != healthy_tools, 'the registry must follow live health'

@@ -9,9 +9,12 @@ class ContextVectorState:
     dirty: bool = False
     count: int = 0
     reason: str = ''
+    # None means the cache passed its normal checks. A set restricts a cache
+    # awaiting recovery to individually verified, still-eligible vectors.
+    verified_ids: frozenset[int] | None = None
 
     def available(self, engine):
-        return (not self.reason and self.count > 0 and engine is not None
+        return ((not self.reason or bool(self.verified_ids)) and self.count > 0 and engine is not None
                 and bool(getattr(engine, 'is_loaded', False)))
 
 
@@ -30,20 +33,34 @@ def inspect_context_vector(config, store, index, documents=None):
             return ContextVectorState(reason='context_vector_path_mismatch')
         dirty = bool(index.is_dirty())
         count = index.count()
-        if dirty:
-            return ContextVectorState(True, count, 'context_vector_dirty')
         documents = store.list_vector_documents() if documents is None else documents
-        if count != len(documents):
-            return ContextVectorState(False, count, 'context_vector_count_mismatch')
-        if set(index.ids()) != {d.item_id for d in documents}:
-            return ContextVectorState(False, count, 'context_vector_ids_mismatch')
+        ids = set(index.ids())
         proofs, compatible = vector_provenance.load_with_contract(config)
         if compatible is False:
-            return ContextVectorState(False, count, 'context_vector_contract_mismatch')
-        for document in documents:
-            proof = proofs.get(str(document.item_id))
-            if isinstance(proof, dict) and proof.get('text') != vector_provenance.text_digest(document.l0):
-                return ContextVectorState(False, count, 'context_vector_content_mismatch')
-        return ContextVectorState(False, count)
+            return ContextVectorState(dirty, count, 'context_vector_contract_mismatch')
+        reason = ''
+        if dirty:
+            reason = 'context_vector_dirty'
+        elif count != len(documents):
+            reason = 'context_vector_count_mismatch'
+        elif ids != {d.item_id for d in documents}:
+            reason = 'context_vector_ids_mismatch'
+        elif any(isinstance(proofs.get(str(d.item_id)), dict) and
+                 proofs[str(d.item_id)].get('text') != vector_provenance.text_digest(d.l0)
+                 for d in documents):
+            reason = 'context_vector_content_mismatch'
+        if not reason:
+            return ContextVectorState(False, count)
+        verified = set()
+        if compatible is True:
+            for document in documents:
+                proof = proofs.get(str(document.item_id))
+                if (document.item_id not in ids or not isinstance(proof, dict) or
+                        proof.get('text') != vector_provenance.text_digest(document.l0)):
+                    continue
+                vector = index.vector_copy(document.item_id)
+                if vector is not None and proof.get('vector') == vector_provenance.vector_digest(vector):
+                    verified.add(document.item_id)
+        return ContextVectorState(dirty, count, reason, frozenset(verified))
     except Exception:
         return ContextVectorState(dirty, count, 'context_vector_unavailable')
