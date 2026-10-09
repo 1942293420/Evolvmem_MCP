@@ -1029,6 +1029,8 @@ def retry(service, task_id):
         has_units = conn.execute(
             'SELECT 1 FROM organization_units WHERE task_id=? LIMIT 1', (task_id,)).fetchone() is not None
         stage = 'assignment' if has_units else 'queued'
+        conn.execute("UPDATE organization_units SET extraction_stage='pending',updated_at=? "
+                     "WHERE task_id=? AND extraction_stage='failed'", (_now_iso(), task_id))
         conn.execute("UPDATE organization_tasks SET status='pending',stage=?,error_code='',error_detail='',"
                      'finished_at=NULL,updated_at=? WHERE id=?', (stage, _now_iso(), task_id))
     return {'ok': True, 'status': 'pending', 'stage': stage,
@@ -1587,7 +1589,7 @@ class OrganizationWorker:
         # Unit ownership is authoritative; leave the immutable whole archive
         # unbound so later corrections cannot leak the original mixed source.
         self._ingest(service, task)
-        _refresh_task_state(service, task['id'])
+        _refresh_task_state(service, task['id'], retry_transient=True)
 
     def _reload_units(self, service, task_id):
         return [dict(r) for r in service.store._connection().execute(
@@ -1759,7 +1761,7 @@ class OrganizationWorker:
         if not self._is_current(service, task):
             self._finish(service, task['id'], 'superseded', 'stale', 'stale_task')
             return
-        _refresh_task_state(service, task['id'])
+        _refresh_task_state(service, task['id'], retry_transient=True)
 
 def _cas_unit_review(service, task_id, unit, reason):
     """Mark one unit for review with a revision check, preserving manual decisions."""
@@ -2047,19 +2049,31 @@ def _unresolve_item(service, item_id, reason):
     kb._sync([item_id])
 
 
-def _refresh_task_state(service, task_id):
+def _refresh_task_state(service, task_id, *, retry_transient=False):
     units = [dict(r) for r in service.store._connection().execute(
         'SELECT * FROM organization_units WHERE task_id=? ORDER BY ordinal', (task_id,))]
     pending = [unit for unit in units if unit['disposition'] not in ('set_aside', 'history_only')]
     review = sum(1 for unit in pending if unit['decision'] == 'review' or not unit['project'])
     assigned = [u for u in pending if u['project'] and u['decision'] != 'review']
+    if retry_transient:
+        from evolvmem.organization_diagnostics import retryable
+        attempts = service.store._connection().execute(
+            'SELECT attempts FROM organization_tasks WHERE id=?', (task_id,)).fetchone()['attempts']
+        if attempts < MAX_ATTEMPTS:
+            with service.store.transaction():
+                for unit in assigned:
+                    if unit['extraction_stage'] == 'failed' and retryable(unit['extraction_diagnostic']):
+                        service.store._connection().execute(
+                            "UPDATE organization_units SET extraction_stage='pending',updated_at=? "
+                            'WHERE task_id=? AND digest=?', (_now_iso(), task_id, unit['digest']))
+                        unit['extraction_stage'] = 'pending'
     failed = any(u['extraction_stage'] == 'failed' for u in assigned)
     from evolvmem.organization_diagnostics import describe
     failure_detail = next((describe(u.get('extraction_diagnostic', '')) for u in assigned
                            if u['extraction_stage'] == 'failed' and u.get('extraction_diagnostic')), '')
     unfinished = any(u['extraction_stage'] in ('pending', 'running') for u in assigned)
-    status, stage, error = ('failed', 'extraction', 'extraction_failed') if failed else (
-        ('pending', 'extraction', '') if unfinished else
+    status, stage, error = ('pending', 'extraction', '') if unfinished else (
+        ('failed', 'extraction', 'extraction_failed') if failed else
         ('review', 'done', 'units_need_review') if review else ('completed', 'done', ''))
     with service.store.transaction():
         conn = service.store._connection()

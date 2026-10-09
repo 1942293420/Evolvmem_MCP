@@ -86,6 +86,7 @@ class FakeVectorIndex:
     def __init__(self, config, results=(), *, dirty: bool = False, path=None):
         self.path = (path or config.context_vector_path).resolve()
         self._results = list(results)
+        self.document_ids = [result['id'] for result in self._results]
         self._dirty = dirty
         self.search_calls: list[int] = []
 
@@ -93,7 +94,10 @@ class FakeVectorIndex:
         return self._dirty
 
     def count(self) -> int:
-        return len(self._results)
+        return len(self.document_ids)
+
+    def ids(self):
+        return sorted(self.document_ids)
 
     def search(self, embedding, k: int) -> list[dict]:
         self.search_calls.append(k)
@@ -147,6 +151,9 @@ def add_item(store, identity_key: str, **overrides) -> ContextItem:
 def make_retriever(config, store, vector_index=None, engine=None) -> ContextRetriever:
     if vector_index is None:
         vector_index = FakeVectorIndex(config)
+    if isinstance(vector_index, FakeVectorIndex) and vector_index._results:
+        # A result page is only a subset of a complete cache, not its ID set.
+        vector_index.document_ids = [d.item_id for d in store.list_vector_documents()]
     return ContextRetriever(config, store, vector_index, engine, clock=fixed_clock)
 
 
@@ -307,6 +314,7 @@ def test_real_vector_index_supplies_thresholded_candidates(store, test_config):
     far = add_item(store, "far", l0="another unrelated note")
     index = VectorIndex(test_config, path=test_config.context_vector_path)
     index.initialize(dim=3)
+    index.add(fts_item.id, np.array([0.0, 1.0, 0.0], dtype=np.float32))
     index.add(near.id, np.array([1.0, 0.0, 0.0], dtype=np.float32))
     index.add(far.id, np.array([0.0, 1.0, 0.0], dtype=np.float32))
     index.save()  # persists and clears the dirty marker

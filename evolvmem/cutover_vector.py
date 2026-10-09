@@ -388,6 +388,7 @@ def _rebuild_context_vector_atomically(
             duration_ms=_elapsed_ms(started),
         )
 
+    _remove_temp_artifacts(temp_path)
     return ContextVectorStageReport(
         status="staged",
         document_count=document_count,
@@ -593,7 +594,10 @@ def _fsync_dir(path: Path) -> None:
 
 
 def _remove_temp_artifacts(temp_path: Path) -> None:
-    for artifact in (temp_path, temp_path.with_suffix(f"{temp_path.suffix}.dirty")):
+    # This UUID path belongs only to this closed staging attempt. Never remove
+    # the shared lock belonging to the formal cache.
+    for artifact in (temp_path, temp_path.with_suffix(f"{temp_path.suffix}.dirty"),
+                     temp_path.with_suffix(f"{temp_path.suffix}.lock")):
         try:
             artifact.unlink(missing_ok=True)
         except OSError:

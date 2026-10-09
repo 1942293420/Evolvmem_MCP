@@ -542,7 +542,7 @@ class _FakeVectorIndex:
         self.path = path.resolve()
         self.initialized = initialized
         self.dirty = False
-        self.ids = set()
+        self._ids = set()
 
     def is_dirty(self):
         return self.dirty
@@ -550,7 +550,12 @@ class _FakeVectorIndex:
     def count(self):
         if not self.initialized:
             raise RuntimeError("index is not initialized")
-        return len(self.ids)
+        return len(self._ids)
+
+    def ids(self):
+        if not self.initialized:
+            raise RuntimeError("index is not initialized")
+        return sorted(self._ids)
 
     def mark_dirty(self):
         self.dirty = True
@@ -565,10 +570,10 @@ class _FakeVectorIndex:
         self.initialized = True
 
     def add(self, mem_id, embedding):
-        self.ids.add(mem_id)
+        self._ids.add(mem_id)
 
     def remove(self, mem_id):
-        self.ids.discard(mem_id)
+        self._ids.discard(mem_id)
         return False
 
     def save(self):

@@ -222,7 +222,7 @@ def _set_stage(service, task_id, digest, stage, want, error, diagnostic=''):
 def pending_units(service, task_id):
     return [dict(row) for row in service.store._connection().execute(
         "SELECT * FROM organization_units WHERE task_id=? AND project!='' AND decision!='review' "
-        "AND disposition NOT IN ('set_aside','history_only') AND extraction_stage IN ('pending','running','failed') "
+        "AND disposition NOT IN ('set_aside','history_only') AND extraction_stage IN ('pending','running') "
         'ORDER BY ordinal', (task_id,))]
 
 

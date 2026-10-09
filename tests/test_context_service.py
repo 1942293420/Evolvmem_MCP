@@ -160,6 +160,9 @@ class FakeVectorIndex:
     def count(self):
         return self._count
 
+    def ids(self):
+        return list(range(1, self._count + 1))
+
     def search(self, embedding, k):
         return []
 
@@ -718,8 +721,11 @@ def test_legacy_and_compat_modes_fail_context_operations_closed(
 def test_primary_mode_serves_reads_when_invariants_hold(test_config, store):
     item = add_item(store, "alpha", l1="alpha detail")
     vector = FakeVectorIndex(test_config, count=1)
+    engine = FakeEmbeddingEngine()
+    engine.is_loaded = True
     service = make_service(
-        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector
+        test_config, store, mode=ContextMode.PRIMARY, vector_index=vector,
+        embedding_engine=engine,
     )
 
     status = service.status()

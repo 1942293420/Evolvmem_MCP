@@ -578,15 +578,17 @@ def test_recovery_rebuilds_a_dirty_context_cache_and_clears_the_marker(test_conf
         index.close()
 
 
-def test_recovery_is_a_noop_when_the_cache_is_not_dirty(test_config):
+def test_recovery_is_a_noop_when_the_cache_is_clean_and_aligned(test_config):
     from evolvmem.recall_recovery import recover_context_vector
 
     test_config.embedding_dim = 3
     engine = CountingEngine()
     with ContextStore(test_config) as store:
-        _make_store_item(test_config, store, identity_key='clean:one', l0='clean l0')
+        item = _make_store_item(test_config, store, identity_key='clean:one', l0='clean l0')
         index = VectorIndex(test_config, path=test_config.context_vector_path)
         index.initialize(dim=3)
+        index.add(item.id, engine._vector('clean l0'))
+        index.save()
 
         report = recover_context_vector(test_config, store, index, engine)
 
@@ -987,9 +989,11 @@ def test_recovery_loop_leaves_a_clean_service_alone(test_config):
         pass
 
     with ContextStore(test_config) as store:
-        _make_store_item(test_config, store, identity_key='quiet:one', l0='quiet l0')
+        item = _make_store_item(test_config, store, identity_key='quiet:one', l0='quiet l0')
         index = VectorIndex(test_config, path=test_config.context_vector_path)
         index.initialize(dim=3)
+        index.add(item.id, engine._vector('quiet l0'))
+        index.save()
         service = FakeService()
         service.config = test_config
         service.store = store

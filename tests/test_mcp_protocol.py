@@ -107,7 +107,7 @@ class _FakeVectorIndex:
         self.path = path.resolve()
         self.initialized = initialized
         self.dirty = False
-        self.ids = set()
+        self._ids = set()
 
     def is_dirty(self):
         return self.dirty
@@ -115,7 +115,12 @@ class _FakeVectorIndex:
     def count(self):
         if not self.initialized:
             raise RuntimeError("index is not initialized")
-        return len(self.ids)
+        return len(self._ids)
+
+    def ids(self):
+        if not self.initialized:
+            raise RuntimeError("index is not initialized")
+        return sorted(self._ids)
 
     def mark_dirty(self):
         self.dirty = True
@@ -130,10 +135,10 @@ class _FakeVectorIndex:
         self.initialized = True
 
     def add(self, mem_id, embedding):
-        self.ids.add(mem_id)
+        self._ids.add(mem_id)
 
     def remove(self, mem_id):
-        self.ids.discard(mem_id)
+        self._ids.discard(mem_id)
         return False
 
     def save(self):
@@ -455,7 +460,7 @@ class TestModeAdapterHealthMatrix:
                 confidence=0.9,
             )
         )
-        service._test_context_index.ids.add(orphan.id)  # 保持向量计数不变量
+        service._test_context_index._ids.add(orphan.id)  # 保持向量集合不变量
         assert service.status().ready is True
 
         # context_search 能看到两个 Core 条目

@@ -163,6 +163,8 @@ _HEALTH_LOG_CODES = frozenset(
         "context_vector_unavailable",
         "context_vector_dirty",
         "context_vector_count_mismatch",
+        "context_vector_ids_mismatch",
+        "context_vector_content_mismatch",
         "degraded_legacy",
     }
 )
@@ -403,7 +405,10 @@ class ContextService:
         except Exception:
             mapping_count = 0
             projection_lag = 0
-        context_ready, context_dirty = self._vector_flags(self.vector_index)
+        from evolvmem.context_vector_health import inspect_context_vector
+        context_state = inspect_context_vector(self.config, self.store, self.vector_index)
+        context_ready = context_state.available(self.embedding_engine)
+        context_dirty = context_state.dirty
         legacy_ready, legacy_dirty = self._vector_flags(self._legacy_vector_index())
         return ContextServiceStatus(
             mode=self._mode,
@@ -554,21 +559,11 @@ class ContextService:
     def _vector_diagnostics(
         self, documents: list[ContextVectorDocument] | None
     ) -> list[str]:
-        index = self.vector_index
-        if index.path != self.config.context_vector_path.resolve():
-            return ["context_vector_path_mismatch"]
         if documents is None:
             return []  # schema/layer failures already cover the count baseline
-        try:
-            dirty = bool(index.is_dirty())
-            count = index.count()
-        except Exception:
-            return ["context_vector_unavailable"]
-        if dirty:
-            return ["context_vector_dirty"]
-        if count != len(documents):
-            return ["context_vector_count_mismatch"]
-        return []
+        from evolvmem.context_vector_health import inspect_context_vector
+        state = inspect_context_vector(self.config, self.store, self.vector_index, documents)
+        return [state.reason] if state.reason else []
 
     def _legacy_vector_index(self) -> VectorIndex:
         if self._legacy_vector is None:

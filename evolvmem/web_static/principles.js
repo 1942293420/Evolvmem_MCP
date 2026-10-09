@@ -39,8 +39,8 @@ window.EvolvPrinciples={render(mount){
   arrow('M775 566V610')+box(650,610,275,80,['保存指导 · 后续符合时复用','不符合或有冲突仍待判断'],'warm')+
   arrow('M925 655H950V180H280V205')+
   arrow('M280 285V355','完成',321,329)+box(105,355,350,80,['历史与知识自动保存','自动结果可抽检，无需全部复核'])+
-  arrow('M280 435V485')+box(105,485,350,80,['更新检索 · 已保存结果可召回','暂未同步时显示待同步'])+
-  box(105,795,820,70,['处理失败在「系统问题」重试；需要业务判断在「待你判断」处理'],'accent'));
+  arrow('M280 435V485')+box(105,485,350,80,['自动核对并更新检索','补齐变化，移除失效条目'])+
+  box(105,795,820,70,['临时故障自动重试；仍未完成的在「系统问题」处理'],'accent'));
  const diagrams={modules:moduleMap,flow,activity,organization};
  const titles={modules:'各页面负责什么',flow:'新资料自动成为历史与知识',activity:'什么时候需要你参与',organization:'整篇自动整理，指导一次后续复用'};
  mount.innerHTML=`<header class="data-page-header"><h1>工作原理</h1></header><nav class="principles-tabs" aria-label="工作原理图类型"><button data-principle="modules" aria-pressed="true">页面职责</button><button data-principle="flow" aria-pressed="false">完整流程</button><button data-principle="activity" aria-pressed="false">系统与人工</button><button data-principle="organization" aria-pressed="false">指导复用</button></nav><section class="principle-board"><div class="section-head"><h2 id="principle-title">${titles.modules}</h2><button class="ui-button" data-diagram-size>放大查看</button></div><div class="product-diagram" tabindex="0" aria-label="流程图，可横向滚动">${moduleMap}</div></section><div class="principle-links">${modules.map(m=>`<a href="${m[2]}"><strong>${m[0]} →</strong></a>`).join('')}</div>`;

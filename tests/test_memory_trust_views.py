@@ -1008,7 +1008,7 @@ def test_http_homepage_links_trust_page(http_trust):
     assert status == 200
     assert "text/html" in content_type
     assert 'href="/trust"' in body
-    assert "信任视图" in body
+    assert "来源与归属明细" in body
 
 
 def test_http_trust_page_and_readonly_apis(http_trust):

@@ -1,0 +1,164 @@
+"""Real-cache regressions for clean-marker drift and truthful vector readiness."""
+import numpy as np
+import pytest
+
+from evolvmem.context_models import ContextMatchType, ContextMode, ContextSearchRequest
+from evolvmem.recall_recovery import ContextVectorRecoveryLoop, recover_context_vector
+from evolvmem.unit_derivations import record_derivation
+from tests.test_history_qa_memory import service as base_service
+from tests.test_recall_recovery import _add_task, _add_unit, _make_store_item
+
+
+class Engine:
+    is_loaded = True
+
+    def __init__(self, dim):
+        self.dim = dim
+        self.documents = []
+
+    def encode_document(self, text):
+        self.documents.append(text)
+        return self.encode_query(text)
+
+    def encode_query(self, text):
+        return np.array([1.0] + [0.0] * (self.dim - 1), dtype=np.float32)
+
+
+@pytest.fixture
+def service(base_service):
+    base_service.config.context_vectors_required = False
+    engine = Engine(base_service.config.embedding_dim)
+    base_service.embedding_engine = engine
+    base_service.retriever.embedding_engine = engine
+    base_service.vector_index.initialize(dim=engine.dim)
+    base_service._mode = ContextMode.PRIMARY
+    base_service._refresh_health()
+    return base_service
+
+
+def seed(service):
+    kept = _make_store_item(service.config, service.store, identity_key='kept',
+                            l0='kept original constraint', project='evo')
+    changing = _make_store_item(service.config, service.store, identity_key='changing',
+                                l0='changing source constraint', project='evo')
+    report = recover_context_vector(service.config, service.store, service.vector_index,
+                                    service.embedding_engine, force=True)
+    assert report.status == 'recovered'
+    service.embedding_engine.documents.clear()
+    return kept, changing
+
+
+@pytest.mark.parametrize('cause', ['expired', 'source_withdrawn'])
+def test_clean_extra_is_reported_then_automatically_removed_without_reencoding(service, cause):
+    kept, changing = seed(service)
+    with service.store.transaction():
+        conn = service.store._connection()
+        if cause == 'expired':
+            conn.execute("UPDATE context_items SET expires_at='2000-01-01 00:00:00' WHERE id=?",
+                         (changing.id,))
+        else:
+            task_id = _add_task(service, status='superseded')
+            _add_unit(service, task_id, changing.id, ordinal=0)
+            record_derivation(service, task_id, 'synthetic-digest', changing.id, project='evo')
+
+    assert service.vector_index.is_dirty() is False
+    assert service.status().context_vector_ready is False
+    assert service.status().ready is True, 'optional vectors must not disable lexical reads'
+    assert service.retriever._vector_available() is False
+    # Optional-vector degradation still serves exact lexical knowledge.
+    assert kept.id in {r.id for r in service.search(ContextSearchRequest(query='kept', project='evo'))}
+
+    reports = ContextVectorRecoveryLoop().tick([service])
+
+    assert [r.status for r in reports] == ['recovered']
+    assert service.vector_index.ids() == [kept.id]
+    assert service.embedding_engine.documents == [], 'unchanged vectors must be reused'
+    assert service.status().context_vector_ready is True
+    hits = service.search(ContextSearchRequest(query='unrelated paraphrase', project='evo'))
+    assert [r.id for r in hits] == [kept.id]
+    assert hits[0].match_types == (ContextMatchType.VECTOR,)
+    assert service.store.get_item(changing.id).status.value == 'active', 'repair changes only the cache'
+
+
+def test_equal_counts_do_not_hide_a_missing_id_and_an_extra_id(service):
+    kept, changing = seed(service)
+    index = service.vector_index
+    index.remove(changing.id)
+    index.add(999999, service.embedding_engine.encode_query('extra'))
+    index.save()
+    assert index.count() == 2 and not index.is_dirty()
+
+    assert service.retriever._vector_available() is False
+    assert service.status().context_vector_ready is False
+    reports = ContextVectorRecoveryLoop().tick([service])
+
+    assert [r.status for r in reports] == ['recovered']
+    assert index.ids() == [kept.id, changing.id]
+    assert service.embedding_engine.documents == ['changing source constraint']
+    assert service.status().context_vector_ready is True
+
+
+def test_clean_l0_change_is_detected_and_only_changed_document_is_encoded(service):
+    kept, changing = seed(service)
+    with service.store.transaction():
+        service.store._connection().execute(
+            "UPDATE context_layers SET content='updated constraint' WHERE item_id=? AND layer='l0'",
+            (changing.id,))
+
+    assert not service.vector_index.is_dirty()
+    assert service.retriever._vector_available() is False
+    assert service.status().context_vector_ready is False
+    reports = ContextVectorRecoveryLoop().tick([service])
+
+    assert [r.status for r in reports] == ['recovered']
+    assert service.embedding_engine.documents == ['updated constraint']
+    assert service.vector_index.ids() == [kept.id, changing.id]
+    assert service.status().context_vector_ready is True
+
+
+def test_unloaded_encoder_cannot_report_vector_ready_but_lexical_still_works(service):
+    kept, _ = seed(service)
+    service.embedding_engine.is_loaded = False
+
+    assert service.status().context_vector_ready is False
+    assert service.retriever._vector_available() is False
+    results = service.search(ContextSearchRequest(query='kept', project='evo'))
+    assert [r.id for r in results] == [kept.id]
+    assert results[0].match_types == (ContextMatchType.LEXICAL,)
+
+
+def test_failed_recovery_of_clean_drift_keeps_previous_cache_and_retry_marker(service, monkeypatch):
+    kept, changing = seed(service)
+    with service.store.transaction():
+        service.store._connection().execute(
+            "UPDATE context_layers SET content='updated constraint' WHERE item_id=? AND layer='l0'",
+            (changing.id,))
+    before = service.config.context_vector_path.read_bytes()
+
+    def unavailable(text):
+        raise RuntimeError('synthetic encoder failure')
+
+    monkeypatch.setattr(service.embedding_engine, 'encode_document', unavailable)
+    reports = ContextVectorRecoveryLoop().tick([service])
+
+    assert [r.status for r in reports] == ['failed']
+    assert service.config.context_vector_path.read_bytes() == before
+    assert service.vector_index.is_dirty() is True
+    assert service.status().context_vector_ready is False
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_staging_releases_its_unique_lock_files(service, monkeypatch, fail):
+    service.config.lan_shared_vector_cache = True
+    seed(service)
+    # Ignore setup's old leak; inspect only artifacts created by this attempt.
+    before = set(service.config.data_dir.glob('context_vectors.usearch.stage-*.lock'))
+    _make_store_item(service.config, service.store, identity_key='next', l0='next constraint', project='evo')
+    if fail:
+        def unavailable(text):
+            raise RuntimeError('synthetic failure')
+        monkeypatch.setattr(service.embedding_engine, 'encode_document', unavailable)
+    report = recover_context_vector(service.config, service.store, service.vector_index,
+                                    service.embedding_engine, force=True)
+    assert report.status == ('failed' if fail else 'recovered')
+    assert set(service.config.data_dir.glob('context_vectors.usearch.stage-*.lock')) == before

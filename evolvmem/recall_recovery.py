@@ -512,9 +512,13 @@ def recover_context_vector(
     except Exception:
         dirty = True
     if not dirty and not force:
-        return VectorRecoveryReport(
-            status="clean", dirty=False, attempted=False
-        )
+        from evolvmem.context_vector_health import inspect_context_vector
+        if not inspect_context_vector(config, store, index).reason:
+            return VectorRecoveryReport(status="clean", dirty=False, attempted=False)
+    # A drifted cache can have a clean marker (TTL/source eligibility changes).
+    # Persist the retry signal before staging so an interruption stays visible.
+    index.mark_dirty()
+    index.preserve_dirty()
     engine_loaded = embedding_engine is not None and bool(
         getattr(embedding_engine, "is_loaded", False)
     )
@@ -670,8 +674,15 @@ class ContextVectorRecoveryLoop:
                 reason_codes=("service_unavailable",),
             )
         try:
-            if not bool(index.is_dirty()):
+            from evolvmem.context_vector_health import inspect_context_vector
+            state = inspect_context_vector(config, store, index)
+            if not state.reason:
                 return None
+            if state.reason == 'context_vector_path_mismatch':
+                return VectorRecoveryReport(status="failed", dirty=True, attempted=False,
+                                            reason_codes=("index_path_mismatch",))
+            index.mark_dirty()
+            index.preserve_dirty()
         except Exception:
             return VectorRecoveryReport(
                 status="failed", dirty=True, attempted=False,

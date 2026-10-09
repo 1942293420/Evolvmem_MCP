@@ -286,21 +286,9 @@ class ContextRetriever:
             return []  # gracefully degrade to FTS-only on encoding/index failure
 
     def _vector_available(self) -> bool:
-        if self.embedding_engine is None or not self.embedding_engine.is_loaded:
-            return False
-        if self.vector_index.path != self.config.context_vector_path.resolve():
-            return False  # an index wired to the legacy path never serves context
-        try:
-            if self.vector_index.is_dirty():
-                return False
-            count = self.vector_index.count()
-            if count <= 0:
-                return False
-            if not self.config.context_vectors_required:
-                return count == len(self.store.list_vector_documents())
-            return True
-        except Exception:
-            return False  # uninitialized or unreadable index degrades to FTS-only
+        from evolvmem.context_vector_health import inspect_context_vector
+        state = inspect_context_vector(self.config, self.store, self.vector_index)
+        return state.available(self.embedding_engine)
 
     def _merge_candidates(
         self,
