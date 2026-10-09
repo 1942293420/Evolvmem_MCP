@@ -2,6 +2,10 @@
 
 from dataclasses import dataclass
 
+# llama-cpp's embed() truncates at n_batch. Keep its token batch equal to
+# the supported input window, and bind this budget into vector provenance.
+EMBEDDING_INPUT_TOKENS = 512
+
 
 @dataclass(frozen=True, slots=True)
 class EmbeddingRuntimeContract:

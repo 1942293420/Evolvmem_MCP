@@ -9,6 +9,50 @@ from tests.test_history_qa_memory import service as base_service
 from tests.test_recall_recovery import _add_task, _add_unit, _make_store_item
 
 
+def test_one_new_vector_cannot_certify_remaining_vectors_from_an_old_contract(service):
+    import json
+    from evolvmem import vector_provenance
+    kept, _ = seed(service)
+    proof_path = vector_provenance.path(service.config)
+    payload = json.loads(proof_path.read_text())
+    payload['contract'] = payload['contract'][:3]
+    proof_path.write_text(json.dumps(payload))
+    vector_provenance.record(service.config, kept.id, 'kept original constraint',
+                             service.embedding_engine.encode_query('kept'))
+    assert service.status().context_vector_ready is False
+    assert vector_provenance.load(service.config) == {}
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_old_encoder_contract_is_unavailable_and_reencoded(service, monkeypatch, fail):
+    import json
+    from evolvmem import vector_provenance
+    kept, changing = seed(service)
+    proof_path = vector_provenance.path(service.config)
+    payload = json.loads(proof_path.read_text())
+    payload['contract'] = [service.config.embedding_model_filename,
+                           service.config.embedding_dim, service.config.embedding_doc_prefix]
+    proof_path.write_text(json.dumps(payload))
+    before = service.config.context_vector_path.read_bytes()
+    assert not service.vector_index.is_dirty()
+    assert service.status().context_vector_ready is False
+    assert service.retriever._vector_available() is False
+    if fail:
+        def unavailable(text):
+            raise RuntimeError('synthetic encoder failure')
+        monkeypatch.setattr(service.embedding_engine, 'encode_document', unavailable)
+    reports = ContextVectorRecoveryLoop().tick([service])
+    assert [r.status for r in reports] == [('failed' if fail else 'recovered')]
+    if fail:
+        assert service.config.context_vector_path.read_bytes() == before
+        assert service.vector_index.is_dirty()
+        assert not service.status().context_vector_ready
+    else:
+        assert sorted(service.embedding_engine.documents) == ['changing source constraint', 'kept original constraint']
+        assert service.status().context_vector_ready
+        assert vector_provenance.load(service.config)
+
+
 class Engine:
     is_loaded = True
 

@@ -4,6 +4,30 @@ import pytest
 from evolvmem.embedding import EmbeddingEngine
 
 
+def test_document_tail_inside_context_changes_embedding(test_config, monkeypatch):
+    """llama-cpp embed truncates at n_batch, not at the advertised n_ctx."""
+    import sys
+    from types import SimpleNamespace
+
+    class TokenWindowModel:
+        def __init__(self, **kwargs):
+            self.limit = min(kwargs['n_batch'], kwargs['n_ctx'])
+
+        def embed(self, text):
+            tokens = text.split()[:self.limit]
+            return [float('TAIL' in tokens)] + [0.0] * (test_config.embedding_dim - 1)
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, 'llama_cpp', SimpleNamespace(Llama=TokenWindowModel))
+    monkeypatch.setattr(type(test_config), 'validate_runtime', lambda *a, **k: [])
+    prefix = 'word ' * 100
+    with EmbeddingEngine(test_config) as engine:
+        assert engine.encode_document(prefix + 'TAIL') != engine.encode_document(prefix + 'OTHER')
+        assert engine.encode_query(prefix + 'TAIL') != engine.encode_query(prefix + 'OTHER')
+
+
 class TestEmbeddingEngine:
     def test_initialize_fails_gracefully_without_model(self, test_config):
         """Model file not found should raise a clear error."""

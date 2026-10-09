@@ -10,6 +10,7 @@ import json
 import os
 import uuid
 import numpy as np
+from evolvmem.runtime_contract import EMBEDDING_INPUT_TOKENS
 
 
 def path(config):
@@ -17,7 +18,8 @@ def path(config):
 
 
 def contract(config):
-    return [config.embedding_model_filename, config.embedding_dim, config.embedding_doc_prefix]
+    return [config.embedding_model_filename, config.embedding_dim,
+            config.embedding_doc_prefix, EMBEDDING_INPUT_TOKENS]
 
 
 def text_digest(text):
@@ -32,14 +34,20 @@ def entry(text, vector):
     return {'text': text_digest(text), 'vector': vector_digest(vector)}
 
 
-def load(config):
+def load_with_contract(config):
+    """Return proofs and compatibility; None means no trustworthy manifest."""
     try:
         data = json.loads(path(config).read_text())
-        if data.get('version') == 1 and data.get('contract') == contract(config) and isinstance(data.get('items'), dict):
-            return data['items']
+        if data.get('version') == 1 and isinstance(data.get('items'), dict):
+            compatible = data.get('contract') == contract(config)
+            return (data['items'] if compatible else {}), compatible
     except (OSError, ValueError, AttributeError):
         pass
-    return {}
+    return {}, None
+
+
+def load(config):
+    return load_with_contract(config)[0]
 
 
 def save(config, entries):
@@ -56,7 +64,11 @@ def save(config, entries):
 
 
 def record(config, item_id, l0, vector):
-    entries = load(config)
+    entries, compatible = load_with_contract(config)
+    if compatible is False:
+        # One new vector cannot certify the rest of an old vector space.
+        # Keep the mismatch visible until recovery replaces the whole cache.
+        return
     entries[str(item_id)] = entry(l0, vector)
     save(config, entries)
 

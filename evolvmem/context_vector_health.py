@@ -37,7 +37,9 @@ def inspect_context_vector(config, store, index, documents=None):
             return ContextVectorState(False, count, 'context_vector_count_mismatch')
         if set(index.ids()) != {d.item_id for d in documents}:
             return ContextVectorState(False, count, 'context_vector_ids_mismatch')
-        proofs = vector_provenance.load(config)
+        proofs, compatible = vector_provenance.load_with_contract(config)
+        if compatible is False:
+            return ContextVectorState(False, count, 'context_vector_contract_mismatch')
         for document in documents:
             proof = proofs.get(str(document.item_id))
             if isinstance(proof, dict) and proof.get('text') != vector_provenance.text_digest(document.l0):

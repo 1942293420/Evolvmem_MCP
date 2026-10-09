@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from evolvmem.config import Config
+from evolvmem.runtime_contract import EMBEDDING_INPUT_TOKENS
 
 
 class RuntimeConfigurationError(RuntimeError, FileNotFoundError):
@@ -44,8 +45,8 @@ class EmbeddingEngine:
         model = Llama(
             model_path=str(model_path),
             embedding=True,
-            n_ctx=512,          # embedding doesn't need long context
-            n_batch=32,         # batch processing
+            n_ctx=EMBEDDING_INPUT_TOKENS,
+            n_batch=EMBEDDING_INPUT_TOKENS,
             verbose=False,
         )
         self._model = model

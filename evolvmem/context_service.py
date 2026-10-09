@@ -165,6 +165,7 @@ _HEALTH_LOG_CODES = frozenset(
         "context_vector_count_mismatch",
         "context_vector_ids_mismatch",
         "context_vector_content_mismatch",
+        "context_vector_contract_mismatch",
         "degraded_legacy",
     }
 )
