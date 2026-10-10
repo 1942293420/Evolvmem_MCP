@@ -86,6 +86,9 @@ class Config:
     # nomic-embed-text-v1.5 任务前缀；置空字符串可关闭
     embedding_query_prefix: str = DEFAULT_EMBEDDING_CONTRACT.query_prefix
     embedding_doc_prefix: str = DEFAULT_EMBEDDING_CONTRACT.document_prefix
+    # Optional local cross-encoder. Embedding vectors and their contract stay unchanged.
+    context_reranker_model_dir: str = ""
+    context_reranker_min_score: float = 0.1
 
     # --- Context Core（尚未接入现有检索层）---
     context_l0_max_chars: int = 240
@@ -289,6 +292,7 @@ class Config:
         for name in (
             "context_min_confidence",
             "context_vector_min_similarity",
+            "context_reranker_min_score",
             "context_promotion_similarity_threshold",
         ):
             if not self._is_unit_interval(getattr(self, name)):
@@ -388,6 +392,8 @@ class Config:
             "embedding_dim": self.embedding_dim,
             "embedding_query_prefix": self.embedding_query_prefix,
             "embedding_doc_prefix": self.embedding_doc_prefix,
+            "context_reranker_model_dir": self.context_reranker_model_dir,
+            "context_reranker_min_score": self.context_reranker_min_score,
             "context_l0_max_chars": self.context_l0_max_chars,
             "context_l1_max_chars": self.context_l1_max_chars,
             "context_l2_max_chars": self.context_l2_max_chars,

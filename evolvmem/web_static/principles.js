@@ -41,8 +41,17 @@ window.EvolvPrinciples={render(mount){
   arrow('M280 285V355','完成',321,329)+box(105,355,350,80,['历史与知识自动保存','自动结果可抽检，无需全部复核'])+
   arrow('M280 435V485')+box(105,485,350,80,['待更新条目不打断已有检索','模型变化时重新建立全部索引'])+
   box(105,795,820,70,['临时故障自动重试；仍未完成的在「系统问题」处理'],'accent'));
- const diagrams={modules:moduleMap,flow,activity,organization};
- const titles={modules:'各页面负责什么',flow:'新资料自动成为历史与知识',activity:'什么时候需要你参与',organization:'整篇自动整理，指导一次后续复用'};
- mount.innerHTML=`<header class="data-page-header"><h1>工作原理</h1></header><nav class="principles-tabs" aria-label="工作原理图类型"><button data-principle="modules" aria-pressed="true">页面职责</button><button data-principle="flow" aria-pressed="false">完整流程</button><button data-principle="activity" aria-pressed="false">系统与人工</button><button data-principle="organization" aria-pressed="false">指导复用</button></nav><section class="principle-board"><div class="section-head"><h2 id="principle-title">${titles.modules}</h2><button class="ui-button" data-diagram-size>放大查看</button></div><div class="product-diagram" tabindex="0" aria-label="流程图，可横向滚动">${moduleMap}</div></section><div class="principle-links">${modules.map(m=>`<a href="${m[2]}"><strong>${m[0]} →</strong></a>`).join('')}</div>`;
+ const recall=svg('资料资格、语义召回与重排序',860,
+  box(315,20,350,70,['问题与当前项目'],'accent')+arrow('M490 90V120')+
+  box(270,120,440,85,['核对资料来源、归属与有效期','历史、可用问答和已验证经验分别查找'])+arrow('M490 205V235')+
+  box(270,235,440,80,['关键词与语义共同查找','保留错误码和明确标识'])+arrow('M490 315V345')+
+  box(270,345,440,80,['比较问题与内容，重新排序','核对适用条件，避免热门资料挤掉答案'])+arrow('M490 425V465')+
+  diamond(490,503,'有相关且可用的内容？')+
+  arrow('M620 503H790V570','没有',762,484)+box(655,570,280,80,['返回没有匹配内容','不拿无关资料填满结果'],'warm')+
+  arrow('M490 541V590','有',524,569)+box(270,590,370,85,['重复内容只占一个位置','保留各自的来源与适用范围'])+arrow('M455 675V725')+
+  box(270,725,370,90,['按阅读预算返回结果','可继续查看来源与原文'],'accent'));
+ const diagrams={modules:moduleMap,flow,activity,organization,recall};
+ const titles={modules:'各页面负责什么',flow:'新资料自动成为历史与知识',activity:'什么时候需要你参与',organization:'整篇自动整理，指导一次后续复用',recall:'知识怎样被找到并排出顺序'};
+ mount.innerHTML=`<header class="data-page-header"><h1>工作原理</h1></header><nav class="principles-tabs" aria-label="工作原理图类型"><button data-principle="modules" aria-pressed="true">页面职责</button><button data-principle="flow" aria-pressed="false">完整流程</button><button data-principle="activity" aria-pressed="false">系统与人工</button><button data-principle="organization" aria-pressed="false">指导复用</button><button data-principle="recall" aria-pressed="false">知识召回</button></nav><section class="principle-board"><div class="section-head"><h2 id="principle-title">${titles.modules}</h2><button class="ui-button" data-diagram-size>放大查看</button></div><div class="product-diagram" tabindex="0" aria-label="流程图，可横向滚动">${moduleMap}</div></section><div class="principle-links">${modules.map(m=>`<a href="${m[2]}"><strong>${m[0]} →</strong></a>`).join('')}</div>`;
  mount.onclick=e=>{const b=e.target.closest('[data-principle]');if(b){mount.querySelectorAll('[data-principle]').forEach(t=>t.setAttribute('aria-pressed',String(t===b)));const board=mount.querySelector('.product-diagram');board.innerHTML=diagrams[b.dataset.principle];board.scrollLeft=0;mount.querySelector('#principle-title').textContent=titles[b.dataset.principle];}const zoom=e.target.closest('[data-diagram-size]');if(zoom){const board=mount.querySelector('.product-diagram');board.classList.toggle('enlarged');zoom.textContent=board.classList.contains('enlarged')?'恢复大小':'放大查看';}};
 }};

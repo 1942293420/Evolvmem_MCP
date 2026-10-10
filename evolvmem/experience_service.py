@@ -514,7 +514,8 @@ class ExperienceService:
             strong_semantic = (semantic_hit is not None and
                 ContextMatchType.VECTOR in semantic_hit.match_types and
                 ContextMatchType.LEXICAL not in semantic_hit.match_types and
-                semantic_hit.score_components.relevance >= self.config.context_vector_weight * .94)
+                (semantic_hit.score_components.relevance >= self.config.context_vector_weight * .94
+                 or (semantic_hit.rerank_score is not None and semantic_hit.rerank_score >= self.config.context_reranker_min_score)))
             if not lexical_support and not strong_semantic:
                 continue
             # Problem-statement matches carry more intent than incidental words
@@ -523,19 +524,20 @@ class ExperienceService:
                 1.0, overlap + (.15 if strong_problem_term else 0.0))
             relevance = max(
                 lexical_relevance,
-                semantic_hit.score_components.relevance if semantic_hit else 0)
+                (semantic_hit.rerank_score if semantic_hit.rerank_score is not None else semantic_hit.score_components.relevance) if semantic_hit else 0)
             evidence_score = (case['success_count']+1)/(case['success_count']+case['failure_count']+2)
             condition_match = sum(case['conditions'].get(k)==v for k,v in constraints.items()) / max(1,len(constraints))
             score = relevance*.55 + condition_match*.2 + evidence_score*.15 + .1*(case['project']==project)
             result = {k:v for k,v in case.items() if k != 'evidence'}
             result['verification'] = compatible_verification
             result.update(score=round(score,4), match_reason='当前项目案例' if case['project']==project else '可迁移方法：须核对新场景',
+                          rerank_score=semantic_hit.rerank_score if semantic_hit else None,
                           adaptation_required=(case['project']!=project or not constraints or
                               any(k not in constraints for proof in compatible_verification
                                   for k in proof['conditions'])),
                           instruction='比较机制、环境和约束；说明可复用步骤与必须改变的步骤，验证后再记录结果。')
             scored.append(result)
-        scored.sort(key=lambda v:(-v['score'],-v['success_count'],v['id']))
+        scored.sort(key=lambda v:(-(v['rerank_score'] or 0),-v['score'],-v['success_count'],v['id']))
         selected = []
         remaining = self.config.context_inject_related_max_chars
         for result in scored:

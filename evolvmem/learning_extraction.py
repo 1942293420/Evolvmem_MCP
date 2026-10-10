@@ -334,7 +334,7 @@ def persist(service, item, messages, source_session, archive_id):
         key=item.key + ':learn:' + digest, value=body, attribute=item.attribute,
         tags=item.tags, confidence=item.confidence, importance=item.importance,
         tier='normal' if category == 'task_requirement' else item.tier, expires_at=item.expires_at,
-        source_session=source_session, project_hint=decision['project']))
+        source_session=source_session, project_hint=decision['project']), record_source=False)
     cid = added.context_id
     removed, old_legacy = [], []
     if result['action'] == 'replace' and result['status'] == 'active':

@@ -20,6 +20,7 @@ class EmbeddingEngine:
         self.config = config
         self._model = None
         self._http = None
+        self._reranker = None
         self._dim: int | None = None
 
     # ---- lifecycle ----
@@ -64,6 +65,13 @@ class EmbeddingEngine:
         except Exception:
             self.close()
             raise
+        if self.config.context_reranker_model_dir:
+            try:
+                from evolvmem.reranking import Reranker
+                self._reranker = Reranker(self.config.context_reranker_model_dir)
+            except Exception:
+                # Optional model failure leaves the existing vector leg intact.
+                self._reranker = None
 
     def close(self) -> None:
         if self._http is not None:
@@ -72,6 +80,7 @@ class EmbeddingEngine:
         model = self._model
         self._model = None
         self._dim = None
+        self._reranker = None
         if model is not None:
             model.close()
 
@@ -91,6 +100,17 @@ class EmbeddingEngine:
         if self._dim is None:
             raise RuntimeError("EmbeddingEngine not initialized")
         return self._dim
+
+    @property
+    def reranker_loaded(self):
+        return self._http.reranker_loaded if self._http is not None else self._reranker is not None
+
+    def rerank(self, query, documents):
+        if self._http is not None:
+            return self._http.rerank(query, documents)
+        if self._reranker is None:
+            raise RuntimeError('reranker_unavailable')
+        return self._reranker.score(query, documents)
 
     # ---- encoding ----
 

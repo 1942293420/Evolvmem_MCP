@@ -361,6 +361,8 @@ class ContextSearchResult:
     effective_until: str | None = None
     occurred_at: str | None = None
     mentioned_at: str | None = None
+    rerank_score: float | None = None
+    duplicate_ids: tuple[int, ...] = ()
 
     @property
     def temporal_state(self) -> str:

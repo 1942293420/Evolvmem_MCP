@@ -13,6 +13,7 @@ from evolvmem.lan_sharing import LanError, LanSharing, validate_request_id
 from evolvmem.mcp_contract import tool_specs
 from evolvmem.lan_context import remote_context, validate_snapshot, prepare_bindings, bind_workspace, prepare_memory_revision
 from evolvmem.lan_capture import CAPTURE_TOOLS, LanCapture, capture_specs
+from evolvmem.request_health import request_health_scope
 
 PROTOCOLS = ('2025-11-25', '2025-03-26')
 SEARCH = frozenset({'memory_search', 'context_search', 'experience_recall'})
@@ -229,7 +230,7 @@ class LanTools:
         return result
 
     def call_tool(self, user, name, arguments, *, owner=False):
-        with self.lock:
+        with self.lock, request_health_scope():
             try:
                 result = self._call_tool(user, name, arguments, owner=owner)
                 result['authenticated_user'] = user

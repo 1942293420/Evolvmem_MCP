@@ -81,6 +81,23 @@ def test_verified_case_keeps_steps_and_can_be_recalled(experiences):
         'data_size': 'large', 'freshness': 'realtime'}
 
 
+def test_verified_paraphrase_uses_reranking_without_bypassing_conditions(experiences):
+    from tests.test_context_retriever import FakeVectorIndex
+    from tests.test_retrieval_regressions import RankedEngine
+    saved = experiences.record(case(), evidence=proof(experiences))
+    store = experiences.core.store
+    l0 = store.get_item(saved['id']).layers.l0
+    engine = RankedEngine({l0:.9})
+    experiences.core.embedding_engine = engine
+    experiences.core.retriever.embedding_engine = engine
+    index = FakeVectorIndex(experiences.config, [{'id':saved['id'],'distance':.3}])
+    index.document_ids = [d.item_id for d in store.list_vector_documents()]
+    experiences.core.retriever.vector_index = index
+    hit = experiences.recall(project='demo', query='How can we make the order screen faster?', constraints={'data_size':'large'})
+    assert [row['id'] for row in hit['results']] == [saved['id']]
+    assert experiences.recall(project='demo', query='How can we make the order screen faster?', constraints={'data_size':'small'})['results'] == []
+
+
 def test_unverified_claim_is_candidate_not_success(experiences):
     saved = experiences.record(case(result='助手说已经修复'))
     assert saved['status'] == 'candidate'

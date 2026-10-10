@@ -51,6 +51,14 @@ class _SerializedEmbeddingEngine:
         return self._engine.dim
 
     @property
+    def reranker_loaded(self):
+        return bool(getattr(self._engine, 'reranker_loaded', False))
+
+    def rerank(self, query, documents):
+        with self._lock:
+            return self._engine.rerank(query, documents)
+
+    @property
     def config(self):
         return self._engine.config
 

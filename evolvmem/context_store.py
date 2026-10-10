@@ -1728,6 +1728,26 @@ class ContextStore:
             for row in rows
         }
 
+    def retrieval_fingerprints(self, item_ids):
+        """Exact full-content/applicability fingerprints without loading L1/L2."""
+        if not item_ids:
+            return {}
+        placeholders = ','.join('?' for _ in item_ids)
+        rows = self._connection().execute(
+            'SELECT i.id,i.experience_payload,i.effective_from,i.effective_until,'
+            'i.occurred_at,i.expires_at,l.layer,l.content_hash '
+            'FROM context_items i JOIN context_layers l ON l.item_id=i.id '
+            f'WHERE i.id IN ({placeholders}) ORDER BY i.id,l.layer', tuple(item_ids)).fetchall()
+        grouped = {}
+        for row in rows:
+            grouped.setdefault(row['id'], []).append(tuple(row)[1:])
+        publications = set()
+        if self._connection().execute("SELECT 1 FROM sqlite_master WHERE name='lan_publications'").fetchone():
+            publications = {row[0] for row in self._connection().execute(
+                f'SELECT context_id FROM lan_publications WHERE context_id IN ({placeholders})', tuple(item_ids))}
+        # Separate publications retain independent owners, withdrawal and refs.
+        return {key: (tuple(value), key if key in publications else None) for key, value in grouped.items() if len(value) == 3}
+
     def get_layer(self, item_id: int, layer: ContextLayer) -> str | None:
         """Return the exact stored content of one layer, or None when absent."""
         row = self._connection().execute(
@@ -1889,8 +1909,13 @@ class ContextStore:
             else "context_layers_fts"
         )
         rows = self._search_fts5(table, query, top_k, statuses, layer_sql, layer_params)
-        if has_cjk:
-            rows.extend(self._search_like(query, top_k, statuses, layer_sql, layer_params))
+        numeric_identifier = bool(re.fullmatch(r'\d{4,}', query.strip()))
+        if has_cjk or numeric_identifier:
+            extra = self._search_like(query, top_k, statuses, layer_sql, layer_params)
+            if numeric_identifier:
+                pattern = re.compile(r'(?<!\d)' + re.escape(query.strip()) + r'(?!\d)')
+                extra = [row for row in extra if pattern.search(row['content'])]
+            rows.extend(extra)
 
         merged: dict[int, dict[str, object]] = {}
         for row in rows:
@@ -1981,7 +2006,7 @@ class ContextStore:
     ) -> list[dict[str, object]]:
         status_sql, status_params = self._status_filter(statuses)
         rows = self._connection().execute(
-            "SELECT i.id AS item_id, l.layer, i.content_type, i.project, "
+            "SELECT i.id AS item_id, l.layer, l.content, i.content_type, i.project, "
             "i.status, 0.0 AS score "
             "FROM context_layers l "
             "JOIN context_items i ON i.id=l.item_id "

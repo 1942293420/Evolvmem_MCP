@@ -76,7 +76,7 @@ class MemoryLearning:
         return hashlib.sha256(encoded(data).encode()).hexdigest()
 
     def usable(self, row):
-        if row['status'] != 'active' or row['ownership'].get('excluded', False):
+        if row['status'] != 'active' or row['ownership'].get('state') == 'excluded':
             return False
         expires = row.get('expires_at') or row.get('effective_until')
         if expires:

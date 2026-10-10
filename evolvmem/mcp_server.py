@@ -842,6 +842,8 @@ class MemoryMCPServer:
                     "confidence": r.confidence,
                     "importance": r.importance,
                     "score": r.score,
+                    "rerank_score": r.rerank_score,
+                    "duplicate_ids": list(r.duplicate_ids),
                     "match_types": [m.value for m in r.match_types],
                     "match_layers": [layer.value for layer in r.match_layers],
                     "available_layers": [
@@ -1583,6 +1585,10 @@ class MemoryMCPServer:
     # ---- mode/health views and mutation boundary helpers ----
 
     def _live_status(self):
+        from evolvmem.request_health import current_status
+        return current_status(self, self._evaluate_live_status)
+
+    def _evaluate_live_status(self):
         """已初始化服务的健康快照；不可用返回 None。
 
         PRIMARY 每次调用都用与设计门禁相同的评估器重新复查，服务在

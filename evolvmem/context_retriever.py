@@ -1,9 +1,10 @@
 """Deterministic, thresholded retrieval over layered Context Core items."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import math
+import re
 
 import numpy as np
 
@@ -85,11 +86,11 @@ class ContextRetriever:
 
     Query flow:
     1. Active-only L0 FTS5/trigram candidates plus an expanded L0 vector pool.
-    2. Discard vector-only neighbors below the configured similarity floor.
+    2. Over-fetch a bounded pool when optional reranking is available.
     3. Merge match types/layers by context ID and fetch narrow metadata + L0.
     4. Apply status, expiry, scope, content-type, confidence, and tier filters.
-    5. Score the eight frozen normalized components into a weighted total.
-    6. Sort by (-score, id) and only then truncate to top_k.
+    5. Apply the original acceptance gate or independent reranking confirmation.
+    6. Rank relevance, keep applicable identity winners, deduplicate full content.
 
     The retriever never loads L1/L2 text and never mutates access counts.
     """
@@ -111,15 +112,15 @@ class ContextRetriever:
 
     def search(self, request: ContextSearchRequest, *, eligible_ids=None) -> tuple[ContextSearchResult, ...]:
         """Return deterministic L0-only results without access-count side effects."""
-        pool_size = request.top_k * _CANDIDATE_POOL_MULTIPLIER
+        reranking = bool(getattr(self.embedding_engine, 'reranker_loaded', False))
+        pool_size = max(50, request.top_k * _CANDIDATE_POOL_MULTIPLIER) if reranking else request.top_k * _CANDIDATE_POOL_MULTIPLIER
         moment = self._moment(request)
         # Superseded rows are always candidate material: an explicit ``as_of``
         # may read them, and a *default* current read must still see a
         # predecessor whose known successor is only scheduled for the future.
         # The metadata filter below decides which of them is actually eligible.
         statuses = (ContextStatus.ACTIVE, ContextStatus.SUPERSEDED)
-        fts_hits = self.store.search_fts(
-            request.query,
+        fts_options = dict(
             top_k=pool_size,
             statuses=statuses,
             layers=(ContextLayer.L0, ContextLayer.L1),
@@ -132,8 +133,15 @@ class ContextRetriever:
             exclude_checkpoints=ContextContentType.WORKSTREAM_CHECKPOINT not in request.content_types,
             item_ids=None if eligible_ids is None else tuple(eligible_ids),
         )
+        fts_hits = self.store.search_fts(request.query, **fts_options)
+        # Exact error codes and code identifiers survive a natural-language
+        # wrapper. Keep all scope/status gates on these additional queries.
+        identifiers = re.findall(r'(?<!\d)\d{4,}(?!\d)|[A-Za-z][A-Za-z0-9]*[_-][A-Za-z0-9_-]+', request.query)
+        for identifier in dict.fromkeys(identifiers[:8]):
+            fts_hits.extend(self.store.search_fts(identifier, **fts_options))
         candidates = self._merge_candidates(
-            fts_hits, self._scoped_vector_candidates(request, pool_size, eligible_ids)
+            fts_hits, self._scoped_vector_candidates(request, pool_size, eligible_ids),
+            min_similarity=min(.6, self.config.context_vector_min_similarity) if reranking else None,
         )
         if eligible_ids is not None:
             allowed = set(eligible_ids)
@@ -162,6 +170,7 @@ class ContextRetriever:
         )
         now = self._now()
         scored: list[tuple[float, ContextSearchResult]] = []
+        eligible_candidates = []
         for candidate in candidates:
             record = records.get(candidate.item_id)
             if record is None or not self._eligible(
@@ -171,18 +180,60 @@ class ContextRetriever:
                 implicit_end=implicit_ends.get(candidate.item_id),
             ):
                 continue
+            eligible_candidates.append(candidate)
+        rank_scores = None
+        if reranking and eligible_candidates:
+            try:
+                values = self.embedding_engine.rerank(request.query, [records[c.item_id].l0 for c in eligible_candidates])
+                if len(values) != len(eligible_candidates) or any(not math.isfinite(v) or not 0 <= v <= 1 for v in values):
+                    raise ValueError('invalid_reranking_response')
+                rank_scores = dict(zip((c.item_id for c in eligible_candidates), values))
+            except Exception:
+                # Optional reranking failure restores the original acceptance
+                # gate; weak over-fetched neighbors cannot leak on fallback.
+                pass
+        for candidate in eligible_candidates:
+            record = records[candidate.item_id]
+            similarity = 0 if candidate.distance is None else 1 - candidate.distance / 2
+            rank_score = None if rank_scores is None else rank_scores[candidate.item_id]
+            if (candidate.lexical_raw is None and similarity < self.config.context_vector_min_similarity
+                    and (rank_score is None or rank_score < self.config.context_reranker_min_score)):
+                continue
             components = self._score_components(
                 record.item, candidate, request, now, max_lexical_raw
             )
             score = min(1.0, max(0.0, self._total_score(components)))
-            scored.append(
-                (score, self._build_result(record, candidate, components, score))
-            )
-        scored.sort(key=lambda entry: (-entry[0], entry[1].id))
+            result = self._build_result(record, candidate, components, score)
+            if rank_score is not None:
+                result = replace(result, score=rank_score, rerank_score=rank_score)
+            scored.append((score, result))
+        # Query/document relevance decides first; existing metadata only breaks
+        # equal cross-encoder scores instead of drowning out the query intent.
+        scored.sort(key=lambda entry: (-entry[1].score, -entry[0], entry[1].id))
         ranked = self._latest_applicable_per_identity(
             [result for _, result in scored], request, now
         )
-        return tuple(ranked[: request.top_k])
+        return tuple(self._deduplicate(ranked)[: request.top_k])
+
+    def _deduplicate(self, results):
+        kept, seen = [], {}
+        fingerprints = self.store.retrieval_fingerprints([result.id for result in results])
+        for result in results:
+            fingerprint = fingerprints.get(result.id)
+            if fingerprint is None:
+                kept.append(result)
+                continue
+            # A shared short L0 does not prove duplicates. Require complete
+            # content, scope, temporal applicability and case conditions alike.
+            signature = (result.project, result.scope, result.content_type, result.status, fingerprint)
+            if signature in seen:
+                position = seen[signature]
+                canonical = kept[position]
+                kept[position] = replace(canonical, duplicate_ids=canonical.duplicate_ids + (result.id,))
+            else:
+                seen[signature] = len(kept)
+                kept.append(result)
+        return kept
 
     def _latest_applicable_per_identity(
         self,
@@ -304,16 +355,23 @@ class ContextRetriever:
         self,
         fts_hits: list[ContextSearchHit],
         vector_hits: list[dict],
+        *, min_similarity=None,
     ) -> list[_Candidate]:
         """Fuse both channels by context ID, dropping weak vector-only neighbors."""
         by_id: dict[int, _Candidate] = {}
         for hit in fts_hits:
+            existing = by_id.get(hit.item_id)
+            if existing is not None:
+                existing.lexical_raw = max(existing.lexical_raw, hit.score)
+                existing.match_layers = tuple(layer for layer in ContextLayer if layer in set(existing.match_layers) | set(hit.match_layers))
+                continue
             by_id[hit.item_id] = _Candidate(
                 item_id=hit.item_id,
                 match_layers=hit.match_layers,
                 lexical_raw=hit.score,
             )
-        min_similarity = self.config.context_vector_min_similarity
+        if min_similarity is None:
+            min_similarity = self.config.context_vector_min_similarity
         for hit in vector_hits:
             item_id = int(hit["id"])
             distance = float(hit["distance"])

@@ -17,6 +17,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+reranking = [
+    "onnxruntime>=1.20,<2",
+    "tokenizers>=0.20,<1",
+]
 embedding = [
     "llama-cpp-python>=0.3.0",
 ]

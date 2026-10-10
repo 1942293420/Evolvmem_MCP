@@ -292,7 +292,7 @@ class CutoverCanary:
                 source_session="cutover-canary",
                 importance=9.0,
                 tier="pinned",
-            )
+            ), record_source=False
         )
         if result.context_id is None:
             raise CutoverCanaryError("canary_dual_write_missing_context")

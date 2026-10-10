@@ -8,6 +8,7 @@ import ipaddress
 from pathlib import Path
 
 from evolvmem.embedding_client import valid_vector
+from evolvmem.reranking import valid_scores
 from evolvmem.lan_config import LanSettings
 from evolvmem.lan_runtime import LanRuntime
 from evolvmem.lan_tools import LanTools, PROTOCOLS
@@ -66,7 +67,7 @@ def make_http_server(runtime, host=None, port=None):
             if self.path == '/owner/mcp' and not owner_peer_allowed(self.client_address[0], user):
                 self._reply(403, {'error': 'owner_forbidden'})
                 return None
-            if self.path not in ('/mcp', '/owner/mcp', '/embedding', '/embedding/status'):
+            if self.path not in ('/mcp', '/owner/mcp', '/embedding', '/embedding/status', '/rerank'):
                 self._reply(404, {'error': 'not_found'})
                 return None
             version = self.headers.get('MCP-Protocol-Version')
@@ -112,7 +113,23 @@ def make_http_server(runtime, host=None, port=None):
                 self._reply(400, {'error': 'incomplete_body'})
                 return
             try:
-                if self.path.startswith('/embedding'):
+                if self.path == '/rerank':
+                    engine = runtime._shared_engine
+                    if (not isinstance(request, dict) or set(request) != {'query', 'documents'}
+                            or not isinstance(request['query'], str) or len(request['query']) > 4000
+                            or not isinstance(request['documents'], list) or len(request['documents']) > 200
+                            or any(not isinstance(d, str) or len(d) > 4000 for d in request['documents'])):
+                        self._reply(400, {'error': 'invalid_reranking_input'})
+                        return
+                    if not getattr(engine, 'reranker_loaded', False):
+                        self._reply(503, {'error': 'reranker_unavailable'})
+                        return
+                    scores = engine.rerank(request['query'], request['documents'])
+                    if not valid_scores(scores, len(request['documents'])):
+                        self._reply(502, {'error': 'invalid_reranking_response'})
+                        return
+                    result = {'scores': scores}
+                elif self.path.startswith('/embedding'):
                     # Model serialization is separate from SQLite dispatch: native
                     # extraction can hold a SQLite transaction while calling here.
                     engine = runtime._shared_engine
@@ -120,6 +137,7 @@ def make_http_server(runtime, host=None, port=None):
                     available = bool(engine.is_loaded)
                     if self.path == '/embedding/status':
                         result = dict(available=available, dimension=config.embedding_dim,
+                                      reranker_available=bool(getattr(engine, 'reranker_loaded', False)),
                                       query_prefix=config.embedding_query_prefix, document_prefix=config.embedding_doc_prefix)
                     elif not available:
                         self._reply(503, {'error': 'embedding_unavailable'})

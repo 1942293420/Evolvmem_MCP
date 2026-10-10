@@ -1503,7 +1503,7 @@ class ContextService:
             self._facade = LegacyCompatibilityFacade(self)
         return self._facade
 
-    def legacy_add(self, request: LegacyAddRequest) -> LegacyMutationResult:
+    def legacy_add(self, request: LegacyAddRequest, *, record_source=True) -> LegacyMutationResult:
         """Write the projection row, the ContextItem + layers, and the mapping atomically."""
         self._require_request(request, LegacyAddRequest)
         self._require_initialized()
@@ -1532,12 +1532,12 @@ class ContextService:
             )
         with self._cutover_lock.shared():
             with self.store.transaction():
-                result, aftermath = self._add_dual_in_transaction(request)
+                result, aftermath = self._add_dual_in_transaction(request, record_source=record_source)
         self._apply_vector_aftermath(aftermath)
         return result
 
     def _add_dual_in_transaction(
-        self, request: LegacyAddRequest
+        self, request: LegacyAddRequest, *, record_source=True
     ) -> tuple[LegacyMutationResult, "_VectorAftermath"]:
         """legacy_add write steps; the caller holds the lock and outer transaction."""
         repository = self.store.legacy_projection()
@@ -1568,6 +1568,9 @@ class ContextService:
         )
         item = self.store._create_legacy_item(draft)
         self.store.record_legacy_mapping(legacy_id, item.id)
+        if record_source and request.source_session.strip():
+            self.store.record_migration_source(item.id, source_ref=request.source_session,
+                extraction_version='legacy-write.v1')
         self._record_write_resolution(item.id, decision)
         new_l0 = item.layers.l0 if item.layers is not None else ""
         return (
@@ -1619,7 +1622,7 @@ class ContextService:
         return result
 
     def _replace_dual_in_transaction(
-        self, request: LegacyReplaceRequest
+        self, request: LegacyReplaceRequest, *, record_source=True
     ) -> tuple[LegacyMutationResult, "_VectorAftermath"]:
         """legacy_replace write steps; the caller holds the lock and outer transaction."""
         repository = self.store.legacy_projection()
@@ -1670,6 +1673,9 @@ class ContextService:
                     predecessor_legacy_id=old_legacy_id,
                 )
         self.store.record_legacy_mapping(new_id, item.id)
+        if record_source and request.source_session.strip():
+            self.store.record_migration_source(item.id, source_ref=request.source_session,
+                extraction_version='legacy-write.v1')
         self._record_write_resolution(item.id, decision)
         new_l0 = item.layers.l0 if item.layers is not None else ""
         return (
@@ -2086,7 +2092,7 @@ class ContextService:
                     confidence=item.confidence,
                     workspace_path=item.workspace_path or request.workspace_path,
                     project_hint=item.project_hint or request.project_hint,
-                )
+                ), record_source=False
             )
 
         def write_replace(
@@ -2111,7 +2117,7 @@ class ContextService:
                     confidence=item.confidence,
                     workspace_path=item.workspace_path or request.workspace_path,
                     project_hint=item.project_hint or request.project_hint,
-                )
+                ), record_source=False
             )
 
         with self._cutover_lock.shared():

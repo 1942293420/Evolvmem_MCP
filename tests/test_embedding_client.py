@@ -104,6 +104,26 @@ def test_embedding_client_credentials_and_unavailable_are_redacted(tmp_path):
     assert not client.is_loaded
 
 
+def test_reranking_is_shared_over_http_and_failure_does_not_disable_embeddings(embedding_http):
+    config, model, runtime = embedding_http
+    model.reranker_loaded = True
+    calls = []
+    def rerank(query, documents):
+        calls.append((query, documents))
+        return [.8, .02][:len(documents)]
+    model.rerank = rerank
+    client = EmbeddingEngine(config)
+    client.initialize()
+    assert client.reranker_loaded
+    assert client.rerank('query', ['answer', 'other']) == [.8, .02]
+    assert calls == [('query', ['answer', 'other'])]
+    model.rerank = lambda *_: [float('nan')]
+    with pytest.raises(RuntimeError):
+        client.rerank('query', ['answer'])
+    assert not client.reranker_loaded
+    assert client.is_loaded and client.encode_query('query') == [.25] * 768
+
+
 def test_existing_vector_instances_can_overwrite_each_others_cache(tmp_path):
     """Concrete pre-existing deployment hazard: two resident index writers."""
     import numpy as np

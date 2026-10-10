@@ -15,7 +15,9 @@ from tests.unit_model_fixture import (UnitProvider, many_topic_archive, model_fo
                                       run_worker)
 from evolvmem import memory_recall, project_memory
 
-RECALL = {'project': 'evo', 'kind': 'history', 'query': '验收', 'max_chars': 8000}
+# These contracts inspect current history membership, including a retained
+# publication unit with no "验收" wording; browse without a relevance filter.
+RECALL = {'project': 'evo', 'kind': 'history', 'query': '', 'max_chars': 8000}
 
 
 def _history_ids(service, **overrides):

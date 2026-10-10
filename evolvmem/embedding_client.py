@@ -1,6 +1,7 @@
 """Optional shared embedding provider; never imports or initializes llama."""
 import math
 from evolvmem.lan_http_client import JsonClient
+from evolvmem.reranking import valid_scores
 
 
 def valid_vector(value, dim):
@@ -13,6 +14,7 @@ class HttpEmbeddingProvider:
         self.config = config
         self.client = JsonClient(config.embedding_http_url.rstrip('/') + '/embedding', config.embedding_http_token_file)
         self.is_loaded = False
+        self.reranker_loaded = False
         self.dim = config.embedding_dim
 
     def initialize(self):
@@ -26,9 +28,24 @@ class HttpEmbeddingProvider:
                 or status.get('document_prefix') != self.config.embedding_doc_prefix):
             raise RuntimeError('embedding_contract_mismatch')
         self.is_loaded = True
+        self.reranker_loaded = status.get('reranker_available') is True
 
     def close(self):
         self.is_loaded = False
+        self.reranker_loaded = False
+
+    def rerank(self, query, documents):
+        if not self.reranker_loaded:
+            raise RuntimeError('reranker_unavailable')
+        try:
+            client = JsonClient(self.config.embedding_http_url.rstrip('/') + '/rerank', self.config.embedding_http_token_file)
+            result = client.post({'query': query, 'documents': documents})
+            if not isinstance(result, dict) or not valid_scores(result.get('scores'), len(documents)):
+                raise RuntimeError('invalid_reranking_response')
+            return result['scores']
+        except RuntimeError:
+            self.reranker_loaded = False
+            raise
 
     def encode(self, text, kind):
         if not self.is_loaded:

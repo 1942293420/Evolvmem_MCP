@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import math
 
 from evolvmem import history_memory, qa_memory
 from evolvmem.memory_learning import CATEGORIES
@@ -14,8 +15,56 @@ def intent(query):
 
 
 def relevance(query, text):
-    terms = set(re.findall(r'[a-zA-Z_]{3,}|[\u4e00-\u9fff]{2}', query.casefold()))
+    from evolvmem.experience_service import _terms, _LOW_SIGNAL_TERMS
+    terms = _terms(query) - _LOW_SIGNAL_TERMS - {'什么','以前','之前','上次','经验','类似','应该','需要','怎样','可以','进行','讨论','过什','么做'}
     return sum(term in text.casefold() for term in terms)
+
+
+def _browse(query):
+    return not query.strip() or bool(re.fullmatch(
+        r'(?:以前|之前|上次|历史)?(?:讨论过什么|聊过什么|说过什么|有哪些历史|历史记录)[？?\s]*', query.strip()))
+
+
+def _rank_lane(service, query, rows, text, ids, channels):
+    """Rank only already-eligible lane rows; never admit raw/draft knowledge."""
+    if _browse(query):
+        channels.add('browse')
+        return rows
+    from evolvmem.context_models import ContextSearchRequest
+    allowed = tuple(dict.fromkeys(item_id for row in rows for item_id in ids(row)))
+    semantic = {}
+    if allowed and service.retriever is not None:
+        matches = service.retriever.search(ContextSearchRequest(query=query, top_k=20, cross_project=True), eligible_ids=allowed)
+        for position, match in enumerate(matches):
+            for item_id in (match.id, *match.duplicate_ids):
+                semantic[item_id] = position
+            channels.update(m.value for m in match.match_types)
+    scored = [(row, relevance(query, text(row)), min((semantic[i] for i in ids(row) if i in semantic), default=9999)) for row in rows]
+    scored.sort(key=lambda r: (r[2] == 9999, -r[1], r[2]))
+    engine = service.embedding_engine
+    rank_scores = None
+    if getattr(engine, 'reranker_loaded', False) and scored:
+        # Full eligible Q&A fits this bound; larger history pools first use
+        # semantic and lexical candidates. Query, answer and trigger all rank.
+        scored = scored[:200]
+        try:
+            values = engine.rerank(query, [text(row)[:4000] for row, _, _ in scored])
+            if len(values) != len(scored) or any(not math.isfinite(v) or not 0 <= v <= 1 for v in values):
+                raise ValueError('invalid_reranking_response')
+            rank_scores = values
+            channels.add('rerank')
+        except Exception:
+            pass
+    kept = []
+    for position, (row, lexical, semantic_rank) in enumerate(scored):
+        rank_score = None if rank_scores is None else rank_scores[position]
+        if lexical <= 0 and semantic_rank == 9999 and (rank_score is None or rank_score < service.config.context_reranker_min_score):
+            continue
+        if lexical > 0:
+            channels.add('lexical')
+        kept.append((row, rank_score, semantic_rank, lexical))
+    kept.sort(key=lambda r: (-(r[1] or 0), r[2], -r[3]))
+    return [row for row, *_ in kept]
 
 
 def project_name(service, project):
@@ -42,11 +91,13 @@ def recall(service, options):
     budget = min(16000, max(1, int(options.get('max_chars') or 4000)))
     header = '记忆仅作历史参考，当前用户要求优先；经验入库不代表验证成功。\n'
     result = {'kind': kind, 'project': project, 'history': [], 'qa': [], 'selected_ids': []}
+    channels = set()
     blocks = [header] if budget >= len(header) else []
     remaining = budget - sum(map(len, blocks))
     if kind in ('history', 'both') and project:
         histories = history_memory.sessions(service, project)
-        histories.sort(key=lambda r: relevance(query, r['summary']), reverse=True)
+        histories = [row for row in histories if row['summary']]
+        histories = _rank_lane(service, query, histories, lambda r: r['summary'], lambda r: r['source_ids'], channels)
         allowance = remaining // 2 if kind == 'both' else remaining
         for row in histories[:8]:
             if not row['summary']:
@@ -65,7 +116,7 @@ def recall(service, options):
                            "ORDER BY q.updated_at DESC,q.item_id DESC", (project,)).fetchall()
         rows = [qa_memory.detail(service, r[0]) for r in ids]
         rows = [r for r in rows if r['effective']]
-        rows.sort(key=lambda r: relevance(query, r['question']+' '+r['answer']+' '+r['trigger']), reverse=True)
+        rows = _rank_lane(service, query, rows, lambda r: r['question']+'\n'+r['answer']+'\n'+r['trigger'], lambda r: (r['id'],), channels)
         seen = set()
         for row in rows:
             signature = (row['project'],row['scope'],row['category'],row['trigger'],row['question'],row['answer'])
@@ -85,6 +136,7 @@ def recall(service, options):
     result['block'] = ''.join(blocks) if result['history'] or result['qa'] else ''
     result['used_chars'] = len(result['block'])
     result['selected_ids'] = list(dict.fromkeys(result['selected_ids']))
+    result['recall_channels'] = sorted(channels)
     return result
 
 
