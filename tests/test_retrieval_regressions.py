@@ -94,6 +94,20 @@ def test_exact_error_identifier_inside_sentence_has_lexical_candidate(store, tes
     assert [h.id for h in results] == [target.id]
 
 
+def test_weak_reranked_quantity_match_needs_evidence_for_named_subject(store, test_config):
+    target = add_item(store, 'progress-count', l0='采集结果已经从十七条增加到十九条')
+    engine = RankedEngine({'采集结果已经从十七条增加到十九条': .95})
+    index = FakeVectorIndex(test_config, [{'id':target.id,'distance':.74}])
+    retriever = make_retriever(test_config, store, index, engine)
+    for subject in ('Neptune', 'Aldebaran', 'NovaProduct'):
+        assert retriever.search(request_for(f'How many items belong to {subject}?')) == ()
+    assert retriever.search(request_for('How many items were collected?'))
+    # Strong semantic support still permits translated names; the extra check
+    # applies only to weak neighbors that the reranker alone would admit.
+    index._results[0]['distance'] = .4
+    assert retriever.search(request_for('How many moons does Neptune have?'))
+
+
 def test_full_text_duplicates_share_one_slot_but_keep_both_source_ids(store, test_config):
     a = add_item(store, 'source-a', l0='同一份配置约束', l1='同一份完整配置约束', l2='用户明确要求的完整配置约束')
     b = add_item(store, 'source-b', l0=a.layers.l0, l1=a.layers.l1, l2=a.layers.l2)

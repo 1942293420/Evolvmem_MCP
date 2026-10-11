@@ -186,10 +186,13 @@ class ContextRetriever:
                 continue
             eligible_candidates.append(candidate)
         rank_scores = None
+        rank_documents = {}
         if reranking and eligible_candidates:
             try:
                 with stage('rerank'):
-                    values = self.embedding_engine.rerank(request.query, self._rerank_documents(eligible_candidates, records))
+                    texts = self._rerank_documents(eligible_candidates, records)
+                    rank_documents = dict(zip((c.item_id for c in eligible_candidates), texts))
+                    values = self.embedding_engine.rerank(request.query, texts)
                 if len(values) != len(eligible_candidates) or any(not math.isfinite(v) or not 0 <= v <= 1 for v in values):
                     raise ValueError('invalid_reranking_response')
                 rank_scores = dict(zip((c.item_id for c in eligible_candidates), values))
@@ -204,6 +207,10 @@ class ContextRetriever:
             if (candidate.lexical_raw is None and similarity < self.config.context_vector_min_similarity
                     and (rank_score is None or rank_score < self.config.context_reranker_min_score)):
                 continue
+            if candidate.lexical_raw is None and similarity < self.config.context_vector_min_similarity:
+                from evolvmem.query_anchors import supports_named_subject
+                if not supports_named_subject(request.query, rank_documents.get(candidate.item_id, '') + '\n' + record.item.project):
+                    continue
             components = self._score_components(
                 record.item, candidate, request, now, max_lexical_raw
             )

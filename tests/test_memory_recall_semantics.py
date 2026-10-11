@@ -30,6 +30,18 @@ def test_factual_unrelated_query_does_not_return_recent_qa_or_history(service):
     assert result['qa'] == [] and result['history'] == [] and result['block'] == ''
 
 
+def test_question_about_unknown_named_subject_cannot_use_qa_quantity_as_answer(service):
+    qa_memory.save(service, {'project':'evo','question':'采集了多少商品？',
+        'answer':'已采集十九个商品。','action':'publish'})
+    ranked_service(service, {'采集了多少商品？\n已采集十九个商品。\n': .95})
+    result = memory_recall.recall(service, {'project':'evo','kind':'experience',
+        'query':'How many moons does Neptune have?'})
+    assert result['qa'] == []
+    known = memory_recall.recall(service, {'project':'evo','kind':'experience',
+        'query':'How many items were collected in Evo?'})
+    assert known['qa'], 'the canonical project also supports a named subject'
+
+
 def test_qa_semantic_match_never_bypasses_project_or_draft_eligibility(service):
     row = qa_memory.save(service, {'project':'shop','question':'怎样做页面验收？',
         'answer':'用真实截图检查呈现。','action':'publish'})

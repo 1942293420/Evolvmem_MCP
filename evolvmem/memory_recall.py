@@ -60,6 +60,10 @@ def _rank_lane(service, query, rows, text, ids, channels):
         rank_score = None if rank_scores is None else rank_scores[position]
         if lexical <= 0 and semantic_rank == 9999 and (rank_score is None or rank_score < service.config.context_reranker_min_score):
             continue
+        if lexical <= 0 and semantic_rank == 9999:
+            from evolvmem.query_anchors import supports_named_subject
+            if not supports_named_subject(query, text(row) + '\n' + row.get('project', '')):
+                continue
         if lexical > 0:
             channels.add('lexical')
         kept.append((row, rank_score, semantic_rank, lexical))
