@@ -67,7 +67,7 @@ python -m evolvmem.knowledge_cli POST items/123/assign --file request.json
 
 召回先核对来源资格、项目边界和有效期，再组合关键词与语义候选。自然问题中的错误码也能参与关键词查找。可选本地重排序按问题与内容的相关程度安排顺序，已有热度、类型和重要度只用于相同相关分数的次序；未达到原语义门槛的新候选还须通过重排序的独立检查。模型不可用时恢复原门槛，不拿弱候选填空。问答比较问题、答案和适用条件，历史只使用当前项目的有效摘要，方法经验仍要求真实验证与条件匹配；无关问题返回空，空查询保留浏览用途。完整内容与适用范围都相同的资料只占一个展示位置，各来源记录保留。
 
-重排序是可选依赖：安装 `pip install '.[reranking]'`，将 `context_reranker_model_dir` 指向本机已下载的 `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` ONNX 目录（含 `tokenizer.json` 和 `onnx/model_quint8_avx2.onnx`）。程序不会自动下载模型或外发资料；共享 LAN 运行时只驻留一份，并由认证后的 `/rerank` 供本地客户端复用。它不改变 embedding 模型或已存向量。`context_reranker_min_score` 默认 0.1，仅用于新增弱候选的接纳，须结合本库正例和无关问题对照验证。检索返回 `rerank_score` 和 `duplicate_ids`，知识召回返回实际 `recall_channels`；缺少重排序时不声称启用。
+重排序是可选依赖：安装 `pip install '.[reranking]'`，将 `context_reranker_model_dir` 指向本机已下载的 `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` ONNX 目录（含 `tokenizer.json` 和浮点 `onnx/model.onnx`）。动态量化版本会随批量内容改变绝对评分，不用于当前接纳门槛。程序不会自动下载模型或外发资料；共享 LAN 运行时只驻留一份，并由认证后的 `/rerank` 供本地客户端复用。它不改变 embedding 模型或已存向量。`context_reranker_min_score` 默认 0.1，仅用于新增弱候选的接纳，须结合本库正例和无关问题对照验证。检索返回 `rerank_score` 和 `duplicate_ids`，知识召回返回实际 `recall_channels`；缺少重排序时不声称启用。
 
 ## 运行环境
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import logging
 import json
 import math
 import re
@@ -241,9 +242,11 @@ class LanTools:
                 return {'error': str(exc)}
             except (ValueError, TypeError, KeyError):
                 return {'error': 'invalid_arguments'}
-            except Exception:
+            except Exception as exc:
                 # A persisted intent is retained on unexpected failure. Neither
                 # exceptions, request bodies nor filesystem diagnostics escape.
+                safe_name = name if isinstance(name, str) and re.fullmatch(r'[a-z_]{1,64}', name) else 'invalid'
+                logging.getLogger(__name__).warning('tool_failure name=%s category=%s', safe_name, type(exc).__name__)
                 return {'error': 'request_indeterminate' if isinstance(arguments, dict) and arguments.get('request_id') else 'remote_tool_failed'}
 
     def _call_tool(self, user, name, arguments, *, owner=False):

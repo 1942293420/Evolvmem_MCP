@@ -1,57 +1,137 @@
-/* The diagrams mirror shipped automatic processing and explicit exception decisions. */
+/* Business facts and directed routes drive both diagrams and demonstrations. */
 window.EvolvPrinciples={render(mount){
  if(mount.dataset.ready)return;mount.dataset.ready='true';
- const modules=[['总览','自动进度 · 待判断 · 系统问题','#home'],['自动整理','集中判断 · 一次指导 · 后续复用','#knowledge/organization'],['项目历史','会话原文 · 项目摘要','#knowledge/projects'],['经验知识','可用问答 · 验证依据','#knowledge/qa'],['任务断点','当前进度 · 下一步','#progress'],['数据清洗','补跑资料 · 修改与删除','#knowledge/cleaning'],['存量资料','旧资料归类 · 补充与纠正','#knowledge/intake'],['整理规则','修改处理规则 · 样例预览','#knowledge/skill']];
- const text=(x,y,lines,cls='')=>`<text x="${x}" y="${y}" text-anchor="middle" class="${cls}">${lines.map((s,i)=>`<tspan x="${x}" dy="${i?26:0}">${s}</tspan>`).join('')}</text>`;
- const box=(x,y,w,h,lines,cls='')=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" class="node ${cls}"/>${text(x+w/2,y+h/2-(lines.length-1)*13+6,lines)}`;
- const arrow=(d,label,x,y)=>`<path d="${d}" class="edge" marker-end="url(#arrow)"/>${label?text(x,y,[label],'edge-label'):''}`;
- const diamond=(x,y,label)=>`<path d="M${x} ${y-38} L${x+130} ${y} L${x} ${y+38} L${x-130} ${y}Z" class="decision"/>${text(x,y+6,[label])}`;
- const svg=(title,h,body)=>`<svg viewBox="0 0 980 ${h}" role="img" aria-label="${title}" xmlns="http://www.w3.org/2000/svg"><title>${title}</title><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#657987"/></marker></defs>${body}</svg>`;
- const moduleMap=svg('工作台、整理成果和管理入口',530,
-  text(180,34,['工作台'])+text(490,34,['整理成果'])+text(800,34,['管理与调整'])+
-  [[modules[0],40,70],[modules[1],40,205],[modules[2],350,70],[modules[3],350,205],[modules[4],350,340],[modules[5],660,70],[modules[6],660,205],[modules[7],660,340]].map(([m,x,y])=>box(x,y,280,100,[m[0],m[1]])).join(''));
- const flow=svg('从新会话到历史与可用知识',880,
-  box(325,20,330,70,['新会话自动进入处理队列'],'accent')+arrow('M490 90V125')+
-  box(325,125,330,80,['自动清洗、分段、判断项目','使用已保存规则和适用指导'])+arrow('M490 205V250')+diamond(490,288,'归属与内容明确？')+
-  arrow('M620 288H800V360','需你判断',783,270)+box(675,360,270,85,['只核对有疑问的资料','查看原因、原话和当前判断'],'warm')+
-  arrow('M800 445V482H490','保存决定',794,474)+arrow('M490 326V520','明确',530,420)+
-  box(330,520,320,65,['保存项目历史与摘要'])+arrow('M490 585V615H210V650')+arrow('M490 615H755V650')+
-  box(50,650,320,80,['历史可查','当时讨论、要求和决定了什么'])+
-  box(595,650,320,80,['提炼可用知识','明确无冲突自动保存，歧义待确认'])+
-  arrow('M210 730V785H490V805')+arrow('M755 730V785H490')+box(305,805,370,60,['按问题召回历史、知识或两者'],'accent'));
- const activity=svg('系统自动处理与用户例外判断',960,
-  '<rect x="24" y="18" width="932" height="920" rx="16" class="swimlane"/><path d="M600 18V938 M24 75H956" class="lane-line"/>'+text(305,53,['系统自动处理'])+text(775,53,['只在必要时由你决定'])+
-  box(140,110,330,80,['清洗与项目分类','原始对话保留供核对'])+arrow('M305 190V220')+diamond(305,258,'规则与依据明确？')+
-  arrow('M435 258H765V315','有歧义',739,243)+box(650,315,270,90,['为什么需要你 · 关键原话','选择项目或保留处理方式'],'warm')+
-  arrow('M765 405V450H305','保存决定',760,440)+arrow('M305 296V490','明确',348,385)+
-  box(140,490,330,75,['自动保存历史并提炼知识'])+arrow('M305 565V600')+diamond(305,638,'答案与原话一致？')+
-  arrow('M435 638H650','需核对',537,618)+box(650,595,270,90,['只核对冲突与缺失条件','未采纳的 AI 建议只留历史'],'warm')+
-  arrow('M765 685V745H305','确认或修正',772,738)+arrow('M305 676V780','通过',346,735)+
-  box(140,780,330,90,['保存并更新检索','可用知识不需要重复审核'])+
-  box(650,780,270,90,['方法经验须有真实验证依据','未验证的方法保留候选'],'warm'));
- const organization=svg('持续整理与指导复用',900,
-  text(280,42,['系统自动处理'])+text(770,42,['用户处理例外'])+
-  box(105,80,350,90,['自动接收新会话','同会话续写可参考前文已确认项目'])+arrow('M280 170V205')+
-  box(105,205,350,80,['自动清洗、归类和提炼','核对原话与内容范围'])+arrow('M455 245H630','存在疑问',542,223)+
-  box(630,205,290,100,['同类资料集中判断','原因、关键原话、前文项目依据'],'warm')+arrow('M775 305V350')+
-  box(630,350,290,90,['填写条件与例外','预览本次将处理哪些资料'],'warm')+arrow('M775 440V490')+diamond(775,528,'以后同类适用？')+
-  arrow('M645 528H475V680','仅本次',542,510)+box(315,680,320,80,['只修正本次符合条件的资料'])+
-  arrow('M775 566V610')+box(650,610,275,80,['保存指导 · 后续符合时复用','不符合或有冲突仍待判断'],'warm')+
-  arrow('M925 655H950V180H280V205')+
-  arrow('M280 285V355','完成',321,329)+box(105,355,350,80,['历史与知识自动保存','自动结果可抽检，无需全部复核'])+
-  arrow('M280 435V485')+box(105,485,350,80,['待更新条目不打断已有检索','模型变化时重新建立全部索引'])+
-  box(105,795,820,70,['临时故障自动重试；仍未完成的在「系统问题」处理'],'accent'));
- const recall=svg('资料资格、语义召回与重排序',860,
-  box(315,20,350,70,['问题与当前项目'],'accent')+arrow('M490 90V120')+
-  box(270,120,440,85,['核对资料来源、归属与有效期','历史、可用问答和已验证经验分别查找'])+arrow('M490 205V235')+
-  box(270,235,440,80,['关键词与语义共同查找','保留错误码和明确标识'])+arrow('M490 315V345')+
-  box(270,345,440,80,['比较问题与内容，重新排序','核对适用条件，避免热门资料挤掉答案'])+arrow('M490 425V465')+
-  diamond(490,503,'有相关且可用的内容？')+
-  arrow('M620 503H790V570','没有',762,484)+box(655,570,280,80,['返回没有匹配内容','不拿无关资料填满结果'],'warm')+
-  arrow('M490 541V590','有',524,569)+box(270,590,370,85,['重复内容只占一个位置','保留各自的来源与适用范围'])+arrow('M455 675V725')+
-  box(270,725,370,90,['按阅读预算返回结果','可继续查看来源与原文'],'accent'));
- const diagrams={modules:moduleMap,flow,activity,organization,recall};
- const titles={modules:'各页面负责什么',flow:'新资料自动成为历史与知识',activity:'什么时候需要你参与',organization:'整篇自动整理，指导一次后续复用',recall:'知识怎样被找到并排出顺序'};
- mount.innerHTML=`<header class="data-page-header"><h1>工作原理</h1></header><nav class="principles-tabs" aria-label="工作原理图类型"><button data-principle="modules" aria-pressed="true">页面职责</button><button data-principle="flow" aria-pressed="false">完整流程</button><button data-principle="activity" aria-pressed="false">系统与人工</button><button data-principle="organization" aria-pressed="false">指导复用</button><button data-principle="recall" aria-pressed="false">知识召回</button></nav><section class="principle-board"><div class="section-head"><h2 id="principle-title">${titles.modules}</h2><button class="ui-button" data-diagram-size>放大查看</button></div><div class="product-diagram" tabindex="0" aria-label="流程图，可横向滚动">${moduleMap}</div></section><div class="principle-links">${modules.map(m=>`<a href="${m[2]}"><strong>${m[0]} →</strong></a>`).join('')}</div>`;
- mount.onclick=e=>{const b=e.target.closest('[data-principle]');if(b){mount.querySelectorAll('[data-principle]').forEach(t=>t.setAttribute('aria-pressed',String(t===b)));const board=mount.querySelector('.product-diagram');board.innerHTML=diagrams[b.dataset.principle];board.scrollLeft=0;mount.querySelector('#principle-title').textContent=titles[b.dataset.principle];}const zoom=e.target.closest('[data-diagram-size]');if(zoom){const board=mount.querySelector('.product-diagram');board.classList.toggle('enlarged');zoom.textContent=board.classList.contains('enlarged')?'恢复大小':'放大查看';}};
+ const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const n=(id,label,x,y,kind='action',facts={})=>({id,label:label.split('|'),x,y,w:260,h:80,kind,...facts});
+ const e=(id,from,to,label='',d='',x=0,y=0)=>({id,from,to,label,d,x,y});
+ const r=(id,label,nodes,edges)=>({id,label,nodes:nodes.split(' '),edges:edges.split(' ')});
+ const facts=(owner,input,output,rule='',tool='',link='')=>({owner,input,output,rule,tool,link});
+ const modules=[['home','总览','处理进度与系统问题','#home'],['organization','自动整理','归类、提炼与集中判断','#knowledge/organization'],['history','项目历史','历史对话与项目摘要','#knowledge/projects'],['qa','经验知识','明确问答与适用范围','#knowledge/qa'],['checkpoint','任务断点','当前进度与下一步','#progress'],['cleaning','数据清洗','核对来源、修改与删除','#knowledge/cleaning'],['intake','存量资料','旧资料归类与纠正','#knowledge/intake'],['rules','整理规则','处理规则与样例预览','#knowledge/skill']];
+ const diagrams={
+ modules:{title:'从业务目标找到负责的页面',type:'职责图',goal:'知道资料在哪里、疑问在哪里处理、任务从哪里继续。',height:600,nodes:modules.map((m,i)=>n(m[0],m[1]+'|'+m[2],40+(i%3)*310,60+Math.floor(i/3)*165,'action',facts('你与 Evo','当前业务资料和处理状态',m[2],'','',m[3]))),edges:[],routes:[]},
+ flow:{title:'新会话怎样成为以后可用的资料',type:'业务流程图',goal:'保留原话，自动整理明确内容；只把需要判断的部分交给你。',height:1160,nodes:[
+ n('start','开始：产生新会话',350,20,'start',facts('客户端','用户与助手的可见对话','新增会话批次')),
+ n('archive','保存会话与来源',350,130,'action',facts('会话接入','会话批次、客户端与会话标识','会话档案、来源引用','系统工具输出不作为用户要求。')),
+ n('clean','清洗、分段与项目判断',350,260,'action',facts('自动整理','会话档案、规则、已确认指导','业务片段、归属判断、关键原话')),
+ n('clear','归属与依据明确？',350,390,'decision',facts('自动整理','归属判断与冲突','明确内容或待判断内容')),
+ n('review','你核对有疑问的部分',690,520,'exception',facts('你','疑问原因、关键原话、建议归属','本次决定；可选持续指导','','','#knowledge/organization')),
+ n('save','保存当前有效资料',350,650,'action',facts('自动整理','明确内容或你保存的决定','项目历史、可用问答、方法候选','归属不明、冲突和依据失效的问答继续待判断。')),
+ n('history','项目历史|当时讨论和决定了什么',30,800,'store',facts('历史管理','整理后的对话与摘要','可读历史、摘要和来源','','','#knowledge/projects')),
+ n('qa','可用问答|以后何时遵守什么要求',350,800,'store',facts('知识提炼','明确要求、约定与关键原话','问题、答案和适用范围','','','#knowledge/qa')),
+ n('case','方法经验|有执行证据才算验证',690,800,'store',facts('经验验证','方法、条件和实际验证证据','方法候选或已验证案例','问答入库不代表方法验证成功。','','#experiences')),
+ n('index','更新可检索内容',350,940,'action',facts('检索准备','当前有效资料及变化条目','关键词索引与语义索引','只更新变化条目；索引故障或模型变化时恢复或重建。')),
+ n('end','完成：以后按问题找回',350,1070,'end',facts('Evo','当前有效的资料及检索准备状态','以后可供助手按问题召回的资料'))],edges:[
+ e('f1','start','archive','新增会话'),e('f2','archive','clean','会话与规则'),e('f3','clean','clear'),e('f4','clear','save','明确'),e('f5','clear','review','有疑问'),e('f6','review','save','保存决定'),e('f7','save','history','历史摘要'),e('f8','save','qa','明确要求'),e('f9','save','case','方法与证据'),e('f10','history','index'),e('f11','qa','index'),e('f12','case','index'),e('f13','index','end')],routes:[
+ r('auto','明确内容自动入库','start archive clean clear save qa index end','f1 f2 f3 f4 f8 f11 f13'),r('review','有疑问时由你确认','start archive clean clear review save history index end','f1 f2 f3 f5 f6 f7 f10 f13')]},
+ activity:{title:'一个知识片段从候选到可用',type:'活动图',goal:'看清入库前必须核对的条件，以及不能通过时资料去哪里。',height:1160,nodes:[
+ n('start','开始：收到知识候选',350,20,'start',facts('知识提炼','会话中提炼出的内容与来源','待核对的知识候选')),n('evidence','核对原话与来源',350,130,'action',facts('自动整理','候选答案、关键原话、来源','依据是否支持答案','助手建议或自称完成不能代替用户要求与实际验证。')),
+ n('supported','答案被原话支持？',350,270,'decision',facts('依据核对','答案与关键原话的核对结果','有依据的内容；需确认或修正的候选')),n('pending','保留待判断候选',690,420,'exception',facts('你','不支持、冲突或归属不明的候选','修正、确认或暂不采用','','','#knowledge/organization')),
+ n('scope','核对项目、条件与有效期',350,460,'action',facts('入库检查','有依据的内容、归属与适用条件','当前可用或暂不可用','纠正、撤回和来源变化后重新核对资格。')),
+ n('eligible','当前资格有效？',350,600,'decision',facts('资格核对','归属、来源、状态与有效期','可以当前采用的内容；只保留历史的内容')),n('blocked','保留历史，停止采用',690,740,'exception',facts('知识管理','已失效或范围不匹配的资料','保留可核对历史；不进入当前召回')),
+ n('save','保存正文、归属与来源',350,760,'action',facts('资料存储','当前有效的内容及来源','正文、状态和来源关系')),
+ n('index','更新关键词与语义索引',350,900,'action',facts('检索准备','可检索正文及变化条目','可供查询的索引','索引暂不可用时保留待更新状态，由系统恢复；已有核验内容仍可召回。')),
+ n('end','完成：可供当前任务召回',350,1050,'end',facts('Evo','已保存的有效资料及检索状态','当前任务可查找的知识'))],edges:[
+ e('a1','start','evidence'),e('a2','evidence','supported'),e('a3','supported','scope','支持'),e('a4','supported','pending','需核对'),e('a5','pending','evidence','修正后重查','M950 460H970V170H610',850,155),e('a6','scope','eligible'),e('a7','eligible','save','有效'),e('a8','eligible','blocked','失效或不适用'),e('a9','save','index'),e('a10','index','end')],routes:[
+ r('valid','有依据且当前可用','start evidence supported scope eligible save index end','a1 a2 a3 a6 a7 a9 a10'),r('pending','依据不足时待判断','start evidence supported pending','a1 a2 a4'),r('expired','失效内容保留历史','start evidence supported scope eligible blocked','a1 a2 a3 a6 a8')]},
+ organization:{title:'谁处理新资料，谁决定例外',type:'泳道图',goal:'客户端提交资料，Evo 自动处理；你只决定无法可靠自动判断的部分。',height:1290,lanes:[['client','客户端 / 助手',20,305],['system','Evo 自动处理',325,330],['user','你：例外判断',655,325]],nodes:[
+ n('submit','提交新增会话',43,110,'action',facts('客户端','可见对话与会话标识','可复核会话批次')),
+ n('process','清洗、分段与归类',360,250,'action',facts('Evo','新增会话、规则、已确认指导','明确片段与疑问片段')),
+ n('clear','需要你判断？',360,390,'decision',facts('Evo','片段归属、关键原话与冲突','自动保存的资料；需你核对的例外')),n('review','查看原因与关键原话',690,530,'exception',facts('你','存在疑问的同类资料','选定项目、修正或暂放')),
+ n('guidance','保存决定与适用条件',690,670,'exception',facts('你','本次选择、条件和例外','本次决定；可选的持续指导','只处理预览范围；后续只有符合条件才复用。','','#knowledge/organization')),
+ n('save','保存历史与可用知识',360,830,'action',facts('Evo','明确内容或你保存的决定','当前有效资料、来源和待更新索引')),
+ n('request','当前任务需要历史',43,980,'action',facts('助手','当前项目与问题','召回请求')),
+ n('recall','查找相关且可用的内容',360,980,'action',facts('Evo','问题、项目与资料类型','相关摘要、适用条件和来源引用','','knowledge_recall / experience_recall')),
+ n('use','结合当前要求继续任务',43,1150,'action',facts('助手','召回结果或没有匹配内容','当前任务的下一步','历史只能作为参考，当前用户要求优先。'))],edges:[
+ e('o1','submit','process','会话与来源'),e('o2','process','clear'),e('o3','clear','save','不需要'),e('o4','clear','review','需要'),e('o5','review','guidance','本次决定'),e('o6','guidance','save','决定与指导'),e('o7','request','recall','问题与项目'),e('o8','save','recall','有效资料'),e('o9','recall','use','摘要、条件与来源')],routes:[
+ r('auto','自动整理后供助手使用','submit process clear save recall use','o1 o2 o3 o8 o9'),r('review','有疑问：确认后继续','submit process clear review guidance save recall use','o1 o2 o4 o5 o6 o8 o9')]},
+ recall:{title:'当前任务怎样找回历史、知识与经验',type:'召回流程图',goal:'先选业务入口，再核对资格、查找和重新排序，最后返回可读结果。',height:1560,nodes:[
+ n('task','当前任务与项目',350,20,'start',facts('助手','当前问题、项目与已知条件','需要的历史信息类型')),
+ n('intent','要找回什么？',350,140,'decision',facts('助手','当前任务需要的背景','历史或问答、已验证案例、精确任务断点')),
+ n('knowledge','历史讨论 / 可用问答',30,300,'action',facts('知识召回','当前项目、问题、历史或问答类型、阅读预算','相关历史摘要、问答和来源引用','历史回答以前讨论、决定了什么；问答提供明确习惯、规则、环境约定，入库不代表验证成功。','knowledge_recall','#knowledge/qa')),
+ n('experience','已验证的方法案例',350,300,'action',facts('经验召回','问题、项目与已直接观察到的条件','方法、适用条件、验证证据和来源','新场景仍须比较条件，不把查到方法当执行成功。','experience_recall','#experiences')),
+ n('checkpoint','接着原任务做',690,300,'action',facts('任务续接','当前工作区与原任务指针','已保存进度、下一步与版本','按精确任务指针读取，跳过语义检索和重排序。','continuity_resume','#progress')),
+ n('eligible','核对来源与当前适用资格',190,480,'action',facts('召回检查','所选业务入口的候选资料','当前项目可用的候选','核对归属、状态、有效期、当前来源；经验另核对验证与适用条件。')),
+ n('lexical','关键词与明确标识查找',30,650,'action',facts('词面检索','问题、错误码与明确名称','词面候选与命中依据')),
+ n('vector','语义查找：换说法也能找',350,650,'action',facts('语义检索','问题表示与已核验索引','语义候选与相似度','索引故障时降级；不能用已准备标志代替实际检索证据。')),
+ n('rerank','比较问题与内容，重新排序',190,820,'action',facts('相关性排序','有效的词面与语义候选','按问题相关性排序的候选','可选重排序服务参与时逐项比较；不可用时沿原门槛降级，弱候选不能借机放行。')),
+ n('related','有相关且可用的内容？',190,980,'decision',facts('结果检查','已排序候选及当前适用资格','有依据的相关资料；没有匹配内容')),n('empty','返回没有匹配内容',690,1120,'exception',facts('召回结果','没有通过相关性与资格检查的候选','空结果','不拿无关资料填满结果。')),
+ n('dedup','重复内容只占一个位置|保留各自的来源与适用范围',190,1130,'action',facts('结果整理','已排序的当前可用资料','保留各自的来源与适用范围','短摘要相同不等于完整正文重复；公开条目的独立引用和撤回关系保留。')),
+ n('return','按阅读预算返回结果',190,1290,'action',facts('召回结果','相关摘要、问答、方法或精确断点','可供助手阅读的内容和来源','历史结果可按引用继续读取整理后的原对话。','conversation_read')),
+ n('continue','结合当前要求继续任务',350,1440,'end',facts('助手','召回结果；必要时读取原文','当前任务的下一步行动'))],edges:[
+ e('r1','task','intent'),e('r2','intent','knowledge','讨论 / 规则'),e('r3','intent','experience','验证过的方法'),e('r4','intent','checkpoint','任务进度'),e('r5','knowledge','eligible','摘要与问答来源'),e('r6','experience','eligible','案例与验证条件'),e('r7','eligible','lexical'),e('r8','eligible','vector'),e('r9','lexical','rerank','词面候选'),e('r10','vector','rerank','语义候选'),e('r11','rerank','related'),e('r12','related','empty','没有'),e('r13','related','dedup','有'),e('r14','dedup','return'),e('r15','checkpoint','return','精确读取，跳过检索与排序','M820 380H970V1330H450',795,1270),e('r16','return','continue'),e('r17','empty','continue','空结果也继续任务','M820 1200V1480H610',812,1410)],routes:[
+ r('knowledge','找回历史与问答','task intent knowledge eligible vector rerank related dedup return continue','r1 r2 r5 r8 r10 r11 r13 r14 r16'),r('case','查找已验证案例','task intent experience eligible lexical rerank related dedup return continue','r1 r3 r6 r7 r9 r11 r13 r14 r16'),r('none','没有相关内容','task intent knowledge eligible vector rerank related empty continue','r1 r2 r5 r8 r10 r11 r12 r17'),r('resume','精确恢复任务断点','task intent checkpoint return continue','r1 r4 r15 r16')]},
+ dataflow:{title:'业务资料怎样流向当前任务',type:'数据流图',goal:'区分会话原文、整理成果、检索候选和返回结果，追踪各自的来源。',height:1170,nodes:[
+ n('dialogue','客户端提交的会话',350,20,'actor',facts('客户端','用户与助手可见对话','会话批次及来源标识')),
+ n('archive','会话档案与原文',30,210,'store',facts('来源保存','原始会话与来源','可复核对话与来源引用')),
+ n('organize','清洗、归类与提炼',350,210,'process',facts('自动整理','会话、规则与确认指导','有依据的历史与知识成果')),
+ n('rules','规则与已确认指导',690,210,'store',facts('你','适用条件、例外与确认决定','符合条件才适用的指导')),
+ n('history','项目历史与摘要',30,430,'store',facts('历史管理','整理后的项目对话','摘要、日期、原文引用')),
+ n('qa','当前可用问答',350,430,'store',facts('知识管理','明确问题、答案、归属和依据','有效问答及适用条件')),
+ n('cases','案例与验证证据',690,430,'store',facts('经验验证','方法候选、执行结果与证据','已验证案例与场景条件')),
+ n('prepare','维护检索索引',350,650,'process',facts('检索准备','当前可检索内容及变化条目','关键词索引与语义索引','索引是查找手段；来源和当前资格仍由正式资料决定。')),
+ n('question','助手的当前问题与项目',30,840,'actor',facts('助手','当前用户要求与业务任务','问题、资料类型和阅读预算')),
+ n('recall','召回与重新排序',350,840,'process',facts('Evo','问题、索引、有效资料与来源','相关内容、条件和来源引用','','knowledge_recall / experience_recall')),
+ n('answer','当前任务可读的结果',350,1040,'actor',facts('助手','历史、知识、适用条件和来源','继续任务；按引用读取原文','数据流向不代表所有资料必须串行经过每个节点。'))],edges:[
+ e('d1','dialogue','archive','会话与来源'),e('d2','dialogue','organize','新增对话'),e('d3','archive','organize','原文'),e('d4','rules','organize','指导'),e('d5','organize','history','对话与摘要'),e('d6','organize','qa','有效问答'),e('d7','organize','cases','方法与来源'),e('d8','history','prepare','摘要'),e('d9','qa','prepare','问答'),e('d10','cases','prepare','案例'),e('d11','prepare','recall','检索候选'),e('d12','question','recall','问题'),e('d13','recall','answer','相关内容与来源'),e('d14','archive','answer','按引用读取原文','M160 290H20V1140H480V1120',179,1125)],routes:[
+ r('qa','新对话成为可用知识','dialogue organize qa prepare recall answer','d2 d6 d9 d11 d13'),r('history','新对话成为项目历史','dialogue organize history prepare recall answer','d2 d5 d8 d11 d13'),r('read','找到来源后读取原文','dialogue archive answer','d1 d14')]}
+ };
+ const tabs=[['modules','页面职责'],['flow','完整流程'],['activity','入库活动'],['organization','角色泳道'],['recall','知识召回'],['dataflow','资料数据流']];
+ let saved={};try{saved=JSON.parse(sessionStorage.getItem('evolvmem-business-diagrams')||'{}');}catch(_){}
+ let kind=diagrams[saved.kind]?saved.kind:'flow',routeId=saved.route||'',step=-1,timer=null,zoom=saved.zoom===1.3?1.3:1;
+ const reduced=matchMedia('(prefers-reduced-motion: reduce)');
+ const remember=()=>{try{sessionStorage.setItem('evolvmem-business-diagrams',JSON.stringify({kind,route:routeId,zoom}));}catch(_){}};
+ const text=(x,y,label,cls='')=>`<text x="${x}" y="${y}" text-anchor="middle" class="${cls}">${label.map((s,i)=>`<tspan x="${x}" dy="${i?25:0}">${esc(s)}</tspan>`).join('')}</text>`;
+ const shape=n=>{
+  if(n.kind==='start'||n.kind==='end')return `<circle cx="${n.x+130}" cy="${n.y+16}" r="${n.kind==='end'?13:10}" class="diagram-${n.kind}"/>${n.kind==='end'?`<circle cx="${n.x+130}" cy="${n.y+16}" r="8" class="diagram-start"/>`:''}${text(n.x+130,n.y+55,n.label)}`;
+  let outline=n.kind==='decision'?`<path class="decision" d="M${n.x+130} ${n.y}L${n.x+260} ${n.y+40}L${n.x+130} ${n.y+80}L${n.x} ${n.y+40}Z"/>`:`<rect class="node ${n.kind==='exception'?'warm':''}" x="${n.x}" y="${n.y}" width="260" height="80" rx="${n.kind==='process'?35:n.kind==='actor'?0:12}"/>`;
+  if(n.kind==='store')outline+=`<path class="store-rule" d="M${n.x+14} ${n.y+13}H${n.x+246}M${n.x+14} ${n.y+67}H${n.x+246}"/>`;
+  return outline+text(n.x+130,n.y+46-(n.label.length-1)*12.5,n.label);
+ };
+ function geometry(edge,nodes){
+  if(edge.d)return edge;
+  const a=nodes.find(n=>n.id===edge.from),b=nodes.find(n=>n.id===edge.to),ax=a.x+130,bx=b.x+130;
+  if(a.y===b.y){const left=a.x<b.x;return {...edge,d:`M${left?a.x+260:a.x} ${a.y+40}H${left?b.x:b.x+260}`,x:(left?a.x+260+b.x:a.x+b.x+260)/2,y:a.y+22};}
+  const middle=(a.y+80+b.y)/2;
+  return {...edge,d:`M${ax} ${a.y+80}V${middle}H${bx}V${b.y}`,x:ax===bx?ax+62:(ax+bx)/2,y:middle-14};
+ }
+ mount.innerHTML=`<header class="data-page-header"><h1>工作原理</h1></header><nav class="principles-tabs" aria-label="工作原理图类型">${tabs.map(([id,label])=>`<button data-principle="${id}" aria-pressed="false">${label}</button>`).join('')}</nav><section class="principle-board"><div class="section-head"><div><h2 data-diagram-title></h2><p class="diagram-goal"></p></div><button class="ui-button" data-diagram-size>放大查看</button></div><div class="diagram-controls"><label>业务路径 <select data-route-select></select></label><button class="ui-button" data-trace-play>演示路径</button><button class="ui-button" data-trace-next>下一步</button><button class="ui-button" data-trace-reset>重置</button><span data-trace-status role="status"></span></div><div class="product-diagram" tabindex="0" aria-label="业务图，可滚动并选择节点"></div><section data-node-detail hidden aria-label="业务节点详情"></section></section><div class="principle-links">${modules.map(m=>`<a href="${m[3]}"><strong>${esc(m[1])} →</strong></a>`).join('')}</div>`;
+ const board=mount.querySelector('.product-diagram'),detail=mount.querySelector('[data-node-detail]'),status=mount.querySelector('[data-trace-status]'),play=mount.querySelector('[data-trace-play]'),select=mount.querySelector('[data-route-select]');
+ const stop=()=>{clearTimeout(timer);timer=null;play.textContent='演示路径';};
+ const currentRoute=()=>diagrams[kind].routes.find(r=>r.id===routeId);
+ function showNode(id){
+  const node=diagrams[kind].nodes.find(n=>n.id===id);if(!node)return;
+  board.querySelectorAll('[data-node]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.node===id)));
+  const rows=[['负责人',node.owner],['输入',node.input],['输出',node.output],['判断条件',node.rule],['助手入口',node.tool]].filter(([,value])=>value);
+  detail.hidden=false;detail.innerHTML=`<div class="section-head"><h3>${esc(node.label.join(' · '))}</h3><button class="ui-button" data-detail-close>收起</button></div><dl>${rows.map(([label,value])=>`<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${node.link?`<a class="ui-button" href="${esc(node.link)}">打开对应页面</a>`:''}`;
+ }
+ function trace(next){
+  const route=currentRoute();if(!route)return;
+  step=Math.min(route.nodes.length-1,Math.max(0,next));const active=route.nodes[step],connection=step>0?route.edges[step-1]:null;
+  board.querySelectorAll('[data-node]').forEach(el=>el.classList.toggle('trace-active',el.dataset.node===active));board.querySelectorAll('[data-edge]').forEach(el=>el.classList.toggle('trace-active',el.dataset.edge===connection));
+  const node=diagrams[kind].nodes.find(n=>n.id===active);showNode(active);status.textContent=`${step+1}/${route.nodes.length} · ${node.label.join(' · ')}`;
+  board.scrollTo({top:Math.max(0,node.y*board.querySelector('svg').clientWidth/1000-board.clientHeight/2),behavior:reduced.matches?'instant':'smooth'});
+ }
+ function reset(){stop();step=-1;status.textContent='业务路径演示';detail.hidden=true;board.querySelectorAll('.trace-active').forEach(el=>el.classList.remove('trace-active'));board.querySelectorAll('[data-node]').forEach(el=>el.setAttribute('aria-pressed','false'));}
+ function draw(){
+  reset();const d=diagrams[kind],ids=new Set(d.nodes.map(n=>n.id));if(d.edges.some(e=>!ids.has(e.from)||!ids.has(e.to)))throw Error('diagram_endpoint_missing');
+  for(const route of d.routes)if(route.edges.length!==route.nodes.length-1||route.edges.some((id,i)=>!d.edges.some(e=>e.id===id&&e.from===route.nodes[i]&&e.to===route.nodes[i+1])))throw Error('diagram_route_invalid');
+  routeId=d.routes.some(r=>r.id===routeId)?routeId:d.routes[0]?.id||'';
+  mount.querySelectorAll('[data-principle]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.principle===kind)));
+  mount.querySelector('[data-diagram-title]').textContent=d.title;mount.querySelector('.diagram-goal').textContent=d.goal;select.innerHTML=d.routes.map(r=>`<option value="${r.id}">${esc(r.label)}</option>`).join('');select.value=routeId;
+  mount.querySelector('.diagram-controls').hidden=!d.routes.length;play.disabled=reduced.matches;mount.querySelector('[data-diagram-size]').textContent=zoom>1?'恢复大小':'放大查看';
+  const lanes=(d.lanes||[]).map(([id,label,x,w])=>`<g data-lane="${id}"><rect class="swimlane" x="${x}" y="20" width="${w}" height="${d.height-45}"/><path class="lane-line" d="M${x} 80H${x+w}"/>${text(x+w/2,57,[label])}</g>`).join('');
+  board.innerHTML=`<svg viewBox="0 0 1000 ${d.height}" role="group" aria-label="${esc(d.type+'：'+d.title)}" xmlns="http://www.w3.org/2000/svg"><title>${esc(d.type+'：'+d.title)}</title><defs><marker id="business-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#677c90"/></marker></defs>${lanes}${d.edges.map(edge=>{const e=geometry(edge,d.nodes);return `<g data-edge="${e.id}" data-from="${e.from}" data-to="${e.to}"><path d="${e.d}" class="edge" marker-end="url(#business-arrow)"/>${e.label?text(e.x,e.y,[e.label],'edge-label'):''}</g>`;}).join('')}${d.nodes.map(n=>`<g data-node="${n.id}" role="button" tabindex="0" aria-label="${esc(n.label.join(' · '))}" aria-pressed="false">${shape(n)}</g>`).join('')}</svg>`;
+  board.scrollTop=0;board.scrollLeft=0;board.classList.toggle('enlarged',zoom>1);remember();
+ }
+ function tick(){const route=currentRoute();if(!route||document.hidden||!mount.isConnected){stop();return;}trace(step+1);if(step>=route.nodes.length-1){stop();return;}timer=setTimeout(tick,1400);}
+ mount.onclick=event=>{const tab=event.target.closest('[data-principle]');if(tab){kind=tab.dataset.principle;routeId='';draw();return;}const node=event.target.closest('[data-node]');if(node){stop();showNode(node.dataset.node);return;}
+  if(event.target.closest('[data-detail-close]'))detail.hidden=true;
+  if(event.target.closest('[data-diagram-size]')){zoom=zoom>1?1:1.3;board.classList.toggle('enlarged',zoom>1);event.target.closest('button').textContent=zoom>1?'恢复大小':'放大查看';remember();}
+  if(event.target.closest('[data-trace-next]')){stop();trace(step+1);}if(event.target.closest('[data-trace-reset]'))reset();
+  if(event.target.closest('[data-trace-play]')){if(timer){stop();return;}if(reduced.matches)return;if(step>=currentRoute().nodes.length-1)step=-1;tick();if(timer)play.textContent='暂停演示';}
+ };
+ mount.onkeydown=event=>{if(['Enter',' '].includes(event.key)&&event.target.matches('[data-node]')){event.preventDefault();stop();showNode(event.target.dataset.node);}if(event.key==='Escape')reset();};
+ select.onchange=()=>{reset();routeId=select.value;remember();};const motionChange=()=>{stop();play.disabled=reduced.matches;};reduced.addEventListener('change',motionChange);
+ const visibility=()=>{if(document.hidden)stop();};document.addEventListener('visibilitychange',visibility);
+ const cleanup=new MutationObserver(()=>{if(!mount.isConnected){stop();reduced.removeEventListener('change',motionChange);document.removeEventListener('visibilitychange',visibility);cleanup.disconnect();}});cleanup.observe(document.body,{childList:true,subtree:true});draw();
 }};

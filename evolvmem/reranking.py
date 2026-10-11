@@ -12,16 +12,21 @@ def valid_scores(values, count):
 
 class Reranker:
     def __init__(self, directory):
+        directory = Path(directory)
+        weights = directory / 'onnx/model.onnx'
+        if not weights.is_file():
+            raise FileNotFoundError('floating_reranker_weights_required')
         from tokenizers import Tokenizer
         import onnxruntime as ort
-        directory = Path(directory)
         self.tokenizer = Tokenizer.from_file(str(directory / 'tokenizer.json'))
         self.tokenizer.enable_truncation(max_length=512)
         self.tokenizer.enable_padding(pad_id=1, pad_token='<pad>')
         options = ort.SessionOptions()
         options.intra_op_num_threads = 4
         options.inter_op_num_threads = 1
-        self.session = ort.InferenceSession(str(directory / 'onnx/model_quint8_avx2.onnx'),
+        # Dynamic integer quantization changes scores with batch composition.
+        # Absolute relevance admission requires the stable floating export.
+        self.session = ort.InferenceSession(str(weights),
             sess_options=options, providers=['CPUExecutionProvider'])
 
     def score(self, query, documents):
