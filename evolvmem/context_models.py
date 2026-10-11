@@ -212,6 +212,8 @@ class ContextItem:
     created_at: str
     updated_at: str
     layers: ContextLayers | None
+    projects: tuple[str, ...] = ()
+    personal_general: bool = False
     # UNKNOWN stays None; a known value is always naive UTC.
     effective_from: str | None = None
     effective_until: str | None = None
@@ -363,6 +365,7 @@ class ContextSearchResult:
     mentioned_at: str | None = None
     rerank_score: float | None = None
     duplicate_ids: tuple[int, ...] = ()
+    projects: tuple[str, ...] = ()
 
     @property
     def temporal_state(self) -> str:

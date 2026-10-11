@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 
+from evolvmem import knowledge_scope as ks
 from evolvmem.context_store import _now_iso
 from evolvmem.context_temporal import window_contains
 from evolvmem.extraction_policy import contains_sensitive_text
@@ -97,8 +98,10 @@ def _merge_review_reasons(*collections):
 
 
 def fingerprint(row):
-    return hashlib.sha256(json.dumps([row['project'], row['scope'], row['body'],
-        row['learning']['category'], row['learning'].get('trigger', '')], ensure_ascii=False).encode()).hexdigest()
+    parts = [row['project'], row['scope'], row['body'], row['learning']['category'], row['learning'].get('trigger', '')]
+    if len(ks.projects(row)) > 1:
+        parts.append(ks.projects(row))
+    return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode()).hexdigest()
 
 
 def normalize(question):
@@ -139,18 +142,21 @@ def detail(service, item_id):
     revision = hashlib.sha256(json.dumps([row['revision'], dict(saved) if saved else None], sort_keys=True).encode()).hexdigest()
     return {'id': item_id, 'question': saved['question'] if saved else '', 'answer': saved['answer'] if saved else '',
             'category': row['learning']['category'], 'trigger': row['learning'].get('trigger', ''), 'learning':row['learning'],
-            'project': row['project'], 'scope': row['scope'], 'status': status, 'effective': effective,
+            **ks.fields(row), 'scope': row['scope'], 'status': status, 'effective': effective,
             'reason': reason, 'review_reason': _review_reason(row, reason, effective=effective, priority=priority),
             'origin': saved['origin'] if saved else 'legacy',
             'managed_content': row['managed_content'], 'source_body': row['body'], 'source_title': row['title'], 'sources': row['sources'],
             'revision': revision, 'updated_at': row['updated_at'], 'source_status': row['status']}
 
 
-def conflicts(service, project, scope, question, answer, category, trigger, *, exclude=()):
+def conflicts(service, project, scope, question, answer, category, trigger, *, exclude=(), projects=None):
     conn = service.store._connection()
     found = []
-    for r in conn.execute("SELECT q.item_id,q.question FROM knowledge_qa q JOIN context_items i ON i.id=q.item_id "
-                          "WHERE i.project=? AND i.scope=? AND q.status='active'", (project, scope)):
+    selected = set(projects if projects is not None else ([project] if project else []))
+    for r in conn.execute("SELECT q.item_id,q.question,i.project,i.projects FROM knowledge_qa q JOIN context_items i ON i.id=q.item_id "
+                          "WHERE i.scope=? AND q.status='active'", (scope,)):
+        if scope != 'global' and not selected.intersection(ks.projects(r)):
+            continue
         if r['item_id'] in exclude or normalize(r['question']) != normalize(question):
             continue
         other = detail(service, r['item_id'])
@@ -175,7 +181,7 @@ def record(service, item_id, metadata, *, origin='extraction', approved=False):
         reason, valid = '问答缺失、过长或与来源内容不一致，需要整理', False
     eligible = valid and service.learning().usable(row) and (approved or row['learning'].get('basis') == 'explicit')
     if valid and conflicts(service, row['project'], row['scope'], question, answer,
-                           row['learning']['category'], row['learning'].get('trigger', ''), exclude=(item_id,)):
+                           row['learning']['category'], row['learning'].get('trigger', ''), exclude=(item_id,), projects=row['projects']):
         eligible, reason = False, '同一问题和适用条件已有不同答案，待确认'
     if not eligible and not reason:
         reason = '推断、来源或入库状态需要确认'
@@ -192,7 +198,9 @@ def list_items(service, params=None):
                    "status IN ('active','candidate')"], []
     project = p.get('project', '__all__')
     if project not in ('__all__', None):
-        where.append('project=?'); args.append('' if project == '__global__' else project)
+        where.append("project=''" if project == '__global__' else ks.match_sql('context_items'))
+        if project != '__global__':
+            args.append(project)
         if project == '__global__':
             where.append("scope='global'")
     rows = service.store._connection().execute('SELECT id FROM context_items WHERE ' + ' AND '.join(where) + ' ORDER BY updated_at DESC,id DESC', args).fetchall()
@@ -261,10 +269,10 @@ def save(service, body, *, item_id=None):
         old = detail(service, item_id) if item_id else None
         if old and body.get('expected_revision') != old['revision']:
             raise ValueError('revision_conflict')
-        project = str(body.get('project', old['project'] if old else ''))
-        scope = 'project' if project else 'global'
+        target = ks.normalize(service, {**body, **({'knowledge_scope': 'global'} if body.get('project') == '' and 'projects' not in body and 'knowledge_scope' not in body else {})}, default=old or {'scope': 'global'}, required='projects' in body or 'knowledge_scope' in body)
+        project, scope = target['project'], target['knowledge_scope']
         kb._project(project)
-        peers = conflicts(service, project, scope, question, answer, category, trigger, exclude=(item_id,))
+        peers = conflicts(service, project, scope, question, answer, category, trigger, exclude=(item_id,), projects=target['projects'])
         publishing = body.get('action') == 'publish'
         if publishing and peers and not body.get('replace_conflicts'):
             raise ValueError('qa_conflict_requires_confirmation')
@@ -276,10 +284,10 @@ def save(service, body, *, item_id=None):
         if old and not derived:
             source = kb.detail(item_id)
             source = kb.update(item_id, {'expected_revision':source['revision'], 'title':question, 'body':answer})
-            if project != old['project'] or scope != old['scope']:
-                source = kb.assign(item_id, {'expected_revision':source['revision'], 'project':project})
+            if target['projects'] != old['projects'] or scope != old['scope']:
+                source = kb.assign(item_id, {'expected_revision':source['revision'], **target})
         else:
-            source = kb.create({'title':question, 'body':answer, 'project':project, 'scope':scope,
+            source = kb.create({'title':question, 'body':answer, **target, 'scope':scope,
                                 'action':'draft', 'source':('知识来源 #'+str(derived['id'])) if derived else body.get('source') or '用户整理问答'})
             item_id = source['id']
             if derived:

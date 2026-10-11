@@ -1,8 +1,6 @@
-"""Guidance exceptions: several items in one stored field, any hit blocks reuse.
+"""Legacy phrase helper compatibility and rejection of automatic keyword rules.
 
-Synthetic project/platform names only (ProjectA/ProjectB, AlphaShop/BetaShop).
-Every check runs through the real organization worker, not only the string
-helper, so the stored guidance is exercised end to end.
+Worker checks ensure old stored rules do not assign new data.
 """
 import pytest
 
@@ -34,59 +32,71 @@ def _run(service, monkeypatch, *, session, text):
     return next(u for u in units if '讨论导出时' in u['text'])
 
 
-def test_exception_list_any_hit_forces_review_and_names_the_hit(service, monkeypatch):
+def test_legacy_rule_does_not_assign_exception_list_any_hit_forces_review_and_names_the_hit(service, monkeypatch):
     _record(service, exceptions='AlphaShop|BetaShop')
     unit = _run(service, monkeypatch, session='exc-alpha',
                 text='讨论导出时必须保留来源版本，AlphaShop 平台沿用旧流程。')
+
     assert unit['decision'] == 'review' and unit['project'] == ''
-    assert '例外' in unit['reason'] and 'AlphaShop' in unit['reason']
+    assert unit['applied_guidance_id'] == 0
 
 
-def test_exception_list_second_platform_also_blocks(service, monkeypatch):
+def test_legacy_rule_does_not_assign_exception_list_second_platform_also_blocks(service, monkeypatch):
     _record(service, exceptions='AlphaShop|BetaShop')
     unit = _run(service, monkeypatch, session='exc-beta',
                 text='讨论导出时必须保留来源版本，BetaShop 平台需要单独核对。')
+
     assert unit['decision'] == 'review' and unit['project'] == ''
-    assert 'BetaShop' in unit['reason']
+    assert unit['applied_guidance_id'] == 0
 
 
-def test_exception_list_non_matching_platform_still_applies(service, monkeypatch):
+def test_legacy_rule_does_not_assign_exception_list_non_matching_platform_still_applies(service, monkeypatch):
     _record(service, exceptions='AlphaShop|BetaShop')
     unit = _run(service, monkeypatch, session='exc-gamma',
                 text='讨论导出时必须保留来源版本，GammaShop 平台按常规流程。')
-    assert unit['decision'] == 'auto' and unit['project'] == 'projecta'
+
+    assert unit['decision'] == 'review' and unit['project'] == ''
+    assert unit['applied_guidance_id'] == 0
 
 
-def test_newline_separated_exceptions_block(service, monkeypatch):
+def test_legacy_rule_does_not_assign_newline_separated_exceptions_block(service, monkeypatch):
     _record(service, exceptions='AlphaShop\nBetaShop')
     unit = _run(service, monkeypatch, session='exc-newline',
                 text='讨论导出时必须保留来源版本，BetaShop 平台需要单独核对。')
-    assert unit['decision'] == 'review' and 'BetaShop' in unit['reason']
+
+    assert unit['decision'] == 'review' and unit['project'] == ''
+    assert unit['applied_guidance_id'] == 0
 
 
-def test_exception_case_and_whitespace_are_normalized(service, monkeypatch):
+def test_legacy_rule_does_not_assign_exception_case_and_whitespace_are_normalized(service, monkeypatch):
     _record(service, exceptions='  AlphaShop  |  BetaShop  ')
     unit = _run(service, monkeypatch, session='exc-case',
                 text='讨论导出时必须保留来源版本，ALPHASHOP 平台沿用旧流程。')
+
     assert unit['decision'] == 'review' and unit['project'] == ''
-    assert 'AlphaShop' in unit['reason']
+    assert unit['applied_guidance_id'] == 0
 
 
-def test_empty_exception_segments_are_ignored(service, monkeypatch):
+def test_legacy_rule_does_not_assign_empty_exception_segments_are_ignored(service, monkeypatch):
     _record(service, exceptions=' |  | \n ')
     unit = _run(service, monkeypatch, session='exc-empty',
                 text='讨论导出时必须保留来源版本，AlphaShop 平台沿用旧流程。')
-    assert unit['decision'] == 'auto' and unit['project'] == 'projecta'
+
+    assert unit['decision'] == 'review' and unit['project'] == ''
+    assert unit['applied_guidance_id'] == 0
 
 
-def test_single_exception_value_stays_backward_compatible(service, monkeypatch):
+def test_legacy_rule_does_not_assign_single_exception_value_stays_backward_compatible(service, monkeypatch):
     _record(service, exceptions='AlphaShop')
     blocked = _run(service, monkeypatch, session='exc-single-hit',
                    text='讨论导出时必须保留来源版本，AlphaShop 平台沿用旧流程。')
-    assert blocked['decision'] == 'review' and 'AlphaShop' in blocked['reason']
     applied = _run(service, monkeypatch, session='exc-single-miss',
                    text='讨论导出时必须保留来源版本，项目按常规流程。')
-    assert applied['decision'] == 'auto' and applied['project'] == 'projecta'
+
+    assert applied['decision'] == 'review' and applied['project'] == ''
+    assert applied['applied_guidance_id'] == 0
+    assert blocked['decision'] == 'review' and blocked['project'] == ''
+    assert blocked['applied_guidance_id'] == 0
 
 
 def test_exception_items_split_ignores_empty_segments():

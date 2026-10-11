@@ -169,3 +169,24 @@ The old installer wrote only a 512-dimensional setting while downloading its BGE
 ## Architecture
 
 The active compatibility stack has three layers: active-memory injection (L0, SessionStart system prompt), exact retrieval (L1, SQLite + FTS5/trigram), and semantic retrieval (L2, USearch HNSW). Context Core routing is mode-driven as described above: in `compat`/`shadow`/`primary` modes Context Core is the source of truth and the legacy stack becomes its transactional projection, while `legacy` mode keeps serving the pre-cutover path unchanged. Memories self-iterate through auto-extraction, conflict detection, and access-decay forgetting. Durable data is stored locally. Manual storage and lexical retrieval need no external model service; enabled extraction, rollups and generated playbooks can call the configured provider.
+
+
+### 知识适用范围与业务依据归类
+
+资料可由用户明确设为个人通用，或由多个项目共用同一条知识。正文、问答、来源与修订保持一份；项目清单存储关联范围，兼容既有单项目记录。未归类与个人通用不再混用。提炼、列表、历史与召回使用相同范围；修改共用问答后所有关联项目读取同一版本。
+
+批量归类由用户填写业务依据和不适用情况，后台工作线程阅读完整片段，生成建议归入、不建议归入与待判断结果，并提供理由和逐字原文。前台轮询进度，网络线程不等待模型。每批最多 100 条；单条过长或依据不可核对时保留待审。保存校验来源、规则、单元和预览版本；客户端不能伪造 AI 判断。旧关键词指导保留可编辑，但不再自动执行。
+
+```mermaid
+flowchart LR
+  A[用户选择个人通用或多个项目] --> B[填写业务依据与不适用情况]
+  B --> C[后台 AI 阅读资料]
+  C --> D[判断、理由和原文证据]
+  D --> E{用户核对预览}
+  E -->|保存符合项| F[一条正文关联多个项目]
+  E -->|拿不准| G[继续待审核]
+  F --> H[提炼问答并核对来源]
+  H --> I[各项目召回同一版本]
+  F --> J[保存业务依据用于后续新资料]
+  J --> C
+```

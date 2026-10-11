@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import math
 
-from evolvmem import history_memory, qa_memory
+from evolvmem import history_memory, qa_memory, knowledge_scope as ks
 from evolvmem.memory_learning import CATEGORIES
 
 
@@ -116,7 +116,7 @@ def recall(service, options):
     if kind in ('experience', 'both'):
         conn = service.store._connection()
         ids = conn.execute("SELECT q.item_id FROM knowledge_qa q JOIN context_items i ON i.id=q.item_id "
-                           "WHERE q.status='active' AND (i.project=? OR (i.project='' AND i.scope='global')) "
+                           f"WHERE q.status='active' AND ({ks.match_sql('i')} OR (i.project='' AND i.scope='global')) "
                            "ORDER BY q.updated_at DESC,q.item_id DESC", (project,)).fetchall()
         rows = [qa_memory.detail(service, r[0]) for r in ids]
         rows = [r for r in rows if r['effective']]
@@ -127,13 +127,13 @@ def recall(service, options):
             if signature in seen:
                 continue
             seen.add(signature)
-            part = f"〔经验问答 #{row['id']} · {row['project'] or '全局'} · {CATEGORIES[row['category']]}〕\n问：{row['question']}\n答：{row['answer']}\n"
+            part = f"〔经验问答 #{row['id']} · {ks.label(row)} · {CATEGORIES[row['category']]}〕\n问：{row['question']}\n答：{row['answer']}\n"
             if row['trigger']:
                 part += '适用：'+row['trigger']+'\n'
             if len(part) > remaining:
                 continue
             blocks.append(part); remaining -= len(part)
-            result['qa'].append({k:row[k] for k in ('id','question','answer','category','trigger','project','scope')})
+            result['qa'].append({k:row[k] for k in ('id','question','answer','category','trigger','project','scope','projects')})
             result['selected_ids'].append(row['id'])
             if len(result['qa']) >= 8:
                 break

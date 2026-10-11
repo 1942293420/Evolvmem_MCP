@@ -15,6 +15,7 @@ aftermath). Generated knowledge is never a verified-experience claim.
 """
 from __future__ import annotations
 
+from evolvmem import knowledge_scope as ks
 import hashlib
 import json
 import sqlite3
@@ -68,7 +69,7 @@ def _unit_revision(row) -> str:
     if isinstance(row, sqlite3.Row):
         row = dict(row)
     return hashlib.sha256(_canonical({k: row.get(k) for k in
-        ('revision', 'project', 'decision', 'reason', 'disposition', 'evidence_quote', 'cleaned_text',
+        ('revision', 'project', 'projects', 'knowledge_scope', 'decision', 'reason', 'disposition', 'evidence_quote', 'cleaned_text',
          'continues_context', 'context_basis', 'applied_guidance_id')}).encode()).hexdigest()[:16]
 
 
@@ -1243,6 +1244,7 @@ class OrganizationWorker:
         """Interrupted work returns to the queue instead of hanging forever."""
         service = self._connect()
         with service.store.transaction():
+            service.store._connection().execute("UPDATE organization_review_jobs SET status='pending' WHERE status='running'")
             service.store._connection().execute(
                 "UPDATE organization_tasks SET status='pending',updated_at=? WHERE status='running'",
                 (_now_iso(),))
@@ -1251,6 +1253,9 @@ class OrganizationWorker:
 
     def tick(self):
         service = self._connect()
+        from evolvmem.organization_semantic_review import tick as review_tick
+        if review_tick(service):
+            return True
         task = self._claim(service)
         if task is None:
             return False
@@ -1502,6 +1507,8 @@ class OrganizationWorker:
                                  "revision=?,disposition=? WHERE task_id=? AND digest=?",
                                  (old['project'], old['reason'], old['revision'] + 1,
                                   old['disposition'], task['id'], digest))
+                    conn.execute('UPDATE organization_units SET projects=?,knowledge_scope=? WHERE task_id=? AND digest=?',
+                                 (old['projects'], old['knowledge_scope'], task['id'], digest))
             conn.execute('UPDATE organization_tasks SET unit_count=?,updated_at=? WHERE id=?',
                          (len(units), _now_iso(), task['id']))
 
@@ -1535,7 +1542,8 @@ class OrganizationWorker:
                                   reason=unit['disposition_reason'], evidence_quote=resolved_quote)
                 review += 1
                 continue
-            guidance = guidance_store.classify(service, unit)
+            from evolvmem.organization_semantic_review import classify_guidance
+            guidance = classify_guidance(service, unit)
             if unit['disposition'] == 'history_only' and guidance['status'] == 'review':
                 with service.store.transaction():
                     service.store._connection().execute(
@@ -1549,17 +1557,11 @@ class OrganizationWorker:
                 review += 1
                 continue
             if guidance['status'] == 'apply':
-                conflict = self._guidance_conflict(service, unit, guidance['project'], policy)
-                if conflict:
-                    self._update_unit(service, task['id'], unit['digest'], project='', decision='review',
-                                      expected_revision=unit, context_basis='',
-                                      reason=conflict, evidence_quote=resolved_quote)
-                    review += 1
-                    continue
                 self._update_unit(service, task['id'], unit['digest'], project=guidance['project'],
                                   decision='auto', expected_revision=unit, context_basis='',
                                   guidance_id=guidance['id'],
-                                  reason=guidance['reason'], evidence_quote=resolved_quote)
+                                  reason=guidance['reason'], evidence_quote=guidance.get('evidence_quote', resolved_quote),
+                                  knowledge_target=guidance)
                 auto_projects.append(guidance['project'])
                 continue
             if guidance['status'] == 'pending':
@@ -1618,7 +1620,8 @@ class OrganizationWorker:
         """Guidance never overrides conflicting project evidence in the unit."""
         kb = service.knowledge()
         evaluated = kb.rules.evaluate({'body': unit['text'], 'source': True}, kb.registry(), policy=policy)
-        others = [candidate for candidate in evaluated['candidates'] if candidate.casefold() != project.casefold()]
+        allowed = ks.projects(project) if isinstance(project, dict) else [project]
+        others = [candidate for candidate in evaluated['candidates'] if candidate.casefold() not in {p.casefold() for p in allowed}]
         if others:
             return '你的指导与这段正文里的其他项目线索冲突（' + '、'.join(others) + '），需要人工确认'
         return ''
@@ -1714,7 +1717,7 @@ class OrganizationWorker:
         return '', '模型建议缺少正文项目证据，等待人工确认', 'review'
 
     def _update_unit(self, service, task_id, digest, *, project, decision, expected_revision=None,
-                     reason='', evidence_quote=None, context_basis=None, guidance_id=0):
+                     reason='', evidence_quote=None, context_basis=None, guidance_id=0, knowledge_target=None):
         """CAS inside the transaction; a manual decision is never overwritten."""
         with service.store.transaction():
             conn = service.store._connection()
@@ -1728,11 +1731,12 @@ class OrganizationWorker:
                 raise ValueError('revision_conflict')
             conn.execute(
                 'UPDATE organization_units SET project=?,decision=?,reason=?,evidence_quote=?,'
-                'context_basis=?,applied_guidance_id=?,revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
+                'context_basis=?,applied_guidance_id=?,projects=?,knowledge_scope=?,revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
                 (project, decision, str(reason or '')[:600],
                  str(row['evidence_quote'] if evidence_quote is None else evidence_quote)[:300],
                  str(row['context_basis'] if context_basis is None else context_basis),
-                 guidance_id, _now_iso(), task_id, digest))
+                 guidance_id, json.dumps(ks.projects(knowledge_target) if knowledge_target is not None else ([project] if project else [])),
+                 ks.scope(knowledge_target) if knowledge_target is not None else 'project', _now_iso(), task_id, digest))
             if context_basis == '':
                 # The unit no longer rests on a predecessor: drop the dependency
                 # so the reconciliation pass cannot report it as live.
@@ -1791,7 +1795,7 @@ def _ingest_units(service, task, spans, *, extract=True):
     units = [dict(r) for r in service.store._connection().execute(
         'SELECT * FROM organization_units WHERE task_id=? ORDER BY ordinal', (task['id'],))]
     for unit in units:
-        if not unit['project'] or unit['decision'] == 'review' or unit['disposition'] == 'set_aside':
+        if not ks.assigned(unit) or unit['decision'] == 'review' or unit['disposition'] == 'set_aside':
             continue
         messages = topic_segmentation.unit_messages(unit, spans)
         if not messages:
@@ -1867,13 +1871,21 @@ def correct_one(service, body, *, record_guidance=True):
     if task['status'] == 'superseded':
         raise ValueError('task_superseded')
     _assert_current(service, task)
-    project = str(body.get('project') or '')
+    target = ks.normalize(service, body)
+    project = target['project']
     reason = str(body.get('reason') or ('人工修正：' + (body.get('guidance') or '用户核对')))[:600]
     if project:
         service.knowledge()._project(project)
     expected = body.get('expected_revision')
     text = str(body.get('guidance') or '').strip()
     scope = 'future' if body.get('scope') == 'future' else 'batch'
+    if scope == 'future' and body.get('matching_mode') == 'semantic':
+        condition = str(body.get('condition') or '').strip()
+        if not 1 <= len(condition) <= 1000:
+            raise ValueError('review_condition_required')
+        if not ks.assigned(target):
+            raise ValueError('project_required')
+        text = text or condition
     stored = None
     with service.store.transaction():
         conn = service.store._connection()
@@ -1885,14 +1897,15 @@ def correct_one(service, body, *, record_guidance=True):
             raise ValueError('revision_conflict')
         if text and record_guidance:
             stored = guidance_store.record(
-                service, guidance=text, scope=scope, project=project or row['project'],
+                service, guidance=text, scope=scope, project=project, projects=target['projects'], knowledge_scope=target['knowledge_scope'],
                 condition=str(body.get('condition') or ''), exceptions=body.get('exceptions', ''),
-                negative=body.get('negative') is True, source_text=text, source_task_id=task_id)
+                negative=body.get('negative') is True, source_text=text, source_task_id=task_id,
+                matching_mode='semantic' if body.get('matching_mode') == 'semantic' else 'phrase')
         decision = 'manual'
         if body.get('negative') is True:
             decision = 'review'
             reason = '你标记的反例：' + (text or '不要再套用此指导')
-        changed_project = project != row['project']
+        changed_project = target['projects'] != ks.projects(row) or target['knowledge_scope'] != ks.scope(row)
         conn.execute(
             'UPDATE organization_units SET project=?,decision=?,reason=?,revision=revision+1,'
             "extraction_stage=CASE WHEN ? THEN 'pending' ELSE extraction_stage END,"
@@ -1904,11 +1917,13 @@ def correct_one(service, body, *, record_guidance=True):
             # The human decision now owns this unit's project; the inherited
             # basis no longer explains it and must not stay a live dependency.
             organization_context.clear_dependency(service, task_id, digest, conn=conn)
+        conn.execute('UPDATE organization_units SET projects=?,knowledge_scope=? WHERE task_id=? AND digest=?',
+                     (json.dumps(target['projects']), target['knowledge_scope'], task_id, digest))
     refreshed = find_unit(service, task_id, digest)
-    if project:
+    if ks.assigned(target):
         item_id = _ensure_unit_item(service, task, refreshed)
         if item_id:
-            _apply_manual_project(service, item_id, project, reason)
+            _apply_manual_project(service, item_id, project, reason, target=target)
         else:
             # The decision is kept, but nothing can be written for a unit whose
             # original message cannot be re-read; say so instead of failing.
@@ -1919,7 +1934,7 @@ def correct_one(service, body, *, record_guidance=True):
     elif refreshed['item_id']:
         _unresolve_item(service, refreshed['item_id'], reason)
     if changed_project:
-        _follow_derived(service, task_id, digest, project, reason)
+        _follow_derived(service, task_id, digest, project, reason, target=target)
     _refresh_task_state(service, task_id)
     # A correction to this unit is exactly the event that must send units
     # inheriting from it back to review; the scan is bounded and model-free.
@@ -1930,7 +1945,7 @@ def correct_one(service, body, *, record_guidance=True):
             'task': task_view(service, task_id)}
 
 
-def _follow_derived(service, task_id, digest, project, reason):
+def _follow_derived(service, task_id, digest, project, reason, *, target=None):
     """Move or supersede only this unit's own derived knowledge.
 
     Knowledge shared with another source keeps its links and is re-extracted
@@ -1947,6 +1962,13 @@ def _follow_derived(service, task_id, digest, project, reason):
         item_id = row['item_id']
         try:
             detail = service.knowledge().detail(item_id)
+            if target and ks.assigned(target) and detail['content_type'] != 'experience' and not unit_derivations.is_shared(
+                    service, item_id, archive_id=archive_id, unit_ref=session_ref, session_ref=session_ref):
+                snapshot = unit_derivations.qa_move_snapshot(service, item_id)
+                service.knowledge().assign(item_id, {**target, 'expected_revision': detail['revision']})
+                unit_derivations.update_project(service, task_id, digest, item_id, project)
+                unit_derivations.rerecord_moved_qa(service, item_id, snapshot)
+                continue
             if project and detail['project'] != project and detail['content_type'] == 'experience':
                 # A changed project is a new applicability scope. Preserve the
                 # parent case and its evidence; the derived case starts unverified.
@@ -2015,12 +2037,12 @@ def _ensure_unit_item(service, task, unit):
     return item_id
 
 
-def _apply_manual_project(service, item_id, project, reason):
+def _apply_manual_project(service, item_id, project, reason, *, target=None):
     """Use the existing assign/transition primitives so ownership and vectors follow."""
     kb = service.knowledge()
     row = kb.detail(item_id)
-    if row['project'] != project:
-        kb.assign(item_id, {'project': project, 'expected_revision': row['revision']})
+    if target or row['project'] != project:
+        kb.assign(item_id, {**(target or {'project': project}), 'expected_revision': row['revision']})
         row = kb.detail(item_id)
     # A human-confirmed unit is real history; other categories stay candidates
     # until their own evidence/rules admit them.
@@ -2053,8 +2075,8 @@ def _refresh_task_state(service, task_id, *, retry_transient=False):
     units = [dict(r) for r in service.store._connection().execute(
         'SELECT * FROM organization_units WHERE task_id=? ORDER BY ordinal', (task_id,))]
     pending = [unit for unit in units if unit['disposition'] not in ('set_aside', 'history_only')]
-    review = sum(1 for unit in pending if unit['decision'] == 'review' or not unit['project'])
-    assigned = [u for u in pending if u['project'] and u['decision'] != 'review']
+    review = sum(1 for unit in pending if unit['decision'] == 'review' or not ks.assigned(unit))
+    assigned = [u for u in pending if ks.assigned(u) and u['decision'] != 'review']
     if retry_transient:
         from evolvmem.organization_diagnostics import retryable
         attempts = service.store._connection().execute(
@@ -2122,6 +2144,8 @@ def guidance_list(service):
 
 
 def guidance_update(service, body):
+    if body.get('matching_mode') == 'semantic':
+        return guidance_store.edit_criteria(service, body)
     guidance_id = body.get('id')
     if 'enabled' not in body:
         raise ValueError('invalid_request')
@@ -2148,6 +2172,12 @@ def dispatch(service, method, route, body):
             return organization_review.detail(service, body)
         if method == 'POST' and route == '/groups/reprocess':
             return organization_review.reprocess(service, body)
+        if method == 'POST' and route == '/groups/analyze':
+            from evolvmem.organization_semantic_review import start
+            return start(service, body)
+        if method == 'GET' and route == '/groups/analysis':
+            from evolvmem.organization_semantic_review import get
+            return get(service, body.get('id'))
         if method == 'POST' and route == '/groups/preview':
             return organization_review.preview(service, body)
         if method == 'POST' and route == '/groups/apply':

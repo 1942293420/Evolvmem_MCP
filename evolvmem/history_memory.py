@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+from evolvmem import knowledge_scope as ks
 from evolvmem.conversation import from_payload, render
 from evolvmem.context_store import _now_iso
 from evolvmem.extraction_policy import redact_messages
@@ -53,7 +54,7 @@ def project_units(service, project, archive_id):
         'u.task_id,i.id AS item_id FROM organization_units u '
         'JOIN organization_tasks t ON t.id=u.task_id '
         'LEFT JOIN context_items i ON i.id=u.item_id '
-        "WHERE t.source_key=? AND u.project=? AND t.status!='superseded' "
+        "WHERE t.source_key=? AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
         "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' AND i.status='active' "
         'ORDER BY u.source_start,u.ordinal',
         (f'archive:{archive_id}', project)).fetchall()
@@ -150,7 +151,7 @@ def sessions(service, project):
             'LEFT JOIN conversation_history h ON h.archive_id=a.id '
             "WHERE a.project='' AND EXISTS(SELECT 1 FROM organization_units u "
             'JOIN organization_tasks t ON t.id=u.task_id '
-            "WHERE t.source_key='archive:'||a.id AND u.project=? AND t.status!='superseded' "
+            "WHERE t.source_key='archive:'||a.id AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
             "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' AND u.item_id IS NOT NULL) "
             'ORDER BY a.created_at DESC,a.id DESC', (project,)).fetchall()
         rows = list(rows) + [row for row in extra if row['id'] not in {r['id'] for r in rows}]
@@ -175,7 +176,7 @@ def sessions(service, project):
             continue
         seen.add(key)
         linked = conn.execute("SELECT DISTINCT i.id,l.content FROM context_sources s JOIN context_items i ON i.id=s.item_id "
-            "JOIN context_layers l ON l.item_id=i.id AND l.layer='l1' WHERE s.archive_id=? AND i.project=? "
+            "JOIN context_layers l ON l.item_id=i.id AND l.layer='l1' WHERE s.archive_id=? AND ? IN (SELECT i.project UNION SELECT value FROM json_each(i.projects)) "
             "AND i.status='active' AND i.content_type='session_summary'", (row['id'], project)).fetchall()
         facts = load_ownership(service.store, [r['id'] for r in linked])
         linked = [r for r in linked if not facts.get(r['id'], UNREVIEWED_FACT).excluded]
@@ -192,7 +193,7 @@ def sessions(service, project):
             unit_items = {item[0] for item in conn.execute(
                 'SELECT DISTINCT u.item_id FROM organization_units u '
                 'JOIN organization_tasks t ON t.id=u.task_id '
-                "WHERE t.source_key=? AND u.project=? AND t.status!='superseded' "
+                "WHERE t.source_key=? AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
                 "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' "
                 'AND u.item_id IS NOT NULL', (f"archive:{row['id']}", project))}
         kept, contents = [], set()

@@ -1,18 +1,13 @@
-"""User guidance with explicit scope, conditions, exceptions and enable state.
+"""Business criteria and explicitly confirmed one-off guidance.
 
-One correction is a one-off by default. Reuse of a correction for later sources
-is an explicit request. A reusable rule needs a *narrow* match condition: the
-user's own condition must contain at least one distinctive term beyond generic
-words such as 资料 / 项目. The condition and every exception are then matched
-as one complete contiguous phrase: case and the phrase's own horizontal
-whitespace never matter, but the phrase is never reassembled from terms
-scattered over the unit, the unit is never compacted, and a unit line break (or
-any other vertical whitespace) stays a hard boundary. Exceptions exclude a
-match instead of silently shrinking the keyword set, and two matching rules
-that point at different projects are a conflict for review, never a
-first-rule-wins guess.
+Only semantic rules participate in automatic organization. Legacy phrase
+helpers remain for reading old records and compatibility, never for assigning
+new units. Semantic rules require AI reasons and verbatim source evidence.
 """
 from __future__ import annotations
+
+from evolvmem import knowledge_scope as ks
+import json
 
 import re
 
@@ -109,22 +104,25 @@ def rows(service, *, enabled_only: bool = True):
 
 
 def record(service, *, guidance, scope, project='', condition='', exceptions='',
-           negative=False, enabled=True, source_text='', source_task_id=None):
+           negative=False, enabled=True, source_text='', source_task_id=None, projects=None, knowledge_scope='project', matching_mode='phrase'):
     """Store one correction atomically; a second connection sees it immediately."""
     text = str(guidance or '').strip()
     if not 1 <= len(text) <= 1000:
         raise ValueError('invalid_guidance')
     if scope not in ('batch', 'future'):
         raise ValueError('invalid_guidance_scope')
-    condition = str(condition or '')[:500]
+    condition = str(condition or '')[:1000 if matching_mode == 'semantic' else 500]
     now = _now_iso()
     with service.store.transaction():
         cursor = service.store._connection().execute(
             'INSERT INTO organization_guidance(scope,project,condition,exceptions,guidance,state,negative,'
             'enabled,revision,source_text,source_task_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?)',
             (scope, str(project or ''), condition, str(exceptions or '')[:500], text,
-             state_for(condition, scope), 1 if negative else 0, 1 if enabled else 0,
+             ('reusable' if matching_mode == 'semantic' and scope == 'future' else state_for(condition, scope)), 1 if negative else 0, 1 if enabled else 0,
              str(source_text or text)[:1000], source_task_id, now, now))
+        target = ks.normalize(service, {'project': project, 'projects': projects if projects is not None else ([project] if project else []), 'knowledge_scope': knowledge_scope})
+        service.store._connection().execute('UPDATE organization_guidance SET projects=?,knowledge_scope=?,matching_mode=? WHERE id=?',
+            (json.dumps(target['projects']), target['knowledge_scope'], matching_mode, cursor.lastrowid))
         return dict(service.store._connection().execute(
             'SELECT * FROM organization_guidance WHERE id=?', (cursor.lastrowid,)).fetchone())
 
@@ -184,7 +182,7 @@ def classify(service, unit):
     folded = body.casefold()
     negatives, positives, pendings = [], [], []
     for row in rows(service):
-        if row['scope'] != 'future' or not row['project']:
+        if row['scope'] != 'future' or not ks.assigned(row):
             continue
         condition_hit = _condition_match(row, folded)
         if row['state'] != 'reusable' or not narrow(row['condition']):
@@ -206,10 +204,10 @@ def classify(service, unit):
         positives.append({**row, 'reason': '沿用了你确认过的指导：' + row['guidance']})
     if negatives:
         return {'status': 'review', **negatives[0]}
-    projects = {row['project'] for row in positives}
+    projects = {(ks.scope(row), tuple(ks.projects(row))) for row in positives}
     if len(projects) > 1:
         return {'status': 'review', 'conflict': True, 'project': '',
-                'reason': '你保存的多条指导指向不同项目，需要人工确认：' + '、'.join(sorted(projects))}
+                'reason': '你保存的多条指导指向不同项目，需要人工确认：' + '、'.join(ks.label(row) for row in positives)}
     if positives:
         return {'status': 'apply', **positives[0]}
     if pendings:
@@ -224,3 +222,22 @@ def match(service, unit):
     if result['status'] in ('apply', 'review'):
         return result
     return None
+
+
+def edit_criteria(service, body):
+    """A user rewrites a saved rule as business criteria with explicit applicability."""
+    condition, exceptions = str(body.get('condition') or '').strip(), str(body.get('exceptions') or '').strip()
+    if not 1 <= len(condition) <= 1000 or len(exceptions)>500:
+        raise ValueError('review_condition_required')
+    target=ks.normalize(service,body,required=True)
+    with service.store.transaction():
+        conn=service.store._connection()
+        row=conn.execute('SELECT * FROM organization_guidance WHERE id=?',(body.get('id'),)).fetchone()
+        if row is None:raise ValueError('guidance_not_found')
+        if row['revision']!=body.get('expected_revision'):raise ValueError('revision_conflict')
+        conn.execute("UPDATE organization_guidance SET condition=?,exceptions=?,project=?,projects=?,knowledge_scope=?,"
+                     "matching_mode='semantic',state='reusable',guidance=?,source_text=?,enabled=1,scope='future',negative=0,"
+                     'revision=revision+1,updated_at=? WHERE id=?',
+                     (condition,exceptions,target['project'],json.dumps(target['projects']),target['knowledge_scope'],
+                      condition,condition,_now_iso(),row['id']))
+    return {'items':[dict(conn.execute('SELECT * FROM organization_guidance WHERE id=?',(row['id'],)).fetchone())]}

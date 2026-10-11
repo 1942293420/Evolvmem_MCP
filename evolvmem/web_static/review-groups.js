@@ -2,10 +2,10 @@
 (() => {
   window.EvolvReviewGroups = {async render({mount, api, esc, projects, onSaved, onDirty, onBusy, historyMount=mount}) {
     let page=1, proposal=null, busy=false, selectedGroup='', detail=null, pendingTasks=[], recoveryTimer=null, recoveryGroup='', listSnapshot='', loadSequence=0;
-    const drafts=new Map(), sourceCache=new Map();
+    const drafts=new Map(), sourceCache=new Map(), analyses=new Map();let analysisTimer=null;
     const $=s=>mount.querySelector(s);
     const projectName=p=>projects.find(x=>x.project===p)?.display_name||p;
-    const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请填写原文中完整出现的一段具体词句；空格不表示多个关键词。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择要归入的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
+    const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
     mount.innerHTML=`<section class="review-groups"><div class="section-head"><h2>待你确认的资料</h2><button data-rg="refresh">刷新资料</button></div><p data-rg-status role="status"></p><div class="review-workspace"><div class="review-list-column"><h3>1. 选择要审核的资料</h3><p data-rg-total></p><div data-rg-list></div><div class="actions"><button data-rg="previous">上一页</button><span data-rg-page></span><button data-rg="next">下一页</button></div></div>
     <div class="review-editor"><div data-rg-empty><h3>点击左侧资料，在这里核对原文和归属</h3></div><form data-rg-form hidden>
       <h3>2. 核对原文</h3><h4 data-rg-title></h4><p data-rg-source-label></p>
@@ -13,22 +13,23 @@
       <p class="review-question" data-rg-reason></p><pre class="review-original" data-rg-original></pre>
       <details data-rg-source><summary>查看所在会话全文</summary><div data-rg-source-text></div></details>
       <div class="actions" data-rg-value hidden><button type="button" data-rg="keep">保留这条资料</button><button type="button" data-rg="aside">暂存，稍后再判断</button></div>
-      <h3>3. 选择归入哪个项目</h3><div class="organization-settings">
-        <label>归入项目<select name="project"><option value="">请选择项目</option>${projects.filter(p=>p.status==='active').map(p=>`<option value="${esc(p.project)}">${esc(p.display_name||p.project)}</option>`).join('')}</select></label>
-        <label>本次处理哪些资料<select name="selection"><option value="item">只处理正在看的这一条</option><option value="group">在左侧选中这组内按条件查找</option><option value="all">在全部待确认资料中按条件查找</option></select></label>
-      </div><div data-rg-batch hidden><label>原文包含的连续词句<input name="condition" maxlength="500" placeholder="从原文复制一段，例如：邮箱认证"></label>
-        <label>不处理包含这些词句的资料（选填）<textarea name="exceptions" rows="2" maxlength="500" placeholder="每行填写一个例外词句"></textarea></label>
-        <label>以后遇到同样内容<select name="scope"><option value="batch">只处理本次预览中的资料</option><option value="future">也按这些条件归入同一项目</option></select></label>
-      </div><details><summary>补充归类说明（选填）</summary><input name="guidance" maxlength="1000" aria-label="补充归类说明"></details>
+      <h3>3. 选择这条知识适用于哪里</h3><div data-rg-scope></div><div class="organization-settings">
+
+        <label>本次处理哪些资料<select name="selection"><option value="item">只处理正在看的这一条</option><option value="group">在左侧选中这组内交给 AI 判断</option><option value="all">在全部待确认资料中交给 AI 判断</option></select></label>
+      </div><div data-rg-batch hidden><label>归类依据<textarea rows="4" name="condition" maxlength="1000" placeholder="例如：介绍技术概念、原理或通用使用方法的资料，归入知识问答；实际修改某个项目的需求不属于这一类。"></textarea></label>
+        <label>不适用的情况（选填）<textarea name="exceptions" rows="2" maxlength="500" placeholder="例如：虽提到某项技术，但主要是在安排具体项目的开发任务。"></textarea></label>
+        <label>以后遇到同样内容<select name="scope"><option value="batch">只处理本次预览中的资料</option><option value="future">让 AI 继续按这份依据判断</option></select></label>
+      </div><details><summary>补充说明（选填）</summary><input name="guidance" maxlength="1000" aria-label="补充归类说明"></details>
       <input type="hidden" name="group_id"><input type="hidden" name="task_id"><input type="hidden" name="digest">
       <button type="button" data-rg="preview">预览归类结果</button><div data-rg-reprocess-status role="status"></div><div data-rg-preview></div>
-      <div class="review-apply-bar"><p data-rg-save-status role="status">选择项目后，先预览再保存。</p><button type="button" class="primary write" data-rg="apply" disabled>确认归类</button></div>
+      <div class="review-apply-bar"><p data-rg-save-status role="status">选择适用范围后，先预览再保存。</p><button type="button" class="primary write" data-rg="apply" disabled>确认归类</button></div>
     </form></div></div></section>`;
     const form=$('[data-rg-form]');
+    const scopePicker=EvolvProjects.scopePicker({mount:$('[data-rg-scope]'),projects,esc});
     function notice(text){$('[data-rg-status]').textContent=text;}
-    function values(){const data=Object.fromEntries(new FormData(form));data.task_id=Number(data.task_id);return data;}
+    function values(){const data=Object.fromEntries(new FormData(form));data.task_id=Number(data.task_id);return {...data,...scopePicker.read(),matching_mode:data.selection==='item'?'phrase':'semantic'};}
     function remember(){if(selectedGroup)drafts.set(selectedGroup,{values:values(),proposal});}
-    function invalidate(){proposal=null;$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='先预览，再确认归类';$('[data-rg-preview]').replaceChildren();$('[data-rg-save-status]').textContent='选择已修改，请预览本次归类结果。';remember();onDirty(true);}
+    function invalidate(){$('[data-rg="preview"]').disabled=false;analyses.delete(selectedGroup);proposal=null;$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='先预览，再确认归类';$('[data-rg-preview]').replaceChildren();$('[data-rg-save-status]').textContent='选择已修改，请预览本次归类结果。';remember();onDirty(true);}
     function highlight(){mount.querySelectorAll('[data-rg="choose"]').forEach(b=>{const yes=b.dataset.id===selectedGroup;b.setAttribute('aria-pressed',String(yes));b.closest('.review-source-card').classList.toggle('selected',yes);});}
     async function load(){
       const sequence=++loadSequence;
@@ -40,7 +41,7 @@
       $('[data-rg-total]').textContent=`共 ${result.unit_count} 条待确认资料，分在 ${result.total} 组中`;
       $('[data-rg-page]').textContent=`第 ${page} / ${Math.max(1,Math.ceil(result.total/result.page_size))} 页`;
       $('[data-rg="previous"]').disabled=page<=1;$('[data-rg="next"]').disabled=page*result.page_size>=result.total;
-      $('[data-rg-list]').innerHTML=result.items.map(g=>`<article class="review-source-card"><button type="button" data-rg="choose" data-id="${esc(g.id)}" aria-pressed="false"><strong>${esc(g.examples[0]?.title||g.title)}</strong><span>${g.count} 条 · ${g.reason==='价值待确认'?'需要确认是否保留':g.reason==='归属有冲突'?'需要解决归属冲突':'需要确认所属项目'}</span><span class="review-source-name">来源：${esc(g.title)}</span></button></article>`).join('')||'<div class="empty">没有需要你确认的资料</div>';
+      $('[data-rg-list]').innerHTML=result.items.map(g=>`<article class="review-source-card"><button type="button" data-rg="choose" data-id="${esc(g.id)}" aria-pressed="false"><strong>${esc(g.examples[0]?.title||g.title)}</strong><span>${g.count} 条 · ${g.reason==='价值待确认'?'需要确认是否保留':g.reason==='归属有冲突'?'需要解决归属冲突':'需要确认适用范围'}</span><span class="review-source-name">来源：${esc(g.title)}</span></button></article>`).join('')||'<div class="empty">没有需要你确认的资料</div>';
       highlight();
     }
     function showUnit(){
@@ -48,7 +49,7 @@
       form.elements.task_id.value=u.task_id;form.elements.digest.value=u.digest;
       $('[data-rg-title]').textContent=u.title;$('[data-rg-source-label]').textContent=`来源：${detail.title}`;
       $('[data-rg-original]').textContent=u.text;
-      $('[data-rg-reason]').textContent=u.disposition==='review'?'需要你确认是否保留：'+(u.disposition_reason||u.reason):'需要你确认所属项目：'+(u.reason||'系统无法确定这条资料属于哪个项目');
+      $('[data-rg-reason]').textContent=u.disposition==='review'?'需要你确认是否保留：'+(u.disposition_reason||u.reason):'需要你确认适用范围：'+(u.reason||'系统无法确定这条知识是个人通用还是用于哪些项目');
       $('[data-rg-value]').hidden=u.disposition!=='review';$('[data-rg-source]').open=false;$('[data-rg-source-text]').replaceChildren();
     }
     async function choose(id,{preserve=false,member=null}={}){
@@ -58,28 +59,44 @@
       selectedGroup=id;detail=next;form.hidden=false;$('[data-rg-empty]').hidden=true;$('[data-rg-empty]').textContent='点击左侧资料，在这里核对原文和归属';
       const draft=drafts.get(id);form.reset();form.elements.group_id.value=id;
       form.elements.unit.innerHTML=detail.items.map((u,i)=>`<option value="${esc(u.task_id+':'+u.digest)}">${i+1}. ${esc(u.title)}</option>`).join('');
-      if(draft)for(const [k,v]of Object.entries(draft.values))if(form.elements[k])form.elements[k].value=v;
+      if(draft)for(const [k,v]of Object.entries(draft.values))if(!['projects','knowledge_scope'].includes(k)&&form.elements[k])form.elements[k].value=v;
+      scopePicker.set(draft?.values||{});
       form.elements.group_id.value=id;
       // A reprocessed task has a new task id. A retained digest identifies the
       // same fragment; otherwise show the first new fragment for fresh review.
       if(!form.elements.unit.value){const old=detail.items.find(u=>u.digest===draft?.values.digest);form.elements.unit.value=old?`${old.task_id}:${old.digest}`:form.elements.unit.options[0]?.value||'';}
       $('[data-rg-unit-picker]').hidden=detail.items.length===1;showUnit();
       $('[data-rg-batch]').hidden=form.elements.selection.value==='item';proposal=draft?.proposal||null;
-      highlight();if(proposal)drawPreview();else{$('[data-rg-preview]').replaceChildren();$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='先预览，再确认归类';$('[data-rg-save-status]').textContent='选择项目后，先预览再保存。';}
+      checkAnalysis();highlight();if(proposal)drawPreview();else{$('[data-rg-preview]').replaceChildren();$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='先预览，再确认归类';$('[data-rg-save-status]').textContent='选择适用范围后，先预览再保存。';}
     }
     function drawPreview(){
-      const p=proposal, target=projectName(p.project);
-      const rows=(items,excluded)=>items.map(u=>`<li><strong>${esc(u.title)}</strong>${excluded?`<p>${esc(u.reason)}</p>`:''}<blockquote>${esc(u.quote)}</blockquote><button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div></li>`).join('');
+      const p=proposal, target=EvolvProjects.scopeLabel(p,projects);
+      const rows=(items,excluded)=>items.map(u=>`<li><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}<blockquote>${esc(u.evidence_quote||u.quote)}</blockquote><button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div></li>`).join('');
       const stale=[...new Set(p.excluded.filter(u=>u.reason_code==='rule_changed').map(u=>u.source_key))];
-      $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${p.selection==='all'?'全部待确认资料':p.selection==='group'?'左侧选中这组资料':'正在看的这一条'}：检查 ${p.searched_count} 条${p.selection==='item'?'':`，词句匹配 ${p.matched_count} 条`}。</p>
-        <div class="review-counts"><strong>归入「${esc(target)}」：${p.eligible.length} 条</strong><strong>本次不归入：${p.excluded.length} 条</strong></div>
-        ${p.scope==='future'?`<p>保存后，新资料包含“${esc(p.condition)}”且不符合例外时，也归入「${esc(target)}」。</p>`:''}
+      $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${p.selection==='all'?'全部待确认资料':p.selection==='group'?'左侧选中这组资料':'正在看的这一条'}：检查 ${p.searched_count} 条${p.matching_mode==='semantic'?`，AI 已按业务依据判断 ${p.eligible.length+p.excluded.filter(u=>['ai_excluded','ai_uncertain'].includes(u.reason_code)).length} 条`:''}。</p>
+        ${p.matching_mode==='semantic'?`<p>判断依据：${esc(p.condition)}</p><p>需要你判断：${p.excluded.filter(u=>u.reason_code==='ai_uncertain').length} 条</p>`:''}<div class="review-counts"><strong>归入「${esc(target)}」：${p.eligible.length} 条</strong><strong>本次不归入：${p.excluded.length} 条</strong></div>
+        ${p.scope==='future'?`<p>保存后，AI 将按“${esc(p.condition)}”及不适用情况判断新资料，符合时归入「${esc(target)}」。</p>`:''}
         ${stale.length?`<div class="review-recovery"><p>${stale.length} 份来源使用了旧版整理规则。重新整理后，请核对新结果再保存。</p><button type="button" class="write" data-rg="reprocess">按最新规则重新整理 ${Math.min(20,stale.length)} 份来源</button>${stale.length>20?'<p>其余来源留待下一批处理。</p>':''}</div>`:''}
         <details open><summary>将归入的资料 · ${p.eligible.length} 条</summary>${p.eligible.length?`<ul>${rows(p.eligible,false)}</ul>`:'<p>没有可归入的资料。</p>'}</details>
-        ${p.excluded.length?`<details open><summary>本次不归入的资料与原因 · ${p.excluded.length} 条</summary><ul>${rows(p.excluded,true)}</ul></details>`:''}`;
+        ${p.excluded.length?`<details open><summary>不建议归入或需要你判断的资料 · ${p.excluded.length} 条</summary><ul>${rows(p.excluded,true)}</ul></details>`:''}`;
       $('[data-rg="apply"]').disabled=!p.eligible.length;
       $('[data-rg="apply"]').textContent=`确认归入「${target}」${p.eligible.length} 条`;
       $('[data-rg-save-status]').textContent=p.eligible.length?'核对以上清单后即可保存。':stale.length?'当前没有可保存的资料。请先点击上方“按最新规则重新整理”。':'当前没有可保存的资料。请查看上方原因，调整查找范围或条件后重新预览。';
+    }
+    async function checkAnalysis(){
+      clearTimeout(analysisTimer);if(!mount.isConnected)return;
+      const group=selectedGroup, pending=analyses.get(group);
+      if(!pending){$('[data-rg=preview]').disabled=false;return;}
+      try{
+        const job=await api('organization/groups/analysis?'+new URLSearchParams({id:pending.id}));
+        if(selectedGroup!==group||analyses.get(group)?.id!==pending.id)return;
+        if(job.status==='completed'){
+          proposal=job.proposal;analyses.delete(group);drawPreview();remember();$('[data-rg=preview]').disabled=false;notice('AI 判断完成，请核对每条理由和原文后保存。');return;
+        }
+        if(job.status==='failed')throw Error(messages[job.error]||job.error||'AI 判断未完成，请重试。');
+        $('[data-rg-save-status]').textContent=`AI ${job.status==='pending'?'等待开始':'正在阅读资料'}：已判断 ${job.processed} / ${job.total} 条`;
+      }catch(error){analyses.delete(group);$('[data-rg=preview]').disabled=false;$('[data-rg-save-status]').textContent=messages[error.message]||error.message;return;}
+      analysisTimer=setTimeout(checkAnalysis,1500);
     }
     async function checkRecovery(){
       clearTimeout(recoveryTimer);if(!pendingTasks.length||!mount.isConnected)return;
@@ -92,7 +109,7 @@
       }catch(error){$('[data-rg-reprocess-status]').textContent='暂时无法读取重新整理进度，可点击“刷新资料”重试。';}
       recoveryTimer=setTimeout(checkRecovery,2000);
     }
-    mount.addEventListener('input',e=>{if(e.target.closest('[data-rg-form]')&&!e.target.matches('select'))invalidate();});
+    mount.addEventListener('input',e=>{if(e.target.closest('[data-rg-form]')&&!e.target.matches('select,[data-scope-search]'))invalidate();});
     mount.addEventListener('change',e=>{if(!e.target.closest('[data-rg-form]'))return;if(e.target.name==='unit')showUnit();$('[data-rg-batch]').hidden=form.elements.selection.value==='item';invalidate();});
     form.onsubmit=e=>e.preventDefault();
     $('[data-rg-source]').addEventListener('toggle',async()=>{
@@ -108,10 +125,16 @@
         if(action==='choose'){await choose(b.dataset.id);}
         else if(action==='preview'){
           if(pendingTasks.length&&selectedGroup===recoveryGroup){notice('这份资料正在重新整理，请完成后再预览。');return;}
-          proposal=await api('organization/groups/preview',values());drawPreview();remember();notice(proposal.eligible.length?'预览已更新，请核对归类清单。':'预览已更新，暂时没有可保存的资料。');
+          const request=values(), requestGroup=selectedGroup;
+          const unchanged=()=>selectedGroup===requestGroup&&JSON.stringify(values())===JSON.stringify(request);
+          if(request.selection==='item'){
+            const result=await api('organization/groups/preview',request);if(!unchanged())return;proposal=result;drawPreview();remember();notice(proposal.eligible.length?'预览已更新，请核对归类清单。':'预览已更新，暂时没有可保存的资料。');
+          }else{
+            const job=await api('organization/groups/analyze',request);if(!unchanged())return;proposal=null;analyses.set(selectedGroup,{id:job.id});$('[data-rg=apply]').disabled=true;$('[data-rg-preview]').replaceChildren();$('[data-rg-save-status]').textContent=`AI 等待判断 ${job.total} 条资料…`;$('[data-rg=preview]').disabled=true;remember();checkAnalysis();
+          }
         }else if(action==='apply'){
           const saved=proposal, result=await api('organization/groups/apply',{proposal:saved});
-          notice(`已归入「${projectName(saved.project)}」${result.succeeded} 条${result.failed?`，${result.failed} 条未保存，请刷新重试`:''}${result.guidance?'；已保存以后同类资料的归类条件':''}。`);
+          notice(`已归入「${EvolvProjects.scopeLabel(saved,projects)}」${result.succeeded} 条${result.failed?`，${result.failed} 条未保存，请刷新重试`:''}${result.guidance?'；已保存以后同类资料的归类条件':''}。`);
           proposal=null;drafts.delete(selectedGroup);selectedGroup='';form.hidden=true;$('[data-rg-empty]').hidden=false;onDirty(drafts.size>0);await load();await onSaved();
         }else if(action==='reprocess'){
           if(pendingTasks.length){notice('上一批来源还在重新整理，完成后可继续处理下一批。');return;}
@@ -156,6 +179,6 @@
       finally{busy=false;onBusy(false);}
     });
     await historyLoad();
-    return {refresh:load,poll:async()=>{if(!busy)await load();},resume:checkRecovery};
+    return {refresh:load,poll:async()=>{if(!busy)await load();},resume:()=>{checkRecovery();checkAnalysis();}};
   }};
 })();

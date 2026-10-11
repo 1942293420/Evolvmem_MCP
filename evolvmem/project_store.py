@@ -582,8 +582,10 @@ class ProjectStore:
         """Set an item's project, surfacing an identity collision as a code."""
         try:
             self._conn.execute(
-                "UPDATE context_items SET project=?, updated_at=? WHERE id=?",
-                (project, now, item_id),
+                "UPDATE context_items SET projects=CASE WHEN project!=? THEN '[]' ELSE projects END, "
+                "personal_general=CASE WHEN project!=? THEN 0 ELSE personal_general END, "
+                "project=?, updated_at=? WHERE id=?",
+                (project, project, project, now, item_id),
             )
         except sqlite3.IntegrityError:
             # The one-active-identity index already holds this identity in the

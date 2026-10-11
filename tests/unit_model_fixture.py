@@ -119,8 +119,18 @@ class UnitProvider:
         self.review_calls.append(prompt)
         return json.dumps(out, ensure_ascii=False)
 
+    def classify(self, prompt):
+        rows=json.loads(prompt.split('待判断资料：',1)[1])
+        exceptions=prompt.split('不适用情况：',1)[1].split('待判断资料：',1)[0]
+        return json.dumps({'items':[{'id':r['id'],
+            'decision':'exclude' if ('跨平台条件' in r['text'] and '跨平台条件' in exceptions) or ('其他平台' in r['text'] and '其他平台' in exceptions) else 'include',
+            'reason':('模拟核对：原文要求跨平台条件另行核对，符合不适用情况。' if '跨平台条件' in r['text'] else '模拟核对：原文规定导出编号的保真要求，符合业务依据。'),
+            'quote':r['text']} for r in rows]},ensure_ascii=False)
+
     def __call__(self, prompt, *args, **kwargs):
         self.calls.append(prompt)
+        if '你是业务资料归类核对员' in prompt:
+            return self.classify(prompt)
         if '独立核对员' in prompt:
             return self.review(prompt)
         if '整理分段助手' in prompt:

@@ -20,3 +20,21 @@ window.EvolvProjects={create({api,esc,onSaved}) {
     };dialog.showModal();
   });
 }};
+
+/* Applicability is explicit: personal general, or one shared item in selected projects. */
+EvolvProjects.projectIds=row=>{const raw=typeof row.projects==='string'?JSON.parse(row.projects):row.projects||[];return raw.length?raw:[row.project].filter(Boolean);};
+EvolvProjects.scopeLabel=(row,projects=[])=>{
+  const names=EvolvProjects.projectIds(row);
+  return (row.knowledge_scope||row.scope)==='global'?'个人通用':names.map(p=>projects.find(x=>x.project===p)?.display_name||p).join('、');
+};
+EvolvProjects.scopePicker=({mount,projects,esc,value={}})=>{
+  mount.innerHTML=`<div class="knowledge-scope-picker"><label>适用范围<select name="knowledge_scope" aria-label="知识适用范围"><option value="project">指定项目（可多选）</option><option value="global">个人通用</option></select></label><div data-scope-projects><input type="search" data-scope-search aria-label="查找可选项目" placeholder="查找项目"><div class="scope-options" role="group" aria-label="选择适用项目">${projects.filter(p=>p.status==='active').map(p=>`<label><input type="checkbox" name="projects" value="${esc(p.project)}"><span>${esc(p.display_name||p.project)}</span></label>`).join('')}</div></div><p data-scope-selected role="status"></p></div>`;
+  const box=mount.querySelector('.knowledge-scope-picker'), mode=box.querySelector('[name=knowledge_scope]');
+  const inputs=()=>[...box.querySelectorAll('[name=projects]')];
+  function read(){return {knowledge_scope:mode.value,projects:mode.value==='global'?[]:inputs().filter(x=>x.checked).map(x=>x.value)};}
+  function draw(){const v=read();box.querySelector('[data-scope-projects]').hidden=mode.value==='global';box.querySelector('[data-scope-selected]').textContent=mode.value==='global'?'供各项目参考，仍按知识中的适用条件使用':v.projects.length?`已选 ${v.projects.length} 个项目：${EvolvProjects.scopeLabel(v,projects)}${v.projects.length>1?'；共用一条知识，修改同步生效':''}`:'尚未选择项目';}
+  function set(v){const selected=EvolvProjects.projectIds(v);mode.value=v.knowledge_scope||v.scope||'project';inputs().forEach(x=>x.checked=selected.includes(x.value));draw();}
+  box.addEventListener('change',draw);
+  box.querySelector('[data-scope-search]').addEventListener('input',e=>{const q=e.target.value.toLocaleLowerCase();inputs().forEach(x=>x.closest('label').hidden=!(x.value+' '+x.closest('label').textContent).toLocaleLowerCase().includes(q));});
+  set(value);return {read,set,draw};
+};

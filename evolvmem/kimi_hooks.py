@@ -488,7 +488,7 @@ def _extract_candidates(messages: list[dict[str, str]],
                         llm_config: LLMConfig,
                         fallback_chunk_chars: int = _FALLBACK_CHUNK_CHARS,
                         config=None, project='', policy=None, related_context=None,
-                        reviewed_cleaning=None
+                        reviewed_cleaning=None, personal_general=False
                         ) -> list:
     """Extract the full conversation once; chunk only on context overflow."""
     from evolvmem.auto_extractor import AutoExtractor
@@ -540,7 +540,7 @@ def _extract_candidates(messages: list[dict[str, str]],
         # 与预览以同一标识复验，避免已审核条目落库后被判为“标识已变化”。
         from evolvmem import answer_support
         for candidate in candidates:
-            answer_support.normalize_key(candidate, project)
+            answer_support.normalize_key(candidate, project, personal_general=personal_general)
         # 每批一次有界模型核对：独立检查 explicit 答案是否超出用户原话。
         # 完整批次消息整体送审；异常在共享模块内按条 fail-closed，这里再兜底。
         try:

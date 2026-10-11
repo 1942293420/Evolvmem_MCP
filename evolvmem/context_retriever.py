@@ -343,8 +343,8 @@ class ContextRetriever:
                               if (allowed is None or r.item.id in allowed) and self._eligible(r.item, request, self._now())})
                 scoped = [h for h in hits if h['id'] in valid]
                 if request.project and not request.cross_project:
-                    local = [h for h in scoped if valid[h['id']].project == request.project]
-                    global_hits = [h for h in scoped if valid[h['id']].project != request.project]
+                    local = [h for h in scoped if request.project in (valid[h['id']].projects or (valid[h['id']].project,))]
+                    global_hits = [h for h in scoped if request.project not in (valid[h['id']].projects or (valid[h['id']].project,))]
                     return local[:pool_size] + global_hits[:pool_size], len(local) >= pool_size
                 return scoped[:pool_size], len(scoped) >= pool_size
             return self._vector_candidates(request.query, pool_size, select=select)
@@ -514,8 +514,8 @@ class ContextRetriever:
         if request.cross_project:
             return True
         if item.scope is ContextScope.GLOBAL:
-            return item.content_type in _APPLICABLE_GLOBAL_TYPES
-        return bool(request.project) and item.project == request.project
+            return item.personal_general or item.content_type in _APPLICABLE_GLOBAL_TYPES
+        return bool(request.project) and request.project in (item.projects or (item.project,))
 
     # ---- scoring ----
 
@@ -569,7 +569,7 @@ class ContextRetriever:
     def _project_component(item: ContextItem, request: ContextSearchRequest) -> float:
         if item.scope is ContextScope.GLOBAL:
             return 0.5
-        if request.project and item.project == request.project:
+        if request.project and request.project in (item.projects or (item.project,)):
             return 1.0
         return 0.0  # only reachable through explicit cross-project search
 
@@ -617,6 +617,7 @@ class ContextRetriever:
             content_type=item.content_type,
             scope=item.scope,
             project=item.project,
+            projects=item.projects,
             status=item.status,
             tier=item.tier,
             confidence=item.confidence,

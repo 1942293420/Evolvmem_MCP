@@ -4,6 +4,7 @@ A proposal binds both the user's exact instruction and every current member.
 Re-reading it before applying prevents a stale browser tab from broadening a
 decision. Individual corrections retain the existing source and revision CAS.
 """
+from evolvmem import knowledge_scope as ks
 import hashlib
 import json
 
@@ -86,16 +87,20 @@ def detail(service, body):
                   for u in group['members']]}
 
 
-def preview(service, body):
+def preview(service, body, *, _judgments=None):
     from evolvmem import auto_organization as org
-    project = str(body.get('project') or '')
-    service.knowledge()._project(project)
+    semantic = body.get('matching_mode') == 'semantic' and body.get('selection') != 'item'
+    if semantic and _judgments is None:
+        from evolvmem.organization_semantic_review import proposal
+        return proposal(service, body)
+    target = ks.normalize(service, body, required=True)
+    project = target['project']
     condition = str(body.get('condition') or '').strip()
     exceptions = str(body.get('exceptions') or '').strip()
     selection = body.get('selection', 'group')
     if selection not in ('item', 'group', 'all'):
         raise ValueError('invalid_items')
-    if selection != 'item' and (not condition or len(condition) > 500 or not guidance.narrow(condition) or not guidance.phrase_pattern(condition)):
+    if selection != 'item' and (not condition or len(condition) > 1000 or (not semantic and (not guidance.narrow(condition) or not guidance.phrase_pattern(condition)))):
         raise ValueError('review_condition_required')
     if len(exceptions) > 500:
         raise ValueError('invalid_guidance')
@@ -106,14 +111,16 @@ def preview(service, body):
     policy = service.knowledge().rules.read()
     if selection == 'item':
         condition, exceptions = '', ''
-    text = str(body.get('guidance') or (f'这条资料归入 {project}' if selection == 'item'
-                                     else f'包含“{condition}”的资料归入 {project}')).strip()
+    text = str(body.get('guidance') or (condition if semantic else f'这条资料归入 {ks.label(target)}' if selection == 'item'
+                                     else f'包含“{condition}”的资料归入 {ks.label(target)}')).strip()
     if not 1 <= len(text) <= 1000:
         raise ValueError('invalid_guidance')
-    result = {'group_id': group['id'], 'project': project, 'condition': condition,
+    result = {'group_id': group['id'], **target, 'condition': condition,
               'exceptions': exceptions, 'scope': 'future' if selection != 'item' and body.get('scope') == 'future' else 'batch',
               'selection': selection, 'guidance': text, 'eligible': [], 'excluded': [], 'remaining': 0,
-              'matched_count': 0}
+              'matched_count': 0, 'matching_mode': 'semantic' if semantic else 'phrase'}
+    if semantic:
+        result['job_id'] = body.get('job_id')
     members = [u for g in all_groups for u in g['members']] if selection == 'all' else group['members']
     if selection == 'item':
         members = [u for u in members if u['task_id'] == body.get('task_id') and u['digest'] == body.get('digest')]
@@ -123,9 +130,9 @@ def preview(service, body):
     result['searched_count'] = len(members)
     for unit in members:
         reason, code = '', ''
-        matched = selection == 'item' or guidance.phrase_match(condition, unit['text'])
+        matched = semantic or selection == 'item' or guidance.phrase_match(condition, unit['text'])
         result['matched_count'] += int(matched)
-        hit = next((x for x in guidance.exception_items(exceptions) if guidance.phrase_match(x, unit['text'])), '')
+        hit = '' if semantic else next((x for x in guidance.exception_items(exceptions) if guidance.phrase_match(x, unit['text'])), '')
         if not matched:
             reason, code = '原文不含这段连续词句', 'phrase_mismatch'
         elif hit:
@@ -134,13 +141,25 @@ def preview(service, body):
             reason, code = '这份资料按旧规则整理，需按最新规则重新整理后再确认归属', 'rule_changed'
         elif unit['disposition'] == 'review':
             reason, code = '请先确认这条资料是否值得保留', 'value_review'
-        elif selection != 'item':
-            reason = org.OrganizationWorker._guidance_conflict(None, service, unit, project, policy)
+        elif selection != 'item' and not semantic:
+            reason = org.OrganizationWorker._guidance_conflict(None, service, unit, target, policy)
             code = 'conflict' if reason else ''
         if not reason and len(result['eligible']) >= 100:
             reason, code = '本次最多处理 100 条，下次继续', 'batch_limit'
             result['remaining'] += 1
         entry = _brief(unit)
+        if semantic and not reason:
+            if len(result['eligible']) + sum(u.get('reason_code','').startswith('ai_') for u in result['excluded']) >= 100:
+                reason, code = '本批最多判断 100 条，其余资料留在待确认列表。', 'batch_limit'
+                result['remaining'] += 1
+            else:
+                verdict = (_judgments or {}).get(f"{unit['task_id']}:{unit['digest']}")
+                if verdict:
+                    entry.update(reason=verdict['reason'], evidence_quote=verdict['evidence_quote'])
+                    if verdict['decision'] != 'include':
+                        reason, code = verdict['reason'], 'ai_excluded' if verdict['decision']=='exclude' else 'ai_uncertain'
+                else:
+                    reason, code = '等待 AI 根据业务依据判断', 'ai_pending'
         (result['excluded'] if reason else result['eligible']).append(entry | ({'reason': reason, 'reason_code': code} if reason else {}))
     # Include all members (also excluded ones), source and rule versions. A new
     # member, changed rule or manual correction requires another preview.
@@ -188,7 +207,7 @@ def apply(service, body):
     succeeded = sum(r['ok'] for r in results)
     stored = None
     if succeeded and current['scope'] == 'future':
-        stored = guidance.record(service, guidance=current['guidance'], project=current['project'],
+        stored = guidance.record(service, guidance=current['guidance'], project=current['project'], projects=current['projects'], knowledge_scope=current['knowledge_scope'],
                                  condition=current['condition'], exceptions=current['exceptions'], scope='future',
-                                 source_task_id=current['eligible'][0]['task_id'])
+                                 source_task_id=current['eligible'][0]['task_id'], matching_mode=current['matching_mode'])
     return {'items': results, 'succeeded': succeeded, 'failed': len(results)-succeeded, 'guidance': stored}

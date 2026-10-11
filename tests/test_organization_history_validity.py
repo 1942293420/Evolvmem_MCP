@@ -108,7 +108,7 @@ def test_moved_unit_with_unchanged_derivation_leaves_current_history(service, mo
     # A manual decision changes the unit's project while the old derivation and
     # the summary row keep the old project (the item write did not happen).
     with service.store.transaction():
-        conn.execute("UPDATE organization_units SET project=?,decision='manual' WHERE task_id=? AND digest=?",
+        conn.execute("UPDATE organization_units SET project=?,projects='[]',knowledge_scope='project',decision='manual' WHERE task_id=? AND digest=?",
                      (target, tid, moved['digest']))
     derivation = conn.execute(
         "SELECT project FROM unit_derivations WHERE unit_task_id=? AND unit_digest=? AND item_id=?",

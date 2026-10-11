@@ -79,6 +79,9 @@ with s.store.transaction():
 
 # Only the external provider is substituted; HTTP, parsing and policy checks remain real.
 def model(prompt, *a, **kw):
+    if '你是业务资料归类核对员' in prompt:
+        from tests.unit_model_fixture import UnitProvider
+        return UnitProvider().classify(prompt)
     if '你是资料清洗助手' in prompt:
         if '无用测试资料' in prompt.split('正文分段',1)[-1]:
             return json.dumps({'cleaned_text':'待核对的无用测试资料。','category':'reference','recommended_action':'delete','reason':'按清洗 Skill，本条没有完成事项或明确决定。'},ensure_ascii=False)

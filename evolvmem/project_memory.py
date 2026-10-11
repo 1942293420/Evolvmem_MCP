@@ -23,7 +23,7 @@ def document(service, project, *, include_sessions=True):
     if not project:
         raise ValueError('project_required')
     conn = service.store._connection()
-    rows = conn.execute("SELECT id,content_type,updated_at FROM context_items WHERE project=? AND scope='project' AND status='active' AND content_type IN ('session_summary','workstream_checkpoint') AND (expires_at IS NULL OR expires_at='' OR expires_at>?) ORDER BY updated_at DESC,id DESC", (project, _now_iso())).fetchall()
+    rows = conn.execute("SELECT id,content_type,updated_at FROM context_items WHERE ? IN (SELECT context_items.project UNION SELECT value FROM json_each(context_items.projects)) AND scope='project' AND status='active' AND content_type IN ('session_summary','workstream_checkpoint') AND (expires_at IS NULL OR expires_at='' OR expires_at>?) ORDER BY updated_at DESC,id DESC", (project, _now_iso())).fetchall()
     facts = load_ownership(service.store, [r['id'] for r in rows])
     # Same validity rule as the history listing: a summary whose unit was
     # removed by re-segmentation, set aside, or moved by a correction must not

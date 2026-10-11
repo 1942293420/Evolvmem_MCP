@@ -11,7 +11,7 @@ from evolvmem.lan_sharing import LanError
 
 
 def prepare_extraction(config, project, source_session, messages, llm_config, *,
-                       reviewed_cleaning=None, related_context=None):
+                       reviewed_cleaning=None, related_context=None, personal_general=False):
     """Only provider calls happen here; persistence uses the shared core later.
 
     ``related_context`` lets a caller pass the bounded same-project peers it
@@ -20,6 +20,8 @@ def prepare_extraction(config, project, source_session, messages, llm_config, *,
     """
     safe_messages, _ = redact_messages(messages)
     options = {'reviewed_cleaning': reviewed_cleaning, 'related_context': related_context}
+    if personal_general:
+        options['personal_general'] = True
     summary, candidates = kimi_hooks._split_summary_candidate(
         kimi_hooks._extract_candidates(safe_messages, llm_config, config=config, project=project, **options))
     if summary is None:

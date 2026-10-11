@@ -198,7 +198,7 @@ def suggestion_reviewable(data, item, messages):
     return bool(assistant_sourced(data, messages))
 
 
-def normalize_key(item, project):
+def normalize_key(item, project, *, personal_general=False):
     """Normalize a candidate's key to *this* run's project before the review.
 
     The model may emit a placeholder or a wrong project segment; the ingestion
@@ -210,11 +210,14 @@ def normalize_key(item, project):
     key would still change after the verdict was recorded.
     """
     key = _text(getattr(item, 'key', '')).strip()
-    if not key or key.upper() == 'SESSION_SUMMARY' or not project:
+    if not key or key.upper() == 'SESSION_SUMMARY' or (not project and not personal_general):
         return key
     parts = key.split(':')
     if len(parts) >= 4 and parts[0].casefold() == 'project':
-        parts[1] = project
+        if personal_general:
+            parts = ['user', 'knowledge', *parts[2:]]
+        else:
+            parts[1] = project
         key = ':'.join(parts)
     key = key.casefold()
     if hasattr(item, 'key'):

@@ -65,7 +65,7 @@ def draft_factory():
 
 EXPECTED_COLUMNS = {
     "context_items": {
-        "id", "identity_key", "content_type", "project", "scope", "status",
+        "id", "identity_key", "content_type", "project", "scope", "status", "projects", "personal_general",
         "tier", "tags", "importance", "confidence", "source_state",
         "source_count", "success_count", "failure_count", "access_count",
         "last_accessed", "last_verified_at", "expires_at", "supersedes",

@@ -76,7 +76,7 @@ def related(service, project, messages, *, max_chars=8000):
     """Bounded same-project facts; no vector writes, usage counts or provider call."""
     ids = service.store._connection().execute(
         "SELECT id FROM context_items WHERE status='active' AND "
-        "(project=? OR (project='' AND scope='global')) AND content_type NOT IN "
+        "(? IN (SELECT context_items.project UNION SELECT value FROM json_each(context_items.projects)) OR (project='' AND scope='global')) AND content_type NOT IN "
         "('session_summary','project_summary','workstream_checkpoint') ORDER BY updated_at DESC,id DESC LIMIT 160",
         (project,)).fetchall()
     text = ' '.join(str(m.get('content', '')) for m in messages)[-12000:]

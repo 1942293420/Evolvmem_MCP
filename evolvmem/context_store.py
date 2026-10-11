@@ -606,6 +606,8 @@ class ContextStore:
         self._require_transaction("create_schema_in_transaction")
         conn = self._connection()
         from evolvmem.learning_schema import SCHEMA as learning_schema
+        from evolvmem.organization_semantic_review import SCHEMA as review_schema
+        conn.execute(review_schema)
         for statement in (*_SCHEMA_TABLE_STATEMENTS, *learning_schema):
             conn.execute(statement)
 
@@ -626,6 +628,8 @@ class ContextStore:
         additions = {
             "context_items": {
                 "experience_payload": "TEXT NOT NULL DEFAULT ''",
+                "personal_general": "INTEGER NOT NULL DEFAULT 0",
+                "projects": "TEXT NOT NULL DEFAULT '[]'",
                 "effective_from": "TEXT",
                 "effective_until": "TEXT",
                 "occurred_at": "TEXT",
@@ -646,6 +650,8 @@ class ContextStore:
             "context_basis": "TEXT NOT NULL DEFAULT ''",
         }
         additions["organization_units"] = {
+            "projects": "TEXT NOT NULL DEFAULT '[]'",
+            "knowledge_scope": "TEXT NOT NULL DEFAULT 'project'",
             "applied_guidance_id": "INTEGER NOT NULL DEFAULT 0",
             "role": "TEXT NOT NULL DEFAULT ''",
             "cleaned_text": "TEXT NOT NULL DEFAULT ''",
@@ -659,6 +665,9 @@ class ContextStore:
             "context_basis": "TEXT NOT NULL DEFAULT ''",
         }
         additions["organization_guidance"] = {
+            "matching_mode": "TEXT NOT NULL DEFAULT 'phrase'",
+            "projects": "TEXT NOT NULL DEFAULT '[]'",
+            "knowledge_scope": "TEXT NOT NULL DEFAULT 'project'",
             "state": "TEXT NOT NULL DEFAULT 'reusable'",
             "revision": "INTEGER NOT NULL DEFAULT 1",
         }
@@ -1766,7 +1775,7 @@ class ContextStore:
             "AND content_type IN ('workflow_policy', 'constraint', 'preference') "
             "AND confidence >= ? "
             "AND (expires_at IS NULL OR expires_at > ?) "
-            "AND (project = ? OR scope = 'global') "
+            "AND (? IN (SELECT context_items.project UNION SELECT value FROM json_each(context_items.projects)) OR scope = 'global') "
             "ORDER BY id",
             (min_confidence, _now_iso(), project),
         ).fetchall()
@@ -1785,7 +1794,7 @@ class ContextStore:
         ids = []
         for kind, limit in (('project_summary', 1), ('session_summary', 3)):
             rows = self._connection().execute('''SELECT id FROM context_items
-                WHERE project=? AND scope='project' AND status='active' AND tier!='reference'
+                WHERE ? IN (SELECT context_items.project UNION SELECT value FROM json_each(context_items.projects)) AND scope='project' AND status='active' AND tier!='reference'
                 AND content_type=? AND confidence>=? AND (expires_at IS NULL OR expires_at>?)
                 ORDER BY updated_at DESC,id DESC LIMIT ?''',
                 (project, kind, min_confidence, _now_iso(), limit)).fetchall()
@@ -1818,6 +1827,8 @@ class ContextStore:
             identity_key=row["identity_key"],
             content_type=ContextContentType(row["content_type"]),
             project=row["project"],
+            personal_general=bool(row["personal_general"]),
+            projects=tuple(json.loads(row["projects"]) or ([row["project"]] if row["project"] else [])),
             scope=ContextScope(row["scope"]),
             status=ContextStatus(row["status"]),
             tier=ContextTier(row["tier"]),
@@ -1885,7 +1896,7 @@ class ContextStore:
             layer_sql += ' AND i.id IN (' + ','.join('?' for _ in item_ids) + ')'
             layer_params += tuple(item_ids)
         if project is not None:
-            layer_sql += " AND (i.scope = 'global' OR i.project = ?)"
+            layer_sql += " AND (i.scope = 'global' OR ? IN (SELECT i.project UNION SELECT value FROM json_each(i.projects)))"
             layer_params += (project,)
         if now is not None:
             layer_sql += " AND (i.expires_at IS NULL OR i.expires_at > ?)"
@@ -1896,7 +1907,7 @@ class ContextStore:
         layer_sql += ' AND i.confidence >= ?'
         layer_params += (min_confidence,)
         if applicable_global_types is not None:
-            layer_sql += " AND (i.scope != 'global' OR i.content_type IN (" + ','.join('?' for _ in applicable_global_types) + '))'
+            layer_sql += " AND (i.scope != 'global' OR i.personal_general=1 OR i.content_type IN (" + ','.join('?' for _ in applicable_global_types) + '))'
             layer_params += tuple(t.value for t in applicable_global_types)
         if exclude_reference:
             layer_sql += " AND i.tier != 'reference'"

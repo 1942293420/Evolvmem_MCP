@@ -11,6 +11,7 @@ from evolvmem.context_layers import layers_from_legacy_value
 from evolvmem.context_models import ContextContentType, ContextItemDraft, ContextLayer, ContextScope, ContextStatus
 from evolvmem.context_store import _now_iso
 from evolvmem.knowledge_rules import KnowledgeRules
+from evolvmem import knowledge_scope as ks
 from evolvmem.project_ownership import load_ownership, UNREVIEWED_FACT
 
 _PROJECT_ID_RE = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
@@ -35,15 +36,21 @@ class KnowledgeBase:
     def projects(self):
         counts = {}
         updated = {r['project']: r['updated_at'] for r in self.conn.execute('SELECT project,updated_at FROM context_project_registry')}
-        for r in self.conn.execute("SELECT project,status,COUNT(*) n,MAX(updated_at) updated_at FROM context_items WHERE status NOT IN ('deleted','superseded') GROUP BY project,status"):
-            counts.setdefault(r['project'], {})[r['status']] = r['n']
-            updated[r['project']] = max(updated.get(r['project']) or '', r['updated_at'] or '')
-        pending = {}
-        rows = self.conn.execute("SELECT i.id,i.project,i.status FROM context_items i WHERE i.status IN ('active','candidate')").fetchall()
+        total = 0
+        for r in self.conn.execute("SELECT project,projects,status,updated_at FROM context_items WHERE status NOT IN ('deleted','superseded')"):
+            total += 1
+            for project in ks.projects(r) or ['']:
+                bucket = counts.setdefault(project, {})
+                bucket[r['status']] = bucket.get(r['status'], 0) + 1
+                updated[project] = max(updated.get(project) or '', r['updated_at'] or '')
+        pending, pending_ids = {}, set()
+        rows = self.conn.execute("SELECT i.id,i.project,i.projects,i.status FROM context_items i WHERE i.status IN ('active','candidate')").fetchall()
         facts = load_ownership(self.store, [r['id'] for r in rows])
         for r in rows:
             if r['status'] == 'candidate' or facts.get(r['id'], UNREVIEWED_FACT).excluded:
-                pending[r['project']] = pending.get(r['project'], 0) + 1
+                pending_ids.add(r['id'])
+                for project in ks.projects(r) or ['']:
+                    pending[project] = pending.get(project, 0) + 1
         projects = self.registry()
         known = {r['project'] for r in projects}
         projects += [{'project': p, 'display_name': p, 'status': 'unregistered', 'aliases': [], 'revision': 0} for p in counts if p and p not in known]
@@ -51,7 +58,7 @@ class KnowledgeBase:
             c = counts.get(row['project'], {})
             row.update(counts=c, total=sum(c.values()), active=c.get('active', 0), pending=pending.get(row['project'], 0), updated_at=updated.get(row['project'], ''))
         return {'projects': projects, 'unassigned': counts.get('', {}),
-                'pending': sum(pending.values()), 'total': sum(sum(c.values()) for c in counts.values())}
+                'pending': len(pending_ids), 'total': total}
 
     def save_project(self, body):
         project = str(body.get('project', '')).strip()
@@ -101,7 +108,7 @@ class KnowledgeBase:
             'SELECT s.source_kind,s.source_ref,s.archive_id,s.created_at,a.adapter,a.project AS source_project,a.state AS source_state '
             'FROM context_sources s LEFT JOIN session_archives a ON a.id=s.archive_id WHERE s.item_id=? ORDER BY s.id', (item_id,))]
         workstream = re.search(r':workstream:(ws_[a-z0-9]+):checkpoint$', row['identity_key'])
-        return {**row, 'title': title, 'body': body, 'summary': layers.get('l0', ''), 'revision': revision, 'learning': learning,
+        return {**row, **ks.fields(row), 'title': title, 'body': body, 'summary': layers.get('l0', ''), 'revision': revision, 'learning': learning,
                 'tags': json.loads(row['tags'] or '[]'), 'ownership': facts.get(item_id, UNREVIEWED_FACT).public(),
                 'resolution': dict(resolution) if resolution else None, 'sources': sources,
                 'ingestion_reason': meta['ingestion_reason'] if meta else '',
@@ -125,7 +132,7 @@ class KnowledgeBase:
             elif p['project'] == '__none__':
                 where.append("i.project='' AND i.scope!='global'")
             else:
-                where.append('i.project=?'); args.append(p['project'])
+                where.append(ks.match_sql('i')); args.append(p['project'])
         if p.get('q'):
             where.append('(i.identity_key LIKE ? OR EXISTS(SELECT 1 FROM context_layers l WHERE l.item_id=i.id AND l.content LIKE ?) OR EXISTS(SELECT 1 FROM knowledge_metadata k WHERE k.item_id=i.id AND k.title LIKE ?))')
             args.extend(['%' + str(p['q']) + '%'] * 3)
@@ -160,7 +167,7 @@ class KnowledgeBase:
     def _sync(self, item_ids):
         item_ids = set(item_ids)
         from evolvmem.project_memory import refresh
-        projects = {self._row(cid)['project'] for cid in item_ids}
+        projects = {p for cid in item_ids for p in ks.projects(self._row(cid))}
         # A project move must refresh the old document as well as the new one.
         for cached in self.conn.execute('SELECT project,source_ids FROM project_memory_documents'):
             if item_ids.intersection(json.loads(cached['source_ids'])):
@@ -204,19 +211,21 @@ class KnowledgeBase:
             raise ValueError('invalid_content')
         if body.get('scope') == 'global' and body.get('project'):
             raise ValueError('global_project_conflict')
-        project = str(body.get('project', ''))
+        target = ks.normalize(self.service, body)
+        project = target['project']
         self._project(project)
         kind = ContextContentType(body.get('content_type', 'reference'))
         if kind in (ContextContentType.WORKSTREAM_CHECKPOINT, ContextContentType.PROJECT_SUMMARY):
             raise ValueError('managed_content_type')
         status = ContextStatus.ACTIVE if body.get('action') == 'publish' else ContextStatus.CANDIDATE
-        if status == ContextStatus.ACTIVE and not project and body.get('scope') != 'global':
+        if status == ContextStatus.ACTIVE and not project and target['knowledge_scope'] != 'global':
             raise ValueError('project_required')
-        scope = ContextScope.GLOBAL if body.get('scope') == 'global' else ContextScope.PROJECT
+        scope = ContextScope(target['knowledge_scope'])
         layers = self._layers(title, text, kind)
         with self.service._cutover_lock.shared(), self.store.transaction():
             item = self.store._create_legacy_item(ContextItemDraft(identity_key=f'knowledge:{uuid.uuid4().hex}', content_type=kind,
                 layers=layers, project=project, scope=scope, status=status, confidence=float(body.get('confidence', .9)), tags=tuple(body.get('tags', []))))
+            self.conn.execute('UPDATE context_items SET projects=?,personal_general=? WHERE id=?', (json.dumps(target['projects']), int(target['knowledge_scope']=='global'), item.id))
             self._stamp(item.id, title=title, reason='用户录入')
             if project:
                 self.service._project_store().review_item_project(item.id, project, expected_revision=0)
@@ -260,11 +269,14 @@ class KnowledgeBase:
         return self.detail(item_id)
 
     def assign(self, item_id, body):
-        project = str(body.get('project', ''))
+        target = ks.normalize(self.service, body, required='projects' in body or 'knowledge_scope' in body)
+        project = target['project']
         self._project(project)
         touched = [item_id]
         with self.service._cutover_lock.shared(), self.store.transaction():
             row = self._check(item_id, body)
+            if row['workstream_id'] and len(target['projects']) > 1:
+                raise ValueError('workstream_single_project_required')
             if row.get('experience_payload') and project != row['project']:
                 if not project:
                     raise ValueError('project_required')
@@ -289,6 +301,7 @@ class KnowledgeBase:
                 self.conn.execute("UPDATE context_project_resolutions SET decision_source='human',review_state='accepted',reviewed_at=? WHERE item_id=?", (_now_iso(), item_id))
             if project:
                 self.conn.execute("UPDATE context_items SET scope='project' WHERE id=?", (item_id,))
+            self.conn.execute('UPDATE context_items SET projects=?,personal_general=? WHERE id=?', (json.dumps(target['projects']), int(target['knowledge_scope']=='global'), item_id))
             self._stamp(item_id, reason='用户确认归属')
         self._sync(touched)
         return self.detail(item_id)
@@ -347,7 +360,7 @@ class KnowledgeBase:
                 from evolvmem import qa_memory
                 if qa['source_fingerprint'] != qa_memory.fingerprint(row):
                     raise ValueError('qa_source_changed')
-                if qa_memory.conflicts(self.service, row['project'], row['scope'], qa['question'], qa['answer'], row['learning']['category'], row['learning'].get('trigger',''), exclude=(item_id,)):
+                if qa_memory.conflicts(self.service, row['project'], row['scope'], qa['question'], qa['answer'], row['learning']['category'], row['learning'].get('trigger',''), exclude=(item_id,), projects=row['projects']):
                     raise ValueError('qa_conflict_requires_confirmation')
             self.store.set_item_status(item_id, ContextStatus(target))
             for lid in row['legacy_ids']:

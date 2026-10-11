@@ -78,3 +78,12 @@ body[data-design=signal] .ui-detail-section,body[data-design=signal] .ui-detail-
 @media(min-width:1151px){.review-workspace{grid-template-columns:minmax(260px,.7fr) minmax(0,1.3fr)}}
 @media(max-width:1150px){.review-list-column [data-rg-list]{max-height:360px;overflow:auto}.review-editor{padding:20px}}
 @media(max-width:480px){.review-editor{padding:16px}.review-source-card>button{padding:14px}.review-editor .organization-settings{grid-template-columns:1fr}.review-original{padding:14px}.review-editor .review-apply-bar button{width:100%}}
+
+.knowledge-scope-picker {display:grid;gap:12px;min-width:0}
+.knowledge-scope-picker > label {display:grid;gap:8px}
+.knowledge-scope-picker [data-scope-projects] {display:grid;gap:10px}
+.knowledge-scope-picker [hidden] {display:none!important}
+.scope-options {display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;max-height:220px;overflow:auto;border:1px solid var(--border,#d4dfeb);border-radius:8px;padding:10px}
+.scope-options label {display:flex;align-items:center;gap:10px;padding:8px;cursor:pointer;font-size:16px}
+.scope-options input[type=checkbox] {width:18px;height:18px;flex:none;margin:0}
+.knowledge-scope-picker [data-scope-selected] {font-size:16px;line-height:1.6;margin:0;overflow-wrap:anywhere}

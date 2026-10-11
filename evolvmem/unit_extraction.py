@@ -13,6 +13,7 @@ completed extraction is skipped, and only incomplete stages are retried.
 """
 from __future__ import annotations
 
+from evolvmem import knowledge_scope as ks
 import hashlib
 import json
 import re
@@ -35,14 +36,14 @@ def signature(unit, project, rule_revision) -> str:
     """
     return hashlib.sha256(json.dumps(
         [unit.get('digest'), unit.get('text'), unit.get('cleaned_text'), unit.get('title'),
-         unit.get('category'), project, rule_revision, unit.get('context_basis') or ''],
+         unit.get('category'), project, ks.projects(unit), ks.scope(unit), rule_revision, unit.get('context_basis') or ''],
         ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:32]
 
 
 def _summary_item(unit, project, digest) -> LegacyExtractionItem:
     """The deterministic, source-linked history record for one unit."""
     return LegacyExtractionItem(
-        key=f'project:{project}:progress:log:org-{digest}',
+        key=(f'project:{project}' if project else 'user') + f':progress:log:org-{digest}',
         value=(unit.get('cleaned_text') or unit.get('text') or '').strip(),
         attribute='fact', tags=('日志', f'分类:{project}', '自动整理'),
         project_hint=project)
@@ -65,6 +66,7 @@ def write_history(service, task, unit, messages) -> int | None:
         item_id = existing['id'] if existing else None
     if item_id is None:
         return None
+    apply_scope(service, item_id, unit)
     _link_provenance(service, item_id, archive_id, task, unit)
     record_derivation(service, task['id'], unit['digest'], item_id, kind='history',
                       project=unit['project'])
@@ -129,7 +131,8 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
         phase = 'model_parse'
         request = prepare_extraction(
             service.config, unit['project'], f'{task["source_key"]}#{unit["digest"]}', messages,
-            llm_config, reviewed_cleaning=unit.get('cleaned_text') or None, related_context=peers)
+            llm_config, reviewed_cleaning=unit.get('cleaned_text') or None, related_context=peers,
+            personal_general=ks.scope(unit) == 'global')
         # The history record stays the deterministic, source-linked one; the
         # model's session summary is only the extraction anchor.
         # A correction or re-assignment during the model call invalidates this
@@ -167,6 +170,7 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
             for mutation in result.candidates:
                 if mutation is None or mutation.context_id is None:
                     continue
+                apply_scope(service, mutation.context_id, unit)
                 item_ids.append(mutation.context_id)
                 record_derivation(service, task['id'], unit['digest'], mutation.context_id,
                                   kind='knowledge', project=unit['project'])
@@ -178,6 +182,7 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
             for mutation in result.reused:
                 if mutation is None or mutation.context_id is None:
                     continue
+                apply_scope(service, mutation.context_id, unit, reuse=True)
                 item_ids.append(mutation.context_id)
                 record_derivation(service, task['id'], unit['digest'], mutation.context_id,
                                   kind='knowledge', project=unit['project'])
@@ -228,7 +233,7 @@ def _set_stage(service, task_id, digest, stage, want, error, diagnostic=''):
 
 def pending_units(service, task_id):
     return [dict(row) for row in service.store._connection().execute(
-        "SELECT * FROM organization_units WHERE task_id=? AND project!='' AND decision!='review' "
+        "SELECT * FROM organization_units WHERE task_id=? AND (project!='' OR knowledge_scope='global') AND decision!='review' "
         "AND disposition NOT IN ('set_aside','history_only') AND extraction_stage IN ('pending','running') "
         'ORDER BY ordinal', (task_id,))]
 
@@ -283,3 +288,17 @@ def _candidate_reason(service, item_id, reason):
             'INSERT INTO knowledge_metadata(item_id,revision,ingestion_reason) VALUES(?,1,?) '
             'ON CONFLICT(item_id) DO UPDATE SET ingestion_reason=excluded.ingestion_reason',
             (int(item_id), str(reason)[:500]))
+
+
+def apply_scope(service, item_id, unit, *, reuse=False):
+    """Use one item, one body and one Q&A; target changes invalidate its revision."""
+    row = service.knowledge().detail(item_id)
+    if reuse and ks.scope(row) == ks.scope(unit) == 'project':
+        unit = {**unit, 'projects': sorted(set(ks.projects(row) + ks.projects(unit)))}
+        unit['project'] = unit['projects'][0]
+    if ks.projects(row) == ks.projects(unit) and ks.scope(row) == ks.scope(unit) and (ks.scope(unit) != 'global' or row['personal_general']):
+        return
+    from evolvmem import unit_derivations
+    snapshot = unit_derivations.qa_move_snapshot(service, item_id)
+    service.knowledge().assign(item_id, {**ks.fields(unit), 'expected_revision': row['revision']})
+    unit_derivations.rerecord_moved_qa(service, item_id, snapshot)
