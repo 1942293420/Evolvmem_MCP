@@ -2144,6 +2144,10 @@ def dispatch(service, method, route, body):
         from evolvmem import organization_review
         if route == '/groups':
             return organization_review.groups(service, body)
+        if route == '/groups/detail':
+            return organization_review.detail(service, body)
+        if method == 'POST' and route == '/groups/reprocess':
+            return organization_review.reprocess(service, body)
         if method == 'POST' and route == '/groups/preview':
             return organization_review.preview(service, body)
         if method == 'POST' and route == '/groups/apply':

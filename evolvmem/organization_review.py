@@ -29,7 +29,8 @@ def _groups(service):
     conn = service.store._connection()
     visible = {r['id'] for r in _unassigned_archives(service)}
     rows = conn.execute("SELECT u.* FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id "
-                        "WHERE t.status IN ('review','completed','failed') AND u.decision='review' "
+                        "WHERE (t.status IN ('review','completed','failed') OR "
+                        "(t.status IN ('pending','running') AND t.stage='extraction')) AND u.decision='review' "
                         "AND u.disposition NOT IN ('set_aside','history_only') ORDER BY u.task_id,u.ordinal").fetchall()
     tasks, groups = {}, {}
     for row in rows:
@@ -74,49 +75,95 @@ def groups(service, options=None):
             'total': len(rows), 'unit_count': sum(len(g['members']) for g in rows), 'page': page, 'page_size': 20}
 
 
+def detail(service, body):
+    group = next((g for g in _groups(service) if g['id'] == body.get('group_id') or
+                  (not body.get('group_id') and any(str(u['task_id']) == str(body.get('task_id')) and
+                   u['digest'] == body.get('digest') for u in g['members']))), None)
+    if not group:
+        raise ValueError('review_preview_changed')
+    return {k: v for k, v in group.items() if k != 'members'} | {
+        'items': [_brief(u) | {k: u[k] for k in ('text', 'reason', 'disposition', 'disposition_reason')}
+                  for u in group['members']]}
+
+
 def preview(service, body):
     from evolvmem import auto_organization as org
     project = str(body.get('project') or '')
     service.knowledge()._project(project)
     condition = str(body.get('condition') or '').strip()
     exceptions = str(body.get('exceptions') or '').strip()
-    if not condition or len(condition) > 500 or not guidance.narrow(condition) or not guidance.phrase_pattern(condition):
+    selection = body.get('selection', 'group')
+    if selection not in ('item', 'group', 'all'):
+        raise ValueError('invalid_items')
+    if selection != 'item' and (not condition or len(condition) > 500 or not guidance.narrow(condition) or not guidance.phrase_pattern(condition)):
         raise ValueError('review_condition_required')
     if len(exceptions) > 500:
         raise ValueError('invalid_guidance')
-    group = next((g for g in _groups(service) if g['id'] == body.get('group_id')), None)
+    all_groups = _groups(service)
+    group = next((g for g in all_groups if g['id'] == body.get('group_id')), None)
     if not group:
         raise ValueError('review_preview_changed')
     policy = service.knowledge().rules.read()
-    text = str(body.get('guidance') or f'包含“{condition}”的资料归入 {project}').strip()
+    if selection == 'item':
+        condition, exceptions = '', ''
+    text = str(body.get('guidance') or (f'这条资料归入 {project}' if selection == 'item'
+                                     else f'包含“{condition}”的资料归入 {project}')).strip()
     if not 1 <= len(text) <= 1000:
         raise ValueError('invalid_guidance')
     result = {'group_id': group['id'], 'project': project, 'condition': condition,
-              'exceptions': exceptions, 'scope': 'future' if body.get('scope') == 'future' else 'batch',
-              'guidance': text, 'eligible': [], 'excluded': [], 'remaining': 0}
-    for unit in group['members']:
-        reason = ''
-        if unit['rule_revision'] != policy['revision']:
-            reason = '整理规则已变化，请先重新处理这份资料'
+              'exceptions': exceptions, 'scope': 'future' if selection != 'item' and body.get('scope') == 'future' else 'batch',
+              'selection': selection, 'guidance': text, 'eligible': [], 'excluded': [], 'remaining': 0,
+              'matched_count': 0}
+    members = [u for g in all_groups for u in g['members']] if selection == 'all' else group['members']
+    if selection == 'item':
+        members = [u for u in members if u['task_id'] == body.get('task_id') and u['digest'] == body.get('digest')]
+        if len(members) != 1:
+            raise ValueError('review_preview_changed')
+        result.update(task_id=members[0]['task_id'], digest=members[0]['digest'])
+    result['searched_count'] = len(members)
+    for unit in members:
+        reason, code = '', ''
+        matched = selection == 'item' or guidance.phrase_match(condition, unit['text'])
+        result['matched_count'] += int(matched)
+        hit = next((x for x in guidance.exception_items(exceptions) if guidance.phrase_match(x, unit['text'])), '')
+        if not matched:
+            reason, code = '原文不含这段连续词句', 'phrase_mismatch'
+        elif hit:
+            reason, code = '命中例外：' + hit, 'exception'
+        elif unit['rule_revision'] != policy['revision']:
+            reason, code = '这份资料按旧规则整理，需按最新规则重新整理后再确认归属', 'rule_changed'
         elif unit['disposition'] == 'review':
-            reason = '资料价值仍待核对，请在单元详情中确认保留或暂存'
-        elif not guidance.phrase_match(condition, unit['text']):
-            reason = '不符合适用短语'
-        else:
-            hit = next((x for x in guidance.exception_items(exceptions) if guidance.phrase_match(x, unit['text'])), '')
-            if hit:
-                reason = '命中例外：' + hit
-            else:
-                reason = org.OrganizationWorker._guidance_conflict(None, service, unit, project, policy)
+            reason, code = '请先确认这条资料是否值得保留', 'value_review'
+        elif selection != 'item':
+            reason = org.OrganizationWorker._guidance_conflict(None, service, unit, project, policy)
+            code = 'conflict' if reason else ''
         if not reason and len(result['eligible']) >= 100:
-            reason = '本次最多处理 100 条，下次继续'
+            reason, code = '本次最多处理 100 条，下次继续', 'batch_limit'
             result['remaining'] += 1
         entry = _brief(unit)
-        (result['excluded'] if reason else result['eligible']).append(entry | ({'reason': reason} if reason else {}))
+        (result['excluded'] if reason else result['eligible']).append(entry | ({'reason': reason, 'reason_code': code} if reason else {}))
     # Include all members (also excluded ones), source and rule versions. A new
     # member, changed rule or manual correction requires another preview.
-    result['revision'] = _hash([result, policy['revision'], group['members']])
+    result['revision'] = _hash([result, policy['revision'], members])
     return result
+
+
+def reprocess(service, body):
+    """Explicit recovery for the stale sources in an unchanged review preview."""
+    from evolvmem import auto_organization as org
+    saved = body.get('proposal')
+    if not isinstance(saved, dict) or not saved.get('revision'):
+        raise ValueError('review_preview_required')
+    current = preview(service, saved)
+    if current != saved:
+        raise ValueError('review_preview_changed')
+    keys = list(dict.fromkeys(u['source_key'] for u in current['excluded']
+                             if u['reason_code'] == 'rule_changed'))
+    if not keys:
+        raise ValueError('review_reprocess_not_needed')
+    # The existing queue preserves source history and prior human decisions.
+    # A click processes only this visible bounded batch, never the whole backlog.
+    return org.enqueue(service, keys[:20]) | {'remaining_sources': max(0, len(keys)-20)}
 
 
 def apply(service, body):

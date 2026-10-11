@@ -90,7 +90,6 @@
   }
   mount.addEventListener('click',e=>{const b=e.target.closest('[data-org-tab]');if(!b||busy)return;e.preventDefault();selectTab(b.dataset.orgTab).catch(error=>notice(errorText(error.message)));});
   const groupHandle=await EvolvReviewGroups.render({mount:$('#org-review-groups'),historyMount:$('#org-history-mount'),api,esc,projects,onBusy,
-    onTask:async id=>{await selectTab('review');const detail=await api('organization/detail?'+new URLSearchParams({task_id:id}));if(!tasks.some(t=>t.id===id))tasks.unshift(detail);if(detail.source_current)current.add(id);else current.delete(id);open.set(id,detail.units||[]);draw();$('#org-task-region').open=true;$(`[data-org-task="${id}"]`)?.scrollIntoView({block:'start',behavior:'smooth'});},
     onDirty:value=>{groupDirty=value;dirty();},onSaved:async()=>{guidanceRows=(await api('organization/guidance')).items;await load();drawGuidance();}});
   async function loadMetrics(){try{$('#org-metrics').innerHTML=EvolvOrganizationMetrics.html(await api('organization/metrics'),esc);}catch(error){$('#org-metrics').textContent='整理效果暂不可用，可刷新重试。';}}
   await loadMetrics();
@@ -322,11 +321,12 @@
     // Stop cleanly once this view is replaced or detached: no detached timer
     // chain survives navigation.
     if(active?.token !== token || !mount.isConnected){running = false;return;}
-    try{if(!busy)await load();}catch(error){notice('任务状态读取失败，请刷新重试。');}
+    try{if(!busy){await load();await groupHandle.poll();}}catch(error){notice('任务状态读取失败，请刷新重试。');}
     try{await loadCapture();}catch(error){}
     if(active?.token === token && mount.isConnected) setTimeout(tick,4000);else running = false;
   };
   const resume = () => {
+    groupHandle.resume();
     if(running || active?.token !== token) return;
     running = true;
     if(mount.isConnected) tick();
