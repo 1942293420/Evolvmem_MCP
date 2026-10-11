@@ -155,11 +155,12 @@ def sessions(service, project):
             'ORDER BY a.created_at DESC,a.id DESC', (project,)).fetchall()
         rows = list(rows) + [row for row in extra if row['id'] not in {r['id'] for r in rows}]
     jobs = {}
-    ignored = set()
+    from evolvmem.history_organization import _excluded_archive_ids
+    ignored = _excluded_archive_ids(service)
     if conn.execute("SELECT 1 FROM sqlite_master WHERE name='lan_session_uploads'").fetchone():
         jobs = {r['archive_id']: r['extraction_status'] for r in conn.execute('SELECT archive_id,extraction_status FROM lan_session_uploads WHERE archive_id IS NOT NULL')}
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='lan_session_heads'").fetchone():
-            ignored = {r[0] for r in conn.execute('SELECT u.archive_id FROM lan_session_uploads u '
+            ignored |= {r[0] for r in conn.execute('SELECT u.archive_id FROM lan_session_uploads u '
                 'JOIN lan_session_heads h ON h.device_id=u.device_id AND h.session_id=u.session_id '
                 'WHERE h.sha256!=u.sha256 AND u.archive_id IS NOT NULL')}
     result, seen = [], set()

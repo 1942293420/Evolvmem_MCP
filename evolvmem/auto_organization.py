@@ -2178,6 +2178,10 @@ def dispatch(service, method, route, body):
         return set_disposition(service, body)
     if method == 'POST' and route == '/repair':
         # Root-controlled bounded repair of existing automatic state; no model call.
+        if body.get('legacy_subagents') is True:
+            from evolvmem.legacy_source_repair import repair_subagents
+            return repair_subagents(service, after_id=body.get('after_id', 0),
+                                    limit=body.get('limit', 100), apply=body.get('apply') is True)
         return repair_sources(service, limit=min(RECONCILE_LIMIT, max(1, int(body.get('limit', RECONCILE_LIMIT) or RECONCILE_LIMIT))))
     raise LookupError('route_not_found')
 

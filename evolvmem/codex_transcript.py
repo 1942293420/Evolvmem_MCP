@@ -12,6 +12,28 @@ from evolvmem.lan_sharing import LanError
 SUBAGENT_SESSION_REASON = 'subagent_session'
 
 
+def payload_is_subagent(payload) -> bool:
+    """Verify the source's own leading metadata, never quoted dialogue/lineage."""
+    if not isinstance(payload, dict) or not isinstance(payload.get('transcript'), str):
+        return False
+    for raw in payload['transcript'].split('\n', 6)[:6]:
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or row.get('type') != 'session_meta':
+            continue
+        meta = row.get('payload')
+        if not isinstance(meta, dict):
+            return False
+        source = payload.get('source')
+        identity = payload.get('session_id') or (source.get('session_id') if isinstance(source, dict) else None)
+        if identity and meta.get('id') != identity:
+            return False
+        return workspace_details([row])['subagent']
+    return False
+
+
 def same_client_workspace(root: str, child: str) -> bool:
     """Compare client paths lexically; never probe a Windows path on Linux."""
     path = ntpath if ntpath.splitdrive(root)[0] else posixpath

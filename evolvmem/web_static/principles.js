@@ -9,20 +9,22 @@ window.EvolvPrinciples={render(mount){
  const modules=[['home','总览','处理进度与系统问题','#home'],['organization','自动整理','归类、提炼与集中判断','#knowledge/organization'],['history','项目历史','历史对话与项目摘要','#knowledge/projects'],['qa','经验知识','明确问答与适用范围','#knowledge/qa'],['checkpoint','任务断点','当前进度与下一步','#progress'],['cleaning','数据清洗','核对来源、修改与删除','#knowledge/cleaning'],['intake','存量资料','旧资料归类与纠正','#knowledge/intake'],['rules','整理规则','处理规则与样例预览','#knowledge/skill']];
  const diagrams={
  modules:{title:'从业务目标找到负责的页面',type:'职责图',goal:'知道资料在哪里、疑问在哪里处理、任务从哪里继续。',height:600,nodes:modules.map((m,i)=>n(m[0],m[1]+'|'+m[2],40+(i%3)*310,60+Math.floor(i/3)*165,'action',facts('你与 Evo','当前业务资料和处理状态',m[2],'','',m[3]))),edges:[],routes:[]},
- flow:{title:'新会话怎样成为以后可用的资料',type:'业务流程图',goal:'保留原话，自动整理明确内容；只把需要判断的部分交给你。',height:1160,nodes:[
+ flow:{title:'新会话怎样成为以后可用的资料',type:'业务流程图',goal:'保留原话，自动整理明确内容；只把需要判断的部分交给你。',height:1290,nodes:[
  n('start','开始：产生新会话',350,20,'start',facts('客户端','用户与助手的可见对话','新增会话批次')),
  n('archive','保存会话与来源',350,130,'action',facts('会话接入','会话批次、客户端与会话标识','会话档案、来源引用','系统工具输出不作为用户要求。')),
- n('clean','清洗、分段与项目判断',350,260,'action',facts('自动整理','会话档案、规则、已确认指导','业务片段、归属判断、关键原话')),
- n('clear','归属与依据明确？',350,390,'decision',facts('自动整理','归属判断与冲突','明确内容或待判断内容')),
- n('review','你核对有疑问的部分',690,520,'exception',facts('你','疑问原因、关键原话、建议归属','本次决定；可选持续指导','','','#knowledge/organization')),
- n('save','保存当前有效资料',350,650,'action',facts('自动整理','明确内容或你保存的决定','项目历史、可用问答、方法候选','归属不明、冲突和依据失效的问答继续待判断。')),
- n('history','项目历史|当时讨论和决定了什么',30,800,'store',facts('历史管理','整理后的对话与摘要','可读历史、摘要和来源','','','#knowledge/projects')),
- n('qa','可用问答|以后何时遵守什么要求',350,800,'store',facts('知识提炼','明确要求、约定与关键原话','问题、答案和适用范围','','','#knowledge/qa')),
- n('case','方法经验|有执行证据才算验证',690,800,'store',facts('经验验证','方法、条件和实际验证证据','方法候选或已验证案例','问答入库不代表方法验证成功。','','#experiences')),
- n('index','更新可检索内容',350,940,'action',facts('检索准备','当前有效资料及变化条目','关键词索引与语义索引','只更新变化条目；索引故障或模型变化时恢复或重建。')),
- n('end','完成：以后按问题找回',350,1070,'end',facts('Evo','当前有效的资料及检索准备状态','以后可供助手按问题召回的资料'))],edges:[
- e('f1','start','archive','新增会话'),e('f2','archive','clean','会话与规则'),e('f3','clean','clear'),e('f4','clear','save','明确'),e('f5','clear','review','有疑问'),e('f6','review','save','保存决定'),e('f7','save','history','历史摘要'),e('f8','save','qa','明确要求'),e('f9','save','case','方法与证据'),e('f10','history','index'),e('f11','qa','index'),e('f12','case','index'),e('f13','index','end')],routes:[
- r('auto','明确内容自动入库','start archive clean clear save qa index end','f1 f2 f3 f4 f8 f11 f13'),r('review','有疑问时由你确认','start archive clean clear review save history index end','f1 f2 f3 f5 f6 f7 f10 f13')]},
+ n('source','业务会话？',350,260,'decision',facts('会话接入','原生会话身份与来源标记','业务对话；审批等系统子会话','旧上传记录也按原生身份补查，原文保留。')),
+ n('excluded','只留原文|不进入业务召回',30,390,'exception',facts('来源核对','审批等系统子会话','保留原文、退出业务整理与历史召回','仅靠这些来源自动生成的资料停止采用；人工确认与其他有效来源保留。')),
+ n('clean','清洗、分段与项目判断',350,390,'action',facts('自动整理','会话档案、规则、已确认指导','业务片段、归属判断、关键原话')),
+ n('clear','归属与依据明确？',350,520,'decision',facts('自动整理','归属判断与冲突','明确内容或待判断内容')),
+ n('review','你核对有疑问的部分',690,650,'exception',facts('你','疑问原因、关键原话、建议归属','本次决定；可选持续指导','','','#knowledge/organization')),
+ n('save','保存当前有效资料',350,780,'action',facts('自动整理','明确内容或你保存的决定','项目历史、可用问答、方法候选','归属不明、冲突和依据失效的问答继续待判断。')),
+ n('history','项目历史|当时讨论和决定了什么',30,930,'store',facts('历史管理','整理后的对话与摘要','可读历史、摘要和来源','','','#knowledge/projects')),
+ n('qa','可用问答|以后何时遵守什么要求',350,930,'store',facts('知识提炼','明确要求、约定与关键原话','问题、答案和适用范围','','','#knowledge/qa')),
+ n('case','方法经验|有执行证据才算验证',690,930,'store',facts('经验验证','方法、条件和实际验证证据','方法候选或已验证案例','问答入库不代表方法验证成功。','','#experiences')),
+ n('index','更新可检索内容',350,1070,'action',facts('检索准备','当前有效资料及变化条目','关键词索引与语义索引','只更新变化条目；索引故障或模型变化时恢复或重建。')),
+ n('end','完成：以后按问题找回',350,1200,'end',facts('Evo','当前有效的资料及检索准备状态','以后可供助手按问题召回的资料'))],edges:[
+ e('f1','start','archive','新增会话'),e('fs','archive','source','核对来源'),e('fx','source','excluded','系统子会话'),e('f2','source','clean','业务会话'),e('f3','clean','clear'),e('f4','clear','save','明确'),e('f5','clear','review','有疑问'),e('f6','review','save','保存决定'),e('f7','save','history','历史摘要'),e('f8','save','qa','明确要求'),e('f9','save','case','方法与证据'),e('f10','history','index'),e('f11','qa','index'),e('f12','case','index'),e('f13','index','end')],routes:[
+ r('system','系统子会话只保留原文','start archive source excluded','f1 fs fx'),r('auto','明确内容自动入库','start archive source clean clear save qa index end','f1 fs f2 f3 f4 f8 f11 f13'),r('review','有疑问时由你确认','start archive source clean clear review save history index end','f1 fs f2 f3 f5 f6 f7 f10 f13')]},
  activity:{title:'一个知识片段从候选到可用',type:'活动图',goal:'看清入库前必须核对的条件，以及不能通过时资料去哪里。',height:1160,nodes:[
  n('start','开始：收到知识候选',350,20,'start',facts('知识提炼','会话中提炼出的内容与来源','待核对的知识候选')),n('evidence','核对原话与来源',350,130,'action',facts('自动整理','候选答案、关键原话、来源','依据是否支持答案','助手建议或自称完成不能代替用户要求与实际验证。')),
  n('supported','答案被原话支持？',350,270,'decision',facts('依据核对','答案与关键原话的核对结果','有依据的内容；需确认或修正的候选')),n('pending','保留待判断候选',690,420,'exception',facts('你','不支持、冲突或归属不明的候选','修正、确认或暂不采用','','','#knowledge/organization')),

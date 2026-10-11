@@ -269,21 +269,8 @@ def _cache_put(key, value):
 
 def _declares_subagent(payload):
     """Whether the batch's own leading metadata marks a system sub-session."""
-    transcript = payload.get('transcript') if isinstance(payload, dict) else None
-    if not isinstance(transcript, str) or not transcript:
-        return False
-    from evolvmem.codex_transcript import workspace_details
-    for raw in transcript.split('\n', 6)[:6]:
-        if not raw.strip():
-            continue
-        try:
-            row = json.loads(raw)
-        except ValueError:
-            continue
-        if isinstance(row, dict) and row.get('type') == 'session_meta' \
-                and workspace_details([row])['subagent']:
-            return True
-    return False
+    from evolvmem.codex_transcript import payload_is_subagent
+    return payload_is_subagent(payload)
 
 
 def archive_info(service, source_key):
