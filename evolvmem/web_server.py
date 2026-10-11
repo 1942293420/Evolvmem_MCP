@@ -23,7 +23,9 @@ Run:
 import argparse
 import json
 import re
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+from functools import wraps
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -1190,9 +1192,21 @@ def make_handler(service: ContextService):
     store = service.store
     auth = WebAuth(AuthSettings.load(service.config.data_dir))
     views = TrustViews(service)
+    # Browser preconnects may open a socket without sending an HTTP request.
+    # Parse those sockets independently, but retain serialized use of this
+    # service's shared SQLite connections and transaction state.
+    business_lock = threading.RLock()
+
+    def serialized(method):
+        @wraps(method)
+        def call(self, *args, **kwargs):
+            with business_lock:
+                return method(self, *args, **kwargs)
+        return call
 
     class MemoryWebHandler(BaseHTTPRequestHandler):
         server_version = "EvolvMemWeb/1.0"
+        timeout = 10
 
         def end_headers(self):
             self.send_header("Referrer-Policy", "no-referrer")
@@ -1241,6 +1255,7 @@ def make_handler(service: ContextService):
         def log_message(self, fmt, *args):  # keep console quiet
             pass
 
+        @serialized
         def do_GET(self):
             parsed = urlparse(self.path)
             path = parsed.path
@@ -1425,6 +1440,7 @@ def make_handler(service: ContextService):
                 return
             self._send_json({"ok": False, "error": "unknown endpoint"}, 404)
 
+        @serialized
         def do_POST(self):
             path = urlparse(self.path).path
             if path == "/auth/logout":
@@ -1480,6 +1496,7 @@ def make_handler(service: ContextService):
             self._send_json({"ok": False,
                              "error": "unknown endpoint"}, 404)
 
+        @serialized
         def _unsupported_write(self):
             if auth.require_write(self):
                 self._send_json({"ok": False, "error": "method_not_allowed"}, 405)
@@ -1543,6 +1560,10 @@ def make_handler(service: ContextService):
     return MemoryWebHandler
 
 
+def make_http_server(service, *, host="127.0.0.1", port=9377):
+    return ThreadingHTTPServer((host, port), make_handler(service))
+
+
 def run(port: int = 9377, data_dir: str | None = None,
         host: str = "127.0.0.1") -> None:
     config = Config.from_file()
@@ -1557,8 +1578,8 @@ def run(port: int = 9377, data_dir: str | None = None,
     rules = service.knowledge().rules
     if not rules.path.exists():
         rules.save({'expected_revision': rules.read()['revision']})
-    # 单线程服务：sqlite 连接不支持跨线程使用；本地单用户控制台无需并发
-    server = HTTPServer((host, port), make_handler(service))
+    # 空闲浏览器连接独立等待；共享 service 的业务处理仍由 handler 串行执行。
+    server = make_http_server(service, host=host, port=port)
     # 单个有界后台整理 worker：独立连接、独立线程；中断的任务在启动时回到队列
     from evolvmem.auto_organization import OrganizationWorker
     organization = OrganizationWorker(config).start()

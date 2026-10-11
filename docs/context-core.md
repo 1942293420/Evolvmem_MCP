@@ -25,6 +25,18 @@ Context Core's L0/L1/L2 names describe three bounded representations of one `Con
 | Claude | Mode-selected compatibility boundary | Legacy MCP memory tools; its SessionStart helper can try Core in primary and fall back to legacy |
 | Web | Mode-selected compatibility boundary | Operator data views and organization; reading the page does not record successful experience |
 
+The Web console accepts browser connections independently. An idle preconnection or incomplete request header cannot hold the listener and prevent a second browser request from loading. Idle socket reads expire after 10 seconds. Once a request has been parsed, its business handler runs under one shared lock: the Context service, SQLite connections, transaction state, and existing revision checks retain sequential access. This is connection handling for the existing single-process console, not parallel database writes.
+
+```mermaid
+flowchart LR
+    Browser[Browser connections] --> Parse[Independent request parsing]
+    Parse -->|complete request| Business[Sequential business handling]
+    Parse -->|idle for 10 seconds| Close[Close idle connection]
+    Business --> Store[Shared Context service and SQLite]
+    Business --> Response[Page or API response]
+```
+
+
 The structured MCP adapter allowlist is `codex`, `kimi`, `dsh`. Expanding it to other adapters remains future work; enabling a client requires its own acceptance, not merely renaming an environment variable.
 
 ### Context tools and recall contract

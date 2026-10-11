@@ -1,11 +1,10 @@
 import sys, json, tempfile, os, shutil
 from pathlib import Path
-from http.server import HTTPServer
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from evolvmem.config import Config
 from evolvmem.context_models import ContextMode
 from tests.test_web_server import _make_service
-from evolvmem.web_server import make_handler
+from evolvmem.web_server import make_http_server
 import re
 from evolvmem import kimi_hooks
 HINTS={'Evo 演示项目':'evo','dsh-a':'dsh-a','DSH 备用项目':'dsh-b','其余内容':'','导出':'dsh-a','未归属事项':''}
@@ -176,7 +175,7 @@ if os.environ.get('EVOLVMEM_CARD_FIXTURE') == '1':
         with s.store.transaction():
             s.store._connection().execute('UPDATE context_items SET updated_at=? WHERE project=?',(stamp,slug))
             s.store._connection().execute('UPDATE context_project_registry SET updated_at=? WHERE project=?',(stamp,slug))
-server=HTTPServer(('127.0.0.1',int(os.environ.get('EVOLVMEM_TEST_PORT','39478'))),make_handler(s))
+server=make_http_server(s, port=int(os.environ.get('EVOLVMEM_TEST_PORT','39478')))
 # A pending auto-organization task plus the bounded worker, both synthetic.
 from evolvmem.auto_organization import OrganizationWorker
 from evolvmem.knowledge_api import dispatch as knowledge_dispatch
