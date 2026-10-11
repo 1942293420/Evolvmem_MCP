@@ -44,7 +44,6 @@ content, absolute paths, or backend exception messages.
 """
 
 from dataclasses import dataclass
-import hashlib
 import json
 import logging
 import re
@@ -217,15 +216,21 @@ class ProjectRollupGenerator:
                 reason=_REASON_LLM_UNAVAILABLE,
             )
         row = self._rollup_row(project)
+        from evolvmem import rollup_provenance
+        previous = self._current_summary(project)
+        current = previous if previous is not None and rollup_provenance.current(self._store, previous.id) else None
         previous_covered = row["covered_through"] if row is not None else None
+        if previous is not None and current is None:
+            previous_covered = None
         sources = self._collect_sources(project, previous_covered)
         if not sources:
             logger.warning("project rollup skipped: %s", _REASON_NO_SOURCES)
             return ProjectRollupReport(
                 project=project, status=_STATUS_SKIPPED, reason=_REASON_NO_SOURCES
             )
-        source_ids = tuple(source.id for source in sources)
-        source_hash = _source_set_hash(source_ids, self.VERSION)
+        prior_ids = rollup_provenance.source_ids(self._store, current.id) if current else ()
+        source_ids = tuple(sorted({source.id for source in sources} | set(prior_ids)))
+        source_hash = rollup_provenance.content_signature(self._store, source_ids)
         if (
             row is not None
             and row["status"] == _STATUS_READY
@@ -239,7 +244,6 @@ class ProjectRollupGenerator:
                 covered_through=row["covered_through"],
             )
 
-        current = self._current_summary(project)
         prompt = self._build_prompt(project, sources, current)
         response = self._call_llm(prompt)
         if response is None:
@@ -253,7 +257,7 @@ class ProjectRollupGenerator:
             return self._fail(project, source_hash, row, gate_reason)
 
         covered_through = max(source.created_at for source in sources)
-        superseded_id = current.id if current is not None else None
+        superseded_id = previous.id if previous is not None else None
         draft = ContextItemDraft(
             identity_key=_rollup_identity_key(project),
             content_type=ContextContentType.PROJECT_SUMMARY,
@@ -494,7 +498,11 @@ class ProjectRollupGenerator:
             params = (*params, covered_through)
         atomic_sql += " ORDER BY created_at, id"
         ids.extend(int(row["id"]) for row in conn.execute(atomic_sql, params))
-        return tuple(self._load_source(item_id) for item_id in ids)
+        from evolvmem.memory_eligibility import eligible
+        now = _now_iso()
+        sources = (self._load_source(item_id) for item_id in ids if eligible(self._store, item_id))
+        return tuple(item for item in sources if (item.expires_at is None or item.expires_at > now)
+                     and window_contains(item.effective_from, item.effective_until, now))
 
     def _load_source(self, item_id: int) -> ContextItem:
         item = self._store.get_item(item_id)
@@ -834,11 +842,6 @@ def _row_context_id(row) -> int | None:
     if row["current_context_id"] is None:
         return None
     return int(row["current_context_id"])
-
-
-def _source_set_hash(source_ids: tuple[int, ...], version: str) -> str:
-    payload = ",".join(sorted(map(str, source_ids))) + version
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _is_low_information(text: str) -> bool:

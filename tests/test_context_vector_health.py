@@ -171,6 +171,51 @@ def seed(service):
     return kept, changing
 
 
+@pytest.mark.parametrize('change', ['missing', 'changed', 'withdrawn'])
+def test_status_explains_pending_coverage_and_incremental_recovery(service, change):
+    kept, changing = seed(service)
+    if change == 'missing':
+        service.vector_index.remove(changing.id)
+        service.vector_index.save()
+    else:
+        with service.store.transaction():
+            if change == 'changed':
+                service.store._connection().execute(
+                    "UPDATE context_layers SET content='new constraint' WHERE item_id=? AND layer='l0'", (changing.id,))
+            else:
+                service.store._connection().execute(
+                    "UPDATE context_items SET expires_at='2000-01-01 00:00:00' WHERE id=?", (changing.id,))
+    before = service.status().vector_sync
+    assert before['state'] == 'pending'
+    assert before['document_count'] == (1 if change == 'withdrawn' else 2)
+    assert before['searchable_count'] == 1
+    assert before['pending_count'] == (0 if change == 'withdrawn' else 1)
+    assert before['obsolete_count'] == (1 if change == 'withdrawn' else 0)
+
+    ContextVectorRecoveryLoop().tick([service])
+
+    after = service.status().vector_sync
+    assert after['state'] == 'ready'
+    assert after['pending_count'] == after['obsolete_count'] == 0
+    assert after['searchable_count'] == after['document_count']
+    assert after['last_recovery']['encoded_operations'] == (0 if change == 'withdrawn' else 1)
+
+
+def test_status_distinguishes_unavailable_model_and_ignores_private_recovery_fields(service):
+    import json
+    seed(service)
+    service.embedding_engine = None
+    service.config.context_vector_path.with_suffix('.recovery.json').write_text(json.dumps({
+        'status': 'failed', 'duration_ms': 12.5, 'document_count': 2,
+        'exception_type': 'PRIVATE MESSAGE', 'query': 'PRIVATE QUERY', 'secret': 'PRIVATE TOKEN'}))
+    status = service.status().vector_sync
+    assert status['state'] == 'unavailable'
+    assert status['searchable_count'] == 0
+    assert status['pending_count'] == 0, 'model availability is distinct from index coverage'
+    assert status['last_recovery'] == {'status': 'failed', 'duration_ms': 12.5, 'document_count': 2}
+    assert 'PRIVATE' not in json.dumps(status)
+
+
 @pytest.mark.parametrize('cause', ['expired', 'source_withdrawn'])
 def test_clean_extra_is_reported_then_automatically_removed_without_reencoding(service, cause):
     kept, changing = seed(service)

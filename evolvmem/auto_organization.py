@@ -2178,6 +2178,10 @@ def dispatch(service, method, route, body):
         return set_disposition(service, body)
     if method == 'POST' and route == '/repair':
         # Root-controlled bounded repair of existing automatic state; no model call.
+        if body.get('unconfirmed_rules') is True:
+            from evolvmem.knowledge_provenance import repair_unconfirmed_rules
+            return repair_unconfirmed_rules(service, after_id=body.get('after_id', 0),
+                                            limit=body.get('limit', 100), apply=body.get('apply') is True)
         if body.get('legacy_subagents') is True:
             from evolvmem.legacy_source_repair import repair_subagents
             return repair_subagents(service, after_id=body.get('after_id', 0),

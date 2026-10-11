@@ -969,6 +969,7 @@ def test_status_exposes_only_bounded_non_sensitive_fields(test_config, store):
         "legacy_vector_dirty",
         "diagnostics",
         "reason_codes",
+        "vector_sync",
     ]
     exposed = {
         status.adapter,

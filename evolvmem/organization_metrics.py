@@ -1,9 +1,7 @@
 """Queue-state metrics, current-source review groups and actual human feedback."""
-import json
 from evolvmem import auto_organization as org
 from evolvmem.context_store import _now_iso
 from evolvmem.organization_review import _groups
-from evolvmem.vector_index import VectorIndex
 
 
 def feedback(service, body):
@@ -48,11 +46,9 @@ def metrics(service):
         if unit and org._unit_revision(unit) == row['unit_revision']:
             checked.append(row['verdict'])
     correct, incorrect = checked.count('correct'), checked.count('incorrect')
-    recovery = None
-    try:
-        recovery = json.loads(service.config.context_vector_path.with_suffix('.recovery.json').read_text())
-    except (OSError, ValueError):
-        pass
+    from evolvmem.context_vector_health import inspect_context_vector
+    state = inspect_context_vector(service.config, service.store, service.vector_index)
+    coverage = state.public_snapshot(service.config, service.embedding_engine)
     return {'scope': '按任务记录统计，排除已替代和空会话；自动完成率=未经人工修正的已完成任务/已结束任务（含待确认与失败）。来源更新后的任务状态由后台复核，审核分组另行核对当前来源',
             'settled_tasks': settled, 'automatic_completed': automatic,
             'manual_completed': len(completed)-automatic,
@@ -62,6 +58,7 @@ def metrics(service):
             'guidance_reused_units': sum(u['decision'] == 'auto' and bool(u['applied_guidance_id']) for u in units),
             'feedback': {'total': len(checked), 'correct': correct, 'incorrect': incorrect,
                          'error_rate': incorrect/len(checked) if checked else None},
-            'index': {'pending': VectorIndex(service.config, path=service.config.context_vector_path).is_dirty(),
+            'index': {'pending': bool(state.reason),
                       'exists': service.config.context_vector_path.exists(),
-                      'last_recovery': recovery}}
+                      'coverage': coverage,
+                      'last_recovery': coverage['last_recovery']}}

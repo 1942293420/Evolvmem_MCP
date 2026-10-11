@@ -256,8 +256,10 @@ def test_project_free_active_summary_is_out_of_scope(test_config, store):
 
 
 def test_expired_covered_summary_within_keep_stays_active(test_config, store):
-    summary_id = _make_summary(store, "eva", "t1", expires_at=EXPIRED)
+    summary_id = _make_summary(store, "eva", "t1")
     _rollup_ready(test_config, store, "eva")
+    with store.transaction():
+        store._connection().execute('UPDATE context_items SET expires_at=? WHERE id=?', (EXPIRED, summary_id))
 
     report = SummaryRetention(test_config, store).sweep(NOW)
 

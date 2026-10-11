@@ -15,6 +15,7 @@ from evolvmem.mcp_contract import tool_specs
 from evolvmem.lan_context import remote_context, validate_snapshot, prepare_bindings, bind_workspace, prepare_memory_revision
 from evolvmem.lan_capture import CAPTURE_TOOLS, LanCapture, capture_specs
 from evolvmem.request_health import request_health_scope
+from evolvmem.request_trace import traced_tool, traced_rpc, timed_lock, stage, failure
 
 PROTOCOLS = ('2025-11-25', '2025-03-26')
 SEARCH = frozenset({'memory_search', 'context_search', 'experience_recall'})
@@ -230,10 +231,12 @@ class LanTools:
                 schema['required'] = [k for k in schema.get('required', []) if k != 'request_id']
         return result
 
+    @traced_tool
     def call_tool(self, user, name, arguments, *, owner=False):
-        with self.lock, request_health_scope():
+        with timed_lock(self.lock), request_health_scope():
             try:
-                result = self._call_tool(user, name, arguments, owner=owner)
+                with stage('dispatch'):
+                    result = self._call_tool(user, name, arguments, owner=owner)
                 result['authenticated_user'] = user
                 if name in ('memory_status', 'context_status', 'context_session_start'):
                     result['memory_revision'] = self._memory_revision(user)
@@ -243,6 +246,7 @@ class LanTools:
             except (ValueError, TypeError, KeyError):
                 return {'error': 'invalid_arguments'}
             except Exception as exc:
+                failure(exc)
                 # A persisted intent is retained on unexpected failure. Neither
                 # exceptions, request bodies nor filesystem diagnostics escape.
                 safe_name = name if isinstance(name, str) and re.fullmatch(r'[a-z_]{1,64}', name) else 'invalid'
@@ -460,8 +464,9 @@ class LanTools:
             result['space'] = space
         return result
 
+    @traced_rpc
     def handle_request(self, user, request, *, owner=False):
-        with self.lock:
+        with timed_lock(self.lock):
             if user not in ('jiangli', 'kane'):
                 return self._rpc_error(None, -32600, 'Unauthorized')
             if (not isinstance(request, dict) or request.get('jsonrpc') != '2.0'

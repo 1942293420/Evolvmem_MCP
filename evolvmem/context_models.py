@@ -604,6 +604,7 @@ class ContextServiceStatus:
     legacy_vector_dirty: bool
     diagnostics: tuple[str, ...] = ()
     reason_codes: tuple[str, ...] = ()
+    vector_sync: dict | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.mode, ContextMode):

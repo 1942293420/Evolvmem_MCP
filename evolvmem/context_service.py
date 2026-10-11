@@ -38,6 +38,7 @@ health-transition warnings plus debug detail.
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
+from evolvmem.request_trace import stage
 import logging
 import sqlite3
 from pathlib import PurePosixPath
@@ -424,6 +425,7 @@ class ContextService:
             projection_lag=projection_lag,
             context_vector_ready=context_ready,
             context_vector_dirty=context_dirty,
+            vector_sync=context_state.public_snapshot(self.config, self.embedding_engine),
             legacy_vector_ready=legacy_ready,
             legacy_vector_dirty=legacy_dirty,
             diagnostics=self._diagnostics,
@@ -444,6 +446,7 @@ class ContextService:
         if self.renderer is None:
             self.renderer = ContextRenderer(self.config)
 
+    @stage('health')
     def _refresh_health(self) -> None:
         if self._mode in (ContextMode.LEGACY, ContextMode.COMPAT):
             self._ready = False
@@ -1012,7 +1015,9 @@ class ContextService:
         if row is None or row["current_context_id"] is None:
             return None
         try:
-            return int(row["current_context_id"])
+            from evolvmem.memory_eligibility import eligible
+            ident = int(row["current_context_id"])
+            return ident if eligible(self.store, ident) else None
         except (TypeError, ValueError):
             return None
 
@@ -1031,6 +1036,9 @@ class ContextService:
         if row is None or row["current_context_id"] is None:
             return ""
         try:
+            from evolvmem.memory_eligibility import eligible
+            if not eligible(self.store, int(row["current_context_id"])):
+                return ""
             return (
                 self.store.get_layer(int(row["current_context_id"]), ContextLayer.L1)
                 or ""
@@ -1088,10 +1096,11 @@ class ContextService:
         # here too: a future-effective or expired pinned policy / summary must
         # not re-enter the default injection surface through a seed.
         moment = _now_iso()
+        from evolvmem.memory_eligibility import eligible
         by_id = {
             item_id: result
             for item_id, result in by_id.items()
-            if window_contains(
+            if eligible(self.store, item_id) and window_contains(
                 result.effective_from, result.effective_until, moment
             )
         }

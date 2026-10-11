@@ -33,15 +33,20 @@ class Reranker:
         if not isinstance(query, str) or len(query) > 4000 or not isinstance(documents, list) \
                 or len(documents) > 200 or any(not isinstance(d, str) or len(d) > 4000 for d in documents):
             raise ValueError('invalid_reranking_input')
-        scores = []
-        for offset in range(0, len(documents), 32):
-            batch = self.tokenizer.encode_batch([(query, d) for d in documents[offset:offset+32]])
+        # Similar lengths share padding. Small batches keep a long history from
+        # expanding every short answer to 512 tokens; output order is unchanged.
+        order = sorted(range(len(documents)), key=lambda i: len(documents[i]))
+        scores = [0.] * len(documents)
+        for offset in range(0, len(documents), 8):
+            indices = order[offset:offset+8]
+            batch = self.tokenizer.encode_batch([(query, documents[i]) for i in indices])
             inputs = {'input_ids': np.asarray([b.ids for b in batch], dtype=np.int64),
                       'attention_mask': np.asarray([b.attention_mask for b in batch], dtype=np.int64)}
             logits = np.asarray(self.session.run(None, inputs)[0]).reshape(-1)
             if logits.size != len(batch) or not np.isfinite(logits).all():
                 raise RuntimeError('invalid_reranking_response')
-            scores.extend(float(1 / (1 + math.exp(-max(-80, min(80, float(v)))))) for v in logits)
+            for i, value in zip(indices, logits):
+                scores[i] = float(1 / (1 + math.exp(-max(-80, min(80, float(value))))))
         if not valid_scores(scores, len(documents)):
             raise RuntimeError('invalid_reranking_response')
         return scores

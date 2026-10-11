@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import math
+from evolvmem.request_trace import stage
 import re
 
 import numpy as np
@@ -92,7 +93,8 @@ class ContextRetriever:
     5. Apply the original acceptance gate or independent reranking confirmation.
     6. Rank relevance, keep applicable identity winners, deduplicate full content.
 
-    The retriever never loads L1/L2 text and never mutates access counts.
+    Optional reranking uses bounded L1 evidence; output remains L0-only.
+    The retriever never loads L2 text and never mutates access counts.
     """
 
     def __init__(
@@ -110,6 +112,7 @@ class ContextRetriever:
         self.embedding_engine = embedding_engine
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
+    @stage('retrieval')
     def search(self, request: ContextSearchRequest, *, eligible_ids=None) -> tuple[ContextSearchResult, ...]:
         """Return deterministic L0-only results without access-count side effects."""
         reranking = bool(getattr(self.embedding_engine, 'reranker_loaded', False))
@@ -133,7 +136,8 @@ class ContextRetriever:
             exclude_checkpoints=ContextContentType.WORKSTREAM_CHECKPOINT not in request.content_types,
             item_ids=None if eligible_ids is None else tuple(eligible_ids),
         )
-        fts_hits = self.store.search_fts(request.query, **fts_options)
+        with stage('lexical'):
+            fts_hits = self.store.search_fts(request.query, **fts_options)
         # Exact error codes and code identifiers survive a natural-language
         # wrapper. Keep all scope/status gates on these additional queries.
         identifiers = re.findall(r'(?<!\d)\d{4,}(?!\d)|[A-Za-z][A-Za-z0-9]*[_-][A-Za-z0-9_-]+', request.query)
@@ -184,7 +188,8 @@ class ContextRetriever:
         rank_scores = None
         if reranking and eligible_candidates:
             try:
-                values = self.embedding_engine.rerank(request.query, [records[c.item_id].l0 for c in eligible_candidates])
+                with stage('rerank'):
+                    values = self.embedding_engine.rerank(request.query, self._rerank_documents(eligible_candidates, records))
                 if len(values) != len(eligible_candidates) or any(not math.isfinite(v) or not 0 <= v <= 1 for v in values):
                     raise ValueError('invalid_reranking_response')
                 rank_scores = dict(zip((c.item_id for c in eligible_candidates), values))
@@ -214,6 +219,13 @@ class ContextRetriever:
             [result for _, result in scored], request, now
         )
         return tuple(self._deduplicate(ranked)[: request.top_k])
+
+    def _rerank_documents(self, candidates, records):
+        ids = [c.item_id for c in candidates]
+        marks = ','.join('?' for _ in ids)
+        details = {r['item_id']: r['detail'] for r in self.store._connection().execute(
+            f"SELECT item_id,substr(content,1,1200) AS detail FROM context_layers WHERE layer='l1' AND item_id IN ({marks})", ids)}
+        return [records[i].l0[:200] + '\n' + details.get(i, '') for i in ids]
 
     def _deduplicate(self, results):
         kept, seen = [], {}
@@ -307,7 +319,28 @@ class ContextRetriever:
 
     # ---- candidate generation ----
 
+    @stage('vector')
     def _scoped_vector_candidates(self, request, pool_size, eligible_ids=None):
+        if (getattr(self.embedding_engine, 'reranker_loaded', False)
+                and request.project and not request.cross_project):
+            # Build the pool within the eligible business scope. Global policies
+            # retain their own bounded lane, rather than exhausting the project's
+            # candidates before the reranker can see their detailed evidence.
+            allowed = None if eligible_ids is None else set(eligible_ids)
+            seen, valid = set(), {}
+            def select(hits):
+                new_ids = [h['id'] for h in hits if h['id'] not in seen]
+                seen.update(new_ids)
+                records = self.store.get_retrieval_records(new_ids)
+                valid.update({r.item.id: r.item for r in records
+                              if (allowed is None or r.item.id in allowed) and self._eligible(r.item, request, self._now())})
+                scoped = [h for h in hits if h['id'] in valid]
+                if request.project and not request.cross_project:
+                    local = [h for h in scoped if valid[h['id']].project == request.project]
+                    global_hits = [h for h in scoped if valid[h['id']].project != request.project]
+                    return local[:pool_size] + global_hits[:pool_size], len(local) >= pool_size
+                return scoped[:pool_size], len(scoped) >= pool_size
+            return self._vector_candidates(request.query, pool_size, select=select)
         hits = self._vector_candidates(request.query, pool_size)
         while len(hits) == pool_size:
             records = self.store.get_retrieval_records([hit["id"] for hit in hits])
@@ -324,22 +357,27 @@ class ContextRetriever:
             hits = self._vector_candidates(request.query, pool_size)
         return hits
 
-    def _vector_candidates(self, query: str, pool_size: int) -> list[dict]:
+    def _vector_candidates(self, query: str, pool_size: int, *, select=None) -> list[dict]:
         """Return raw ANN neighbors, degrading to none on any vector failure."""
         from evolvmem.context_vector_health import inspect_context_vector
         state = inspect_context_vector(self.config, self.store, self.vector_index)
         if not state.available(self.embedding_engine):
             return []
         try:
-            embedding = np.asarray(
-                self.embedding_engine.encode_query(query), dtype=np.float32
-            )
+            with stage('embedding'):
+                embedding = np.asarray(self.embedding_engine.encode_query(query), dtype=np.float32)
             limit = pool_size
             while True:
                 hits = self.vector_index.search(embedding, limit)
-                if state.verified_ids is None:
+                if state.verified_ids is None and select is None:
                     return hits
-                valid = [h for h in hits if int(h['id']) in state.verified_ids]
+                valid = hits if state.verified_ids is None else [h for h in hits if int(h['id']) in state.verified_ids]
+                if select is not None:
+                    valid, filled = select(valid)
+                    if filled or len(hits) < limit or limit >= state.count:
+                        return valid
+                    limit = min(state.count, limit * 2)
+                    continue
                 if len(valid) >= pool_size or len(hits) < limit or limit >= state.count:
                     return valid[:pool_size]
                 limit = min(state.count, limit * 2)

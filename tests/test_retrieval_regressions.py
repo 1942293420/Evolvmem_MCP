@@ -14,7 +14,39 @@ class RankedEngine(QueryEmbeddingEngine):
         self.scores = scores
 
     def rerank(self, query, documents):
-        return [self.scores.get(text, .001) for text in documents]
+        return [max((score for text, score in self.scores.items() if text in document), default=.001) for document in documents]
+
+
+def test_project_candidate_pool_survives_global_neighbors_before_reranking(store, test_config):
+    from evolvmem.context_models import ContextScope
+    neighbors = [add_item(store, f'global-{i}', l0=f'global generic policy {i}',
+                         scope=ContextScope.GLOBAL, project='', content_type=ContextContentType.CONSTRAINT)
+                 for i in range(55)]
+    target = add_item(store, 'local-answer', l0='页面业务说明',
+                      l1='后端已自动处理的内容，不应逐条强制人工审核。')
+    index = FakeVectorIndex(test_config, [{'id':i.id,'distance':.3} for i in neighbors]
+                            + [{'id':target.id,'distance':.5}])
+    engine = RankedEngine({'不应逐条强制人工审核': .9})
+    hits = make_retriever(test_config, store, index, engine).search(
+        request_for('are repeated manual approvals necessary?', top_k=1))
+    assert hits[0].id == target.id
+    assert len(engine.queries) == 1, 'expanding candidate search must reuse the query embedding'
+
+
+def test_reranking_reads_bounded_detail_but_returns_only_summary(store, test_config):
+    test_config.context_l1_max_chars = 3000
+    target = add_item(store, 'detailed-answer', l0='页面设置',
+                      l1='切页后必须保留查询条件和草稿。' + '正常说明' * 500)
+    index = FakeVectorIndex(test_config, [{'id':target.id,'distance':.714}])
+    engine = RankedEngine({})
+    def rank(query, documents):
+        assert '切页后必须保留查询条件和草稿。' in documents[0]
+        assert len(documents[0]) <= 1400
+        return [.9]
+    engine.rerank = rank
+    hits = make_retriever(test_config, store, index, engine).search(request_for('switch tabs safely'))
+    assert [hit.id for hit in hits] == [target.id]
+    assert hits[0].l0 == '页面设置' and not hasattr(hits[0], 'l1')
 
 
 def test_more_relevant_history_beats_popular_high_priority_neighbor(store, test_config):

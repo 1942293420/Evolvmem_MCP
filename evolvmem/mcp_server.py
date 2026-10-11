@@ -985,6 +985,7 @@ class MemoryMCPServer:
             "projection_lag": status.projection_lag,
             "context_vector_ready": status.context_vector_ready,
             "context_vector_dirty": status.context_vector_dirty,
+            "vector_sync": status.vector_sync,
             "legacy_vector_ready": status.legacy_vector_ready,
             "legacy_vector_dirty": status.legacy_vector_dirty,
             "diagnostics": list(status.diagnostics),
