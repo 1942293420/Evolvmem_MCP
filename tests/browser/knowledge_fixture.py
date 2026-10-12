@@ -81,7 +81,14 @@ with s.store.transaction():
 def model(prompt, *a, **kw):
     if '你是业务资料归类核对员' in prompt:
         from tests.unit_model_fixture import UnitProvider
-        return UnitProvider().classify(prompt)
+        result=UnitProvider().classify(prompt)
+        if os.environ.get("EVOLVMEM_REVIEW_ZERO_FIXTURE")=="1":
+            payload=json.loads(result)
+            for item in payload["items"]:
+                item["decision"]="uncertain" if item["id"]==0 else "exclude"
+                item["reason"]="模拟资料缺少适用条件，待人工核对。" if item["decision"]=="uncertain" else "模拟资料不符合本次业务依据。"
+            return json.dumps(payload,ensure_ascii=False)
+        return result
     if '你是资料清洗助手' in prompt:
         if '无用测试资料' in prompt.split('正文分段',1)[-1]:
             return json.dumps({'cleaned_text':'待核对的无用测试资料。','category':'reference','recommended_action':'delete','reason':'按清洗 Skill，本条没有完成事项或明确决定。'},ensure_ascii=False)
@@ -238,7 +245,7 @@ if _auto:
         knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{_batch.id}'}]})
 if os.environ.get('EVOLVMEM_EFFICIENCY_FIXTURE')=='1':
     for session,messages in [
-        ('集中审核演示',[{'role':'user','content':f'审核条目{i:02d}：编号处理必须保留原始编号。'+('跨平台条件需要另行核对。' if i>=10 else '')} for i in range(12)]),
+        ('集中审核演示',[{'role':'user','content':f'审核条目{i:02d}：编号处理必须保留原始编号。'+('跨平台条件需要另行核对。' if i>=10 else '')} for i in range(105 if os.environ.get('EVOLVMEM_REVIEW_MANY_FIXTURE')=='1' else 12)]),
         ('进度历史演示',[{'role':'assistant','content':'纯进度演示：正在核对上一轮测试，接下来继续检查界面。'}])]:
         source=_Archiver(config,s.store).archive_session('','kimi',session,json.dumps({'messages':messages},ensure_ascii=False))
         knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{source.id}'}]})

@@ -137,3 +137,63 @@ def test_removed_source_is_excluded_without_losing_other_results(service,monkeyp
     assert len(p['eligible'])==8
     assert sum(u.get('reason_code')=='review_changed' for u in p['excluded'])==2
     assert org(service,'/groups/apply',{'proposal':p})['succeeded']==8
+
+
+def test_reprocessed_source_leaves_stale_cache_without_rejudging_unchanged_items(service,monkeypatch):
+    from evolvmem import organization_review as review
+    from tests.unit_model_fixture import run_worker, model_for
+    _,request,calls=setup_job(service,monkeypatch,count=4)
+    tid,source=group_source(service,monkeypatch,session='old-rule-source',count=2)
+    with service.store.transaction():
+        service.store._connection().execute("UPDATE organization_tasks SET rule_revision='old-rule' WHERE id=?",(tid,))
+    job=semantic.start(service,request);semantic.tick(service)
+    saved=semantic.get(service,job['id'])['proposal']
+    assert sum(u.get('reason_code')=='rule_changed' for u in saved['excluded'])==2
+    task=review.reprocess(service,{'proposal':saved})['items'][0]
+    run_worker(service,monkeypatch,model_for(service,topics=[('条目00','','task_requirement'),('条目01','','task_requirement')]))
+    restored=semantic.get(service,job['id'])['proposal']
+    assert not any(u.get('reason_code')=='rule_changed' for u in restored['excluded'])
+    assert len(restored['eligible'])==4 and len(calls)==4
+    assert all(u['task_id']!=tid for u in restored['excluded'])
+    assert any(u['task_id']==task['id'] for u in restored['excluded'])
+    before=service.store._connection().execute('SELECT COUNT(*) FROM organization_tasks').fetchone()[0]
+    with pytest.raises(ValueError,match='review_reprocess_not_needed'):
+        review.reprocess(service,{'proposal':restored})
+    assert service.store._connection().execute('SELECT COUNT(*) FROM organization_tasks').fetchone()[0]==before
+
+
+def test_next_batch_judges_unseen_items_and_repeated_preview_reuses_it(service,monkeypatch):
+    _,request,calls=setup_job(service,monkeypatch,count=105)
+    job=semantic.start(service,request);semantic.tick(service)
+    assert len(calls)==100
+    continued={**request,'continue_job_id':job['id']}
+    next_job=semantic.start(service,continued);semantic.tick(service)
+    result=semantic.get(service,next_job['id'])
+    assert next_job['id']!=job['id'] and len(calls)==105
+    assert len(result['proposal']['eligible'])==5
+    assert semantic.start(service,continued)['id']==next_job['id']
+    assert result['request']['continue_job_id']==job['id']
+
+
+def test_next_batch_rejects_different_criteria(service,monkeypatch):
+    _,request,calls=setup_job(service,monkeypatch,count=3)
+    job=semantic.start(service,request);semantic.tick(service)
+    with pytest.raises(ValueError,match='review_preview_changed'):
+        semantic.start(service,{**request,'condition':'另一个业务依据','continue_job_id':job['id']})
+
+
+def test_manual_confirmation_is_saved_and_removed_from_uncertain_batch(service,monkeypatch):
+    from evolvmem import organization_review as review
+    _,request,_=setup_job(service,monkeypatch,count=3)
+    def uncertain(_service,units,*_):
+        return {semantic._key(u):dict(decision='uncertain',reason='需要人工确认适用条件',evidence_quote=u['text']) for u in units}
+    monkeypatch.setattr(semantic,'judge',uncertain)
+    job=semantic.start(service,request);semantic.tick(service)
+    p=semantic.get(service,job['id'])['proposal']
+    assert not p['eligible'] and len(p['excluded'])==3
+    unit=p['excluded'][0]
+    group=review.detail(service,unit)
+    single=review.preview(service,{**unit,'group_id':group['id'],'selection':'item','project':'evo'})
+    assert review.apply(service,{'proposal':single})['succeeded']==1
+    p=semantic.get(service,job['id'])['proposal']
+    assert p['handled_count']==1 and len(p['excluded'])==2

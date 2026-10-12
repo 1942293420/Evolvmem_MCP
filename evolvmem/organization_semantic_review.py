@@ -66,7 +66,7 @@ def judge(service, units, criteria, exceptions, target):
 
 # Only server-created snapshots are accepted; browser fields cannot seed verdicts.
 _REQUEST_FIELDS = ('group_id', 'selection', 'task_id', 'digest', 'projects', 'project',
-                   'knowledge_scope', 'condition', 'exceptions', 'scope', 'guidance')
+                   'knowledge_scope', 'condition', 'exceptions', 'scope', 'guidance', 'continue_job_id')
 
 
 def _units(service):
@@ -131,10 +131,25 @@ def start(service, body):
     with service.store.transaction():
         base=review.preview(service,request,_judgments={})
         units=_units(service)
+        rows=[dict(r) for r in conn.execute('SELECT rowid AS job_order,* FROM organization_review_jobs ORDER BY created_at DESC,rowid DESC LIMIT 100').fetchall()]
+        if request.get('continue_job_id'):
+            parent=_row(service,request['continue_job_id'])
+            previous=_restore_request(service,parent,units)
+            if parent['status']!='completed' or not _same_request(base,previous['_preview']) or _signature(service,request)!=previous['_signature']:
+                raise ValueError('review_preview_changed')
+            cutoff=conn.execute('SELECT rowid FROM organization_review_jobs WHERE id=?',(parent['id'],)).fetchone()[0]
+            skipped=set()
+            for old in rows:
+                previous=json.loads(old['request'])
+                if old['job_order']>cutoff or previous.get('_signature')!=_signature(service,request):continue
+                for key in json.loads(old['judgments']):
+                    if key in units and previous.get('_snapshots',{}).get(key)==_stamp(units[key]):skipped.add(key)
+            request['_skip_keys']=sorted(skipped)
+            groups=[{**g,'members':[u for u in g['members'] if _key(u) not in skipped]} for g in review._groups(service)]
+            base=review.preview(service,request,_judgments={},_groups_snapshot=groups)
         request=_prepare(service,request,base,units)
         cached={}
-        for old in conn.execute('SELECT * FROM organization_review_jobs ORDER BY created_at DESC,rowid DESC LIMIT 100').fetchall():
-            old=dict(old)
+        for old in rows:
             try:
                 previous=_restore_request(service,old,units)
             except ValueError:
@@ -200,10 +215,28 @@ def proposal(service, body):
     # Frozen membership: a new unrelated arrival must not expand or discard this batch.
     result=json.loads(json.dumps(request['_preview']))
     result['eligible'],result['excluded']=[],[]
+    result['handled_count']=0
+    policy=service.knowledge().rules.read()['revision']
+    seen=set()
+    by_source={}
+    for unit in units.values():by_source.setdefault(unit['source_key'],[]).append(unit)
     for entry in request['_preview']['excluded']:
         key=_key(entry)
         if entry.get('reason_code')!='ai_pending':
-            result['excluded'].append(entry)
+            # Judgment membership stays frozen; preparation status is live.
+            # A superseded old unit must not keep offering the reprocess button.
+            current=[units[key]] if key in units else by_source.get(entry['source_key'],[])
+            for unit in current:
+                candidate=_key(unit)
+                if candidate in seen or candidate in request['_snapshots']:continue
+                seen.add(candidate)
+                if unit['rule_revision']!=policy:
+                    reason,code='这份资料使用旧版整理规则，需按最新规则重新整理。','rule_changed'
+                elif unit['disposition']=='review':
+                    reason,code='请先确认这条资料是否值得保留。','value_review'
+                else:
+                    reason,code='本条尚未进行归类判断，可继续判断下一批。','batch_limit'
+                result['excluded'].append(review._brief(unit)|{'reason':reason,'reason_code':code})
             continue
         unit=units.get(key)
         verdict=judgments.get(key)
@@ -211,6 +244,10 @@ def proposal(service, body):
                and current_signature==request['_signature'])
         entry={k:v for k,v in entry.items() if k not in ('reason','reason_code')}
         if not valid:
+            handled=service.store._connection().execute("SELECT 1 FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id WHERE u.task_id=? AND u.digest=? AND u.decision IN ('manual','auto') AND t.status!='superseded'",(entry['task_id'],entry['digest'])).fetchone()
+            if handled:
+                result['handled_count']+=1
+                continue
             entry.update(reason='原文、整理结果或归类规则已变化；本条需重新判断，其余结果已保留。',reason_code='review_changed')
         elif not verdict:
             entry.update(reason='本条尚未完成判断，请继续预览；已完成的结果会复用。',reason_code='ai_pending')
@@ -219,6 +256,8 @@ def proposal(service, body):
             if verdict['decision']!='include':
                 entry['reason_code']='ai_excluded' if verdict['decision']=='exclude' else 'ai_uncertain'
         result['excluded' if entry.get('reason_code') else 'eligible'].append(entry)
+    result['remaining']=sum(u.get('reason_code')=='batch_limit' for u in result['excluded'])
+    result['searched_count']=len(result['eligible'])+len(result['excluded'])+result['handled_count']
     result.pop('revision',None)
     result['revision']=review._hash(result)
     return result
