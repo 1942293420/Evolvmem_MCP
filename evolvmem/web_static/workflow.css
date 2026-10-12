@@ -94,3 +94,5 @@ body[data-design=signal] .ui-detail-section,body[data-design=signal] .ui-detail-
 
 .business-evidence { min-width: 0; overflow-wrap: anywhere; }
 .business-evidence blockquote { font-size: inherit; white-space: pre-wrap; }
+.task-context,.task-context-source{min-width:0;max-width:100%}.task-context-source{margin:20px 0;border-top:1px solid var(--border,#d9e1eb);padding-top:16px}.task-context-source p{font-size:inherit;color:inherit;overflow-wrap:anywhere}.task-context-text{max-height:none!important;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}.task-context-text mark{background:#fff0b8;color:inherit}.task-context-stage{margin:16px 0}.task-context-stage blockquote{font-size:inherit;white-space:pre-wrap;overflow-wrap:anywhere}
+.task-context .task-context-source>p,.task-context .task-context-stage>p{font-size:16px;color:var(--text)}

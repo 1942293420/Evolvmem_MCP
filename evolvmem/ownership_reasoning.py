@@ -37,7 +37,7 @@ def decode(value):
 
 
 def context_for(service, unit):
-    """Only current same-source text and a validated same-session predecessor."""
+    """Current original source and verified task history, with source identity."""
     from evolvmem import auto_organization as org, organization_context as ctx
     if not unit.get('task_id'):
         return {}
@@ -64,6 +64,8 @@ def context_for(service, unit):
         if previous:
             prior=dict(previous)
             out['predecessor']['task_evidence']={k:q[:1000] for k,q in validated(prior).get('chain',{}).items() if isinstance(q,str) and q and q in prior['text']}
+    from evolvmem.task_context import collect
+    out['task_history']=collect(service,unit)
     return out
 
 
@@ -89,6 +91,7 @@ def evidence_texts(unit, context):
     texts.extend([same.get('before',''), same.get('after','')])
     prior = context.get('predecessor',{})
     texts.extend([prior.get('text',''), prior.get('basis',{}).get('quote',''),*prior.get('task_evidence',{}).values()])
+    texts.extend(r['text'] for r in context.get('task_history',{}).get('records',[]) if r.get('current') and r.get('evidence_eligible',True))
     return texts
 
 
@@ -137,9 +140,12 @@ def validate(item, unit, context, projects, target=None):
         decision, reason = 'uncertain', '需求、修改对象或归类依据无法从原文核对，请人工判断。'
     prior=context.get('predecessor',{})
     prior_texts=[prior.get('text',''),prior.get('basis',{}).get('quote',''),*prior.get('task_evidence',{}).values()]
+    records=[r for r in context.get('task_history',{}).get('records',[]) if r.get('current') and r.get('evidence_eligible',True)]
+    prior_texts.extend(r['text'] for r in records if r.get('relation')=='predecessor')
+    later_texts=[r['text'] for r in records if r.get('relation')=='successor']
     cited=list(chain.values())+[r['quote'] for r in resolved]
     uses_prior=bool(prior) and (item.get('continues_context') is True or any(q not in unit['text'] and any(q in t for t in prior_texts) for q in cited))
-    chain_sources={k:('本条原文' if q in unit['text'] else '同会话前文' if any(q in t for t in prior_texts) else '同一来源的相关原文') for k,q in chain.items()}
+    chain_sources={k:('本条原文' if q in unit['text'] else '同会话前文' if any(q in t for t in prior_texts) else '后续过程与结果' if any(q in t for t in later_texts) else '同一来源的相关原文') for k,q in chain.items()}
     return {'decision':decision, 'reason':reason, 'evidence_quote':quote if quote_ok(quote) and quote in unit['text'] else '',
             'chain':chain, 'chain_sources':chain_sources, 'targets':resolved, 'projects':selected if decision=='include' else [],
             'knowledge_scope':'global' if general else 'project',
@@ -161,13 +167,19 @@ def analyze(service, units, *, criteria='', exceptions='', target=None):
         chunk = units[offset:offset+4]
         contexts = [context_for(service,u) for u in chunk]
         stamps = [stamp(service,u,c) for u,c in zip(chunk,contexts)]
-        rows = [{'id':i,'title':u.get('title',''),'text':u['text'],'context':contexts[i]} for i,u in enumerate(chunk) if len(u['text'])<=10000]
+        from evolvmem.task_context import MODEL_MAX_CHARS
+        too_long={i for i,u in enumerate(chunk) if len(u['text'])+sum(len(r['text']) for r in contexts[i].get('task_history',{}).get('records',[]))>MODEL_MAX_CHARS}
+        rows = [{'id':i,'title':u.get('title',''),'text':u['text'],'context':contexts[i]} for i,u in enumerate(chunk) if len(u['text'])<=10000 and i not in too_long]
         prompt = ('你是业务资料归类核对员。\n'+INSTRUCTIONS+
             '\n这是'+('依据用户分类标准核对适用范围。' if target is not None else '自动识别实际归属项目。')+
             '\n返回 {"items":[{"id":0,"decision":"include|exclude|uncertain","reason":"业务理由",'
             '"quote":"本条原话","chain":{"need":"","analysis":"","change":"","result":""},'
             '"targets":[{"project":"登记ID","role":"owner|applicable|related|uncertain","quote":"原话"}],'
             '"continues_context":false,"knowledge_scope":"project","general_quote":""}]}。'
+            '\ntask_history 按时间保留各份任务来源全文，从起始需求理解过程和结果；同一来源可能含其他任务，只引用与本条可明确关联的原话。缺失阶段留空，不把会话相同当作项目相同。'
+            '\n逐项核对当前任务已经出现的需求、分析、修改和结果：这些原话可能在 predecessor 或 successor 记录中。已有关联结果就引用到 result，不要只重复当前片段而忽略起始需求和后续结果。'
+            '\n有目标范围时，decision 只回答是否归入该目标；即使另一个项目是实际负责方，也不能因此把当前目标写成 include。'
+            '\nrelation=session_background 的记录尚未建立有效任务关联，只供人工核查背景；不能作为自动归类的 chain 或 targets 引用。若归属必须依赖这些记录才能确定，返回 uncertain，请人工先核对任务关联。'
             '\n已登记项目：'+json.dumps(registry,ensure_ascii=False)+
             '\n项目归属说明：'+policy['settings'].get('ownership_instructions','')+
             '\n目标范围：'+json.dumps(rendered_target,ensure_ascii=False)+
@@ -185,6 +197,8 @@ def analyze(service, units, *, criteria='', exceptions='', target=None):
             result = validate(matches[0] if len(matches)==1 else {},unit,contexts[i],names,target)
             if len(unit['text'])>10000:
                 result.update(decision='uncertain',projects=[],reason='资料过长，尚未完成全文判断；请先分段整理。')
+            if i in too_long:
+                result.update(decision='uncertain',projects=[],reason='完整任务上下文超出本次自动阅读范围；原文已保留，请人工核查，不能仅凭片段归类。')
             if stamps[i] != stamp(service,unit):
                 result.update(decision='uncertain',projects=[],reason='原文或关联需求已变化，请重新核对。')
             result.update(version=VERSION,text_hash=digest(unit['text']),rule_revision=policy['revision'],input_stamp=stamps[i])

@@ -11,6 +11,10 @@ def dispatch(service, method, path, body=None):
     if route == 'cleaning' or route.startswith('cleaning/'):
         from evolvmem.knowledge_cleaning import dispatch as cleaning_dispatch
         return cleaning_dispatch(service, method, route[len('cleaning'):], body)
+    match = re.fullmatch(r'items/(\d+)/context', route)
+    if method == 'GET' and match:
+        from evolvmem.task_context import for_item
+        return for_item(service,int(match[1]))
     if route == 'history/organization' or route.startswith('history/organization/'):
         from evolvmem.history_organization import dispatch as organization_dispatch
         return organization_dispatch(service, method, route[len('history/organization'):], body)

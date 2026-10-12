@@ -2169,6 +2169,9 @@ def dispatch(service, method, route, body):
         return list_tasks(service, body)
     if route == '/detail':
         return task_detail(service, body.get('task_id'))
+    if route == '/context':
+        from evolvmem.task_context import read
+        return read(service,body)
     if route == '/units':
         return {'items': unit_views(service, body.get('task_id'))}
     if route == '/guidance':

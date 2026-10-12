@@ -129,6 +129,7 @@
    ${ctx?`<p class="organization-reason organization-context">前文已确认项目：${esc(name(ctx.project))}，原话「${esc(ctx.quote||'')}」</p>`:''}
    ${EvolvProjects.businessEvidence(unit.decision==='manual'?null:unit.business_analysis,projects,esc)}
    <span class="review-example-label">关键原话</span><blockquote class="organization-quote">${esc(unit.evidence_quote||unit.text.slice(0,120))}</blockquote>
+   <button type="button" data-org-action="context" data-key="${key}">核查记忆 · 从需求看起</button><div data-org-context hidden></div>
    <details><summary>查看原文片段（${unit.source_end-unit.source_start} 字）</summary><pre class="organization-text">${esc(unit.text)}</pre></details>
    <details class="unit-decision" ${unit.decision==='review'||unit.disposition==='review'?'open':''}><summary>${unit.decision==='review'||unit.disposition==='review'?'你的决定':'修改整理结果'}</summary><div class="organization-correct">
     <label>改为单个项目（选填）<select data-org-project="${key}" aria-label="所属项目">${'<option value="">保持当前适用范围</option>'+projects.filter(p=>p.status==='active').map(p=>`<option value="${esc(p.project)}" ${p.project===draft?.project?'selected':''}>${esc(p.display_name||p.project)}</option>`).join('')}</select></label>
@@ -272,6 +273,7 @@
       dirty(); draw();}
   };
   mount.onclick = async e => {const button = e.target.closest('[data-org-action]');if(!button||busy)return;e.preventDefault();const action = button.dataset.orgAction;
+    if(action==='context'){const [task_id,digest]=button.dataset.key.split(':');const dest=button.nextElementSibling;dest.hidden=false;await EvolvTaskContext.render({mount:dest,api,esc,query:'organization/context?'+new URLSearchParams({task_id,digest})});return;}
     if(action==='toggle'){await openTask(Number(button.dataset.id));return;}
     if(action==='stage-group'){
       const id = Number(button.dataset.id), project = $(`[data-org-group-project="${id}"]`).value;

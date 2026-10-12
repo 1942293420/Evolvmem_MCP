@@ -44,7 +44,8 @@ def _signature(service, request):
     target=ks.normalize(service,request,required=True)
     names={p['project']:p['display_name'] or p['project'] for p in service.knowledge().registry()}
     from evolvmem.ownership_reasoning import VERSION
-    return _hash([VERSION, target, [names.get(p,p) for p in target['projects']],
+    from evolvmem.task_context import VERSION as CONTEXT_VERSION
+    return _hash([VERSION, CONTEXT_VERSION, target, [names.get(p,p) for p in target['projects']],
                   str(request.get('condition','')).strip(), str(request.get('exceptions','')).strip(),
                   service.knowledge().rules.read()['revision']])
 

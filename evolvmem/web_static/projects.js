@@ -47,3 +47,26 @@ EvolvProjects.businessEvidence=(analysis,projects,esc)=>{
   const targets=(analysis.targets||[]).map(t=>`<p>${esc(projects.find(p=>p.project===t.project)?.display_name||t.project)}：${esc(roles[t.role]||'尚待确定')}</p>`).join('');
   return `<details class="business-evidence"><summary>查看归类依据</summary>${targets?`<div>${targets}</div>`:''}${rows}</details>`;
 };
+
+/* One source reader for classification review and saved knowledge. */
+window.EvolvTaskContext={async render({mount,api,esc,query}){
+  const token={};mount._contextRequest=token;mount.textContent='正在读取需求起点与任务原文…';
+  try{
+    const data=await api(query);
+    if(mount._contextRequest!==token||!mount.isConnected)return;
+    const contexts=data.contexts||[data];
+    mount.innerHTML=contexts.map((context,ci)=>{
+      const stages=(context.stages||[]).map(s=>`<div class="task-context-stage"><strong>${esc(s.title)}</strong>${s.quote?`<blockquote>${esc(s.quote)}</blockquote>`:'<p>尚未识别到对应原话，请结合下方原文核对。</p>'}</div>`).join('');
+      const records=(context.records||[]).map((r,ri)=>{
+        const a=r.unit_start,b=r.unit_end,selected=r.focus&&Number.isInteger(a)&&a>=0&&b>a&&b<=r.text.length;
+        const text=selected?esc(r.text.slice(0,a))+`<mark data-context-focus>${esc(r.text.slice(a,b))}</mark>`+esc(r.text.slice(b)):esc(r.text);
+        return `<article class="task-context-source" data-context-record="${ci}-${ri}"><h4>${esc(r.title)}</h4><p>${esc(r.adapter||'资料')} · ${esc(r.created_at||'时间未记录')} · ${esc(r.source_key)}${r.start_line?` · 原始记录 ${r.start_line}–${r.end_line} 行`:''}${r.focus?' · 当前记忆的来源':r.relation==='successor'?' · 后续过程与结果':r.relation==='session_background'?' · 同会话原文，任务关系尚待核对':' · 关联前文'}${r.current?'':' · 原文版本已变化'}</p><pre class="review-original task-context-text">${text}</pre></article>`;
+      }).join('');
+      return `<section class="task-context"><h3>需求起点与任务原文</h3>${(context.notices||[]).map(t=>`<p class="review-question">${esc(t)}</p>`).join('')}${stages?`<details class="task-context-stages"><summary>需求、过程与结果的核对依据</summary>${stages}</details>`:''}<div class="actions"><button type="button" data-context-start="${ci}">回到原文开头</button><button type="button" data-context-locate="${ci}">定位当前记忆</button></div><div data-context-records="${ci}">${records||'<p>没有可读取的原始上下文。</p>'}</div></section>`;
+    }).join('');
+    mount.querySelectorAll('[data-context-start]').forEach(b=>b.onclick=()=>mount.querySelector(`[data-context-records="${b.dataset.contextStart}"]`)?.scrollIntoView({block:'start'}));
+    mount.querySelectorAll('[data-context-locate]').forEach(b=>b.onclick=()=>mount.querySelector(`[data-context-records="${b.dataset.contextLocate}"] [data-context-focus]`)?.scrollIntoView({block:'center'}));
+    return true;
+  }catch(error){if(mount._contextRequest===token)mount.textContent='原始上下文读取失败，请重新打开核查。';}
+  return false;
+}};
