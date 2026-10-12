@@ -83,7 +83,7 @@ def test_partial_results_survive_failure_and_retry(service,monkeypatch):
     assert len(semantic.get(service,retry['id'])['proposal']['eligible'])==8
 
 
-def test_legacy_completed_result_can_be_restored_without_new_model_calls(service,monkeypatch):
+def test_pre_chain_results_remain_visible_but_require_new_business_review(service,monkeypatch):
     _,request,calls=setup_job(service,monkeypatch)
     from evolvmem import organization_review as review
     from evolvmem.context_store import _now_iso
@@ -98,12 +98,13 @@ def test_legacy_completed_result_can_be_restored_without_new_model_calls(service
         service.store._connection().execute("UPDATE organization_units SET created_at='2999-01-01' WHERE task_id=?",(newer,))
     # Restore the old frozen eight even though the current pool now has nine.
     recovered=semantic.get(service,'legacy-job')
-    assert len(recovered['proposal']['eligible'])==8
+    assert not recovered['proposal']['eligible']
+    assert sum(u.get('reason_code')=='review_changed' for u in recovered['proposal']['excluded'])==8
     restored=semantic.start(service,request)
     semantic.tick(service)
     restored=semantic.get(service,restored['id'])
-    assert restored['status']=='completed' and len(calls)==9
-    assert restored['id']!='legacy-job'  # only the new arrival requires AI
+    assert restored['status']=='completed' and len(calls)==17
+    assert restored['id']!='legacy-job'  # the old name-only judgments must not bypass the new checks
 
 
 def test_hundred_results_remain_saveable_after_unrelated_arrival(service,monkeypatch):

@@ -157,12 +157,7 @@ def _manual_ranges(service, source_key):
 
 
 def _continuation(kb, policy, projects, manual, previous, current, text):
-    """The two locatable quotes when the pair is one continuing same-project task.
-
-    Every condition is program-checked against the real unit text and the real
-    project rules; a model hint never presses a conflicting rule candidate
-    down, and anything uncertain returns ``None`` so the pair stays split.
-    """
+    """Join only a declared continuation backed by independently checked ownership."""
     if previous.get('disposition') != 'keep' or current.get('disposition') != 'keep':
         return None
     if current.get('continues_previous') is not True:
@@ -188,12 +183,11 @@ def _continuation(kb, policy, projects, manual, previous, current, text):
         text[current['source_start']:current['source_end']], current.get('evidence_quote'))
     if not previous_quote or not current_quote:
         return None
-    judged = kb.rules.evaluate({'body': previous['text'], 'source': True}, kb.registry(), policy=policy)
-    if [name.casefold() for name in judged['candidates']] != [project.casefold()]:
+    from evolvmem import ownership_reasoning as reasoning
+    left, right = reasoning.validated(previous), reasoning.validated(current)
+    if not left or not right or left.get('projects') != [project] or right.get('projects') != [project]:
         return None
-    judged = kb.rules.evaluate({'body': current['text'], 'source': True}, kb.registry(), policy=policy)
-    if any(name.casefold() != project.casefold() for name in judged['candidates']):
-        return None
+
     return previous_quote, current_quote
 
 
@@ -203,7 +197,10 @@ def _join_units(previous, current, text, quote):
     cleaned = (str(previous.get('cleaned_text') or '') + '\n'
                + str(current.get('cleaned_text') or '')).strip()[:2000]
     category = previous.get('category') if previous.get('category') == current.get('category') else 'reference'
-    return {**previous, 'text': text[start:end], 'source_start': start, 'source_end': end,
+    from evolvmem.ownership_reasoning import decode
+    left,right=decode(previous.get('ownership_analysis')),decode(current.get('ownership_analysis'))
+    analysis={**left,'chain':{**left.get('chain',{}),**right.get('chain',{})}}
+    return {**previous, 'ownership_analysis':analysis, 'text': text[start:end], 'source_start': start, 'source_end': end,
             'title': previous.get('title') or '', 'cleaned_text': cleaned, 'category': category,
             'evidence_quote': quote, 'start_id': previous.get('start_id'),
             'end_id': current.get('end_id'), 'disposition': 'keep',
@@ -211,20 +208,10 @@ def _join_units(previous, current, text, quote):
 
 
 def coalesce_units(service, task, units, text, policy):
-    """Join adjacent units that are one continuing, same-project task.
+    """Join adjacent spans only after business reasoning agrees on one owner.
 
-    The merge is deliberately narrow: both units must be ``keep``, the later one
-    must declare ``continues_previous`` as a real boolean true, both must carry
-    the same non-empty registered project hint, the previous group must be the
-    only project its own text names while the current text names no other
-    project, and both must carry a quote that locates in the real text
-    (horizontal whitespace only may differ). A rule-candidate conflict is never
-    pressed down by the hint, a manual decision on the same range blocks the
-    merge, units from different chunks are never joined, and nothing is merged
-    across real gap content. The input list and the merged result are both
-    validated against the whole source, so an existing overlap or gap can never
-    be hidden by a merge. The merged unit keeps the complete original ``text``
-    slice, its start/end offsets and the first verifiable project quote.
+    Exact coverage, source boundaries and human decisions still gate the join.
+    A name or segmentation hint by itself never merges two tasks.
     """
     # A merge must never hide an existing overlap, gap or invented span, and the
     # result must still cover the very same source range.
@@ -999,6 +986,7 @@ def task_detail(service, task_id):
 
 def unit_views(service, task_id):
     from evolvmem.organization_diagnostics import describe
+    from evolvmem.ownership_reasoning import decode
     feedback = {r['digest']: dict(r) for r in service.store._connection().execute(
         'SELECT * FROM organization_review_feedback WHERE task_id=?', (task_id,))}
     rows = service.store._connection().execute(
@@ -1007,7 +995,8 @@ def unit_views(service, task_id):
              'diagnostic_text': describe(row['extraction_diagnostic']),
              'feedback': feedback.get(row['digest'], {}).get('verdict', '')
                          if feedback.get(row['digest'], {}).get('unit_revision') == _unit_revision(row) else '',
-             'context': organization_context.decode(row['context_basis'])} for row in rows]
+             'context': organization_context.decode(row['context_basis']),
+             'business_analysis': decode(row['ownership_analysis'])} for row in rows]
 
 
 def find_unit(service, task_id, digest):
@@ -1453,7 +1442,27 @@ class OrganizationWorker:
                     (_now_iso(), task['id']))
         # Only a program-verified same-project continuation is joined; the whole
         # source is re-checked for exact coverage before anything is stored.
+        from evolvmem import ownership_reasoning as reasoning
+        for unit in units:
+            unit.update(task_id=task['id'], digest=unit_digest(task['source_key'],unit['source_start'],unit['source_end'],unit['text']))
+        for unit in units:
+            if unit.get('evidence_quote') and not topic_segmentation.resolve_evidence_quote(unit['text'],unit['evidence_quote']):
+                unit.update(disposition='review',disposition_reason='分段引用在原文中定位不到，请核对原文。')
+        candidates=[u for u in units if u.get('disposition') in ('keep','history_only')]
+        analyses=reasoning.analyze(service,candidates) if candidates else {}
+        for unit in units:
+            unit['ownership_analysis']=analyses.get(f"{unit['task_id']}:{unit['digest']}",{})
+        _assert_current(service,task)
+        for unit in units:
+            analysis=unit.get('ownership_analysis',{})
+            if analysis.get('input_stamp') != reasoning.stamp(service,unit):
+                analysis.update(decision='uncertain',projects=[],reason='关联需求已变化，请重新核对。')
         units = coalesce_units(service, task, units, text, policy)
+        for unit in units:
+            analysis=unit.get('ownership_analysis',{})
+            analysis['text_hash']=reasoning.digest(unit['text'])
+            analysis['input_stamp']=reasoning.stamp(service,unit)
+
         topic_segmentation.coverage(text, units)
         self._store_units(service, row, units)
         self._touch(service, task['id'], 'assignment')
@@ -1485,10 +1494,9 @@ class OrganizationWorker:
                     # The provider suggests purpose; original structural roles
                     # and project conflicts are checked by the program.
                     real = topic_segmentation.unit_messages(unit, spans)
-                    signals = service.knowledge().rules.evaluate(
-                        {'body': unit['text'], 'source': True}, service.knowledge().registry())
+                    owners=[t for t in unit.get('ownership_analysis',{}).get('targets',[]) if t['role']=='owner']
                     if not real or any(m['role'] != 'assistant' for m in real) or \
-                            unit['category'] != 'reference' or len(signals['candidates']) > 1:
+                            unit['category'] != 'reference' or len(owners) > 1:
                         disposition = 'review'
                         unit['disposition_reason'] = '不能按纯助手进度处理：原文含其他角色、重要类别或项目冲突，保留待核对'
                 conn.execute(
@@ -1501,6 +1509,8 @@ class OrganizationWorker:
                      unit['category'], role, disposition, unit.get('disposition_reason', ''),
                      unit['project_hint'], unit.get('evidence_quote', ''),
                      1 if unit.get('continues_context') is True else 0, _now_iso(), _now_iso()))
+                conn.execute('UPDATE organization_units SET ownership_analysis=? WHERE task_id=? AND digest=?',
+                             (json.dumps(unit.get('ownership_analysis',{}),ensure_ascii=False),task['id'],digest))
                 old = prior.get(digest)
                 if old:
                     conn.execute("UPDATE organization_units SET project=?,decision='manual',reason=?,"
@@ -1523,6 +1533,13 @@ class OrganizationWorker:
             raise topic_segmentation.SegmentationError('coverage_gap', '没有可归属的单元')
         names = set(project_names(service))
         basis = self._valid_basis(service, task)
+        from evolvmem import ownership_reasoning as reasoning
+        candidates = [u for u in units if u['decision']!='manual' and u['disposition'] in ('keep','history_only')]
+        analyzed = {f"{u['task_id']}:{u['digest']}":reasoning.validated(u,policy['revision']) for u in candidates}
+        pending=[u for u in candidates if analyzed[f"{u['task_id']}:{u['digest']}"].get('input_stamp')!=reasoning.stamp(service,u)]
+        analyzed.update(reasoning.analyze(service,pending) if pending else {})
+        _assert_current(service,task)
+        basis = self._valid_basis(service,task)
         auto_projects, review = [], 0
         for unit in units:
             if unit['decision'] == 'manual':
@@ -1557,11 +1574,15 @@ class OrganizationWorker:
                 review += 1
                 continue
             if guidance['status'] == 'apply':
+                guidance_analysis=guidance.get('ownership_analysis',{})
+                guidance_basis=reasoning.context_for(service,unit).get('predecessor',{}).get('basis',{}) if guidance_analysis.get('uses_predecessor') else {}
                 self._update_unit(service, task['id'], unit['digest'], project=guidance['project'],
-                                  decision='auto', expected_revision=unit, context_basis='',
+                                  decision='auto', expected_revision=unit, context_basis=organization_context.unit_context(guidance_basis) if guidance_basis else '',
                                   guidance_id=guidance['id'],
                                   reason=guidance['reason'], evidence_quote=guidance.get('evidence_quote', resolved_quote),
-                                  knowledge_target=guidance)
+                                  knowledge_target=guidance,ownership_analysis=guidance.get('ownership_analysis'))
+                if guidance_basis:
+                    self._record_dependency(service,task['id'],unit['digest'],guidance_basis)
                 auto_projects.append(guidance['project'])
                 continue
             if guidance['status'] == 'pending':
@@ -1570,13 +1591,20 @@ class OrganizationWorker:
                                   reason=guidance['reason'], evidence_quote=resolved_quote)
                 review += 1
                 continue
+            analysis = analyzed.get(f"{unit['task_id']}:{unit['digest']}",{})
+            if analysis.get('input_stamp') != reasoning.stamp(service,unit):
+                analysis.update(decision='uncertain',projects=[],reason='原文或关联需求已变化，请重新核对。')
+            unit['ownership_analysis'] = analysis
+            resolved_quote = analysis.get('evidence_quote') or resolved_quote
             hint = unit['project_hint'] if unit['project_hint'] in names else ''
             used = {}
             project, reason, decision = self._decide(service, unit, hint, policy, names, basis, used)
             inherited = decision == 'auto' and used.get('context') is True
             self._update_unit(service, task['id'], unit['digest'], project=project, decision=decision,
                               expected_revision=unit, reason=reason, evidence_quote=resolved_quote,
-                              context_basis=organization_context.unit_context(basis) if inherited else '')
+                              context_basis=organization_context.unit_context(basis) if inherited else '',
+                              knowledge_target={'projects':used.get('projects',[]),'knowledge_scope':used.get('knowledge_scope','project')},
+                              ownership_analysis=analysis)
             if inherited:
                 self._record_dependency(service, task['id'], unit['digest'], basis)
             if decision == 'auto':
@@ -1616,7 +1644,7 @@ class OrganizationWorker:
         if not basis:return
         with service.store.transaction():
             row=service.store._connection().execute('SELECT decision,project FROM organization_units WHERE task_id=? AND digest=?',(task_id,digest)).fetchone()
-            if row is None or row['decision']!='auto' or row['project']!=basis.get('project'):
+            if row is None or row['decision']!='auto':
                 return
             organization_context.record_dependency(service, task_id, digest, basis)
 
@@ -1631,97 +1659,26 @@ class OrganizationWorker:
         return ''
 
     def _decide(self, service, unit, hint, policy, names, basis=None, used=None):
-        """Program validation decides; the model hint alone is never the gate.
-
-        A validated same-session basis can carry a unit that names no project at
-        all, but only when the model explicitly judged this batch a continuation
-        and the current batch offers no decisive competing project evidence. A
-        name that only appears as a delegation to a tool -- by its registered id,
-        display name or alias ("交给 DSH 执行", "使用 Kimi 运行") -- is not a
-        project switch; a real switch ("修改 DSH 项目") always wins.
-
-        When the model names exactly the project the validated predecessor
-        established, the program accepts it even though this batch's own text
-        does not repeat the name: that is precisely the case a model reaches by
-        reading the supplied background.
-
-        ``used``, when a dict is passed, records whether the returned project
-        actually rests on that basis, so a dependency is never recorded for a
-        unit whose own text already names the project.
-        """
+        """Accept source-bound business reasoning; names/hints never decide."""
+        from evolvmem import ownership_reasoning as reasoning
         if used is not None:
             used['context'] = False
-        if not names:
-            return '', '没有已登记项目，先登记项目再整理', 'review'
-        raw_quote = str(unit.get('evidence_quote') or '')
-        # Only the kind/count of horizontal whitespace may differ from the real
-        # text; the located value is always the actual source substring.
-        evidence_quote = topic_segmentation.resolve_evidence_quote(unit.get('text', ''), raw_quote) or ''
-        if raw_quote and not evidence_quote:
-            return '', '模型引用的证据在原文中定位不到（只允许空白差异），需要人工核对', 'review'
-        _evaluated, decisive, tool_only = organization_context.project_candidates(
-            service, unit['text'], policy)
-        inherited = (unit.get('continues_context') in (1, True) and isinstance(basis, dict)
-                     and basis.get('state') == organization_context.STATE_READY
-                     and basis.get('project') in names)
-        tool_names = {name.casefold() for name in tool_only}
-        decisive_names = {name.casefold() for name in decisive}
-
-        def carried(project, reason):
+        analysis = reasoning.validated(unit, policy['revision'])
+        selected = analysis.get('projects', [])
+        if analysis.get('decision') != 'include' or (not selected and analysis.get('knowledge_scope')!='global') or any(p not in names for p in selected):
+            return '', analysis.get('reason') or '尚未核对需求和实际修改对象，不能仅凭项目名称归类。', 'review'
+        if analysis.get('uses_predecessor'):
+            if not basis or basis.get('state') != organization_context.STATE_READY:
+                return '', '关联的前文需求已变化，请重新核对归属。', 'review'
             if used is not None:
                 used['context'] = True
-            return project, reason, 'auto'
-
-        def by_text(reason):
-            """The batch's own decisive project evidence decides."""
-            if len(decisive) == 1:
-                return decisive[0], reason, 'auto'
-            if len(decisive) > 1:
-                return '', '正文点名多个项目，需要人工拆分', 'review'
-            return None
-
-        if not hint:
-            decided = by_text('正文只点名一个已登记项目，按规则自动归属')
-            if decided:
-                return decided
-            if inherited:
-                return carried(basis['project'], organization_context.reason_for(basis))
-            if tool_only:
-                return '', ('正文只把' + '、'.join(tool_only) +
-                            '当作工具提及，缺少业务项目依据，等待人工确认'), 'review'
-            return '', '正文没有明确项目线索，等待人工选择', 'review'
-        hinted = hint.casefold()
-        if hinted in tool_names:
-            # The hint only rests on a tool gesture ("交给 DSH 执行"). It is
-            # never a project switch, so any real project this batch names wins;
-            # otherwise the validated same-session project continues.
-            decided = by_text('正文点名一个已登记项目，工具提及不构成项目切换')
-            if decided:
-                return decided
-            if inherited:
-                return carried(basis['project'], organization_context.reason_for(basis))
-            return '', '模型建议只来自工具提及，缺少项目依据，等待人工确认', 'review'
-        if hinted in decisive_names:
-            competitors = [name for name in decisive if name.casefold() != hinted]
-            if len(competitors) > 1:
-                return '', '项目线索冲突，不能覆盖其他项目归属', 'review'
-            if not competitors:
-                return hint, '正文与已登记项目一致，按规则自动归属', 'auto'
-            if evidence_quote and evidence_quote in unit['text'] and competitors[0] in evidence_quote:
-                return competitors[0], '引用原话指向另一个已登记项目，按证据归属', 'auto'
-            return '', '这段同时提到' + '、'.join(competitors) + '与' + hint + '，需要人工拆分', 'review'
-        if inherited and hinted == str(basis['project']).casefold() and not decisive:
-            # The model named exactly the validated predecessor's project and the
-            # batch itself offers no competing decisive evidence: this is the
-            # continuation the background was supplied for.
-            return carried(basis['project'], organization_context.reason_for(basis))
-        decided = by_text('正文点名一个已登记项目，按规则自动归属')
-        if decided:
-            return decided
-        return '', '模型建议缺少正文项目证据，等待人工确认', 'review'
+        if used is not None:
+            used['projects'] = selected
+            used['knowledge_scope'] = analysis.get('knowledge_scope','project')
+        return (selected[0] if selected else ''), analysis['reason'], 'auto'
 
     def _update_unit(self, service, task_id, digest, *, project, decision, expected_revision=None,
-                     reason='', evidence_quote=None, context_basis=None, guidance_id=0, knowledge_target=None):
+                     reason='', evidence_quote=None, context_basis=None, guidance_id=0, knowledge_target=None, ownership_analysis=None):
         """CAS inside the transaction; a manual decision is never overwritten."""
         with service.store.transaction():
             conn = service.store._connection()
@@ -1733,6 +1690,11 @@ class OrganizationWorker:
                 return False
             if expected_revision is not None and _unit_revision(expected_revision) != _unit_revision(row):
                 raise ValueError('revision_conflict')
+            if decision=='auto' and ownership_analysis is not None:
+                from evolvmem.ownership_reasoning import stamp
+                if ownership_analysis.get('input_stamp') != stamp(service,dict(row)):
+                    project,decision,reason,context_basis,guidance_id,knowledge_target='', 'review','关联需求或原文已变化，请重新核对。','',0,{'project':''}
+                    ownership_analysis={**ownership_analysis,'decision':'uncertain','projects':[]}
             if decision=='auto' and (project or ks.assigned(knowledge_target or {})):
                 from evolvmem import organization_exclusions
                 blocked=organization_exclusions.active(service,dict(row),knowledge_target or {'project':project})
@@ -1746,6 +1708,9 @@ class OrganizationWorker:
                  str(row['context_basis'] if context_basis is None else context_basis),
                  guidance_id, json.dumps(ks.projects(knowledge_target) if knowledge_target is not None else ([project] if project else [])),
                  ks.scope(knowledge_target) if knowledge_target is not None else 'project', _now_iso(), task_id, digest))
+            if ownership_analysis is not None:
+                conn.execute('UPDATE organization_units SET ownership_analysis=? WHERE task_id=? AND digest=?',
+                             (json.dumps(ownership_analysis,ensure_ascii=False),task_id,digest))
             if context_basis == '':
                 # The unit no longer rests on a predecessor: drop the dependency
                 # so the reconciliation pass cannot report it as live.

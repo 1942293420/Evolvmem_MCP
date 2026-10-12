@@ -456,13 +456,13 @@ def _prior_project_verified(service, unit):
     """
     if unit.get('decision') == 'manual':
         return True
+    from evolvmem.ownership_reasoning import validated
+    analysis = validated(unit, service.knowledge().rules.read()['revision'])
+    if analysis.get('decision') != 'include' or analysis.get('projects') != [unit.get('project')]:
+        return False
     inherited = decode(unit.get('context_basis'))
-    if inherited:
-        # A predecessor that itself inherited must still be backed by a live
-        # basis; one nested level is enough to keep the chain honest.
-        return validate(service, inherited, depth=0)
-    _evaluated, decisive, _tool_only = project_candidates(service, unit.get('text', ''))
-    return [name.casefold() for name in decisive] == [str(unit['project']).casefold()]
+    return validate(service, inherited, depth=0) if inherited else True
+
 
 
 def build_basis(service, task):
@@ -626,7 +626,7 @@ def basis_prompt(basis, tail=''):
              % (basis['source_key'], basis['archive_id'], basis['start_line'],
                 basis['end_line'], str(basis.get('session_id') or '')[:8] + '…'),
              '- 已确认归属：%s（依据：%s）'
-             % (basis['project'], '人工归属' if basis.get('basis_source') == 'manual' else '正文明确点名'),
+             % (basis['project'], '人工归属' if basis.get('basis_source') == 'manual' else '需求与修改对象已核对'),
              '- 前文原话：「%s」' % str(basis.get('quote') or '')]
     if tail:
         lines.append('- 前文末尾：\n' + str(tail)[-TAIL_CHARS:])

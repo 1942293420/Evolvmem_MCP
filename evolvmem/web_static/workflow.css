@@ -91,3 +91,6 @@ body[data-design=signal] .ui-detail-section,body[data-design=signal] .ui-detail-
 .scope-options label span {min-width:0;overflow-wrap:anywhere}
 .scope-options input[type=checkbox] {width:18px;height:18px;flex:none;margin:0}
 .knowledge-scope-picker [data-scope-selected] {font-size:16px;line-height:1.6;margin:0;overflow-wrap:anywhere}
+
+.business-evidence { min-width: 0; overflow-wrap: anywhere; }
+.business-evidence blockquote { font-size: inherit; white-space: pre-wrap; }

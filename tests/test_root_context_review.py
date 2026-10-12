@@ -76,13 +76,13 @@ def test_tool_alias_is_not_project(service,monkeypatch):
     u=units(service,tb)[0];u.update(text='继续刚才的任务，我会使用 Kimi 执行修改。',evidence_quote='',continues_context=1)
     w=OrganizationWorker(service.config)
     result=w._decide(service,u,'',service.knowledge().rules.read(),{'demo','other','dsh','execution-hub'},basis)
-    assert result[0]=='demo' and result[2]=='auto',result
+    assert result[2]=='review', 'changed text must be analyzed again'
 
 def test_explicit_business_hint_ignores_execution_tool(service):
     from evolvmem.auto_organization import OrganizationWorker
     u={'text':'demo 项目要求保留编号，使用 DSH 执行修改。','evidence_quote':'demo 项目要求保留编号','continues_context':0}
     result=OrganizationWorker(service.config)._decide(service,u,'demo',service.knowledge().rules.read(),{'demo','other','dsh'},{})
-    assert result[0]=='demo' and result[2]=='auto',result
+    assert result[2]=='review', 'a model hint alone does not prove ownership'
 
 def test_tool_hint_cannot_override_explicit_project_switch(service,monkeypatch):
     from evolvmem.auto_organization import OrganizationWorker

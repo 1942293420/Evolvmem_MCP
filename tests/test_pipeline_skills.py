@@ -15,11 +15,14 @@ def save_stage(service, stage, **changes):
 def test_skill_catalog_and_attribution_settings_are_executable(service):
     assert [s['id'] for s in dispatch(service, 'GET', 'skills')['skills']] == ['ownership', 'cleaning', 'extraction']
     sample = {'body': 'evo 项目需要保留可追溯的历史记录。', 'source': '样例'}
-    assert service.knowledge().preview(sample)['project'] == 'evo'
+    initial = service.knowledge().preview(sample)
+    assert initial['project'] == '' and initial['action'] == 'review'
+    assert initial['candidates'] == ['evo']
     old = dispatch(service, 'GET', 'skills/ownership')
     saved = save_stage(service, 'ownership', instructions='正文只作参考；优先采用已经登记的归属。', settings={'project_alias_matching': False})
     assert saved['revision'] != old['revision']
     assert service.knowledge().preview(sample)['action'] == 'review'
+    assert service.knowledge().preview(sample)['candidates'] == []
     assert service.knowledge().preview({**sample, 'project':'evo'})['project'] == 'evo'
     with pytest.raises(ValueError, match='revision_conflict'):
         dispatch(service, 'POST', 'skills/ownership', {'expected_revision':old['revision'], 'instructions':'旧版本不可覆盖新版本。'})
@@ -155,10 +158,11 @@ def test_full_rules_save_and_framework_save_refresh_stage_exports(service):
 
 def test_ownership_verify_parks_sample_with_decision_reason(service):
     result = verify(service, 'ownership', {'body': 'evo 项目需要保留可追溯的历史记录。'})
-    assert result['created'] == 1 and result['decision']['project'] == 'evo'
+    assert result['created'] == 1 and result['decision']['project'] == ''
+    assert result['decision']['action'] == 'review' and result['decision']['candidates'] == ['evo']
     row = service.knowledge().detail(result['ids'][0])
     assert row['status'] == 'candidate' and row['project'] == ''
-    assert 'Skill 验证' in row['ingestion_reason'] and 'evo' in row['ingestion_reason']
+    assert 'Skill 验证' in row['ingestion_reason'] and '需核对需求' in row['ingestion_reason']
     assert 'skill-verify' in row['tags']
 
 

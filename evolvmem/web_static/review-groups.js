@@ -80,7 +80,7 @@
       const manuallyExcluded=p.excluded.filter(u=>u.reason_code==='manual_excluded');
       const unjudged=p.excluded.filter(u=>!['ai_uncertain','review_changed','ai_excluded','manual_excluded'].includes(u.reason_code));
       const judged=p.ai_judged_count??(p.eligible.length+rejected.length+p.excluded.filter(u=>u.reason_code==='ai_uncertain').length+(p.handled_count||0));
-      const rows=(items,manual=false)=>items.map(u=>`<li><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}<blockquote>${esc(u.evidence_quote||u.quote)}</blockquote>${manual?`<button type="button" data-rg="review-one" data-task="${u.task_id}" data-digest="${esc(u.digest)}">审核这条资料</button><div data-rg-manual-original hidden></div>`:`<button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div>`}${u.reason_code==='manual_excluded'?`<button type="button" data-rg="undo-exclude" data-task="${u.task_id}" data-digest="${esc(u.digest)}">撤销不归入</button>`:''}</li>`).join('');
+      const rows=(items,manual=false)=>items.map(u=>`<li><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}<blockquote>${esc(u.evidence_quote||u.quote)}</blockquote>${EvolvProjects.businessEvidence(u,projects,esc)}${manual?`<button type="button" data-rg="review-one" data-task="${u.task_id}" data-digest="${esc(u.digest)}">审核这条资料</button><div data-rg-manual-original hidden></div>`:`<button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div>`}${u.reason_code==='manual_excluded'?`<button type="button" data-rg="undo-exclude" data-task="${u.task_id}" data-digest="${esc(u.digest)}">撤销不归入</button>`:''}</li>`).join('');
       const section=(name,items,open=false,manual=false)=>items.length?`<details ${open?'open':''}><summary>${name} · ${items.length} 条</summary><ul>${rows(items,manual)}</ul></details>`:'';
       const stale=[...new Set(p.excluded.filter(u=>u.reason_code==='rule_changed').map(u=>u.source_key))];
       $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${p.selection==='all'?'全部待确认资料':p.selection==='group'?'左侧选中这组资料':'正在看的这一条'}：共 ${p.searched_count} 条${semantic?`，AI 已按业务依据判断 ${judged} 条`:''}。</p>
@@ -89,12 +89,12 @@
         ${stale.length?`<div class="review-recovery"><p>${stale.length} 份来源还需按最新规则整理。完成后会自动更新本次归类结果。</p><button type="button" class="write" data-rg="reprocess">按最新规则重新整理 ${Math.min(20,stale.length)} 份来源</button>${stale.length>20?'<p>其余来源留待下一批处理。</p>':''}</div>`:''}
         ${p.eligible.length?`<details open><summary>将归入的资料 · ${p.eligible.length} 条</summary><ul>${rows(p.eligible,semantic)}</ul></details>`:''}
         ${semantic?section('需要你判断',pending,true,true)+section('你已确认不归入当前范围',manuallyExcluded,true)+section('AI 判断不符合',rejected,false,true)+section('尚未进行归类判断',unjudged):section('本次未归入',p.excluded,true)}
-        ${semantic&&p.remaining?`<p>还有 ${p.remaining} 条可继续交给 AI 判断。</p><button type="button" data-rg="next-batch">继续判断下一批（最多 100 条）</button>`:''}
+        ${semantic&&p.remaining&&!p.needs_recheck?`<p>还有 ${p.remaining} 条可继续交给 AI 判断。</p><button type="button" data-rg="next-batch">继续判断下一批（最多 100 条）</button>`:''}
         ${semantic&&form.elements.continue_job_id.value?'<button type="button" data-rg="previous-batch">查看上一批结果</button>':''}`;
       $('[data-rg="apply"]').disabled=!p.eligible.length;
       $('[data-rg="apply"]').hidden=!p.eligible.length;
       $('[data-rg="apply"]').textContent=p.eligible.length?`确认归入「${target}」${p.eligible.length} 条`:'当前没有推荐归入的资料';
-      $('[data-rg-save-status]').textContent=p.eligible.length?'核对以上清单后即可保存。':pending.length?'本批没有 AI 推荐项。可在“需要你判断”中阅读全文并人工确认归入。':stale.length?'当前没有可保存的资料。重新整理完成后会自动更新结果。':rejected.length?'本批资料均被 AI 判断为不符合。可人工核对具体资料，或继续判断下一批。':'当前没有可保存的资料。请查看原因或调整归类依据。';
+      $('[data-rg-save-status]').textContent=p.eligible.length?'核对以上清单后即可保存。':pending.length?'本批没有 AI 推荐项。可在“需要你判断”中阅读全文，选择归入或不归入。':stale.length?'当前没有可保存的资料。重新整理完成后会自动更新结果。':rejected.length?'本批资料均被 AI 判断为不符合。可人工核对具体资料，或继续判断下一批。':'当前没有可保存的资料。请查看原因或调整归类依据。';
       if(!pendingTasks.length&&$('[data-rg-reprocess-status]').textContent.includes('自动更新'))$('[data-rg-reprocess-status]').textContent='重新整理完成，归类结果已更新。';
     }
     async function checkAnalysis(){

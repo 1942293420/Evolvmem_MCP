@@ -121,11 +121,37 @@ class UnitProvider:
 
     def classify(self, prompt):
         rows=json.loads(prompt.split('待判断资料：',1)[1])
+        target=json.loads(prompt.split('目标范围：',1)[1].split('归类依据：',1)[0])
+        registry=json.loads(prompt.split('已登记项目：',1)[1].split('项目归属说明：',1)[0])
         exceptions=prompt.split('不适用情况：',1)[1].split('待判断资料：',1)[0]
-        return json.dumps({'items':[{'id':r['id'],
-            'decision':'exclude' if ('跨平台条件' in r['text'] and '跨平台条件' in exceptions) or ('其他平台' in r['text'] and '其他平台' in exceptions) else 'include',
-            'reason':('模拟核对：原文要求跨平台条件另行核对，符合不适用情况。' if '跨平台条件' in r['text'] else '模拟核对：原文规定导出编号的保真要求，符合业务依据。'),
-            'quote':r['text']} for r in rows]},ensure_ascii=False)
+        out=[]
+        for r in rows:
+            excluded=any(t in r['text'] and t in exceptions for t in ('跨平台条件','其他平台'))
+            context=r.get('context',{}).get('predecessor',{})
+            continued=False
+            if target is not None:
+                selected=target.get('projects') or ([target['project']] if target.get('project') else [])
+            else:
+                selected=[]
+                for p in registry:
+                    names=[p['project'],p.get('display_name') or '',*(p.get('aliases') or [])]
+                    if any(n and re.search(r'(?<![a-z0-9_-])'+re.escape(n)+r'(?![a-z0-9_-])',r['text'],re.I) for n in names):
+                        if not any((re.search(r'(?:使用|交给|用|让)\s*'+re.escape(n),r['text'],re.I)) for n in names if n):
+                            selected.append(p['project'])
+                marker=next((x for x in self.topics if x[0] in r['text']),None)
+                if not selected and context and marker and len(marker)>3 and marker[3] is True:
+                    selected=[context['basis']['project']];continued=True
+                if not selected and r.get('context',{}).get('same_source') and '继续细化' in r['text']:
+                    before=r['context']['same_source']['before']
+                    selected=[p['project'] for p in registry if re.search(r'(?<![a-z0-9_-])'+re.escape(p['project'])+r'(?![a-z0-9_-])',before,re.I)]
+                if len(selected)>1:selected=[]
+            out.append({'id':r['id'],'decision':'exclude' if excluded else 'include' if selected or target and target.get('knowledge_scope')=='global' else 'uncertain',
+                'reason':'模拟核对：按本条要求与业务对象判断适用范围；不明确的由人工核对。', 'quote':r['text'][:1000],
+                'chain':{'need':r['text'][:1000]},'continues_context':continued,
+                'knowledge_scope':target.get('knowledge_scope','project') if target else 'project',
+                'general_quote':r['text'][:1000] if target and target.get('knowledge_scope')=='global' else '',
+                'targets':[{'project':p,'role':'applicable' if target is not None and len(selected)>1 else 'owner','quote':context['basis']['quote'] if continued else r['text'][:1000]} for p in selected]})
+        return json.dumps({'items':out},ensure_ascii=False)
 
     def __call__(self, prompt, *args, **kwargs):
         self.calls.append(prompt)

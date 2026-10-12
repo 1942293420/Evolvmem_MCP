@@ -656,6 +656,7 @@ class ContextStore:
             "context_basis": "TEXT NOT NULL DEFAULT ''",
         }
         additions["organization_units"] = {
+            "ownership_analysis": "TEXT NOT NULL DEFAULT '{}'",
             "projects": "TEXT NOT NULL DEFAULT '[]'",
             "knowledge_scope": "TEXT NOT NULL DEFAULT 'project'",
             "applied_guidance_id": "INTEGER NOT NULL DEFAULT 0",

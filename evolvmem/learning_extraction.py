@@ -254,9 +254,14 @@ def plan(service, item, messages, *, policy=None):
             return {'action': 'skip', 'status': row['status'], 'reason': '已有同范围相同内容，保留现有版本',
                     'target_id': row['id'], 'relation': relation, 'process': process,
                     'rule_revision': policy['revision'], 'body': item.value}
+        if row['body'] == item.value and row['learning'].get('trigger','') != data.get('trigger',''):
+            previous_qa=service.store._connection().execute('SELECT status FROM knowledge_qa WHERE item_id=?',(row['id'],)).fetchone()
+            from evolvmem import qa_memory
+            if previous_qa and qa_memory.detail(service,row['id'])['status']=='stale':
+                blocked_reuse='原资料的适用条件已变化，重新提炼不能自动恢复旧条件。'
         if row['identity_key'].split(':learn:')[0] == key and row['status'] == 'active':
             same_key.append(row)
-    reason = None
+    reason = blocked_reuse or None
     target_ok = target and target['project'] == project and target['scope'] == scope and service.learning().usable(target)
     if action not in ('add', 'supplement', 'replace', 'skip'):
         reason = '提炼动作不明确'

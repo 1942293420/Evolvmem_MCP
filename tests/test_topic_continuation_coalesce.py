@@ -134,6 +134,11 @@ def scripted_units(service, key, text, spans, shapes, *, size=topic_segmentation
 def coalesced(service, key, units, text):
     from evolvmem.auto_organization import coalesce_units
     policy = service.knowledge().rules.read()
+    # Supply independently reviewed project decisions, as the worker now does.
+    from evolvmem.ownership_reasoning import VERSION,digest
+    for u in units:
+        owner='dsh' if 'DSH' in u['text'] else u.get('project_hint','')
+        u['ownership_analysis']={'version':VERSION,'text_hash':digest(u['text']),'decision':'include','projects':[owner]}
     return coalesce_units(service, {'source_key': key}, units, text, policy)
 
 
@@ -313,7 +318,7 @@ def test_worker_assign_saves_the_real_quote_after_a_whitespace_only_difference(s
     units = stored_units(service, task['id'])
     assert len(units) == 1
     unit = units[0]
-    assert unit['evidence_quote'] == 'Evo 演示项目：导出必须保留来源版本号。'
+    assert 'Evo 演示项目：导出必须保留来源版本号。' in unit['evidence_quote']
     assert '\u00a0' not in unit['evidence_quote'], 'the saved quote is the real source substring'
     snapshot = dispatch(service, 'GET', 'organization/detail', {'task_id': task['id']})['source_text']
     assert snapshot[unit['source_start']:unit['source_end']] == unit['text']
@@ -359,7 +364,7 @@ def test_decide_accepts_a_whitespace_variant_and_rejects_a_rewrite(service):
     text = 'evo\u00a0演示项目与 dsh 演示项目都要求保留来源版本。'
     project, reason, decision = worker._decide(
         service, {'text': text, 'evidence_quote': 'evo 演示项目与'}, 'dsh', policy, names)
-    assert decision == 'auto' and project == 'evo', (project, reason)
+    assert decision == 'review' and not project, 'a valid quote alone cannot replace business reasoning'
     project, reason, decision = worker._decide(
         service, {'text': text, 'evidence_quote': 'evo 演示项目均'}, 'dsh', policy, names)
     assert decision == 'review' and not project

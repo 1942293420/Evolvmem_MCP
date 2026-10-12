@@ -100,8 +100,8 @@ def test_semantic_preview_requires_reasons_and_real_quotes(service, monkeypatch)
     def model(prompt, *_a, **_k):
         import json
         return json.dumps({'items':[
-            {'id':0,'decision':'include','reason':'这段规定了导出数据的保真要求。','quote':units[0]['text']},
-            {'id':1,'decision':'exclude','reason':'资料明确要求另作判断。','quote':'其他平台需要单独判断。'},
+            {'id':0,'decision':'include','reason':'这段规定了导出数据的保真要求。','quote':units[0]['text'],'chain':{'need':units[0]['text']},'targets':[{'project':p,'role':'applicable','quote':units[0]['text']} for p in ('evo','dsh')]},
+            {'id':1,'decision':'exclude','reason':'资料明确要求另作判断。','quote':'其他平台需要单独判断。','chain':{'need':'其他平台需要单独判断。'},'targets':[]},
             {'id':2,'decision':'include','reason':'虽然包含同样词语但引用无法定位。','quote':'不存在的原话'}]})
     monkeypatch.setattr('evolvmem.auto_organization._load_llm',lambda:(None,model))
     request={'group_id':org(service, '/groups')['items'][0]['id'],'selection':'group',

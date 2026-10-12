@@ -104,7 +104,7 @@ def test_edit_legacy_record_updates_projection_and_fts(service):
 def test_rule_save_changes_future_decisions_and_is_read_back(service):
     kb = manager(service)
     policy = kb.rules.read()
-    sample = {'title': 'EVA 退款规则', 'body': 'EVA 客服退款前核对原始订单和金额。', 'confidence': .9, 'source': '测试来源'}
+    sample = {'project':'eva','title': 'EVA 退款规则', 'body': 'EVA 客服退款前核对原始订单和金额。', 'confidence': .9, 'source': '测试来源'}
     assert kb.preview(sample)['action'] == 'auto'
     settings = {**policy['settings'], 'auto_min_confidence': .95}
     saved = kb.rules.save({'expected_revision': policy['revision'], 'settings': settings, 'instructions': '核对来源；退款金额资料需要明确支付依据。'})
@@ -115,10 +115,11 @@ def test_rule_save_changes_future_decisions_and_is_read_back(service):
         kb.rules.save({'expected_revision': policy['revision'], 'settings': settings})
 
 
-def test_unique_project_text_resolves_and_conflicting_text_waits(service):
+def test_project_names_are_candidates_until_business_ownership_is_known(service):
     kb = manager(service)
     clear = kb.preview({'title': 'EVA 客服', 'body': 'EVA 客服的订单退款规则已经确认。', 'confidence': .95, 'source': '用户会话'})
-    assert (clear['project'], clear['action']) == ('eva', 'auto')
+    assert (clear['project'], clear['action']) == ('', 'review')
+    assert clear['candidates']==['eva']
     conflict = kb.preview({'title': '系统对比', 'body': 'EVA 与 EvolvMem 两个项目的配置比较。', 'confidence': .99, 'source': '用户会话'})
     assert conflict['action'] == 'review'
     assert conflict['project'] == ''
@@ -135,14 +136,14 @@ def test_skill_edit_is_persisted_and_used_as_ingestion_prompt(service):
         kb.rules.save({'expected_revision': saved['revision'], 'skill': '无格式的内容'})
 
 
-def test_organize_clear_records_applies_but_leaves_difficult_ones(service):
+def test_intake_name_clues_wait_for_business_analysis(service):
     kb = manager(service)
     clear = kb.create({'title': 'EVA 运费说明', 'body': 'EVA 客服运费需要根据订单所在地区确定。', 'source': '用户说明', 'confidence': .95})
     unclear = kb.create({'title': '待整理资料', 'body': '后续需要核对这个模块实际采用的工作流程。', 'source': '用户说明'})
     result = kb.organize({'ids': [clear['id'], unclear['id']], 'apply': True})
-    assert result['applied'] == 1
-    assert kb.detail(clear['id'])['project'] == 'eva'
-    assert kb.detail(clear['id'])['status'] == 'active'
+    assert result['applied'] == 0
+    assert kb.detail(clear['id'])['project'] == ''
+    assert kb.detail(clear['id'])['status'] == 'candidate'
     assert kb.detail(unclear['id'])['status'] == 'candidate'
 
 
@@ -158,7 +159,7 @@ def test_saved_rules_apply_to_real_extraction_writes(service):
         candidates=(extracted('misc:unknown', '这个模块需要进一步确认业务规则与适用范围。'),),
         source_session='synthetic-session', max_writes=8))
     summary = kb.detail(result.summary.context_id)
-    assert (summary['project'], summary['status']) == ('eva', 'active')
+    assert (summary['project'], summary['status']) == ('', 'candidate'), 'an old invalid key plus a name mention does not establish ownership'
     uncertain = kb.detail(result.candidates[0].context_id)
     assert uncertain['status'] == 'candidate'
     assert service.legacy_facade().get_by_id(result.candidates[0].legacy_id)['status'] == 'candidate'
@@ -271,7 +272,8 @@ def test_runtime_paths_and_generic_project_labels_are_not_business_ownership(ser
     sample['body']='讨论审批表单设计，核对角色权限与资料来源。'
     assert kb.preview(sample)['action']=='review'
     sample['body']='Hermes 项目的会话资料需要核对来源和项目名称。'
-    assert kb.preview(sample)['project']=='hermes'
+    assert kb.preview(sample)['project']==''
+    assert kb.preview(sample)['candidates']==['hermes']
     sample['body']='采购规则的运行目录为 .hermes，实际业务归属仍需核对。'
     assert kb.preview(sample)['action']=='review'
     sample['body']='续接飞书审批项目，另回答了 EVA 客服版本更新内容。'
@@ -287,7 +289,7 @@ def test_organize_duplicate_target_stays_pending_and_other_records_continue(serv
         service.store._connection().execute("INSERT INTO context_sources(item_id,source_kind,source_ref,extraction_version,created_at) VALUES(?,'manual','old-source','test','2026-01-01')",(duplicate.id,))
     clear=kb.create({'title':'EVA 物流约定','body':'EVA 客服发货时应核对收货地址与运费。'})
     result=kb.organize({'ids':[duplicate.id,clear['id']],'apply':True})
-    assert result['applied']==1 and result['pending']==1
+    assert result['applied']==0 and result['pending']==2
     assert kb.detail(duplicate.id)['project']==''
-    assert kb.detail(clear['id'])['project']=='eva'
+    assert kb.detail(clear['id'])['project']==''
     assert result['items'][0]['action']=='review'

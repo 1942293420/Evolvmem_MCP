@@ -399,9 +399,9 @@ def test_segmentation_prompt_merges_one_tasks_advice_and_keeps_a_real_switch():
     # Ownership inside one batch is never inherited or inferred: only a directly
     # named project counts, and the only allowed cross-batch source is the
     # explicitly supplied same-session background.
-    assert '绝不能把同一批次内上一单元的项目顺势继承' in rendered
+    assert '不把其他任务成果搬入本条' in rendered
     assert '也不得推断正文与前文都没有出现过的项目' in rendered
-    assert 'project_hint（仅当正文直接点名' in rendered
+    assert 'project_hint（按实际需求或修改对象' in rendered
     # The existing validation rules stay exact.
     assert '不重叠、不遗漏、不跳号' in rendered
     assert '逐字' in rendered and 'review' in rendered

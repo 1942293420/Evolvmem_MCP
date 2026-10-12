@@ -136,6 +136,8 @@ def test_project_correction_during_delayed_extraction_invalidates_the_result(ser
     def slow_provider(prompt, *args, **kwargs):
         if '整理分段助手' in prompt:
             return base.segment(prompt)
+        if '你是业务资料归类核对员' in prompt:
+            return base.classify(prompt)
         base.extract_calls.append(prompt)
         # The operator corrects the unit while the provider is still answering.
         row = conn.execute("SELECT digest FROM organization_units WHERE project='dsh' LIMIT 1").fetchone()

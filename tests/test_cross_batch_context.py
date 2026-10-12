@@ -208,8 +208,8 @@ def test_continuation_batch_inherits_the_project_with_full_evidence(
     assert any(CONTEXT_MARKER in prompt for prompt in provider.calls)
     unit_b = units(service, task_b)[0]
     assert (unit_b['project'], unit_b['decision']) == ('demo', 'auto'), unit_b['reason']
-    assert '沿用同会话前文' in unit_b['reason']
-    assert f'archive:{first}' in unit_b['reason'], 'the reason must name the predecessor'
+    assert unit_b['business_analysis']['uses_predecessor'] is True
+    assert unit_b['context']['source_key']==f'archive:{first}', 'the evidence must identify the predecessor'
     basis = unit_b['context']
     assert basis['source_key'] == f'archive:{first}'
     assert basis['archive_id'] == first
@@ -289,7 +289,7 @@ def test_a_batch_naming_its_own_project_records_no_context_dependency(
     # predecessor's, so it must not become a dependency that a later edit of the
     # predecessor could drag back to review.
     assert (unit_b['project'], unit_b['decision']) == ('demo', 'auto')
-    assert '正文只点名一个已登记项目' in unit_b['reason'], unit_b['reason']
+    assert unit_b['business_analysis']['uses_predecessor'] is False
     assert unit_b['context_basis'] == ''
     assert context.dependency_rows(service, task_b) == []
     assert context.invalidate_dependents(service, limit=20)['invalidated'] == 0
@@ -543,6 +543,8 @@ def test_a_pure_model_hint_and_a_string_true_never_inherit(
                      'project_hint': 'demo', 'evidence_quote': '继续补充：批量删除还要支持撤销。',
                      'disposition': 'keep', 'disposition_reason': '',
                      'continues_context': 'true'}]}, ensure_ascii=False)
+            if '你是业务资料归类核对员' in prompt:
+                return json.dumps({'items':[{'id':0,'decision':'include','reason':'模拟坏响应','quote':'继续补充：批量删除还要支持撤销。','chain':{},'targets':[], 'continues_context':'true'}]},ensure_ascii=False)
             raise AssertionError('unexpected prompt')
 
     task_b = enqueue(service, ids[0])
@@ -551,7 +553,7 @@ def test_a_pure_model_hint_and_a_string_true_never_inherit(
     assert unit_b['context_basis'] == '', 'a string "true" must never enable inheritance'
     # The model hint alone is refused because the text names no project.
     assert unit_b['decision'] == 'review', unit_b['reason']
-    assert '正文项目证据' in unit_b['reason'] or '工具提及' in unit_b['reason'], unit_b['reason']
+    assert '原文核对' in unit_b['reason'], unit_b['reason']
     parsed = segmentation._parse(json.dumps({'units': [
         {'title': 't', 'continues_context': 'true', 'start_id': 1, 'end_id': 1}]}))
     assert parsed[0]['continues_context'] is False
@@ -659,7 +661,7 @@ def test_a_tool_mention_never_moves_an_explicit_business_project(
     run_worker(service, monkeypatch, provider)
     unit_b = units(service, task_b)[0]
     assert unit_b['project'] == 'demo', 'a delegation to a tool is not a project switch'
-    assert '沿用同会话前文' in unit_b['reason']
+    assert unit_b['business_analysis']['uses_predecessor'] is True
     assert unit_b['context']['archive_id'] == ids[0]
     assert context.mention_kind('这批整理交给 DSH 执行。', 'dsh') == 'tool_only'
 
@@ -1149,7 +1151,7 @@ def test_an_assistant_progress_report_continues_the_business_project(
     run_worker(service, monkeypatch, provider)
     unit_b = units(service, task_b)[0]
     assert (unit_b['project'], unit_b['decision']) == ('demo', 'auto'), unit_b['reason']
-    assert '沿用同会话前文' in unit_b['reason']
+    assert unit_b['business_analysis']['uses_predecessor'] is True
     assert unit_b['context']['archive_id'] == first
     assert context.validate(service, unit_b['context']) is True
     # The knowledge it produced is still only a candidate, never a verified claim.
@@ -1218,8 +1220,7 @@ def test_a_tool_only_hint_never_conflicts_with_the_batchs_real_project(service):
     """The decided hint branch must reuse the tool/business split, not the raw set."""
     unit = {'text': 'demo 项目要求保留编号，使用 DSH 执行修改。',
             'evidence_quote': 'demo 项目要求保留编号', 'continues_context': 0}
-    assert _decide(service, unit, 'demo') == (
-        'demo', '正文与已登记项目一致，按规则自动归属', 'auto')
+    assert _decide(service, unit, 'demo')[2] == 'review', 'a name/hint alone is no longer a business verdict'
 
 
 def test_a_tool_only_hint_never_overrides_a_real_project_switch(service, config, tmp_path, monkeypatch):
@@ -1231,7 +1232,7 @@ def test_a_tool_only_hint_never_overrides_a_real_project_switch(service, config,
     basis = unit['context']
     result = _decide(service, unit, 'dsh', basis)
     assert result[0] != 'demo', result
-    assert result[0] == 'other' and result[2] == 'auto', result
+    assert result[2] == 'review', 'changed text must invalidate its stored business verdict'
 
 
 def test_two_real_project_candidates_still_conflict_with_a_hint(service):
@@ -1240,7 +1241,7 @@ def test_two_real_project_candidates_still_conflict_with_a_hint(service):
             'continues_context': 0}
     result = _decide(service, unit, 'demo')
     assert result[2] == 'review', result
-    assert '人工拆分' in result[1] or '冲突' in result[1], result
+    assert '不能仅凭项目名称' in result[1], result
 
 
 def test_a_business_project_plus_a_tool_mention_can_supply_the_next_context(

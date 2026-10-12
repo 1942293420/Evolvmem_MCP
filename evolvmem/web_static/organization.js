@@ -127,6 +127,7 @@
    ${unit.diagnostic_text?`<details><summary>查看失败详情</summary><p class="error">${esc(unit.diagnostic_text)}</p></details>`:''}
    <details class="optional-check"><summary>抽检反馈（可选）</summary><div class="actions"><span>整理判断${unit.feedback?` · 已标记${unit.feedback==='correct'?'正确':'有误'}`:''}</span><button data-org-action="feedback" data-verdict="correct" data-key="${key}" data-revision="${esc(unit.revision)}">判断正确</button><button data-org-action="feedback" data-verdict="incorrect" data-key="${key}" data-revision="${esc(unit.revision)}">判断有误</button></div></details>
    ${ctx?`<p class="organization-reason organization-context">前文已确认项目：${esc(name(ctx.project))}，原话「${esc(ctx.quote||'')}」</p>`:''}
+   ${EvolvProjects.businessEvidence(unit.decision==='manual'?null:unit.business_analysis,projects,esc)}
    <span class="review-example-label">关键原话</span><blockquote class="organization-quote">${esc(unit.evidence_quote||unit.text.slice(0,120))}</blockquote>
    <details><summary>查看原文片段（${unit.source_end-unit.source_start} 字）</summary><pre class="organization-text">${esc(unit.text)}</pre></details>
    <details class="unit-decision" ${unit.decision==='review'||unit.disposition==='review'?'open':''}><summary>${unit.decision==='review'||unit.disposition==='review'?'你的决定':'修改整理结果'}</summary><div class="organization-correct">

@@ -14,7 +14,7 @@ def test_metrics_define_unassessed_and_count_current_review_groups(service,monke
 
 
 def test_only_actual_guidance_assignment_counts_and_manual_decision_is_separate(service,monkeypatch):
-    organization_guidance.record(service,guidance='导出行归 Evo',scope='future',project='evo',condition='导出行')
+    organization_guidance.record(service,guidance='导出行归 Evo',scope='future',project='evo',condition='导出行',matching_mode='semantic')
     tid,_=group_source(service,monkeypatch)
     assert org(service,'/metrics')['guidance_reused_units']==12
     assert org(service,'/metrics')['automatic_completed']==1

@@ -38,3 +38,12 @@ EvolvProjects.scopePicker=({mount,projects,esc,value={}})=>{
   box.querySelector('[data-scope-search]').addEventListener('input',e=>{const q=e.target.value.toLocaleLowerCase();inputs().forEach(x=>x.closest('label').hidden=!(x.value+' '+x.closest('label').textContent).toLocaleLowerCase().includes(q));});
   set(value);return {read,set,draw};
 };
+
+EvolvProjects.businessEvidence=(analysis,projects,esc)=>{
+  if(!analysis||!Object.keys(analysis.chain||{}).length)return '';
+  const stages={need:'需求目标',analysis:'问题分析',change:'修改或设计对象',result:'验收或当前结果'};
+  const roles={owner:'直接负责的项目',applicable:'知识适用项目',related:'关联场景或依赖',uncertain:'尚待确定'};
+  const rows=Object.entries(stages).filter(([key])=>analysis.chain[key]).map(([key,label])=>`<div><strong>${label}${analysis.chain_sources?.[key]?` · ${esc(analysis.chain_sources[key])}`:''}</strong><blockquote>${esc(analysis.chain[key])}</blockquote></div>`).join('');
+  const targets=(analysis.targets||[]).map(t=>`<p>${esc(projects.find(p=>p.project===t.project)?.display_name||t.project)}：${esc(roles[t.role]||'尚待确定')}</p>`).join('');
+  return `<details class="business-evidence"><summary>查看归类依据</summary>${targets?`<div>${targets}</div>`:''}${rows}</details>`;
+};

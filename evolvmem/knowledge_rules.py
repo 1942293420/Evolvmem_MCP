@@ -17,7 +17,7 @@ goal/decision/correction 来自用户；understanding 来自助手；verificatio
 双类记忆：历史只生成 SESSION_SUMMARY，正文由系统清洗保存。原子知识以 learning.question / learning.answer 表达，answer 与 value 一致；一个问题一条短答案，分类与适用条件独立保留。明确无冲突自动入库，推断或不同答案待确认。'''
 
 DEFAULT_SETTINGS = {
-    'ownership_instructions': '先核对用户确认的项目、目录绑定、项目名称与别名。项目目录可与项目名不同；通用目录、多个项目或线索冲突不得硬猜，留待确认。',
+    'ownership_instructions': '沿需求、分析、修改或设计对象与当前结果核对归属；名称、别名和目录只提供线索。区分实际负责的项目、同一知识的适用项目与调用或验收场景。不同项目各自的修改分开整理；共同适用可共享一条知识。缺少阶段不补造，依据不明留待确认，尊重人工决定。',
     'cleaning_instructions': '保留用户与助手的真实对话，去除工具记录与系统注入。将口语整理为明确的需求表达，保留范围、否定、条件与纠正；不替用户补造功能、原因或验收要求。原话不改写，整理后的需求独立保存并引用用户原话。疑问和多种可能理解写入待确认问题。',
     'project_alias_matching': True,
     'cleaning_drop_lines': [],
@@ -45,10 +45,10 @@ DEFAULT_INSTRUCTIONS = """# 知识库入库与整理
 - 旧资料没有可靠问答结构时显示“待整理”，保留原资料；不截断条件、不编造结论、不将所有旧资料自动确认为经验。
 
 ## 项目归属
-- 从资料正文、来源会话、项目名称和别名核对业务项目。
+- 沿资料及同一任务前文的需求、分析、修改或设计对象与当前结果核对业务项目；名称和别名只提供候选线索。
 - 主目录名、运行程序目录不代表业务项目；不要将 jiangli、home、general 当作项目。
 - 路径中的程序目录和“设计、测试、平台”等通用词不独立构成业务归属；不确定时待确认。
-- 优先尊重用户已确认的归属。资料同时涉及多个项目、线索冲突或仅有含糊指代时进入待确认。
+- 优先尊重用户已确认的归属。调用方、依赖、验收样例及间接受益方只作为关联；各有不同修改的项目分别整理，同一知识明确共同适用时可多项目共享。线索冲突或含糊指代进入待确认。
 - 知识 key 使用 project:<已登记项目>:<领域>:<主题>；全局用户偏好用 user: 前缀。
 
 ## 入库逻辑
@@ -92,7 +92,7 @@ DEFAULT_INSTRUCTIONS = """# 知识库入库与整理
 PIPELINE_GUIDE = """## 分环节处理 Skill
 - 主界面 Skill 规则提供项目归属、数据清洗与需求表达、摘要问答提炼、入库判断、协作学习五项编辑器；先读取当前环节再处理资料。
 - CLI/Web 共用 GET skills 和 GET skills/ID；ID 为 ownership、cleaning、extraction、ingestion、collaboration。POST skills/ID 带 expected_revision、instructions 和本环节 settings；版本冲突先重读。
-- 自然语言说明供 AI 归属、清洗表达和提炼参考；名称匹配、噪声提示行、重复合并和入库阈值由程序执行。不能仅修改说明就宣称已改变固定算法。
+- 自然语言说明供 AI 归属、清洗表达和提炼参考；程序核对原文依据、来源版本、人工决定及入库条件，名称匹配只发现候选。不能仅修改说明就宣称已改变固定算法。
 - 历史正文保留清洗后的真实对话；口语整理为需求时独立保存 learning.normalization={requirement, acceptance, questions}。需求与答案一致，quote 引用用户原话；验收要求必须逐字有据，问题未明确则待确认，不能补造范围或长期习惯。
 - 本地去噪试运行 POST skills/cleaning/preview 不调用模型；POST extraction/preview 才将明确选中的样例发送给配置模型。保存影响后续处理，历史资料不静默改写。
 - 项目摘要在项目历史查看，任务断点只负责进度与续接；经验知识共用项目登记，创建项目不构成新增记忆或验证成功。
@@ -243,7 +243,9 @@ class KnowledgeRules:
         elif key_project in canonical:
             matches.add(key_project)
         global_scope = sample.get('scope') == 'global' or key.startswith('user:')
-        project = '' if global_scope or len(matches) != 1 else next(iter(matches))
+        # Names/key prefixes are candidate discovery only; the caller must supply
+        # a human-selected or business-validated scope.
+        project = explicit if not global_scope and explicit in canonical else ''
         settings = {**policy['settings'], **policy['settings']['project_overrides'].get(project, {})}
         confidence = sample.get('confidence', .9)
         if type(confidence) not in (float, int) or not 0 <= confidence <= 1:
@@ -256,12 +258,12 @@ class KnowledgeRules:
             action, reason = 'ignore', '匹配忽略关键词'
         elif not settings['min_chars'] <= len(str(sample.get('body', ''))) <= settings['max_chars']:
             action, reason = 'review', '内容长度不符合入库条件'
-        elif any(marker in text for marker in ('另回答', '另讨论', '跨项目', '多个项目', '同时涉及')):
+        elif not project and any(marker in text for marker in ('另回答', '另讨论', '跨项目', '多个项目', '同时涉及')):
             action, reason = 'review', '资料包含多个话题或项目，需要拆分或确认'
-        elif not global_scope and len(matches) > 1:
+        elif not global_scope and not project and len(matches) > 1:
             action, reason = 'review', '存在多个项目线索，需要确认归属'
         elif not global_scope and not project:
-            action, reason = 'review', '缺少明确的业务项目线索'
+            action, reason = 'review', '需核对需求与实际讨论对象，项目名称只作为候选线索'
         elif settings['require_source'] and not sample.get('source'):
             action, reason = 'review', '缺少可核对的来源'
         elif confidence < settings['auto_min_confidence']:
