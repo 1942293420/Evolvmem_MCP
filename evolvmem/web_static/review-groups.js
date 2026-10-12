@@ -5,7 +5,7 @@
     const drafts=new Map(), sourceCache=new Map(), analyses=new Map(), manualPreviews=new Map();let analysisTimer=null;
     const $=s=>mount.querySelector(s);
     const projectName=p=>projects.find(x=>x.project===p)?.display_name||p;
-    const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
+    const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
     mount.innerHTML=`<section class="review-groups"><div class="section-head"><h2>待你确认的资料</h2><button data-rg="refresh">刷新资料</button></div><p data-rg-status role="status"></p><div class="review-workspace"><div class="review-list-column"><h3>1. 选择要审核的资料</h3><p data-rg-total></p><div data-rg-list></div><div class="actions"><button data-rg="previous">上一页</button><span data-rg-page></span><button data-rg="next">下一页</button></div></div>
     <div class="review-editor"><div data-rg-empty><h3>点击左侧资料，在这里核对原文和归属</h3></div><form data-rg-form hidden>
       <h3>2. 核对原文</h3><h4 data-rg-title></h4><p data-rg-source-label></p>
@@ -77,17 +77,18 @@
       const p=proposal, target=EvolvProjects.scopeLabel(p,projects), semantic=p.matching_mode==='semantic';
       const pending=p.excluded.filter(u=>['ai_uncertain','review_changed'].includes(u.reason_code));
       const rejected=p.excluded.filter(u=>u.reason_code==='ai_excluded');
-      const unjudged=p.excluded.filter(u=>!['ai_uncertain','review_changed','ai_excluded'].includes(u.reason_code));
-      const judged=p.eligible.length+rejected.length+p.excluded.filter(u=>u.reason_code==='ai_uncertain').length+(p.handled_count||0);
-      const rows=(items,manual=false)=>items.map(u=>`<li><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}<blockquote>${esc(u.evidence_quote||u.quote)}</blockquote>${manual?`<button type="button" data-rg="review-one" data-task="${u.task_id}" data-digest="${esc(u.digest)}">查看原文并人工确认</button><div data-rg-manual-original hidden></div>`:`<button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div>`}</li>`).join('');
+      const manuallyExcluded=p.excluded.filter(u=>u.reason_code==='manual_excluded');
+      const unjudged=p.excluded.filter(u=>!['ai_uncertain','review_changed','ai_excluded','manual_excluded'].includes(u.reason_code));
+      const judged=p.ai_judged_count??(p.eligible.length+rejected.length+p.excluded.filter(u=>u.reason_code==='ai_uncertain').length+(p.handled_count||0));
+      const rows=(items,manual=false)=>items.map(u=>`<li><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}<blockquote>${esc(u.evidence_quote||u.quote)}</blockquote>${manual?`<button type="button" data-rg="review-one" data-task="${u.task_id}" data-digest="${esc(u.digest)}">审核这条资料</button><div data-rg-manual-original hidden></div>`:`<button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div>`}${u.reason_code==='manual_excluded'?`<button type="button" data-rg="undo-exclude" data-task="${u.task_id}" data-digest="${esc(u.digest)}">撤销不归入</button>`:''}</li>`).join('');
       const section=(name,items,open=false,manual=false)=>items.length?`<details ${open?'open':''}><summary>${name} · ${items.length} 条</summary><ul>${rows(items,manual)}</ul></details>`:'';
       const stale=[...new Set(p.excluded.filter(u=>u.reason_code==='rule_changed').map(u=>u.source_key))];
       $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${p.selection==='all'?'全部待确认资料':p.selection==='group'?'左侧选中这组资料':'正在看的这一条'}：共 ${p.searched_count} 条${semantic?`，AI 已按业务依据判断 ${judged} 条`:''}。</p>
-        ${semantic?`<p>判断依据：${esc(p.condition)}</p><p>AI 判断不符合：${rejected.length} 条；需要你判断：${pending.length} 条${p.handled_count?`；已人工处理：${p.handled_count} 条`:''}</p>`:''}<div class="review-counts"><strong>${semantic?'AI 建议归入':'本次归入'}「${esc(target)}」：${p.eligible.length} 条</strong><strong>本次不归入：${semantic?rejected.length+pending.length:p.excluded.length} 条</strong></div>
+        ${semantic?`<p>判断依据：${esc(p.condition)}</p><p>AI 判断不符合：${rejected.length} 条；需要你判断：${pending.length} 条${manuallyExcluded.length?`；你已确认不归入：${manuallyExcluded.length} 条`:''}${p.handled_count?`；已人工处理：${p.handled_count} 条`:''}</p>`:''}<div class="review-counts"><strong>${semantic?'AI 建议归入':'本次归入'}「${esc(target)}」：${p.eligible.length} 条</strong><strong>本次不归入：${semantic?rejected.length+pending.length+manuallyExcluded.length:p.excluded.length} 条</strong></div>
         ${p.scope==='future'?`<p>保存后，AI 将按“${esc(p.condition)}”及不适用情况判断新资料，符合时归入「${esc(target)}」。</p>`:''}
         ${stale.length?`<div class="review-recovery"><p>${stale.length} 份来源还需按最新规则整理。完成后会自动更新本次归类结果。</p><button type="button" class="write" data-rg="reprocess">按最新规则重新整理 ${Math.min(20,stale.length)} 份来源</button>${stale.length>20?'<p>其余来源留待下一批处理。</p>':''}</div>`:''}
-        ${p.eligible.length?`<details open><summary>将归入的资料 · ${p.eligible.length} 条</summary><ul>${rows(p.eligible)}</ul></details>`:''}
-        ${semantic?section('需要你判断',pending,true,true)+section('AI 判断不符合',rejected,false,true)+section('尚未进行归类判断',unjudged):section('本次未归入',p.excluded,true)}
+        ${p.eligible.length?`<details open><summary>将归入的资料 · ${p.eligible.length} 条</summary><ul>${rows(p.eligible,semantic)}</ul></details>`:''}
+        ${semantic?section('需要你判断',pending,true,true)+section('你已确认不归入当前范围',manuallyExcluded,true)+section('AI 判断不符合',rejected,false,true)+section('尚未进行归类判断',unjudged):section('本次未归入',p.excluded,true)}
         ${semantic&&p.remaining?`<p>还有 ${p.remaining} 条可继续交给 AI 判断。</p><button type="button" data-rg="next-batch">继续判断下一批（最多 100 条）</button>`:''}
         ${semantic&&form.elements.continue_job_id.value?'<button type="button" data-rg="previous-batch">查看上一批结果</button>':''}`;
       $('[data-rg="apply"]').disabled=!p.eligible.length;
@@ -154,15 +155,23 @@
           const job=await api('organization/groups/analysis?'+new URLSearchParams({id:form.elements.continue_job_id.value}));
           drafts.set(job.request.group_id,{values:job.request,proposal:job.proposal});await choose(job.request.group_id,{preserve:true});
         }else if(action==='review-one'){
+          const reviewedBatch=proposal,requestGroup=selectedGroup;
           const member={task_id:Number(b.dataset.task),digest:b.dataset.digest};
           const group=await api('organization/groups/detail?'+new URLSearchParams(member));
           const unit=group.items.find(u=>u.task_id===member.task_id&&u.digest===member.digest);
-          const single=await api('organization/groups/preview',{...member,group_id:group.id,selection:'item',projects:proposal.projects,knowledge_scope:proposal.knowledge_scope});
+          const single=await api('organization/groups/preview',{...member,group_id:group.id,selection:'item',projects:reviewedBatch.projects,knowledge_scope:reviewedBatch.knowledge_scope});
+          if(proposal!==reviewedBatch||selectedGroup!==requestGroup)return;
           if(single.eligible.length&&single.eligible[0].revision!==unit.revision)throw Error('review_preview_changed');
           manualPreviews.set(member.task_id+':'+member.digest,single);
           const dest=b.nextElementSibling,pre=document.createElement('pre');pre.className='review-original';pre.textContent=unit.text;dest.replaceChildren(pre);dest.hidden=false;
-          if(single.eligible.length){const confirm=document.createElement('button');confirm.type='button';confirm.className='primary write';confirm.dataset.rg='confirm-one';confirm.dataset.task=member.task_id;confirm.dataset.digest=member.digest;confirm.textContent=`我确认这条归入「${EvolvProjects.scopeLabel(single,projects)}」`;dest.appendChild(confirm);}
+          const actions=document.createElement('div');actions.className='actions review-decision-actions';dest.appendChild(actions);
+          if(single.eligible.length){const confirm=document.createElement('button');confirm.type='button';confirm.className='primary write';confirm.dataset.rg='confirm-one';confirm.dataset.task=member.task_id;confirm.dataset.digest=member.digest;confirm.textContent=`我确认这条归入「${EvolvProjects.scopeLabel(single,projects)}」`;actions.appendChild(confirm);}
           else{const reason=document.createElement('p');reason.textContent=single.excluded[0]?.reason||'本条已处理，请刷新结果。';dest.appendChild(reason);}
+          if(single.excluded[0]?.reason_code!=='manual_excluded'){const reject=document.createElement('button');reject.type='button';reject.dataset.rg='exclude-one';reject.dataset.task=member.task_id;reject.dataset.digest=member.digest;reject.textContent=`不归入「${EvolvProjects.scopeLabel(single,projects)}」`;actions.appendChild(reject);}
+        }else if(action==='exclude-one'||action==='undo-exclude'){
+          const target=EvolvProjects.scopeLabel(proposal,projects);
+          const result=await api('organization/groups/exclusion',{proposal,task_id:Number(b.dataset.task),digest:b.dataset.digest,action:action==='exclude-one'?'exclude':'undo'});
+          proposal=result.proposal;manualPreviews.clear();drawPreview();remember();notice(action==='exclude-one'?`已确认这条不归入「${target}」。可以撤销这个决定。`:'已撤销不归入，恢复之前的判断结果。');
         }else if(action==='confirm-one'){
           const key=b.dataset.task+':'+b.dataset.digest,single=manualPreviews.get(key);if(!single)throw Error('review_preview_required');
           const result=await api('organization/groups/apply',{proposal:single});if(result.succeeded!==1)throw Error(messages[result.items[0]?.error]||'这条资料未保存，请重新核对原文。');

@@ -123,7 +123,7 @@ def _same_request(a,b):
     return all(a.get(k)==b.get(k) for k in keys)
 
 
-def start(service, body):
+def start(service, body, *, _cached_only=False):
     from evolvmem import organization_review as review
     request={k:body[k] for k in _REQUEST_FIELDS if k in body}
     request.update(matching_mode='semantic',job_id=uuid.uuid4().hex)
@@ -154,16 +154,18 @@ def start(service, body):
                 previous=_restore_request(service,old,units)
             except ValueError:
                 continue
-            if previous.get('_applied') or previous['_signature']!=request['_signature']:
+            if previous['_signature']!=request['_signature']:
                 continue
             if (_same_request(base,previous['_preview']) and request['_snapshots']==previous['_snapshots']
-                    and old['status'] in ('pending','running','completed')):
+                    and old['status'] in ('pending','running','completed') and not previous.get('_applied') and not _cached_only):
                 return get(service,old['id'])
             for key,verdict in json.loads(old['judgments']).items():
                 if key not in cached and key in request['_snapshots'] and previous['_snapshots'].get(key)==request['_snapshots'][key]:
                     cached[key]=verdict
         request['_reused']=len(cached)
         total=len(request['_snapshots'])
+        if _cached_only and len(cached)!=total:
+            return None
         status='completed' if len(cached)==total else 'pending'
         conn.execute('INSERT INTO organization_review_jobs(id,status,request,base_revision,judgments,processed,total,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
                      (request['job_id'],status,json.dumps(request,ensure_ascii=False),base['revision'],
@@ -212,16 +214,26 @@ def proposal(service, body):
     request=_restore_request(service,row,units)
     current_signature=_signature(service,request)
     judgments=json.loads(row['judgments'])
+    from evolvmem import organization_exclusions
+    exclusions=organization_exclusions.rows(service)
     # Frozen membership: a new unrelated arrival must not expand or discard this batch.
     result=json.loads(json.dumps(request['_preview']))
     result['eligible'],result['excluded']=[],[]
     result['handled_count']=0
+    result['ai_judged_count']=len(judgments)
     policy=service.knowledge().rules.read()['revision']
     seen=set()
     by_source={}
     for unit in units.values():by_source.setdefault(unit['source_key'],[]).append(unit)
     for entry in request['_preview']['excluded']:
         key=_key(entry)
+        if key in seen:continue
+        unit=units.get(key)
+        excluded=organization_exclusions.active(service,unit,request,exclusions) if unit else None
+        if excluded:
+            seen.add(key)
+            result['excluded'].append(review._brief(unit)|excluded)
+            continue
         if entry.get('reason_code')!='ai_pending':
             # Judgment membership stays frozen; preparation status is live.
             # A superseded old unit must not keep offering the reprocess button.
@@ -230,6 +242,10 @@ def proposal(service, body):
                 candidate=_key(unit)
                 if candidate in seen or candidate in request['_snapshots']:continue
                 seen.add(candidate)
+                excluded=organization_exclusions.active(service,unit,request,exclusions)
+                if excluded:
+                    result['excluded'].append(review._brief(unit)|excluded)
+                    continue
                 if unit['rule_revision']!=policy:
                     reason,code='这份资料使用旧版整理规则，需按最新规则重新整理。','rule_changed'
                 elif unit['disposition']=='review':
@@ -306,8 +322,14 @@ def classify_guidance(service, unit):
     rules=[r for r in all_rules if r['matching_mode']=='semantic']
     matches=[]
     excluded=[]
+    from evolvmem import organization_exclusions
+    exclusions=organization_exclusions.rows(service)
     for rule in rules:
         if not ks.assigned(rule):continue
+        blocked=organization_exclusions.active(service,unit,rule,exclusions)
+        if blocked:
+            excluded.append(blocked)
+            continue
         verdict=judge(service,[unit],rule['condition'],rule['exceptions'],rule)[_key(unit)]
         if verdict['decision']=='include':
             matches.append({**rule,'reason':verdict['reason'],'evidence_quote':verdict['evidence_quote']})

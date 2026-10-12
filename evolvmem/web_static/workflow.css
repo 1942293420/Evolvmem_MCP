@@ -84,6 +84,8 @@ body[data-design=signal] .ui-detail-section,body[data-design=signal] .ui-detail-
 .knowledge-scope-picker > label {display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
 .knowledge-scope-picker [data-scope-projects] {display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
 .knowledge-scope-picker [hidden] {display:none!important}
+.review-decision-actions{margin-top:12px;display:flex;flex-wrap:wrap;gap:10px}
+.review-decision-actions button{white-space:normal;max-width:100%;overflow-wrap:anywhere}
 .scope-options {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:8px;max-height:220px;overflow:auto;border:1px solid var(--border,#d4dfeb);border-radius:8px;padding:10px}
 .knowledge-scope-picker .scope-options label {display:flex;flex-direction:row;align-items:center;gap:10px;min-width:0;padding:8px;cursor:pointer;font-size:16px}
 .scope-options label span {min-width:0;overflow-wrap:anywhere}

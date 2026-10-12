@@ -128,6 +128,8 @@ def preview(service, body, *, _judgments=None, _groups_snapshot=None):
             raise ValueError('review_preview_changed')
         result.update(task_id=members[0]['task_id'], digest=members[0]['digest'])
     result['searched_count'] = len(members)
+    from evolvmem import organization_exclusions
+    exclusions=organization_exclusions.rows(service)
     for unit in members:
         reason, code = '', ''
         matched = semantic or selection == 'item' or guidance.phrase_match(condition, unit['text'])
@@ -148,6 +150,10 @@ def preview(service, body, *, _judgments=None, _groups_snapshot=None):
             reason, code = '本次最多处理 100 条，下次继续', 'batch_limit'
             result['remaining'] += 1
         entry = _brief(unit)
+        excluded=organization_exclusions.active(service,unit,target,exclusions)
+        if matched and excluded:
+            result['excluded'].append(entry|excluded)
+            continue
         if semantic and not reason:
             if len(result['eligible']) + sum(u.get('reason_code','').startswith('ai_') for u in result['excluded']) >= 100:
                 reason, code = '本批最多判断 100 条，其余资料留在待确认列表。', 'batch_limit'
@@ -210,7 +216,7 @@ def apply(service, body):
         stored = guidance.record(service, guidance=current['guidance'], project=current['project'], projects=current['projects'], knowledge_scope=current['knowledge_scope'],
                                  condition=current['condition'], exceptions=current['exceptions'], scope='future',
                                  source_task_id=current['eligible'][0]['task_id'], matching_mode=current['matching_mode'])
-    if succeeded and succeeded == len(results) and current.get('job_id'):
+    if succeeded and succeeded == len(results) and current.get('job_id') and not any(u.get('reason_code')=='manual_excluded' for u in current['excluded']):
         from evolvmem.organization_semantic_review import mark_applied
         mark_applied(service, current['job_id'])
     return {'items': results, 'succeeded': succeeded, 'failed': len(results)-succeeded, 'guidance': stored}

@@ -116,6 +116,12 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
         updated_at TEXT NOT NULL,
         PRIMARY KEY(task_id,digest)
     )""",
+    """CREATE TABLE IF NOT EXISTS organization_scope_exclusions (
+        source_key TEXT NOT NULL, digest TEXT NOT NULL, scope_key TEXT NOT NULL,
+        content_stamp TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(source_key,digest,scope_key)
+    )""",
     """CREATE TABLE IF NOT EXISTS unit_derivations (
         unit_task_id INTEGER NOT NULL,
         unit_digest TEXT NOT NULL,

@@ -1613,7 +1613,11 @@ class OrganizationWorker:
         return basis
 
     def _record_dependency(self, service, task_id, digest, basis):
+        if not basis:return
         with service.store.transaction():
+            row=service.store._connection().execute('SELECT decision,project FROM organization_units WHERE task_id=? AND digest=?',(task_id,digest)).fetchone()
+            if row is None or row['decision']!='auto' or row['project']!=basis.get('project'):
+                return
             organization_context.record_dependency(service, task_id, digest, basis)
 
     def _guidance_conflict(self, service, unit, project, policy):
@@ -1729,6 +1733,11 @@ class OrganizationWorker:
                 return False
             if expected_revision is not None and _unit_revision(expected_revision) != _unit_revision(row):
                 raise ValueError('revision_conflict')
+            if decision=='auto' and (project or ks.assigned(knowledge_target or {})):
+                from evolvmem import organization_exclusions
+                blocked=organization_exclusions.active(service,dict(row),knowledge_target or {'project':project})
+                if blocked:
+                    project,decision,reason,context_basis,guidance_id,knowledge_target='', 'review',blocked['reason'],'',0,{'project':''}
             conn.execute(
                 'UPDATE organization_units SET project=?,decision=?,reason=?,evidence_quote=?,'
                 'context_basis=?,applied_guidance_id=?,projects=?,knowledge_scope=?,revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
@@ -1895,6 +1904,9 @@ def correct_one(service, body, *, record_guidance=True):
             raise ValueError('unit_not_found')
         if _unit_revision(row) != expected:
             raise ValueError('revision_conflict')
+        from evolvmem import organization_exclusions
+        if organization_exclusions.active(service,dict(row),target):
+            raise ValueError('review_excluded')
         if text and record_guidance:
             stored = guidance_store.record(
                 service, guidance=text, scope=scope, project=project, projects=target['projects'], knowledge_scope=target['knowledge_scope'],
@@ -2172,6 +2184,9 @@ def dispatch(service, method, route, body):
             return organization_review.detail(service, body)
         if method == 'POST' and route == '/groups/reprocess':
             return organization_review.reprocess(service, body)
+        if method == 'POST' and route == '/groups/exclusion':
+            from evolvmem.organization_exclusions import decide
+            return decide(service,body)
         if method == 'POST' and route == '/groups/analyze':
             from evolvmem.organization_semantic_review import start
             return start(service, body)
