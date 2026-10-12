@@ -67,21 +67,26 @@
       if(!form.elements.unit.value){const old=detail.items.find(u=>u.digest===draft?.values.digest);form.elements.unit.value=old?`${old.task_id}:${old.digest}`:form.elements.unit.options[0]?.value||'';}
       $('[data-rg-unit-picker]').hidden=detail.items.length===1;showUnit();
       $('[data-rg-batch]').hidden=form.elements.selection.value==='item';proposal=draft?.proposal||null;
+      if(proposal?.job_id){
+        const job=await api('organization/groups/analysis?'+new URLSearchParams({id:proposal.job_id}));
+        proposal=job.proposal;remember();
+      }
       checkAnalysis();highlight();if(proposal)drawPreview();else{$('[data-rg-preview]').replaceChildren();$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='先预览，再确认归类';$('[data-rg-save-status]').textContent='选择适用范围后，先预览再保存。';}
     }
     function drawPreview(){
       const p=proposal, target=EvolvProjects.scopeLabel(p,projects);
+      const changed=p.excluded.filter(u=>u.reason_code==='review_changed').length;
       const rows=(items,excluded)=>items.map(u=>`<li><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}<blockquote>${esc(u.evidence_quote||u.quote)}</blockquote><button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div></li>`).join('');
       const stale=[...new Set(p.excluded.filter(u=>u.reason_code==='rule_changed').map(u=>u.source_key))];
       $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${p.selection==='all'?'全部待确认资料':p.selection==='group'?'左侧选中这组资料':'正在看的这一条'}：检查 ${p.searched_count} 条${p.matching_mode==='semantic'?`，AI 已按业务依据判断 ${p.eligible.length+p.excluded.filter(u=>['ai_excluded','ai_uncertain'].includes(u.reason_code)).length} 条`:''}。</p>
-        ${p.matching_mode==='semantic'?`<p>判断依据：${esc(p.condition)}</p><p>需要你判断：${p.excluded.filter(u=>u.reason_code==='ai_uncertain').length} 条</p>`:''}<div class="review-counts"><strong>归入「${esc(target)}」：${p.eligible.length} 条</strong><strong>本次不归入：${p.excluded.length} 条</strong></div>
+        ${p.matching_mode==='semantic'?`<p>判断依据：${esc(p.condition)}</p><p>AI 判断不符合：${p.excluded.filter(u=>u.reason_code==='ai_excluded').length} 条；需要你判断：${p.excluded.filter(u=>u.reason_code==='ai_uncertain').length} 条</p>`:''}<div class="review-counts"><strong>归入「${esc(target)}」：${p.eligible.length} 条</strong><strong>本次不归入：${p.excluded.length} 条</strong></div>
         ${p.scope==='future'?`<p>保存后，AI 将按“${esc(p.condition)}”及不适用情况判断新资料，符合时归入「${esc(target)}」。</p>`:''}
         ${stale.length?`<div class="review-recovery"><p>${stale.length} 份来源使用了旧版整理规则。重新整理后，请核对新结果再保存。</p><button type="button" class="write" data-rg="reprocess">按最新规则重新整理 ${Math.min(20,stale.length)} 份来源</button>${stale.length>20?'<p>其余来源留待下一批处理。</p>':''}</div>`:''}
         <details open><summary>将归入的资料 · ${p.eligible.length} 条</summary>${p.eligible.length?`<ul>${rows(p.eligible,false)}</ul>`:'<p>没有可归入的资料。</p>'}</details>
         ${p.excluded.length?`<details open><summary>不建议归入或需要你判断的资料 · ${p.excluded.length} 条</summary><ul>${rows(p.excluded,true)}</ul></details>`:''}`;
       $('[data-rg="apply"]').disabled=!p.eligible.length;
       $('[data-rg="apply"]').textContent=`确认归入「${target}」${p.eligible.length} 条`;
-      $('[data-rg-save-status]').textContent=p.eligible.length?'核对以上清单后即可保存。':stale.length?'当前没有可保存的资料。请先点击上方“按最新规则重新整理”。':'当前没有可保存的资料。请查看上方原因，调整查找范围或条件后重新预览。';
+      $('[data-rg-save-status]').textContent=changed?`已有判断已保留；${changed} 条资料有变化，未列入本次归类。${p.eligible.length?'其余符合的资料可核对后保存。':'重新预览时只补充需要判断的资料。'}`:p.eligible.length?'核对以上清单后即可保存。':stale.length?'当前没有可保存的资料。请先点击上方“按最新规则重新整理”。':'当前没有可保存的资料。请查看上方原因，调整查找范围或条件后重新预览。';
     }
     async function checkAnalysis(){
       clearTimeout(analysisTimer);if(!mount.isConnected)return;
@@ -91,7 +96,7 @@
         const job=await api('organization/groups/analysis?'+new URLSearchParams({id:pending.id}));
         if(selectedGroup!==group||analyses.get(group)?.id!==pending.id)return;
         if(job.status==='completed'){
-          proposal=job.proposal;analyses.delete(group);drawPreview();remember();$('[data-rg=preview]').disabled=false;notice('AI 判断完成，请核对每条理由和原文后保存。');return;
+          proposal=job.proposal;analyses.delete(group);drawPreview();remember();$('[data-rg=preview]').disabled=false;notice('判断结果已保留，符合的资料已列入归类清单。核对后即可保存。');return;
         }
         if(job.status==='failed')throw Error(messages[job.error]||job.error||'AI 判断未完成，请重试。');
         $('[data-rg-save-status]').textContent=`AI ${job.status==='pending'?'等待开始':'正在阅读资料'}：已判断 ${job.processed} / ${job.total} 条`;
@@ -110,7 +115,7 @@
       recoveryTimer=setTimeout(checkRecovery,2000);
     }
     mount.addEventListener('input',e=>{if(e.target.closest('[data-rg-form]')&&!e.target.matches('select,[data-scope-search]'))invalidate();});
-    mount.addEventListener('change',e=>{if(!e.target.closest('[data-rg-form]'))return;if(e.target.name==='unit')showUnit();$('[data-rg-batch]').hidden=form.elements.selection.value==='item';invalidate();});
+    mount.addEventListener('change',e=>{if(!e.target.closest('[data-rg-form]'))return;if(e.target.name==='unit'){showUnit();if(form.elements.selection.value!=='item'){remember();return;}}$('[data-rg-batch]').hidden=form.elements.selection.value==='item';invalidate();});
     form.onsubmit=e=>e.preventDefault();
     $('[data-rg-source]').addEventListener('toggle',async()=>{
       const box=$('[data-rg-source]');if(!box.open)return;const id=Number(form.elements.task_id.value), dest=$('[data-rg-source-text]');
@@ -153,10 +158,25 @@
           if(action==='previous')page=Math.max(1,page-1);if(action==='next')page++;
           remember();await load();if(action==='refresh'){if(pendingTasks.length)await checkRecovery();else if(selectedGroup)try{await choose(selectedGroup,{preserve:true});}catch(error){notice(messages[error.message]||error.message);}}
         }
-      }catch(error){notice(messages[error.message]||error.message);if(['apply','preview','reprocess'].includes(b.dataset.rg))invalidate();}
+      }catch(error){
+        notice(messages[error.message]||error.message);
+        if(b.dataset.rg==='apply'&&proposal?.job_id){
+          try{const job=await api('organization/groups/analysis?'+new URLSearchParams({id:proposal.job_id}));proposal=job.proposal;drawPreview();remember();notice('已重新核对资料变化，未变化的判断已保留。请确认更新后的清单。');}
+          catch(_){invalidate();}
+        }else if(['apply','preview','reprocess'].includes(b.dataset.rg))invalidate();
+      }
       finally{busy=false;onBusy(false);}
     });
     await load();
+    try{
+      const {job}=await api('organization/groups/recent-analysis');
+      if(job){
+        drafts.set(job.request.group_id,{values:job.request,proposal:job.proposal||null});
+        if(job.status!=='completed')analyses.set(job.request.group_id,{id:job.id});
+        await choose(job.request.group_id);
+        notice(job.status==='completed'?'已恢复上次判断结果和项目选择，可继续核对并确认归类。':'已恢复上次判断任务，请等待处理结果。');
+      }
+    }catch(error){notice(messages[error.message]||error.message);}
     const history=document.createElement('section');history.className='progress-history';historyMount.appendChild(history);
     history.innerHTML='<h2>进度已保存，无需审核</h2><form><label>查找进度原文<input name="query" maxlength="200"></label><button type="submit">查找</button></form><p data-history-status role="status"></p><div data-history-list></div><div class="actions"><button data-history-page="previous">上一页</button><span data-history-page-label></span><button data-history-page="next">下一页</button></div>';
     let historyPage=1, historyItems=[];

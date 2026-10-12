@@ -87,7 +87,7 @@ def detail(service, body):
                   for u in group['members']]}
 
 
-def preview(service, body, *, _judgments=None):
+def preview(service, body, *, _judgments=None, _groups_snapshot=None):
     from evolvmem import auto_organization as org
     semantic = body.get('matching_mode') == 'semantic' and body.get('selection') != 'item'
     if semantic and _judgments is None:
@@ -104,7 +104,7 @@ def preview(service, body, *, _judgments=None):
         raise ValueError('review_condition_required')
     if len(exceptions) > 500:
         raise ValueError('invalid_guidance')
-    all_groups = _groups(service)
+    all_groups = _groups(service) if _groups_snapshot is None else _groups_snapshot
     group = next((g for g in all_groups if g['id'] == body.get('group_id')), None)
     if not group:
         raise ValueError('review_preview_changed')
@@ -210,4 +210,7 @@ def apply(service, body):
         stored = guidance.record(service, guidance=current['guidance'], project=current['project'], projects=current['projects'], knowledge_scope=current['knowledge_scope'],
                                  condition=current['condition'], exceptions=current['exceptions'], scope='future',
                                  source_task_id=current['eligible'][0]['task_id'], matching_mode=current['matching_mode'])
+    if succeeded and succeeded == len(results) and current.get('job_id'):
+        from evolvmem.organization_semantic_review import mark_applied
+        mark_applied(service, current['job_id'])
     return {'items': results, 'succeeded': succeeded, 'failed': len(results)-succeeded, 'guidance': stored}

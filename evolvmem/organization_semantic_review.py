@@ -64,15 +64,95 @@ def judge(service, units, criteria, exceptions, target):
     return output
 
 
+# Only server-created snapshots are accepted; browser fields cannot seed verdicts.
+_REQUEST_FIELDS = ('group_id', 'selection', 'task_id', 'digest', 'projects', 'project',
+                   'knowledge_scope', 'condition', 'exceptions', 'scope', 'guidance')
+
+
+def _units(service):
+    from evolvmem import organization_review as review
+    return {_key(u):u for g in review._groups(service) for u in g['members']}
+
+
+def _stamp(unit):
+    from evolvmem.organization_review import _hash
+    # Extraction progress and updated_at do not change the reviewed content.
+    return _hash({k:unit[k] for k in ('revision','text','title','source_revision','rule_revision')})
+
+
+def _signature(service, request):
+    from evolvmem.organization_review import _hash
+    target=ks.normalize(service,request,required=True)
+    names={p['project']:p['display_name'] or p['project'] for p in service.knowledge().registry()}
+    return _hash([target, [names.get(p,p) for p in target['projects']],
+                  str(request.get('condition','')).strip(), str(request.get('exceptions','')).strip(),
+                  service.knowledge().rules.read()['revision']])
+
+
+def _prepare(service, request, base, units):
+    return {**request, '_preview':base, '_signature':_signature(service,request),
+            '_snapshots':{_key(u):_stamp(units[_key(u)]) for u in base['excluded']
+                          if u.get('reason_code')=='ai_pending' and _key(u) in units}}
+
+
+def _restore_request(service, row, units=None):
+    """Old jobs can be adopted only when their original full revision still matches."""
+    from evolvmem import organization_review as review
+    request=json.loads(row['request'])
+    if '_snapshots' not in request:
+        base=review.preview(service,request,_judgments={})
+        if base['revision']!=row['base_revision']:
+            # Recover an old batch after new arrivals only if reconstruction
+            # reproduces its exact stored hash. Dates alone never prove validity.
+            groups=[{**g,'members':[u for u in g['members'] if u['created_at']<=row['created_at']]}
+                    for g in review._groups(service)]
+            base=review.preview(service,request,_judgments={},
+                                _groups_snapshot=[g for g in groups if g['members']])
+        if base['revision']!=row['base_revision']:
+            raise ValueError('review_preview_changed')
+        request=_prepare(service,request,base,units if units is not None else _units(service))
+        with service.store.transaction():
+            service.store._connection().execute('UPDATE organization_review_jobs SET request=? WHERE id=?',
+                                                (json.dumps(request,ensure_ascii=False),row['id']))
+    return request
+
+
+def _same_request(a,b):
+    # Compare the normalized preview fields, not transient form fields or job IDs.
+    keys=('group_id','selection','projects','knowledge_scope','condition','exceptions','scope','guidance')
+    return all(a.get(k)==b.get(k) for k in keys)
+
+
 def start(service, body):
     from evolvmem import organization_review as review
-    request = {**body, 'matching_mode':'semantic', 'job_id':uuid.uuid4().hex}
-    base = review.preview(service,request,_judgments={})
+    request={k:body[k] for k in _REQUEST_FIELDS if k in body}
+    request.update(matching_mode='semantic',job_id=uuid.uuid4().hex)
     conn=service.store._connection()
     with service.store.transaction():
-        conn.execute('INSERT INTO organization_review_jobs(id,status,request,base_revision,total,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',
-                     (request['job_id'],'pending',json.dumps(request,ensure_ascii=False),base['revision'],
-                      sum(u.get('reason_code')=='ai_pending' for u in base['excluded']),_now_iso(),_now_iso()))
+        base=review.preview(service,request,_judgments={})
+        units=_units(service)
+        request=_prepare(service,request,base,units)
+        cached={}
+        for old in conn.execute('SELECT * FROM organization_review_jobs ORDER BY created_at DESC,rowid DESC LIMIT 100').fetchall():
+            old=dict(old)
+            try:
+                previous=_restore_request(service,old,units)
+            except ValueError:
+                continue
+            if previous.get('_applied') or previous['_signature']!=request['_signature']:
+                continue
+            if (_same_request(base,previous['_preview']) and request['_snapshots']==previous['_snapshots']
+                    and old['status'] in ('pending','running','completed')):
+                return get(service,old['id'])
+            for key,verdict in json.loads(old['judgments']).items():
+                if key not in cached and key in request['_snapshots'] and previous['_snapshots'].get(key)==request['_snapshots'][key]:
+                    cached[key]=verdict
+        request['_reused']=len(cached)
+        total=len(request['_snapshots'])
+        status='completed' if len(cached)==total else 'pending'
+        conn.execute('INSERT INTO organization_review_jobs(id,status,request,base_revision,judgments,processed,total,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+                     (request['job_id'],status,json.dumps(request,ensure_ascii=False),base['revision'],
+                      json.dumps(cached,ensure_ascii=False),len(cached),total,_now_iso(),_now_iso()))
     return get(service,request['job_id'])
 
 
@@ -86,10 +166,26 @@ def _row(service, job_id):
 def get(service, job_id):
     row=_row(service,job_id)
     result={k:row[k] for k in ('id','status','error','processed','total')}
+    request=json.loads(row['request'])
+    result['request']={k:request[k] for k in _REQUEST_FIELDS if k in request}
     if row['status']=='completed':
-        from evolvmem import organization_review as review
         result['proposal']=proposal(service, {'job_id':row['id']})
     return result
+
+
+def recent(service):
+    """Recover saved work on refresh, without starting any AI or applying changes."""
+    rows=service.store._connection().execute('SELECT * FROM organization_review_jobs ORDER BY created_at DESC,rowid DESC LIMIT 20').fetchall()
+    for row in rows:
+        request=json.loads(row['request'])
+        if request.get('_applied'):continue
+        try:
+            from evolvmem import organization_review as review
+            review.detail(service,request)
+            return {'job':get(service,row['id'])}
+        except ValueError:
+            continue
+    return {'job':None}
 
 
 def proposal(service, body):
@@ -97,14 +193,46 @@ def proposal(service, body):
     row=_row(service,body.get('job_id'))
     if row['status']!='completed':
         raise ValueError('review_ai_not_ready')
-    request=json.loads(row['request'])
-    if review.preview(service,request,_judgments={})['revision']!=row['base_revision']:
-        raise ValueError('review_preview_changed')
-    return review.preview(service,request,_judgments=json.loads(row['judgments']))
+    units=_units(service)
+    request=_restore_request(service,row,units)
+    current_signature=_signature(service,request)
+    judgments=json.loads(row['judgments'])
+    # Frozen membership: a new unrelated arrival must not expand or discard this batch.
+    result=json.loads(json.dumps(request['_preview']))
+    result['eligible'],result['excluded']=[],[]
+    for entry in request['_preview']['excluded']:
+        key=_key(entry)
+        if entry.get('reason_code')!='ai_pending':
+            result['excluded'].append(entry)
+            continue
+        unit=units.get(key)
+        verdict=judgments.get(key)
+        valid=(unit is not None and _stamp(unit)==request['_snapshots'].get(key)
+               and current_signature==request['_signature'])
+        entry={k:v for k,v in entry.items() if k not in ('reason','reason_code')}
+        if not valid:
+            entry.update(reason='原文、整理结果或归类规则已变化；本条需重新判断，其余结果已保留。',reason_code='review_changed')
+        elif not verdict:
+            entry.update(reason='本条尚未完成判断，请继续预览；已完成的结果会复用。',reason_code='ai_pending')
+        else:
+            entry.update(reason=verdict['reason'],evidence_quote=verdict['evidence_quote'])
+            if verdict['decision']!='include':
+                entry['reason_code']='ai_excluded' if verdict['decision']=='exclude' else 'ai_uncertain'
+        result['excluded' if entry.get('reason_code') else 'eligible'].append(entry)
+    result.pop('revision',None)
+    result['revision']=review._hash(result)
+    return result
+
+
+def mark_applied(service, job_id):
+    row=_row(service,job_id)
+    request=json.loads(row['request']);request['_applied']=True
+    with service.store.transaction():
+        service.store._connection().execute('UPDATE organization_review_jobs SET request=? WHERE id=?',
+                                            (json.dumps(request,ensure_ascii=False),job_id))
 
 
 def tick(service):
-    from evolvmem import organization_review as review
     conn=service.store._connection()
     with service.store.transaction():
         row=conn.execute("SELECT * FROM organization_review_jobs WHERE status='pending' ORDER BY created_at LIMIT 1").fetchone()
@@ -112,20 +240,18 @@ def tick(service):
         row=dict(row)
         conn.execute("UPDATE organization_review_jobs SET status='running',updated_at=? WHERE id=?",(_now_iso(),row['id']))
     try:
-        request=json.loads(row['request'])
-        base=review.preview(service,request,_judgments={})
-        if base['revision']!=row['base_revision']:raise ValueError('review_preview_changed')
-        keys={_key(u) for u in base['excluded'] if u.get('reason_code')=='ai_pending'}
-        units=[u for g in review._groups(service) for u in g['members'] if _key(u) in keys]
-        results={}
+        available=_units(service)
+        request=_restore_request(service,row,available)
+        results=json.loads(row['judgments'])
+        units=[u for key,u in available.items() if key in request['_snapshots'] and key not in results
+               and _stamp(u)==request['_snapshots'][key]] if _signature(service,request)==request['_signature'] else []
         for offset in range(0,len(units),4):
             results.update(judge(service,units[offset:offset+4],request['condition'],request.get('exceptions',''),request))
             with service.store.transaction():
-                conn.execute('UPDATE organization_review_jobs SET processed=?,updated_at=? WHERE id=?',(len(results),_now_iso(),row['id']))
-        if review.preview(service,request,_judgments={})['revision']!=row['base_revision']:raise ValueError('review_preview_changed')
+                conn.execute('UPDATE organization_review_jobs SET judgments=?,processed=?,updated_at=? WHERE id=?',
+                             (json.dumps(results,ensure_ascii=False),len(results),_now_iso(),row['id']))
         with service.store.transaction():
-            conn.execute("UPDATE organization_review_jobs SET status='completed',judgments=?,updated_at=? WHERE id=?",
-                         (json.dumps(results,ensure_ascii=False),_now_iso(),row['id']))
+            conn.execute("UPDATE organization_review_jobs SET status='completed',updated_at=? WHERE id=?",(_now_iso(),row['id']))
     except Exception as error:
         code=str(error) if isinstance(error,ValueError) else 'review_ai_failed'
         with service.store.transaction():
