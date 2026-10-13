@@ -109,3 +109,10 @@ def test_evidence_source_identifier_copies_original_without_model_transcription(
     data['steps'][0]['evidence']=[{'source':'e999'}]
     with pytest.raises(ValueError,match='task_narrative_evidence'):
         engine().organize(MESSAGES,lambda _:json.dumps(data))
+
+
+def test_explicit_null_steps_mean_no_actions_in_this_window():
+    data={'requirement':None,'analysis':None,'steps':None,'result':None,'outstanding':None,'state':'unknown'}
+    record=engine().organize([{'role':'assistant','content':'等待后续回复。'}],lambda _:json.dumps(data))
+    assert record['steps']==[] and record['outstanding']==[]
+    assert not record['requirement'] and record['state']=='unknown'

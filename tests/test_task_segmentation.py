@@ -81,3 +81,15 @@ def test_bad_window_is_corrected_once_and_checkpoint_keeps_previous_windows():
     assert len(result)==2 and len(calls)==4
     assert 'task_coverage_gap' in calls[2]
     assert len(checkpoints)==3 and checkpoints[-1]['processed_end']==records[-1]['end']
+
+
+def test_need_identifier_uses_original_user_record_without_model_transcription():
+    from evolvmem.topic_segmentation import message_spans
+    from evolvmem.conversation import render
+    from evolvmem.task_segmentation import segment
+    messages=[{'role':'user','content':'需求：增加写入开关。'},{'role':'assistant','content':'先检查配置。'}]
+    spans=message_spans(messages)
+    result=segment(render(messages),lambda _:json.dumps({'segments':[{'task':'new','start_id':1,'end_id':2,'title':'写入开关','need_id':1}]}),records=spans)
+    assert result[0]['need_quote']=='需求：增加写入开关。'
+    with pytest.raises(ValueError,match='task_quote_not_found'):
+        segment(render(messages),lambda _:json.dumps({'segments':[{'task':'new','start_id':1,'end_id':2,'title':'写入开关','need_id':2}]}),records=spans)

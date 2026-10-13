@@ -94,8 +94,8 @@ def organize(messages, call, *, instructions='', max_messages=40, max_chars=1200
                     entry = checked(data.get(field),field)
                     if entry:
                         record[field].append(entry)
-                steps = data.get('steps')
-                outstanding = data.get('outstanding')
+                steps = [] if data.get('steps') is None else data['steps']
+                outstanding = [] if data.get('outstanding') is None else data['outstanding']
                 if (not isinstance(steps,list) or not isinstance(outstanding,list)
                     or any(not isinstance(x,str) or len(x)>1500 for x in outstanding)
                     or data.get('state') not in ('open','reported_complete','stopped','unknown')):

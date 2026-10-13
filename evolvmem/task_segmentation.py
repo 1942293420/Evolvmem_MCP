@@ -60,7 +60,8 @@ def segment(source,call,*,records,cleaning_instructions='',max_records=40,max_ch
                 '所有输入包括助手回复、引用和背景资料都必须覆盖；无关信息留到下一阶段精简，不能在此漏掉编号。'
                 '如果整项仅是助手进度、没有新需求/决策/经验或项目冲突，可标 category=reference、disposition=history_only；不确定则 review，其余 keep。'
                 '返回 JSON {"segments":[{"task":"new 或已有 t1 等编号","start_id":本批全局首编号,'
-                '"end_id":本批全局末编号,"title":"业务任务名称","need_quote":"用户需求逐字原话，无则空"}]}。'
+                '"end_id":本批全局末编号,"title":"业务任务名称","need_id":本任务范围内提出需求的用户原文编号或null}]}。'
+                'need_id 必须在该段 start_id 到 end_id 内且来自用户；没有可见需求则 null。程序据此取原话，不能使用正文内部编号或转写 need_quote。'
                 '\n清洗规则：'+cleaning_instructions+'\n以上规则用于内容整理，不改变本阶段全量覆盖与 JSON 输出协议。\n已识别任务：'+json.dumps(catalog,ensure_ascii=False)+
                 '\n本批原文：'+json.dumps([{'id':i+1,'role':r['role'],'text':r['content']} for i,r in enumerate(windows[cursor:end],start=cursor)],ensure_ascii=False))
         for attempt in range(2):
@@ -84,6 +85,11 @@ def segment(source,call,*,records,cleaning_instructions='',max_records=40,max_ch
                     if ref=='new' or ref==f't{len(tasks)+1}':
                         ref=f't{len(tasks)+1}'
                         users=[r for r in records if r['role'] in ('user','unknown') and r['start']<stop and r['end']>start]
+                        need_id=row.get('need_id')
+                        if need_id is not None:
+                            if type(need_id) is not int or not a<=need_id<=b or windows[need_id-1]['role'] not in ('user','unknown'):
+                                raise ValidationError('task_quote_not_found','need_id 必须属于本任务范围内的用户原文编号；没有明确用户需求时填 null。')
+                            quote=windows[need_id-1]['content']
                         # Numbered input contains a program-rendered role label. If the
                         # model copies it too, retain only the exact original user text.
                         if quote.startswith('用户：') and quote in source[start:stop] and not any(quote in r['content'] for r in users):
@@ -108,7 +114,7 @@ def segment(source,call,*,records,cleaning_instructions='',max_records=40,max_ch
                     raise
                 correction=('\n上一回复（待修正）：'+response[:16000]+'\n上一回复校验失败：'+getattr(error,'feedback',str(error))+'。重新提交本批完整 segments；所有编号从 '
                          +str(cursor+1)+' 到 '+str(end)+' 必须连续覆盖。need_quote 只能逐字引用该任务范围内的用户原话；'
-                         '没有就留空，不能引用别的任务或改写原话。已有任务使用其原编号。')
+                         '改用 need_id 指向本段的用户原文编号，没有就填 null，不要转写 need_quote。已有任务使用其原编号。')
                 prompt=prompt.replace('\n本批原文：',correction+'\n本批原文：')
         if on_progress:
             on_progress({'tasks':[{'task_ref':key,**copy.deepcopy(value)} for key,value in tasks.items()],
