@@ -163,8 +163,19 @@ def recent(service):
         if request.get('_applied'):continue
         try:
             from evolvmem import organization_review as review
-            review.detail(service,request)
-            return {'job':get(service,row['id'])}
+            job = get(service,row['id'])
+            try:
+                group = review.detail(service,request)
+            except ValueError:
+                # The first task may already have been admitted while other
+                # choices in this same frozen batch still need review.
+                remaining = {(u['task_id'],u['digest']) for u in
+                             job.get('proposal',{}).get('eligible',[]) + job.get('proposal',{}).get('excluded',[])}
+                group = next((g for g in review._groups(service)
+                              if any((u['task_id'],u['digest']) in remaining for u in g['members'])), None)
+                if group is None:
+                    continue
+            return {'job':job | {'resume_group_id':group['id']}}
         except ValueError:
             continue
     return {'job':None}

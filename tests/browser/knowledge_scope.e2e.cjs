@@ -21,11 +21,11 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await form.locator('[name=exceptions]').fill('提到跨平台条件、要求单独判断的资料暂不归入。');await form.locator('[name=scope]').selectOption('future');
   const started=Date.now();await form.locator('[data-rg=preview]').click();
   await page.waitForFunction(()=>document.querySelector('[data-rg-preview]')?.textContent.includes('AI 已按业务依据'));
-  const preview=await form.locator('[data-rg-preview]').innerText();assert.match(preview,/Evo 演示项目、第二个演示项目/);assert.match(preview,/10 条/);assert.match(preview,/本次不归入：2 条/);assert.match(preview,/模拟核对/);
+  const preview=await form.locator('[data-rg-preview]').innerText();assert.match(preview,/Evo 演示项目、第二个演示项目/);assert.match(preview,/10 条/);assert.match(preview,/未推荐或此前不录入：2 条/);assert.match(preview,/模拟核对/);
   assert.ok(Date.now()-started<20000);
   await form.locator('[name=condition]').scrollIntoViewIfNeeded();await page.screenshot({path:'/tmp/evo-business-criteria-desktop.png'});
   for(const width of [1512,390]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));await page.screenshot({path:`/tmp/evo-business-scope-${width}.png`,fullPage:true});}
-  await page.setViewportSize({width:1512,height:1000});await form.locator('[data-rg=apply]').click();await page.waitForFunction(()=>document.querySelector('[data-rg-status]')?.textContent.includes('已归入'));
+  await page.setViewportSize({width:1512,height:1000});await form.locator('[data-rg=apply]').click();await page.waitForFunction(()=>document.querySelector('[data-rg-status]')?.textContent.includes('已保存审核结果'));
   const rule=(await api('organization/guidance')).items.find(r=>r.matching_mode==='semantic');assert.ok(rule);assert.deepEqual(JSON.parse(rule.projects),['evo','scope-second']);
   await page.locator('[data-org-tab=guidance]').click();await page.locator('[data-org-action=edit-guidance]').first().click();
   const rd=page.getByRole('dialog',{name:'修改业务归类依据'});await rd.locator('[name=condition]').fill('只有规定导出内容与原始数据对应关系的业务要求才归入；概念介绍除外。');await rd.locator('[type=submit]').click();await rd.waitFor({state:'detached'});

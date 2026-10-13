@@ -12,13 +12,13 @@ const assert=require('node:assert/strict');const {chromium}=require(process.env.
   await row.locator('[data-rg=exclude-one]').waitFor();assert.match(await row.locator('.review-original').innerText(),/审核条目/);
   for(const width of [1512,390]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'overflow '+width);}
   await page.setViewportSize({width:1512,height:1000});
-  await row.locator('[data-rg=exclude-one]').click();await form.locator('[data-rg=undo-exclude]').waitFor();
-  assert.equal(await form.locator('[data-rg=undo-exclude]').count(),1);assert.equal(await form.locator('[name=exceptions]').inputValue(),'');
+  await row.locator('[data-rg=exclude-one]').click();assert.equal(await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).count(),0,'not persisted before save');await form.locator('[data-rg=apply]').click();await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).waitFor();
+  assert.equal(await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).count(),1);assert.equal(await form.locator('[name=exceptions]').inputValue(),'');
   assert.match(await form.locator('[data-rg-preview]').innerText(),/你已确认不归入/);
-  await page.reload();await ready();assert.equal(await form.locator('[data-rg=undo-exclude]').count(),1);assert.equal(analyzes,1,'refresh must not start AI');
-  await form.locator('[data-rg=undo-exclude]').scrollIntoViewIfNeeded();await page.screenshot({path:'/tmp/evo-manual-excluded.png'});
-  await form.locator('[data-rg=undo-exclude]').click();await page.waitForFunction(()=>!document.querySelector('[data-rg=undo-exclude]'));
+  await page.reload();await ready();assert.equal(await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).count(),1);assert.equal(analyzes,1,'refresh must not start AI');
+  await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).scrollIntoViewIfNeeded();await page.screenshot({path:'/tmp/evo-manual-excluded.png'});
+  await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).selectOption('include');await form.locator('[data-rg=apply]').click();await page.waitForFunction(()=>![...document.querySelectorAll('[data-rg-choice] option')].some(x=>x.textContent==='已保存：不录入'));
   assert.equal(analyzes,1,'undo must restore saved judgments');
-  assert.deepEqual(errors,[]);console.log(JSON.stringify({checks:['原文下同时提供归入与不归入决定','排除只保存当前范围，例外条件保持空白','刷新仍记得人工排除，无重复 AI 调用','可撤销排除并恢复原判断'],errors},null,2));
+  assert.deepEqual(errors,[]);console.log(JSON.stringify({checks:['原文下同时提供归入与不归入决定','排除只保存当前范围，例外条件保持空白','刷新仍记得人工排除，无重复 AI 调用','已排除资料可选为录入并统一保存'],errors},null,2));
  }catch(e){await page.screenshot({path:'/tmp/evo-manual-exclude-failed.png',fullPage:true});throw e;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

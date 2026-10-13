@@ -2304,6 +2304,9 @@ def dispatch(service, method, route, body):
             return get(service, body.get('id'))
         if method == 'POST' and route == '/groups/preview':
             return organization_review.preview(service, body)
+        if method == 'POST' and route == '/groups/decisions':
+            from evolvmem.organization_review_decisions import save
+            return save(service, body)
         if method == 'POST' and route == '/groups/apply':
             return organization_review.apply(service, body)
     if route == '':

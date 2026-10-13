@@ -30,11 +30,11 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(jobs.length,2,'reload must not create an analysis');
   await form.locator('[data-rg-preview] h3').scrollIntoViewIfNeeded();await page.screenshot({path:'/tmp/evo-review-cache-restored.png'});
   await form.locator('[data-rg=apply]').click();
-  await page.waitForFunction(()=>document.querySelector('[data-rg-status]')?.textContent.includes('已归入'));
+  await page.waitForFunction(()=>document.querySelector('[data-rg-status]')?.textContent.includes('已保存审核结果'));
   await page.reload();await page.waitForSelector('[data-rg-list]');
   const recent=await page.evaluate(async()=>await(await fetch('/api/knowledge/organization/groups/recent-analysis')).json());
-  assert.equal(recent.job,null,'saved batch must not reopen');
+  assert.equal(recent.job.proposal.eligible.length,0,'saved items must not be offered again');assert.equal(recent.job.proposal.handled_count,10);assert.equal(recent.job.proposal.excluded.length,2,'unreviewed choices remain available');
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({checks:['再次预览复用同一任务','阅读另一条原文不清空判断','刷新恢复项目、依据、结果与可保存状态，没有启动 AI','确认保存后不再自动打开已处理批次'],errors},null,2));
+  console.log(JSON.stringify({checks:['再次预览复用同一任务','阅读另一条原文不清空判断','刷新恢复项目、依据、结果与可保存状态，没有启动 AI','保存后只保留未处理选择，已录入资料不再重复提供'],errors},null,2));
  }catch(e){await page.screenshot({path:'/tmp/evo-review-cache-failed.png',fullPage:true});throw e;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

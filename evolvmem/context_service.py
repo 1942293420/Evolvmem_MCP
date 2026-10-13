@@ -2847,6 +2847,8 @@ class ContextService:
     ) -> None:
         if not upserts and not removals:
             return
+        if self.store.defer_until_commit(lambda: self._sync_legacy_vector_aftermath(upserts, removals)):
+            return
         index = self._legacy_vector_index()
         try:
             was_dirty = bool(index.is_dirty())
@@ -2894,6 +2896,8 @@ class ContextService:
         removals: tuple[int, ...],
     ) -> None:
         if not upserts and not removals:
+            return
+        if self.store.defer_until_commit(lambda: self._sync_context_vector_aftermath(upserts, removals)):
             return
         try:
             synchronizer = self._context_synchronizer()

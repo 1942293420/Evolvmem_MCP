@@ -537,6 +537,7 @@ class ContextStore:
         self._conn: sqlite3.Connection | None = None
         self._has_trigram: bool | None = None
         self._transaction_depth = 0
+        self._after_commit = []
 
     # ---- lifecycle ----
 
@@ -593,6 +594,7 @@ class ContextStore:
         outermost = self._transaction_depth == 0
         if outermost:
             conn.execute("BEGIN IMMEDIATE")
+            self._after_commit = []
         self._transaction_depth += 1
         try:
             yield self
@@ -601,9 +603,21 @@ class ContextStore:
         except Exception:
             if outermost:
                 conn.rollback()
+                self._after_commit = []
             raise
         finally:
             self._transaction_depth -= 1
+        if outermost:
+            callbacks, self._after_commit = self._after_commit, []
+            for callback in callbacks:
+                callback()
+
+    def defer_until_commit(self, callback) -> bool:
+        """Queue external index work until the outer write succeeds; discard on rollback."""
+        if not self._transaction_depth:
+            return False
+        self._after_commit.append(callback)
+        return True
 
     def _connection(self) -> sqlite3.Connection:
         if self._conn is None:

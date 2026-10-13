@@ -98,3 +98,13 @@ body[data-design=signal] .ui-detail-section,body[data-design=signal] .ui-detail-
 .task-context .task-context-source>p,.task-context .task-context-stage>p{font-size:16px;color:var(--text)}
 .task-context [data-context-records]{max-height:65vh;overflow:auto;overscroll-behavior:contain;min-width:0}.task-context-pager{margin:12px 0;font-size:16px}.task-context [data-context-records] .task-context-source:first-child{margin-top:0}
 .task-narrative{display:grid;gap:20px;min-width:0;overflow-wrap:anywhere}.task-narrative section{border:1px solid var(--line);border-radius:8px;padding:16px;min-width:0}.task-narrative h4{margin-bottom:12px}.task-narrative ol,.task-narrative ul{margin:0;padding-left:24px}.task-narrative li+li{margin-top:12px}.task-narrative blockquote{font-size:16px;white-space:pre-wrap;overflow-wrap:anywhere}.task-narrative details{margin-top:6px}
+
+/* Explicit batch review: one save action, readable controls at every width. */
+.review-batch-toolbar{display:grid;gap:12px;padding:16px;border:1px solid var(--line);border-radius:8px;background:#f5f7fb}
+.review-choice-row{display:flex;flex-wrap:wrap;align-items:center;gap:20px;margin-bottom:14px}
+.review-editor .review-choice-row>label{display:flex;flex-direction:row;align-items:center;gap:10px;min-width:0}.review-editor .review-choice-row .review-pick{flex:1 1 220px}.review-choice-row strong{font-size:16px;line-height:1.6}
+.review-editor .review-pick input{width:20px;height:20px;margin:0;flex:none}
+.review-editor .review-choice-row select{width:auto;min-width:140px}
+.review-editor .review-apply-bar{position:sticky;bottom:0;background:var(--surface,#fff);padding:16px;border:1px solid var(--line);border-radius:8px;z-index:2}
+.review-batch-toolbar .actions{flex-wrap:wrap}
+@media(max-width:480px){.review-batch-toolbar button{white-space:normal}.review-choice-row{gap:12px}.review-editor .review-apply-bar{position:static}}

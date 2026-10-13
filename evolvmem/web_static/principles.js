@@ -42,13 +42,14 @@ window.EvolvPrinciples={render(mount){
  n('process','完整任务 → 整理经过 → 分类',360,250,'action',facts('Evo','新旧会话、规则、已确认指导','完整任务资料与待确认事项')),
  n('clear','需要你判断？',360,390,'decision',facts('Evo','片段归属、关键原话与冲突','自动保存的资料；需你核对的例外')),n('review','原地核对原文与归属',690,530,'exception',facts('你','从需求起点读取的任务原文、来源与疑问原因','个人通用或多个指定项目；单条确认或按业务依据由 AI 批量判断','点击核查记忆直接展开原文。完整内容分页阅读，可回到需求开头或定位当前记忆。沿有效任务关联展示过程与后续结果；同会话中尚未确认任务关系的内容单独标明。来源缺失会提示；缺少的阶段不补造。')),
  n('judge','恢复已有判断，补充变化项',360,600,'action',facts('Evo','业务依据、不适用情况、适用范围与完整任务上下文','逐条建议、理由、原文证据和待判断项','先核对本批资料版本，复用未变化判断；资料重整状态按最新来源更新。每小批结果保存，下一批跳过已判断条目，上一批结果可返回查看。')),
- n('guidance','预览清单后确认归类',690,670,'exception',facts('你','目标项目、查找范围、符合与排除的条目及数量','归入或不归入的逐条决定；可选持续指导','重整后自动更新结果；区分推荐、不符合、需人工判断和尚未判断。在条目内阅读全文，选择归入或不归入；排除按所选范围保存并可撤销，其他项目仍可使用。模型建议不能覆盖人工排除。','','#knowledge/organization')),
+ n('guidance','勾选资料并保存审核结果',690,670,'exception',facts('你','目标项目、查找范围、符合与排除的条目及数量','录入与不录入的批量决定；可选持续指导','重整后自动更新结果；区分推荐、不符合、需人工判断和尚未判断。可勾选多条设为录入或不录入，核对数量后统一保存；未保存选择在当前浏览器刷新后保留。已排除资料可重新选择录入。排除按所选范围保存，其他项目仍可使用。模型建议不能覆盖人工排除。','','#knowledge/organization')),
+ n('excluded','保存本范围不录入决定',690,830,'exception',facts('你','明确保存的不录入选择','保留原文与其他范围资格','可重新勾选改为录入；不会作为本范围的经验继续提炼。')),
  n('save','保存历史与可用知识',360,830,'action',facts('Evo','明确内容或你保存的决定','当前有效资料、来源和待更新索引')),
  n('request','当前任务需要历史',43,980,'action',facts('助手','当前项目与问题','召回请求')),
  n('recall','查找相关且可用的内容',360,980,'action',facts('Evo','问题、项目与资料类型','相关摘要、适用条件和来源引用','','knowledge_recall / experience_recall')),
  n('use','结合当前要求继续任务',43,1150,'action',facts('助手','召回结果或没有匹配内容','当前任务的下一步','历史只能作为参考，当前用户要求优先。'))],edges:[
- e('o1','submit','process','会话与来源'),e('o2','process','clear'),e('o3','clear','save','不需要','M360 430H335V870H360',338,510),e('o4','clear','review','需要'),e('o5','review','judge','依据与范围'),e('o10','judge','guidance','理由、原文与数量'),e('o6','guidance','save','决定与指导'),e('o7','request','recall','问题与项目'),e('o8','save','recall','有效资料'),e('o9','recall','use','摘要、条件与来源')],routes:[
- r('auto','自动整理后供助手使用','submit process clear save recall use','o1 o2 o3 o8 o9'),r('review','有疑问：确认后继续','submit process clear review judge guidance save recall use','o1 o2 o4 o5 o10 o6 o8 o9')]},
+ e('o1','submit','process','会话与来源'),e('o2','process','clear'),e('o3','clear','save','不需要','M360 430H335V870H360',338,510),e('o4','clear','review','需要'),e('o5','review','judge','依据与范围'),e('o10','judge','guidance','理由、原文与数量'),e('o6','guidance','save','录入与指导'),e('o11','guidance','excluded','不录入'),e('o7','request','recall','问题与项目'),e('o8','save','recall','有效资料'),e('o9','recall','use','摘要、条件与来源')],routes:[
+ r('auto','自动整理后供助手使用','submit process clear save recall use','o1 o2 o3 o8 o9'),r('review','有疑问：确认后继续','submit process clear review judge guidance save recall use','o1 o2 o4 o5 o10 o6 o8 o9'),r('excluded','不录入：保留原文','submit process clear review judge guidance excluded','o1 o2 o4 o5 o10 o11')]},
  recall:{title:'当前任务怎样找回历史、知识与经验',type:'召回流程图',goal:'先选业务入口，再核对资格、查找和重新排序，最后返回可读结果。',height:1560,nodes:[
  n('task','当前任务与项目',350,20,'start',facts('助手','当前问题、项目与已知条件','需要的历史信息类型')),
  n('intent','要找回什么？',350,140,'decision',facts('助手','当前任务需要的背景','历史或问答、已验证案例、精确任务断点')),

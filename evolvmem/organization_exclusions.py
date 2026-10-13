@@ -60,14 +60,7 @@ def decide(service,body):
         if entry is None or unit is None or entry['revision']!=unit['revision']:raise ValueError('review_preview_changed')
         org._assert_current(service,org.task_view(service,unit['task_id']))
         if action=='undo' and entry.get('reason_code')!='manual_excluded':raise ValueError('review_preview_changed')
-        conn=service.store._connection()
-        for key in _keys(current):
-            if action=='exclude':
-                conn.execute('INSERT INTO organization_scope_exclusions(source_key,digest,scope_key,content_stamp,revision,updated_at) VALUES(?,?,?,?,1,?) ON CONFLICT(source_key,digest,scope_key) DO UPDATE SET content_stamp=excluded.content_stamp,revision=organization_scope_exclusions.revision+1,updated_at=excluded.updated_at WHERE organization_scope_exclusions.content_stamp!=excluded.content_stamp',
-                             (unit['source_key'],unit['digest'],key,_stamp(unit),_now_iso()))
-            else:
-                conn.execute('DELETE FROM organization_scope_exclusions WHERE source_key=? AND digest=? AND scope_key=? AND content_stamp=?',
-                             (unit['source_key'],unit['digest'],key,_stamp(unit)))
+        write_decision(service,unit,current,action)
         if action=='undo' and saved.get('job_id'):
             # Rebuild a current preview only when every judgment is already
             # available. Undo never starts model work or drops cached evidence.
@@ -78,3 +71,15 @@ def decide(service,body):
             if restored is not None:
                 return {'ok':True,'action':action,'proposal':restored['proposal']}
     return {'ok':True,'action':action,'proposal':review.preview(service,saved)}
+
+
+def write_decision(service, unit, target, action):
+    """Caller validates source and preview and owns the transaction."""
+    conn=service.store._connection()
+    for key in _keys(target):
+        if action=='exclude':
+            conn.execute('INSERT INTO organization_scope_exclusions(source_key,digest,scope_key,content_stamp,revision,updated_at) VALUES(?,?,?,?,1,?) ON CONFLICT(source_key,digest,scope_key) DO UPDATE SET content_stamp=excluded.content_stamp,revision=organization_scope_exclusions.revision+1,updated_at=excluded.updated_at WHERE organization_scope_exclusions.content_stamp!=excluded.content_stamp',
+                         (unit['source_key'],unit['digest'],key,_stamp(unit),_now_iso()))
+        else:
+            conn.execute('DELETE FROM organization_scope_exclusions WHERE source_key=? AND digest=? AND scope_key=? AND content_stamp=?',
+                         (unit['source_key'],unit['digest'],key,_stamp(unit)))
