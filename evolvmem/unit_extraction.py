@@ -101,6 +101,8 @@ def _link_provenance(service, item_id, archive_id, task, unit):
                 "INSERT OR IGNORE INTO context_sources(item_id,archive_id,source_kind,source_ref,extraction_version,created_at) "
                 "VALUES(?,?,'organization',?,'complete-task.v1',?)",
                 (item_id,identity,source_ref+f'/archive:{identity}',_now_iso()))
+            conn.execute("INSERT OR IGNORE INTO context_sources(item_id,archive_id,source_kind,source_ref,extraction_version,created_at) "
+                         "VALUES(?,?,'session',?,'complete-task.v1',?)",(item_id,identity,f'archive:{identity}',_now_iso()))
         conn.execute('UPDATE context_items SET source_count=(SELECT COUNT(*) FROM context_sources '
                      'WHERE item_id=?) WHERE id=?', (item_id, item_id))
         service.store.recompute_source_states([item_id])

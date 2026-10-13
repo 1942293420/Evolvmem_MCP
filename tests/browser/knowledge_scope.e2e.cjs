@@ -10,7 +10,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  try{
   await page.goto(base+'/#knowledge/organization');await page.waitForSelector('[data-rg-list]');
   await api('projects',{project:'scope-second',display_name:'第二个演示项目'});await page.reload();await page.waitForSelector('[data-rg-list]');
-  await page.locator('[data-rg-list] > *').filter({hasText:'集中审核演示'}).locator('button').click();
+  await page.locator('[data-rg-list] > *').filter({hasText:'审核条目'}).first().locator('button').click();
   const form=page.locator('[data-rg-form]');
   await form.locator('[name=projects][value=evo]').check();await form.locator('[name=projects][value=scope-second]').check();
   assert.match(await form.locator('[data-scope-selected]').innerText(),/已选 2 个项目/);

@@ -8,7 +8,7 @@ from evolvmem import organization_guidance
 def test_metrics_define_unassessed_and_count_current_review_groups(service,monkeypatch):
     tid,_=group_source(service,monkeypatch)
     m=org(service,'/metrics')
-    assert m['review_units']==12 and m['review_groups']==1
+    assert m['review_units']==12 and m['review_groups']==12
     assert m['automatic_rate']==0 and m['settled_tasks']==1
     assert m['feedback']=={'total':0,'correct':0,'incorrect':0,'error_rate':None}
 

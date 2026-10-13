@@ -69,7 +69,8 @@ def test_provider_sees_only_its_unit_with_saved_guidance_and_related_peers(servi
     assert '保留否定与条件，去掉寒暄。' in segmentation, 'saved cleaning guidance must reach the model'
     assert 'Evo 演示项目' in segmentation, 'the project registry must reach the model'
     # A numbered-record prompt never copies the whole chunk back out.
-    assert 'start_id' in segmentation and 'cleaned_summary' in segmentation
+    assert 'start_id' in segmentation and 'need_quote' in segmentation
+    assert any('任务资料整理员' in call for call in provider.calls)
     assert provider.extract_calls, 'real extraction must run per assigned unit'
     dsh_unit = next(unit for unit in org(service, '/units', {'task_id': task_id})['items']
                     if unit['project'] == 'dsh')
@@ -134,6 +135,7 @@ def test_project_correction_during_delayed_extraction_invalidates_the_result(ser
     conn = service.store._connection()
 
     def slow_provider(prompt, *args, **kwargs):
+        if '完整任务识别员' in prompt or '任务资料整理员' in prompt:return base(prompt,*args,**kwargs)
         if '整理分段助手' in prompt:
             return base.segment(prompt)
         if '你是业务资料归类核对员' in prompt:

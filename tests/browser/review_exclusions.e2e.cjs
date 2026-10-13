@@ -5,7 +5,7 @@ const assert=require('node:assert/strict');const {chromium}=require(process.env.
  page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.url().endsWith('/groups/analyze'))analyzes++;});page.setDefaultTimeout(30000);
  const ready=()=>page.waitForFunction(()=>document.querySelector('[data-rg-preview]')?.textContent.includes('AI 已按业务依据')&&document.querySelector('.knowledge-workspace')?.getAttribute('aria-busy')!=='true');
  try{
-  await page.goto(process.env.EVOLVMEM_TEST_URL+'/#knowledge/organization');await page.locator('[data-rg-list] > *').filter({hasText:'集中审核演示'}).locator('button').click();
+  await page.goto(process.env.EVOLVMEM_TEST_URL+'/#knowledge/organization');await page.locator('[data-rg-list] > *').filter({hasText:'审核条目'}).first().locator('button').click();
   const form=page.locator('[data-rg-form]');await form.locator('[name=projects][value=evo]').check();await form.locator('[name=selection]').selectOption('group');await form.locator('[name=condition]').fill('导出数据保留原始编号的要求。');
   await form.locator('[data-rg=preview]').click();await ready();
   const row=form.locator('[data-rg=review-one]').first().locator('xpath=ancestor::li[1]');await row.locator('[data-rg=review-one]').click();

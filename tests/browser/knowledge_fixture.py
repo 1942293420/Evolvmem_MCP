@@ -81,7 +81,16 @@ with s.store.transaction():
 def model(prompt, *a, **kw):
     if '完整任务识别员' in prompt or '任务资料整理员' in prompt:
         from tests.unit_model_fixture import UnitProvider
-        return UnitProvider()(prompt)
+        result=UnitProvider(topics=[(k,v,'task_requirement') for k,v in HINTS.items()])(prompt)
+        if '完整任务识别员' in prompt:
+            data=json.loads(result);records=json.loads(prompt.split('本批原文：',1)[1])
+            for row in data['segments']:
+                text=next(r['text'] for r in records if r['id']==row['start_id'])
+                if '审核条目' in text:row['title']=text.removeprefix('用户：')[:40]
+                if '保留价值演示' in text:row.update(disposition='review',disposition_reason='是否有长期价值需要用户决定')
+                if '纯进度演示' in text:row.update(disposition='history_only',category='reference')
+            return json.dumps(data,ensure_ascii=False)
+        return result
     if '你是业务资料归类核对员' in prompt:
         from tests.unit_model_fixture import UnitProvider
         result=UnitProvider().classify(prompt)
@@ -267,6 +276,21 @@ if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
         {'role':'user','content':'继续修复同一个开关的更新问题和连接提示。'},
         {'role':'assistant','content':'已修复迁移和连接提示。尚需你在电脑上验证。'}]},ensure_ascii=False))
     enqueue_complete(s,[f'archive:{source.id}'])
+if os.environ.get('EVOLVMEM_DEFAULT_UPGRADE_FIXTURE')=='1':
+    import time
+    from evolvmem import auto_organization as org, organization_task_upgrade as upgrade
+    source=_Archiver(config,s.store).archive_session('','kimi','自动迁移演示',json.dumps({'messages':[
+        {'role':'user','content':'增加写入开关，保留更新失败与修复经过。'},
+        {'role':'assistant','content':'修复后仍待用户实际验收。'}]},ensure_ascii=False))
+    old=org.enqueue(s,[f'archive:{source.id}'])['items'][0]
+    row=org._task_row(s,old['id']);body=row['source_snapshot']
+    OrganizationWorker(config)._store_units(s,row,[{'source_start':0,'source_end':len(body),'text':body,
+        'title':'旧待审资料自动更新演示','category':'task_requirement','project_hint':'','evidence_quote':''}])
+    with s.store.transaction():s.store._connection().execute("UPDATE organization_tasks SET status='review',stage='done' WHERE id=?",(old['id'],))
+    deadline=time.monotonic()+8;advance=upgrade.advance
+    def delayed(service,**kwargs):
+        return {'created':0,'examined':0} if time.monotonic()<deadline else advance(service,**kwargs)
+    upgrade.advance=delayed
 _worker=OrganizationWorker(config,mode=ContextMode.SHADOW).start() if _auto else None
 if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
     import time

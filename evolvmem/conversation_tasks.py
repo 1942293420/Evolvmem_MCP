@@ -82,6 +82,24 @@ def register(service,source_keys,*,expand=False):
     return [row[0] for row in prepared]
 
 
+def revision(service,key,*,visible=None):
+    """Check current membership/revisions without assembling every message."""
+    from evolvmem.history_organization import _unassigned_archives
+    from evolvmem.knowledge_cleaning import record,review
+    if visible is None:visible={r['id'] for r in _unassigned_archives(service)}
+    values=[]
+    for member in members(service,key):
+        row=record(service,member,visible=visible)
+        if member.startswith('archive:'):
+            archive=service.store.get_session_archive(int(member.split(':')[1]))
+            if not archive or archive['state']!='available':raise ValueError('cleaning_source_unavailable')
+        values.append([member,row['expected_revision']])
+    saved=review(service,key)
+    if saved and saved['state']=='deleted':raise ValueError('cleaning_source_deleted')
+    raw=_hash(['complete-tasks-v1',values])
+    return hashlib.sha256((raw+':'+str(saved['revision'] if saved else 0)).encode()).hexdigest()
+
+
 def snapshot(service,key,*,visible=None):
     from evolvmem.history_organization import _unassigned_archives
     from evolvmem.knowledge_cleaning import record,cleaned_messages
@@ -123,9 +141,11 @@ def snapshot(service,key,*,visible=None):
 
 def enqueue(service,source_keys,*,expand=False):
     from evolvmem import auto_organization as org
+    sync=[]
     with service.store.transaction():
         keys=register(service,source_keys,expand=expand)
-        result = org.enqueue(service,keys)
+        result = org.enqueue(service,keys,deferred_sync=sync)
+    if sync:service.knowledge()._sync(sorted(set(sync)))
     # Retire old fragment jobs only after the new durable job exists. Original
     # units and human decisions remain stored and are carried into task review.
     for task in result['items']:
@@ -135,6 +155,9 @@ def enqueue(service,source_keys,*,expand=False):
                     "UPDATE organization_tasks SET status='superseded',superseded_by=?,updated_at=? "
                     "WHERE source_key=? AND status!='superseded'",
                     (task['id'],_now_iso(),member))
+                service.store._connection().execute(
+                    "INSERT OR REPLACE INTO organization_task_upgrades(task_id,replacement_id,updated_at) SELECT id,?,? FROM organization_tasks WHERE source_key=? AND superseded_by=?",
+                    (task['id'],_now_iso(),member,task['id']))
             org._mark_outputs_stale(service,member,current_task=task['id'])
     return result
 

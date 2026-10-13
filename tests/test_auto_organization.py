@@ -121,6 +121,8 @@ def test_fabricated_quote_is_rejected_and_source_is_not_ingested(service, monkey
     task_id = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]['id']
 
     def liar(prompt, *args, **kwargs):
+        if '完整任务识别员' in prompt:
+            return json.dumps({'segments':[{'task':'new','start_id':1,'end_id':4,'title':'捏造','need_quote':'用户从未说过这句话。'}]})
         if '整理分段助手' in prompt:
             text = prompt.split('完整正文：\n', 1)[1]
             return json.dumps({'units': [
@@ -142,7 +144,7 @@ def test_fabricated_quote_is_rejected_and_source_is_not_ingested(service, monkey
             time.sleep(.05)
     finally:
         worker.stop()
-    assert task['status'] == 'review'
+    assert task['status'] == 'failed'
     assert 'coverage' in task['error_code'] or 'quote' in task['error_code']
     assert service.store._connection().execute(
         "SELECT count(*) FROM context_items WHERE identity_key LIKE 'organization:%'").fetchone()[0] == 0
@@ -262,19 +264,20 @@ def test_assigned_unit_is_visible_in_project_history_with_provenance(service, mo
     # Project history is not empty: the unit reaches the project's session list.
     listed = [row for row in history_memory.sessions(service, 'evo') if row['summary']]
     assert listed, 'assigned units must appear in the project history listing'
-    assert any(evo_unit['text'] in row['summary'] for row in listed)
+    assert any(evo_unit['cleaned_text'] in row['summary'] for row in listed)
     assert all(dsh_unit['text'] not in row['summary'] for row in listed)
     # Recall selects the unit and points at conversation_read.
     recall = memory_recall.recall(service, {'project': 'evo', 'query': 'Evo 演示项目先明确验收条件',
                                             'kind': 'history'})
     assert recall['history'], 'history recall must select the organized unit'
-    assert any(evo_unit['text'] in row['summary'] for row in recall['history'])
+    assert any(evo_unit['cleaned_text'] in row['summary'] for row in recall['history'])
     assert recall['selected_ids'], 'recall must expose the source item ids'
     # conversation_read returns only the requested project's units, with ranges.
     evo_read = history_memory.read(service, 'evo', source.id)
     assert [unit['source_start'] for unit in evo_read['units']] == [evo_unit['source_start']]
     assert evo_read['units'][0]['source_end'] == evo_unit['source_end']
-    assert evo_unit['text'] in evo_read['text'] and dsh_unit['text'] not in evo_read['text']
+    assert evo_unit['cleaned_text'] in evo_read['text'] and dsh_unit['cleaned_text'] not in evo_read['text']
+    assert evo_read['units'][0]['text']==evo_unit['text']
     dsh_read = history_memory.read(service, 'dsh', source.id)
     assert [unit['text'] for unit in dsh_read['units']] == [dsh_unit['text']]
     with pytest.raises(ValueError, match='conversation_not_in_project'):
@@ -284,11 +287,11 @@ def test_assigned_unit_is_visible_in_project_history_with_provenance(service, mo
     provenance = conn.execute(
         "SELECT s.source_ref,s.archive_id,i.project FROM context_sources s JOIN context_items i ON i.id=s.item_id "
         "WHERE s.source_kind='organization' AND i.project='evo'").fetchall()
-    assert provenance and all(row['archive_id'] == source.id for row in provenance)
+    assert provenance and {row['archive_id'] for row in provenance if row['archive_id'] is not None} == {source.id}
     assert any(f'@{evo_unit["source_start"]}-{evo_unit["source_end"]}' in row['source_ref']
                for row in provenance)
     document = dispatch(service, 'GET', 'project-memory', {'project': 'evo'})
-    assert evo_unit['text'] in document['body']
+    assert evo_unit['cleaned_text'] in document['body']
 
 def test_generated_candidates_are_never_marked_verified(service, monkeypatch):
     source = many_topic_archive(service, session='evidence-session')
@@ -435,6 +438,8 @@ def test_middle_gap_is_detected_instead_of_classifying_first_and_last_only(servi
     record_id = re.compile(r'^\[(\d+)\] ', re.M)
 
     def skips_the_middle(prompt, *args, **kwargs):
+        if '完整任务识别员' in prompt:
+            records=json.loads(prompt.split('本批原文：')[1]);return json.dumps({'segments':[{'task':'new','start_id':records[0]['id'],'end_id':records[0]['id'],'title':'开头','need_quote':''}]})
         if '整理分段助手' not in prompt:
             raise AssertionError('extraction must not run after a coverage failure')
         records = [int(pos) for pos in record_id.findall(prompt)]
@@ -461,7 +466,7 @@ def test_middle_gap_is_detected_instead_of_classifying_first_and_last_only(servi
             time.sleep(.05)
     finally:
         worker.stop()
-    assert task['status'] == 'review' and task['error_code'] == 'coverage_coverage_gap'
+    assert task['status'] == 'failed' and task['error_code'] == 'task_coverage_gap'
     assert org(service, '/units', {'task_id': task_id})['items'] == []
     assert service.store._connection().execute(
         "SELECT count(*) FROM context_items WHERE identity_key LIKE 'project:%'").fetchone()[0] == 0
@@ -708,7 +713,7 @@ def test_backlog_is_bounded_and_reports_progress(service, monkeypatch):
 def test_task_view_shows_a_readable_source_title_not_only_the_key(service):
     source = many_topic_archive(service, session='title-session')
     task = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]
-    assert 'title-session' in task['source_title']
+    assert 'Evo 演示项目' in task['source_title']
     assert task['source_title'] != task['source_key']
     assert '标题' not in task['source_title']
 

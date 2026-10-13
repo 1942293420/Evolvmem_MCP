@@ -287,8 +287,8 @@ def test_correction_does_not_duplicate_history_summary(service, monkeypatch):
     # The same text is never shown twice for one archive.
     for row in project_memory.document(service, 'evo')['sessions']:
         if row['summary']:
-            parts = [p for p in row['summary'].split('\n') if p]
-            assert len(parts) == len(set(parts)), row['summary']
+            for unit in org(service,'/units',{'task_id':tid})['items']:
+                if unit['project']=='evo':assert row['summary'].count(unit['cleaned_text'])==1, row['summary']
 
 
 # --- 6) shared knowledge is never moved by one source's correction -----------

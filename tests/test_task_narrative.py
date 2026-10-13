@@ -64,3 +64,48 @@ def test_later_progress_without_new_result_keeps_unfinished_work():
         lambda _:json.dumps(outputs.pop(0)),max_messages=3)
     assert record['state']=='open'
     assert record['outstanding']==['等待实际验收']
+
+
+def test_wrong_message_number_is_resolved_only_by_unique_verbatim_quote():
+    data=answer();data['result']['evidence'][0]['message']=999
+    record=engine().organize(MESSAGES,lambda _:json.dumps(data))
+    assert record['result']['evidence'][0]['message']==3
+    assert record['result']['evidence'][0]['role']=='assistant'
+
+
+def test_correction_identifies_exact_bad_quote_and_field():
+    bad=answer();bad['steps'][0]['evidence'][0]['quote']='迁移已全部完成'
+    calls=[]
+    def provider(prompt):
+        calls.append(prompt)
+        if len(calls)==1:return json.dumps(bad)
+        assert 'steps[0].evidence[0]' in prompt
+        assert '迁移已全部完成' in prompt
+        return json.dumps(answer())
+    assert engine().organize(MESSAGES,provider)['steps']
+    assert len(calls)==2
+
+
+def test_json_correction_includes_parser_location():
+    calls=[]
+    def provider(prompt):
+        calls.append(prompt)
+        if len(calls)==1:return '{"requirement": [}'
+        assert 'JSON' in prompt and '第 1 行' in prompt
+        return json.dumps(answer())
+    assert engine().organize(MESSAGES,provider)['requirement']
+
+
+def test_repeated_quote_in_one_message_still_has_unambiguous_message_source():
+    messages=[{'role':'user','content':'增加写入开关。再次强调：增加写入开关。'}]
+    data={'requirement':{'text':'增加开关','evidence':[{'message':99,'quote':'增加写入开关。'}]},'analysis':None,'steps':[],'result':None,'outstanding':[],'state':'open'}
+    assert engine().organize(messages,lambda _:json.dumps(data))['requirement'][0]['evidence'][0]['message']==1
+
+
+def test_evidence_source_identifier_copies_original_without_model_transcription():
+    data=answer();data['steps'][0]['evidence']=[{'source':'e3'}]
+    record=engine().organize(MESSAGES,lambda _:json.dumps(data))
+    assert record['steps'][0]['evidence']==[{'message':3,'quote':MESSAGES[2]['content'],'role':'assistant'}]
+    data['steps'][0]['evidence']=[{'source':'e999'}]
+    with pytest.raises(ValueError,match='task_narrative_evidence'):
+        engine().organize(MESSAGES,lambda _:json.dumps(data))

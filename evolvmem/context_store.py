@@ -40,6 +40,11 @@ def _now_iso() -> str:
 # statement, executed in order; arbitrary SQL is never split on semicolons, so
 # the whole schema can join one outer transaction without an implicit commit.
 _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
+    """CREATE TABLE IF NOT EXISTS organization_task_upgrades (
+        task_id INTEGER PRIMARY KEY REFERENCES organization_tasks(id),
+        replacement_id INTEGER, error_code TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+    )""",
     """CREATE TABLE IF NOT EXISTS organization_conversations (
         source_key TEXT PRIMARY KEY, identity TEXT NOT NULL,
         members TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -656,6 +661,7 @@ class ContextStore:
         }
         additions["organization_tasks"] = {
             "task_draft": "TEXT NOT NULL DEFAULT '[]'",
+            "segmentation_progress": "TEXT NOT NULL DEFAULT '{}'",
             "source_snapshot": "TEXT NOT NULL DEFAULT ''",
             "source_title": "TEXT NOT NULL DEFAULT ''",
             "context_basis": "TEXT NOT NULL DEFAULT ''",

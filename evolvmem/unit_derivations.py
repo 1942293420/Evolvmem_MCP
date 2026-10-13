@@ -5,6 +5,7 @@ supersede exactly the knowledge that came from that unit. Knowledge shared with
 another source keeps its links: it is never blindly moved or deleted.
 """
 from __future__ import annotations
+import json
 
 from evolvmem.context_store import _now_iso
 from evolvmem import knowledge_scope as ks
@@ -59,6 +60,11 @@ def currently_backed(store, item_id):
         return True
     keys = {r['source_key'] for r in rows}
     archives = {int(k.split(':')[1]) for k in keys if k.startswith('archive:')}
+    for key in keys:
+        if key.startswith('conversation:'):
+            row=conn.execute('SELECT members FROM organization_conversations WHERE source_key=?',(key,)).fetchone()
+            if row:archives.update(int(k.split(':')[1]) for k in json.loads(row['members']) if k.startswith('archive:'))
+
     for source in conn.execute('SELECT * FROM context_sources WHERE item_id=?', (item_id,)):
         if source['source_kind'] == 'session' and source['archive_id'] in archives:
             continue
@@ -151,12 +157,13 @@ def is_shared(service, item_id, *, archive_id=None, unit_ref='', session_ref='')
     rows = service.store._connection().execute(
         'SELECT source_kind,archive_id,source_ref FROM context_sources WHERE item_id=?',
         (int(item_id),)).fetchall()
+    own_archives={r['archive_id'] for r in rows if r['source_kind']=='organization' and unit_ref and str(r['source_ref']).startswith(unit_ref)}
     for row in rows:
         if row['source_kind'] == 'organization' and unit_ref and str(row['source_ref']).startswith(unit_ref):
             continue
         if row['source_kind'] == 'extraction' and session_ref and row['source_ref'] == session_ref:
             continue
-        if row['source_kind'] == 'session' and archive_id is not None and row['archive_id'] == archive_id:
+        if row['source_kind'] == 'session' and (row['archive_id'] in own_archives or archive_id is not None and row['archive_id'] == archive_id):
             continue
         return True
     return False

@@ -138,7 +138,7 @@ class UnitProvider:
                     if any(n and re.search(r'(?<![a-z0-9_-])'+re.escape(n)+r'(?![a-z0-9_-])',r['text'],re.I) for n in names):
                         if not any((re.search(r'(?:使用|交给|用|让)\s*'+re.escape(n),r['text'],re.I)) for n in names if n):
                             selected.append(p['project'])
-                marker=next((x for x in self.topics if x[0] in r['text']),None)
+                marker=next((x for x in sorted(self.topics,key=lambda x:len(x[0]),reverse=True) if x[0] in r['text']),None)
                 if not selected and context and marker and len(marker)>3 and marker[3] is True:
                     selected=[context['basis']['project']];continued=True
                 if not selected and r.get('context',{}).get('same_source') and '继续细化' in r['text']:
@@ -157,11 +157,21 @@ class UnitProvider:
         self.calls.append(prompt)
         if '完整任务识别员' in prompt:
             records=json.loads(prompt.split('本批原文：',1)[1])
-            catalog=json.loads(prompt.split('已识别任务：',1)[1].split('本批原文：',1)[0])
-            quote=next((re.sub(r'^用户：','',r['text'])[:100] for r in records if r['role']=='user'),'')
-            return json.dumps({'segments':[{'task':catalog[0]['task'] if catalog else 'new',
-                'start_id':records[0]['id'],'end_id':records[-1]['id'],
-                'title':'完整任务演示','need_quote':quote}]},ensure_ascii=False)
+            catalog=json.loads(prompt.split('已识别任务：',1)[1].split('本批原文：',1)[0].split('上一回复（待修正）：',1)[0].strip())
+            units=[];current=None
+            for r in records:
+                marker=next((x for x in sorted(self.topics,key=lambda x:len(x[0]),reverse=True) if x[0] in r['text']),None)
+                if marker and len(marker)>3 and marker[3] is True and current is not None:
+                    current['end_id']=r['id'];continue
+                if marker or current is None:
+                    if current:units.append(current)
+                    title=marker[0] if marker else (catalog[-1]['title'] if catalog else '完整任务演示')
+                    ref=next((x['task'] for x in catalog if x['title']==title),'new')
+                    current={'task':ref,'start_id':r['id'],'end_id':r['id'],'title':title,
+                             'need_quote':re.sub(r'^用户：','',r['text'])[:100] if r['role']=='user' else ''}
+                else:current['end_id']=r['id']
+            if current:units.append(current)
+            return json.dumps({'segments':units},ensure_ascii=False)
         if '任务资料整理员' in prompt:
             records=json.loads(prompt.split('本批原文：',1)[1])
             def entry(r):return {'text':r['content'][:100],'evidence':[{'message':r['id'],'quote':r['content'][:100]}]}

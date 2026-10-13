@@ -6,7 +6,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  page.on('pageerror',e=>errors.push(e.message));page.setDefaultTimeout(30000);
  try{
   await page.goto(process.env.EVOLVMEM_TEST_URL+'/#knowledge/organization');
-  await page.locator('[data-rg-list] > *').filter({hasText:'集中审核演示'}).locator('button').click();
+  await page.locator('[data-rg-list] > *').filter({hasText:'审核条目'}).first().locator('button').click();
   const form=page.locator('[data-rg-form]');
   await form.locator('[name=projects][value=evo]').check();
   await form.locator('[name=selection]').selectOption('group');

@@ -10,7 +10,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  const previewReady=()=>page.waitForFunction(()=>document.querySelector('[data-rg=apply]')?.disabled===false);
  try{
   await page.goto(base+'/#knowledge/organization');
-  await page.locator('[data-rg-list] > *').filter({hasText:'集中审核演示'}).locator('button').click();
+  await page.locator('[data-rg-list] > *').filter({hasText:'审核条目'}).first().locator('button').click();
   const form=page.locator('[data-rg-form]');
   await form.locator('[name=projects][value=evo]').check();
   await form.locator('[name=selection]').selectOption('group');
@@ -21,7 +21,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await Promise.all([page.waitForResponse(r=>r.url().endsWith('/groups/analyze')),form.locator('[data-rg=preview]').click()]);await previewReady();
   assert.equal(jobs.length,2);assert.equal(jobs[0],jobs[1]);
   // Merely reading another source fragment must not clear batch results.
-  await form.locator('[name=unit]').selectOption({index:1});
+  await form.locator('[data-rg-preview] > details').last().locator(':scope > summary').click();
   assert.equal(await form.locator('[data-rg=apply]').isEnabled(),true);
   await page.reload();await previewReady();
   assert.equal(await form.locator('[name=projects][value=evo]').isChecked(),true);

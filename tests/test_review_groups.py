@@ -28,7 +28,7 @@ def test_preview_ten_matches_two_exceptions_then_single_guidance(service,monkeyp
     tid,source=group_source(service,monkeypatch)
     before=service.store._connection().execute('select count(*) from organization_guidance').fetchone()[0]
     groups=org(service,'/groups')['items']
-    assert len(groups)==1 and groups[0]['count']==12
+    assert len(groups)==12 and all(g['count']==1 and g['complete_task'] for g in groups)
     p=proposal(service,groups[0]['id'])
     assert len(p['eligible'])==10 and len(p['excluded'])==2
     assert all(x['reason']=='命中例外：其他平台' for x in p['excluded'])
@@ -42,7 +42,7 @@ def test_preview_ten_matches_two_exceptions_then_single_guidance(service,monkeyp
     # Saving the ten starts extraction, but the two untouched review units
     # must stay visible while their sibling units are being extracted.
     remaining = org(service, '/groups')['items']
-    assert len(remaining) == 1 and remaining[0]['count'] == 2
+    assert len(remaining) == 2 and all(g['count']==1 for g in remaining)
     with pytest.raises(ValueError,match='review_preview_changed'):
         org(service,'/groups/apply',{'proposal':p})
     assert service.store._connection().execute('select count(*) from organization_guidance').fetchone()[0]==before+1
@@ -71,7 +71,8 @@ def test_groups_keep_sessions_separate_and_manual_rows_out(service,monkeypatch):
     tid,_=group_source(service,monkeypatch,session='first',count=4)
     group_source(service,monkeypatch,session='second',count=4)
     groups=org(service,'/groups')['items']
-    assert len(groups)==2 and sorted(g['count'] for g in groups)==[4,4]
+    assert len(groups)==8 and all(g['count']==1 for g in groups)
+    assert len({g['id'] for g in groups})==8
     u=org(service,'/units',{'task_id':tid})['items'][0]
     org(service,'/correct',{'task_id':tid,'digest':u['digest'],'expected_revision':u['revision'],'project':'evo'})
     groups=org(service,'/groups')['items']
@@ -98,8 +99,8 @@ def test_rules_change_invalidates_preview(service,monkeypatch):
 
 def test_single_item_review_needs_no_phrase_and_changes_only_selected_unit(service, monkeypatch):
     tid, _ = group_source(service, monkeypatch, count=4)
-    group = org(service, '/groups')['items'][0]
     unit = org(service, '/units', {'task_id': tid})['items'][2]
+    group = org(service, '/groups/detail', {'task_id':tid,'digest':unit['digest']})
     p = org(service, '/groups/preview', {'group_id': group['id'], 'project': 'evo',
         'selection': 'item', 'task_id': tid, 'digest': unit['digest']})
     assert p['searched_count'] == 1
@@ -124,8 +125,9 @@ def test_group_detail_returns_every_untruncated_original_fragment(service, monke
     gid = org(service, '/groups')['items'][0]['id']
     detail = org(service, '/groups/detail', {'group_id': gid})
     originals = org(service, '/units', {'task_id': tid})['items']
-    assert len(detail['items']) == 5
-    assert [u['text'] for u in detail['items']] == [u['text'] for u in originals]
+    assert len(detail['items']) == 1
+    assert detail['items'][0]['text'] == originals[0]['text']
+    assert detail['items'][0]['task_record']['version']
 
 
 def test_stale_preview_can_reprocess_only_matching_sources_then_be_saved(service, monkeypatch):

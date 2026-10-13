@@ -11,12 +11,12 @@
       <h3>2. 看清需求、处理经过和结果</h3><h4 data-rg-title></h4><p data-rg-source-label></p>
       <label data-rg-unit-picker>这份会话中需要确认的资料<select name="unit"></select></label>
       <p class="review-question" data-rg-reason></p><div data-rg-narrative></div><pre class="review-original" data-rg-original></pre>
-      <div data-rg-legacy hidden><p>这份旧资料按片段保存，可先还原完整任务再分类。</p><button type="button" data-rg="complete-task">按完整任务重新整理这段会话</button></div>
+      <div data-rg-legacy hidden role="status"><p>这段会话正在等待自动整理成完整任务。完成后会显示需求、处理经过和结果。</p></div>
       <details data-rg-source open><summary>原始任务上下文</summary><div data-rg-source-text></div></details>
-      <div class="actions" data-rg-value hidden><button type="button" data-rg="keep">保留这条资料</button><button type="button" data-rg="aside">暂存，稍后再判断</button></div>
+      <div data-rg-decision><div class="actions" data-rg-value hidden><button type="button" data-rg="keep">保留这条资料</button><button type="button" data-rg="aside">暂存，稍后再判断</button></div>
       <h3>3. 选择这条知识适用于哪里</h3><div data-rg-scope></div><div class="organization-settings">
 
-        <label>本次处理哪些资料<select name="selection"><option value="item">只处理正在看的这一条</option><option value="group">在左侧选中这组内交给 AI 判断</option><option value="all">在全部待确认资料中交给 AI 判断</option></select></label>
+        <label>本次处理哪些资料<select name="selection"><option value="item">只处理正在看的这一条</option><option value="group">在这段会话的待确认任务中交给 AI 判断</option><option value="all">在全部待确认资料中交给 AI 判断</option></select></label>
       </div><div data-rg-batch hidden><label>归类依据<textarea rows="4" name="condition" maxlength="1000" placeholder="例如：介绍技术概念、原理或通用使用方法的资料，归入知识问答；实际修改某个项目的需求不属于这一类。"></textarea></label>
         <label>不适用的情况（选填）<textarea name="exceptions" rows="2" maxlength="500" placeholder="例如：虽提到某项技术，但主要是在安排具体项目的开发任务。"></textarea></label>
         <label>以后遇到同样内容<select name="scope"><option value="batch">只处理本次预览中的资料</option><option value="future">让 AI 继续按这份依据判断</option></select></label>
@@ -24,7 +24,7 @@
       <input type="hidden" name="group_id"><input type="hidden" name="task_id"><input type="hidden" name="digest"><input type="hidden" name="continue_job_id">
       <button type="button" data-rg="preview">预览归类结果</button><div data-rg-reprocess-status role="status"></div><div data-rg-preview></div>
       <div class="review-apply-bar"><p data-rg-save-status role="status">选择适用范围后，先预览再保存。</p><button type="button" class="primary write" data-rg="apply" disabled>确认归类</button></div>
-    </form></div></div></section>`;
+    </div></form></div></div></section>`;
     const form=$('[data-rg-form]');
     const scopePicker=EvolvProjects.scopePicker({mount:$('[data-rg-scope]'),projects,esc});
     function notice(text){$('[data-rg-status]').textContent=text;}
@@ -42,6 +42,7 @@
       const sequence=++loadSequence;
       const result=await api('organization/groups?'+new URLSearchParams({page}));
       if(sequence!==loadSequence)return;
+      await refreshLegacy();
       const snapshot=JSON.stringify(result);
       if(snapshot===listSnapshot)return;
       listSnapshot=snapshot;
@@ -51,6 +52,22 @@
       $('[data-rg-list]').innerHTML=result.items.map(g=>`<article class="review-source-card"><button type="button" data-rg="choose" data-id="${esc(g.id)}" aria-pressed="false"><strong>${esc(g.examples[0]?.title||g.title)}</strong><span>${g.count} 条 · ${g.reason==='价值待确认'?'需要确认是否保留':g.reason==='归属有冲突'?'需要解决归属冲突':'需要确认适用范围'}</span><span class="review-source-name">来源：${esc(g.title)}</span></button></article>`).join('')||'<div class="empty">没有需要你确认的资料</div>';
       highlight();
     }
+    async function refreshLegacy(){
+      if(busy||!detail||form.hidden)return;
+      const u=detail.items.find(x=>x.digest===form.elements.digest.value);
+      if(!u||u.task_record?.version)return;
+      let state=await api('organization/state?'+new URLSearchParams({task_id:u.task_id}));
+      const original=state.id;
+      for(let i=0;i<20&&state.superseded_by;i++)state=await api('organization/state?'+new URLSearchParams({task_id:state.superseded_by}));
+      if(state.id===original)return;
+      const status=$('[data-rg-legacy]');
+      if(['pending','running'].includes(state.status)){status.textContent='正在自动整理完整任务，完成后会显示需求、处理经过和结果。';return;}
+      if(state.status==='failed'){status.textContent='这段会话整理失败，请在“系统问题”查看原因并重试。';return;}
+      const result=await api('organization/groups?'+new URLSearchParams({task_id:state.id}));
+      if(result.total===1){await choose(result.items[0].id);notice('已自动更新为完整任务，可以直接核对需求、处理经过和结果。');return;}
+      form.hidden=true;const pane=$('[data-rg-empty]');pane.hidden=false;
+      pane.innerHTML=result.total?`<h3>这段会话已整理为 ${result.total} 个待确认任务</h3>${result.items.map(g=>`<p><button type="button" data-rg="choose" data-id="${esc(g.id)}">${esc(g.title)}</button></p>`).join('')}`:'<h3>这段会话已整理完成</h3><p>项目归属已确定，可在“已完成”或项目历史查看结果。</p>';
+    }
     function showUnit(){
       const u=detail?.items.find(x=>`${x.task_id}:${x.digest}`===form.elements.unit.value);if(!u)return;
       form.elements.task_id.value=u.task_id;form.elements.digest.value=u.digest;
@@ -59,6 +76,7 @@
       $('[data-rg-narrative]').innerHTML=complete?narrative(u.task_record):'';
       $('[data-rg-original]').hidden=complete;$('[data-rg-original]').textContent=complete?'':u.text;
       $('[data-rg-legacy]').hidden=complete;
+      $('[data-rg-decision]').hidden=!complete;
       $('[data-rg-reason]').textContent=u.disposition==='review'?'需要你确认是否保留：'+(u.disposition_reason||u.reason):'需要你确认适用范围：'+(u.reason||'系统无法确定这条知识是个人通用还是用于哪些项目');
       $('[data-rg-value]').hidden=u.disposition!=='review';
       const source=$('[data-rg-source]');source.ontoggle=null;source.open=!complete;$('[data-rg-source-text]').replaceChildren();
@@ -153,13 +171,6 @@
       try{
         const action=b.dataset.rg;
         if(action==='choose'){await choose(b.dataset.id);}
-        else if(action==='complete-task'){
-          if(pendingTasks.length){notice('会话正在整理，请等待完成。');return;}
-          const u=detail.items.find(x=>x.digest===form.elements.digest.value&&x.task_id===Number(form.elements.task_id.value));
-          const result=await api('organization/organize',{items:[{key:u.source_key}]});
-          pendingTasks=result.items.map(t=>t.id);recoveryGroup=selectedGroup;
-          invalidate();notice('已开始按完整任务整理。原文与以前的人工判断会保留，完成后请在左侧选择完整任务。');checkRecovery();
-        }
         else if(action==='preview'){
           if(pendingTasks.length&&selectedGroup===recoveryGroup){notice('这份资料正在重新整理，请完成后再预览。');return;}
           await refreshPreview();

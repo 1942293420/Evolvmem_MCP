@@ -170,3 +170,6 @@ def test_automatic_judgment_does_not_load_unlinked_session_background(service,mo
     monkeypatch.setattr(task_context,'_session_background',forbidden)
     got=reasoning.context_for(service,u)
     assert u['text'] in '\n'.join(reasoning.evidence_texts(u,got))
+
+# Retain coverage for pre-migration histories and their correction dependencies.
+from tests.legacy_organization_fixture import legacy_stored_history

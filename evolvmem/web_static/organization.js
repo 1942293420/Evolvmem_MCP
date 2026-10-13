@@ -53,6 +53,7 @@
       : c.archived_batches === 0 ? '<span class="badge">暂无新对话</span>'
       : '<span class="badge green">已归档</span>';
   }
+  let completeTasks=queue.complete_tasks||{};
   let tasks = queue.items, current = new Set(queue.current_task_ids || []), busy = false;
   let guidanceRows = guidance.items, arrival = settings, total = queue.total || 0, page = 1, filter = 'review';
   let tab='review', loadSequence=0;
@@ -63,14 +64,14 @@
   const name = p => projects.find(x => x.project === p)?.display_name || p || '未归属';
   const statusText = {pending:'等待处理',running:'处理中',completed:'已完成',review:'待确认',failed:'失败',superseded:'已被新版本替代'};
   const stageText = {queued:'排队',cleaning:'清洗',segmentation:'识别完整任务',narrative:'整理需求、过程与结果',assignment:'判断项目归属',extraction:'提取问答与经验',done:'完成',stale:'过期',retired:'已退出'};
-  const errorText = e => ({revision_conflict:'任务或来源已变化，请刷新后重试。',cleaning_source_deleted:'来源已被永久删除。',cleaning_source_unavailable:'原文暂不可读取。',source_no_dialogue:'这次会话没有对话内容，无需审核，也不进入整理。',source_superseded:'旧快照已退出当前队列，原始归档仍保留；最新版本会正常整理。',source_excluded:'系统子会话已自动排除，不进入整理。',extraction_provider_unavailable:'尚未配置整理模型。',coverage_coverage_gap:'有段落未被处理，已停止；请核对原文后重试。',coverage_coverage_overlap:'分段位置重叠，已停止；请核对原文后重试。',coverage_quote_not_found:'模型引用的原话在原文中找不到，已停止。',units_need_review:'部分单元需要人工确认。',organization_failed:'整理失败，可重试。',organization_needs_context_mode:'当前服务模式不写入知识库，无法自动整理。',task_superseded:'任务已被新版本替代。',resegment_manual_review_required:'这份资料已有人工确认，不能重新分段覆盖；请在现有单元中修改。',guidance_not_found:'这条指导已不存在。',invalid_guidance:'请填写 1–1000 字的指导。',invalid_guidance_scope:'适用范围不正确。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_condition_required:'请填写明确的业务归类依据。',project_required:'请先指定适用范围。'})[e]||e;
+  const errorText = e => ({task_coverage_gap:'部分原文尚未整理，已保留进度，可重试。',task_quote_not_found:'需求引用未能对应原文，已保留进度，可重试。',task_narrative_evidence:'整理结果的引用未通过原文核验，可重试。',task_narrative_invalid:'模型返回的整理结果不完整，可重试。',task_invalid_response:'模型返回格式不正确，可重试。',task_unknown_reference:'模型未能正确关联前后任务，可重试。',task_context_too_large:'会话中的任务过多，需要核对。',task_upgrade_failed:'旧资料暂时无法整理，请核对原文。',conversation_overlap:'会话的原文范围重叠，需要核对。',revision_conflict:'任务或来源已变化，请刷新后重试。',cleaning_source_deleted:'来源已被永久删除。',cleaning_source_unavailable:'原文暂不可读取。',source_no_dialogue:'这次会话没有对话内容，无需审核，也不进入整理。',source_superseded:'旧快照已退出当前队列，原始归档仍保留；最新版本会正常整理。',source_excluded:'系统子会话已自动排除，不进入整理。',extraction_provider_unavailable:'尚未配置整理模型。',coverage_coverage_gap:'有段落未被处理，已停止；请核对原文后重试。',coverage_coverage_overlap:'分段位置重叠，已停止；请核对原文后重试。',coverage_quote_not_found:'模型引用的原话在原文中找不到，已停止。',units_need_review:'部分单元需要人工确认。',organization_failed:'整理失败，可重试。',organization_needs_context_mode:'当前服务模式不写入知识库，无法自动整理。',task_superseded:'任务已被新版本替代。',resegment_manual_review_required:'这份资料已有人工确认，不能重新分段覆盖；请在现有单元中修改。',guidance_not_found:'这条指导已不存在。',invalid_guidance:'请填写 1–1000 字的指导。',invalid_guidance_scope:'适用范围不正确。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_condition_required:'请填写明确的业务归类依据。',project_required:'请先指定适用范围。'})[e]||e;
   let groupDirty = false;
   const dirty = () => onDirty(drafts.size > 0 || groupDirty);
   function notice(t){$('#org-notice').textContent = t;}
   mount.innerHTML = `<section class="panel organization-panel">
   <div class="organization-topbar"><span id="org-arrival-state">${arrival.auto_new?'自动处理已开启':'自动处理已暂停'}</span><div class="actions"><button data-org-action="refresh">刷新状态</button><details class="organization-options"><summary>处理设置</summary><div class="organization-settings"><label class="extraction-choice"><input type="checkbox" data-org-arrival ${arrival.auto_new?'checked':''}>自动处理新资料</label><button class="write" data-org-action="backlog">整理未处理的历史（每次 20 份）</button></div></details></div></div>
   <nav class="organization-tabs" role="tablist" aria-label="整理工作区">${Object.entries(tabs).map(([key,label])=>`<button role="tab" id="org-tab-${key}" aria-controls="org-pane-${key}" aria-selected="${key==='review'}" data-org-tab="${key}">${label}</button>`).join('')}</nav>
-  <p id="org-notice" role="status"></p>
+  <section class="review-decision-notice" aria-label="完整任务整理进度"><strong>先整理完整任务，再判断项目、提炼经验</strong><p id="org-complete-status" role="status"></p></section><p id="org-notice" role="status"></p>
   <section data-org-pane="review" id="org-pane-review" role="tabpanel" aria-labelledby="org-tab-review"><div class="review-decision-notice"><strong>只处理系统无法确定的资料</strong><div class="actions"><a href="#knowledge/qa">问答内容核对 →</a><a href="#knowledge/intake">存量资料待确认 →</a></div></div><div id="org-review-groups"></div></section>
   <section data-org-pane="failed" id="org-pane-failed" role="tabpanel" aria-labelledby="org-tab-failed" hidden><div class="review-decision-notice"><strong>处理失败，无需重新判断项目</strong><button class="write" data-org-action="retry-failed">重试本页失败任务</button></div></section>
   <section data-org-pane="completed" id="org-pane-completed" role="tabpanel" aria-labelledby="org-tab-completed" hidden><div class="actions"><strong>结果已保存，无需再次审核</strong><a href="#knowledge/projects">查看项目历史 →</a><a href="#knowledge/qa">查看可用知识 →</a></div></section>
@@ -186,9 +187,13 @@
     el.focus();
     try{el.setSelectionRange(state.start, state.end);}catch(error){/* non-text inputs */}
   }
+  function drawComplete(){
+    const s=completeTasks;
+    $('#org-complete-status').textContent=`待还原的旧资料 ${s.waiting||0} 份 · 正在处理 ${s.processing||0} 段会话 · 已整理 ${s.ready||0} 段会话${s.failed?` · ${s.failed} 项需在“系统问题”处理`:""}`;
+  }
   function draw(){
     const focus = focusState();
-    renderTaskList(); drawGuidance(); drawCapture(); dirty();
+    renderTaskList(); drawGuidance(); drawCapture(); drawComplete(); dirty();
     restoreFocus(focus);
   }
   function snapshot(){return JSON.stringify(tasks.map(t=>[t.id,t.status,t.stage,t.unit_count,t.review_count,t.attempts,t.updated_at,t.error_code,current.has(t.id)]));}
@@ -201,6 +206,7 @@
     const next = snapshotFor(result);
     tasks = result.items; current = new Set(result.current_task_ids||[]);
     total = result.total || 0; Object.assign(counts, result.counts || {});
+    completeTasks=result.complete_tasks||{};drawComplete();
     for(const id of [...open.keys()]) if(!tasks.some(t=>t.id===id)) open.delete(id);
     // Background polling must not collapse an open list, drop drafts or move
     // the caret of a field the user is editing.

@@ -92,4 +92,4 @@ def from_payload(payload, *, policy=None):
 
 
 def render(messages):
-    return '\n\n'.join(('用户：' if m['role']=='user' else 'AI：')+m['content'] for m in messages)
+    return '\n\n'.join(('用户：' if m['role']=='user' else 'AI：' if m['role']=='assistant' else '')+m['content'] for m in messages)

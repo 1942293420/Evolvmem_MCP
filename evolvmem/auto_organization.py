@@ -256,7 +256,7 @@ def _assert_current(service, task, *, conn=None):
 
 # ---------------------------------------------------------------- task records
 
-def enqueue(service, source_keys, *, snapshot=True):
+def enqueue(service, source_keys, *, snapshot=True, deferred_sync=None):
     """Create one task per source and rule revision; repeated requests reuse it.
 
     A verified system source is never queued at all, and a readable archive with
@@ -303,7 +303,7 @@ def enqueue(service, source_keys, *, snapshot=True):
             conn.execute("UPDATE organization_tasks SET status='superseded',superseded_by=?,finished_at=?,updated_at=? "
                          "WHERE source_key=? AND status!='superseded' AND id!=?",
                          (self_task, _now_iso(), _now_iso(), source_key, self_task))
-        _mark_outputs_stale(service, source_key, current_task=self_task)
+        _mark_outputs_stale(service, source_key, current_task=self_task, deferred_sync=deferred_sync)
         created += 1
         items.append(task_view(service, self_task))
     return {'items': items, 'created': created, 'duplicates': duplicates,
@@ -405,7 +405,7 @@ def _independent_source_link(conn, item_id, *, own_keys, own_archives):
     return False
 
 
-def _mark_outputs_stale(service, source_key, *, current_task):
+def _mark_outputs_stale(service, source_key, *, current_task, deferred_sync=None):
     """A superseded revision's outputs stop being current but stay as history.
 
     Candidates are every output the retired tasks of this source produced: their
@@ -460,7 +460,8 @@ def _mark_outputs_stale(service, source_key, *, current_task):
         # vector cache and the legacy index. Otherwise the database says
         # candidate while the indexes still hold the old ids, and the vector
         # counts keep disagreeing with the rows.
-        service.knowledge()._sync(downgraded)
+        if deferred_sync is not None:deferred_sync.extend(downgraded)
+        else:service.knowledge()._sync(downgraded)
 
 
 def _task_row(service, task_id):
@@ -476,6 +477,8 @@ def task_view(service, task_id, *, visible=None):
     view = _task_row(service, task_id)
     view.pop('source_snapshot', None)
     view.pop('task_draft',None)
+    progress=json.loads(view.pop('segmentation_progress','{}'))
+    view['processed_chars']=progress.get('processed_end',0)
     view['context'] = organization_context.decode(view.get('context_basis'))
     view['source_current'] = _source_current(service, view, visible=visible)
     return view
@@ -492,12 +495,16 @@ def _source_current(service, task, *, visible=None):
         return False
     try:
         from evolvmem.knowledge_cleaning import record
+        from evolvmem import conversation_tasks
+        if conversation_tasks.is_conversation(task['source_key']):
+            return conversation_tasks.revision(service,task['source_key'],visible=visible)==task['source_revision']
         return record(service, task['source_key'], visible=visible)['expected_revision'] == task['source_revision']
     except (ValueError, KeyError, OSError):
         return False
 
 
 def list_tasks(service, options=None):
+    from evolvmem.organization_task_upgrade import status as upgrade_status
     options = options or {}
     conn = service.store._connection()
     where, args = ['1=1'], []
@@ -522,7 +529,7 @@ def list_tasks(service, options=None):
         for name in ('pending', 'running', 'completed', 'review', 'failed', 'superseded')}
     views = [task_view(service, i) for i in ids]
     return {'items': views, 'total': len(rows), 'page': page,
-            'page_size': PAGE_SIZE, 'counts': counts,
+            'page_size': PAGE_SIZE, 'counts': counts, 'complete_tasks': upgrade_status(service),
             'current_task_ids': [r['id'] for r in views if r['source_current']]}
 
 
@@ -991,7 +998,7 @@ def task_detail(service, task_id):
         'SELECT * FROM organization_tasks WHERE id=?', (task_id,)).fetchone()
     if row is None:
         raise ValueError('task_not_found')
-    task = {k: v for k, v in dict(row).items() if k not in ('source_snapshot','task_draft')}
+    task = {k: v for k, v in dict(row).items() if k not in ('source_snapshot','task_draft','segmentation_progress')}
     task['context'] = organization_context.decode(row['context_basis'])
     return {**task, 'source_current': _source_current(service, task),
             'source_text': row['source_snapshot'], 'units': unit_views(service, task_id)}
@@ -1064,7 +1071,7 @@ def resegment(service, task_id):
     with service.store.transaction():
         service.store._connection().execute(
             "UPDATE organization_tasks SET source_snapshot=?,source_title=?,status='pending',stage='queued',"
-            "task_draft='[]',unit_count=0,review_count=0,error_code='',error_detail='',finished_at=NULL,updated_at=? WHERE id=?",
+            "task_draft='[]',segmentation_progress='{}',unit_count=0,review_count=0,error_code='',error_detail='',finished_at=NULL,updated_at=? WHERE id=?",
             (text, _source_title(service, task['source_key'], text), _now_iso(), task_id))
     return {'ok': True, 'status': 'pending', 'stage': 'queued', 'task': task_view(service, task_id)}
 
@@ -1202,11 +1209,19 @@ class OrganizationWorker:
                 self._restore()
             except Exception:
                 pass
+            next_discovery = 0
             while not self._stop.is_set():
                 worked = False
                 try:
                     if self._stop.is_set():
                         break
+                    if time.monotonic() >= next_discovery:
+                        next_discovery = time.monotonic() + 30
+                        try:
+                            from evolvmem.organization_arrival import discover_new
+                            discover_new(self._connect())
+                        except Exception:
+                            pass
                     worked = self.tick()
                     if self.capture_once():
                         worked = True
@@ -1261,7 +1276,15 @@ class OrganizationWorker:
             return True
         task = self._claim(service)
         if task is None:
-            return False
+            from evolvmem.organization_task_upgrade import advance
+            return bool(advance(service)['examined'])
+        if not task['source_key'].startswith('conversation:'):
+            from evolvmem.conversation_tasks import enqueue as complete
+            try:
+                complete(service,[task['source_key']],expand=True)
+            except (ValueError,OSError,KeyError):
+                self._fail(service,task['id'],'failed','task_upgrade_failed','无法读取完整会话，请核对原文。')
+            return True
         self._process(service, task)
         return True
 
@@ -1358,6 +1381,16 @@ class OrganizationWorker:
                        error.detail)
         except ValueError as error:
             code = str(error)
+            task_errors={'task_coverage_gap':'模型遗漏或重复了原文段落，已保留处理进度。',
+                'task_quote_not_found':'需求引用与原文未能对应，已保留处理进度。',
+                'task_narrative_evidence':'整理结果的依据无法在原文中唯一定位。',
+                'task_narrative_invalid':'模型返回的任务经过不完整。',
+                'task_invalid_response':'模型返回的任务结构不完整。',
+                'task_unknown_reference':'模型引用了不存在的任务编号。',
+                'task_context_too_large':'这段会话的任务目录过长，需要检查任务边界。'}
+            if code in task_errors:
+                self._fail(service,task_id,'failed',code,task_errors[code])
+                return
             if code in ('revision_conflict', 'cleaning_source_deleted', 'cleaning_source_unavailable',
                         'classification_no_longer_unassigned',
                         'classification_source_changed', 'invalid_items', 'extraction_provider_unavailable',
@@ -1365,7 +1398,7 @@ class OrganizationWorker:
                 self._fail(service, task_id, 'review' if code == 'revision_conflict' else 'failed', code, '')
             else:
                 from evolvmem.organization_diagnostics import capture, describe
-                self._fail(service, task_id, 'failed', 'organization_failed', describe(capture(error, task['stage'])))
+                self._fail(service, task_id, 'failed', 'organization_failed', describe(capture(error, _task_row(service,task_id)['stage'])))
         except Exception as error:  # provider or storage failure; task stays visible
             from evolvmem.organization_diagnostics import capture, describe
             self._fail(service, task_id, 'failed', 'organization_failed', describe(capture(error, task['stage'])))
@@ -1516,8 +1549,16 @@ class OrganizationWorker:
             if previous and previous['source_snapshot'] and text.startswith(previous['source_snapshot']+'\n\n'):
                 seed=json.loads(previous['task_draft'])
                 processed_end=len(previous['source_snapshot'])
+            progress=json.loads(row.get('segmentation_progress') or '{}')
+            if progress:
+                seed=progress['tasks'];processed_end=progress['processed_end']
+            def save_progress(value):
+                with service.store.transaction():
+                    _assert_current(service,task)
+                    service.store._connection().execute('UPDATE organization_tasks SET segmentation_progress=?,updated_at=? WHERE id=?',
+                        (json.dumps(value,ensure_ascii=False),_now_iso(),task['id']))
             units = task_segmentation.segment(text,provider,records=spans,
-                        cleaning_instructions=policy['settings']['cleaning_instructions'],seed=seed,processed_end=processed_end)
+                        cleaning_instructions=policy['settings']['cleaning_instructions'],seed=seed,processed_end=processed_end,on_progress=save_progress)
             save_draft()
         self._touch(service,task['id'],'narrative','running')
         for unit in units:
@@ -1680,6 +1721,13 @@ class OrganizationWorker:
             if analysis.get('input_stamp') != reasoning.stamp(service,unit):
                 analysis.update(decision='uncertain',projects=[],reason='原文或关联需求已变化，请重新核对。')
             unit['ownership_analysis'] = analysis
+            owners=[t for t in analysis.get('targets',[]) if t.get('role')=='owner']
+            if unit['disposition']=='history_only' and len(owners)>1:
+                with service.store.transaction():
+                    service.store._connection().execute(
+                        "UPDATE organization_units SET disposition='review',disposition_reason=?,revision=revision+1 WHERE task_id=? AND digest=?",
+                        ('涉及多个项目，不能直接作为普通进度保存。',task['id'],unit['digest']))
+                unit=find_unit(service,task['id'],unit['digest'])
             resolved_quote = analysis.get('evidence_quote') or resolved_quote
             hint = unit['project_hint'] if unit['project_hint'] in names else ''
             used = {}
@@ -2254,6 +2302,8 @@ def dispatch(service, method, route, body):
         return list_tasks(service, body)
     if route == '/detail':
         return task_detail(service, body.get('task_id'))
+    if route == '/state':
+        return task_view(service, body.get('task_id'))
     if route == '/context':
         from evolvmem.task_context import read
         return read(service,body)
@@ -2271,14 +2321,22 @@ def dispatch(service, method, route, body):
     if method == 'POST' and route == '/backlog':
         from evolvmem import organization_arrival
         return organization_arrival.backlog(service, body)
-    if method == 'POST' and route == '/tasks':
-        return enqueue(service, _keys(body))
-    if method == 'POST' and route == '/organize':
+    if method == 'POST' and route in ('/tasks','/organize'):
         from evolvmem import conversation_tasks
         return conversation_tasks.enqueue(service, _keys(body), expand=True)
     if method == 'POST' and route == '/retry':
+        old=task_view(service,body.get('task_id'))
+        if not old['source_key'].startswith('conversation:'):
+            from evolvmem.conversation_tasks import enqueue as complete
+            task=complete(service,[old['source_key']],expand=True)['items'][0]
+            return {'ok':True,'status':task['status'],'stage':task['stage'],'task':task}
         return retry(service, body.get('task_id'))
     if method == 'POST' and route == '/resegment':
+        old=task_view(service,body.get('task_id'))
+        if not old['source_key'].startswith('conversation:'):
+            from evolvmem.conversation_tasks import enqueue as complete
+            task=complete(service,[old['source_key']],expand=True)['items'][0]
+            return {'ok':True,'status':task['status'],'stage':task['stage'],'task':task}
         return resegment(service, body.get('task_id'))
     if method == 'POST' and route == '/correct':
         return correct(service, body)

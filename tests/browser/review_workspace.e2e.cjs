@@ -11,11 +11,11 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
   const idle=()=>page.waitForFunction(()=>document.querySelector('.knowledge-workspace')?.getAttribute('aria-busy')!=='true');
   try {
     await page.goto(base+'/#knowledge/organization');await page.waitForSelector('[data-rg-list]');await idle();
-    const card=page.locator('[data-rg-list] > *').filter({hasText:'集中审核演示'});
+    const card=page.locator('[data-rg-list] > *').filter({hasText:'审核条目'}).first();
     await card.locator('[data-rg="choose"]').click();
     const form=page.locator('[data-rg-form]');
-    await page.waitForSelector('[data-rg-original]');
-    assert.match(await page.locator('[data-rg-original]').innerText(),/审核条目00：编号处理必须保留原始编号/);
+    await page.waitForSelector('[data-rg-narrative] h4');
+    assert.match(await page.locator('[data-rg-narrative]').innerText(),/审核条目00：编号处理必须保留原始编号/);
     assert.equal(await form.locator('[name="selection"]').inputValue(),'item');
     await form.locator('[name="projects"][value="evo"]').check();
     await form.locator('[data-rg="preview"]').click();await idle();await page.locator('[data-rg-preview] h3').waitFor();
@@ -23,7 +23,7 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.locator('[data-rg="refresh"]').click();await idle();
     assert.equal(await form.locator('[name="projects"][value="evo"]').isChecked(),true);
     await page.waitForTimeout(4600); // Cross the actual four-second poll.
-    assert.equal(await page.locator('[data-rg-original]').isVisible(),true);
+    assert.equal(await page.locator('[data-rg-narrative]').isVisible(),true);
     assert.equal(await page.locator('#org-task-region').getAttribute('open'),null);
     checks.push('单条审核原地展示完整片段，不跳页；刷新与后台轮询保留选择和草稿');
     await form.locator('[name="selection"]').selectOption('group');
@@ -66,8 +66,8 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await form.locator('[data-rg="apply"]').click();await idle();
     assert.match(await page.locator('[data-rg-status]').innerText(),/已归入「Evo 演示项目」10 条/);
     await page.reload();await page.waitForSelector('[data-rg-list]');await idle();
-    const remaining=page.locator('[data-rg-list] > *').filter({hasText:'集中审核演示'});
-    assert.match(await remaining.innerText(),/2 条/);
+    const remaining=page.locator('[data-rg-list] > *').filter({hasText:'审核条目'}).first();
+    assert.equal(await page.locator('[data-rg-list] > *').filter({hasText:'审核条目'}).count(),2);
     checks.push('保存真实生效且刷新后仅剩排除项；四种宽度无溢出或遮挡');
     assert.deepEqual(errors,[]);console.log(JSON.stringify({checks,errors},null,2));
   } catch(error) {console.error('URL',page.url());console.error('VISIBLE',await page.locator('[data-rg-list]').allTextContents());console.error('PAGE ERRORS',errors);await page.screenshot({path:'/tmp/evo-review-failure.png',fullPage:true});throw error;} finally {await browser.close();}

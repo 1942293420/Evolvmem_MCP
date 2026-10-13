@@ -825,18 +825,18 @@ def test_discovery_across_the_five_source_limit_keeps_session_order(
     from evolvmem.conversation_tasks import members
     assert first['created'] == 1
     key=first['items'][0]['source_key']
-    assert members(service,key)==[f'archive:{i}' for i in ids[:DISCOVER_LIMIT]]
+    assert members(service,key)==[f'archive:{i}' for i in ids]
     second=discover_new(service)
-    assert second['created']==1 and second['items'][0]['source_key']==key
+    assert second['created']==0
     assert members(service,key)==[f'archive:{i}' for i in ids]
     assert discover_new(service)['created']==0
     run_worker(service,monkeypatch,provider)
-    current=org(service,'/detail',{'task_id':second['items'][0]['id']})
+    current=org(service,'/detail',{'task_id':first['items'][0]['id']})
     assert current['status']=='completed'
     assert len(current['units'])==1
     assert current['units'][0]['project']=='demo'
     assert all(text in current['units'][0]['text'] for text in texts)
-    assert org(service,'/detail',{'task_id':first['items'][0]['id']})['status']=='superseded'
+    assert current['source_key']==key
 
 
 TERMINAL_STATUSES = ('completed', 'review', 'failed', 'superseded')
@@ -1329,3 +1329,6 @@ def test_a_cleaning_edit_on_the_predecessor_invalidates_the_saved_context(
     dependent = units(service, task_b)[0]
     assert dependent['decision'] == 'review', dependent['reason']
     assert dependent['project'] == ''
+
+# Retain coverage for pre-migration histories and their correction dependencies.
+from tests.legacy_organization_fixture import legacy_stored_history

@@ -237,13 +237,13 @@ class GapOnceProvider(UnitProvider):
         super().__init__(**kwargs)
         self.segment_calls = 0
 
-    def segment(self, prompt):
-        self.segment_calls += 1
-        good = super().segment(prompt)
-        if self.segment_calls == 1:
-            data = json.loads(good)
-            data['units'] = data['units'][:-1]
-            return json.dumps(data, ensure_ascii=False)
+    def __call__(self,prompt,*args,**kwargs):
+        good=super().__call__(prompt,*args,**kwargs)
+        if '完整任务识别员' in prompt:
+            self.segment_calls+=1
+            if self.segment_calls==1:
+                data=json.loads(good);data['segments']=data['segments'][:-1]
+                return json.dumps(data)
         return good
 
 
@@ -275,7 +275,7 @@ def test_worker_stop_between_calls_cancels_the_correction(service, monkeypatch):
     segmentation_prompts = []
 
     def hook(prompt, *args, **kwargs):
-        if '整理分段助手' in prompt:
+        if '完整任务识别员' in prompt:
             segmentation_prompts.append(prompt)
             worker._stop.set()  # cancellation arrives while the provider is answering
         return base(prompt, *args, **kwargs)

@@ -40,6 +40,14 @@ def read(service, project, archive_id):
     return result
 
 
+def _unit_archive(archive_sql):
+    # Each link is bound to the exact task digest, including disjoint tasks
+    # from one conversation. A shared archive alone cannot claim another unit.
+    return ("(t.source_key='archive:'||"+archive_sql+" OR EXISTS(SELECT 1 FROM context_sources us "
+            "WHERE us.item_id=u.item_id AND us.archive_id="+archive_sql+" AND us.source_kind='organization' "
+            "AND us.source_ref LIKE t.source_key||'#'||u.digest||'@%'))")
+
+
 def project_units(service, project, archive_id):
     """Range-exact organization units attributed to one project for one archive.
 
@@ -54,10 +62,10 @@ def project_units(service, project, archive_id):
         'u.task_id,i.id AS item_id FROM organization_units u '
         'JOIN organization_tasks t ON t.id=u.task_id '
         'LEFT JOIN context_items i ON i.id=u.item_id '
-        "WHERE t.source_key=? AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
+        "WHERE "+_unit_archive("?")+" AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
         "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' AND i.status='active' "
         'ORDER BY u.source_start,u.ordinal',
-        (f'archive:{archive_id}', project)).fetchall()
+        (archive_id,archive_id,project)).fetchall()
     from evolvmem.auto_organization import task_view
     current = {row['task_id']: task_view(service, row['task_id'])['source_current'] for row in rows}
     return [dict(row) for row in rows if current[row['task_id']]]
@@ -151,7 +159,7 @@ def sessions(service, project):
             'LEFT JOIN conversation_history h ON h.archive_id=a.id '
             "WHERE a.project='' AND EXISTS(SELECT 1 FROM organization_units u "
             'JOIN organization_tasks t ON t.id=u.task_id '
-            "WHERE t.source_key='archive:'||a.id AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
+            "WHERE "+_unit_archive("a.id")+" AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
             "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' AND u.item_id IS NOT NULL) "
             'ORDER BY a.created_at DESC,a.id DESC', (project,)).fetchall()
         rows = list(rows) + [row for row in extra if row['id'] not in {r['id'] for r in rows}]
@@ -193,9 +201,9 @@ def sessions(service, project):
             unit_items = {item[0] for item in conn.execute(
                 'SELECT DISTINCT u.item_id FROM organization_units u '
                 'JOIN organization_tasks t ON t.id=u.task_id '
-                "WHERE t.source_key=? AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
+                "WHERE "+_unit_archive("?")+" AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
                 "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' "
-                'AND u.item_id IS NOT NULL', (f"archive:{row['id']}", project))}
+                'AND u.item_id IS NOT NULL', (row['id'],row['id'],project))}
         kept, contents = [], set()
         for item in sorted(linked, key=lambda r: (r['id'] not in unit_items, r['id'])):
             if item['content'] in contents:

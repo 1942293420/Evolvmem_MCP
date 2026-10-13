@@ -71,6 +71,8 @@ def _brief(unit):
 
 def groups(service, options=None):
     rows = _groups(service)
+    if (options or {}).get('task_id'):
+        rows=[g for g in rows if any(u['task_id']==int(options['task_id']) for u in g['members'])]
     page = max(1, int((options or {}).get('page', 1)))
     return {'items': [{k: v for k, v in group.items() if k != 'members'} |
                       {'count': len(group['members']), 'examples': [_brief(u) for u in group['members'][:3]]}
@@ -125,6 +127,9 @@ def preview(service, body, *, _judgments=None, _groups_snapshot=None):
     if semantic:
         result['job_id'] = body.get('job_id')
     members = [u for g in all_groups for u in g['members']] if selection == 'all' else group['members']
+    if selection=='group' and group.get('complete_task'):
+        source_keys={u['source_key'] for u in group['members']}
+        members=[u for g in all_groups for u in g['members'] if u['source_key'] in source_keys]
     if selection == 'item':
         members = [u for u in members if u['task_id'] == body.get('task_id') and u['digest'] == body.get('digest')]
         if len(members) != 1:
@@ -191,7 +196,8 @@ def reprocess(service, body):
         raise ValueError('review_reprocess_not_needed')
     # The existing queue preserves source history and prior human decisions.
     # A click processes only this visible bounded batch, never the whole backlog.
-    return org.enqueue(service, keys[:20]) | {'remaining_sources': max(0, len(keys)-20)}
+    from evolvmem.conversation_tasks import enqueue
+    return enqueue(service, keys[:20], expand=True) | {'remaining_sources': max(0, len(keys)-20)}
 
 
 def apply(service, body):

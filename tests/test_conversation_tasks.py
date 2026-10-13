@@ -59,3 +59,12 @@ def test_complete_task_enqueue_is_idempotent_and_preserves_archives(service):
     assert one['items'][0]['id']==two['items'][0]['id']
     assert one['items'][0]['source_current']
     assert service.store.get_session_archive(a.id)['state']=='available'
+
+
+def test_listing_current_task_does_not_rebuild_full_conversation(service,monkeypatch):
+    from evolvmem import auto_organization as org
+    api=engine();a=craft(service,session=SESSION,start=1,end=3,text='需求：增加开关。')
+    task=api.enqueue(service,[f'archive:{a.id}'])['items'][0]
+    def forbidden(*a,**kw):raise AssertionError('listing must not expand full conversation')
+    monkeypatch.setattr(api,'snapshot',forbidden)
+    assert org.task_view(service,task['id'])['source_current']

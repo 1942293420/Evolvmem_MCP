@@ -58,3 +58,26 @@ def test_appended_conversation_reuses_old_task_and_only_reads_new_messages():
         return json.dumps({'segments':[{'task':'new','start_id':2,'end_id':2,'title':'乙','need_quote':'新需求乙。'}]})
     units=api.segment('\n\n'.join(r['part'] for r in records),provider,records=records,seed=seed,processed_end=len(prefix))
     assert len(units)==2 and units[0]['task_record']['marker']=='previous narrative'
+
+
+def test_exact_model_quote_includes_display_role_prefix_without_fabrication():
+    spans=message_spans([{'role':'user','content':'增加写入开关。'}])
+    # This is exactly the text offered in the numbered model input.
+    response={'segments':[{'task':'new','start_id':1,'end_id':1,'title':'写入开关','need_quote':'用户：增加写入开关。'}]}
+    units=engine().segment(spans[0]['part'],lambda _:json.dumps(response),records=spans)
+    assert units[0]['need_quote']=='增加写入开关。'
+
+
+def test_bad_window_is_corrected_once_and_checkpoint_keeps_previous_windows():
+    records=message_spans([{'role':'user','content':'需求甲。'},{'role':'assistant','content':'甲的处理结果。'},{'role':'user','content':'需求乙。'}])
+    checkpoints=[];calls=[]
+    replies=iter([
+        {'segments':[{'task':'new','start_id':1,'end_id':1,'title':'甲','need_quote':'需求甲。'}]},
+        {'segments':[{'task':'t1','start_id':99,'end_id':99,'title':'甲','need_quote':''}]},
+        {'segments':[{'task':'t1','start_id':2,'end_id':2,'title':'甲','need_quote':''}]},
+        {'segments':[{'task':'new','start_id':3,'end_id':3,'title':'乙','need_quote':'需求乙。'}]}])
+    def provider(prompt):calls.append(prompt);return json.dumps(next(replies))
+    result=engine().segment('\n\n'.join(r['part'] for r in records),provider,records=records,max_records=1,on_progress=lambda x:checkpoints.append(x))
+    assert len(result)==2 and len(calls)==4
+    assert 'task_coverage_gap' in calls[2]
+    assert len(checkpoints)==3 and checkpoints[-1]['processed_end']==records[-1]['end']

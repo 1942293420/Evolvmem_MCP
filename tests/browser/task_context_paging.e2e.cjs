@@ -10,6 +10,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   records[250].unit_start='完整的长段前文。'.length*2000;records[250].unit_end=records[250].unit_start+'正在核对的记忆。'.length;
   await page.route('**/api/knowledge/organization/context?*',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({records,stages:[],notices:[]})}));
   await page.locator('[data-rg-list] button').first().click();
+  await page.locator('[data-rg-source] summary').first().click();
   const reader=page.locator('[data-rg-source-text]');
   await reader.locator('.task-context-source').first().waitFor();
   assert.ok(await reader.locator('.task-context-source').count()<=20,'only a bounded page of original sources may be rendered');

@@ -6,6 +6,26 @@ from evolvmem.session_archive import SessionArchiver
 
 
 class ProgressProvider(UnitProvider):
+    def __call__(self,prompt,*args,**kwargs):
+        result=super().__call__(prompt,*args,**kwargs)
+        if '完整任务识别员' in prompt:
+            data=json.loads(result)
+            for row in data['segments']:
+                row.update(disposition='history_only',category=self.topics[0][2],disposition_reason='只是助手执行进度，没有新要求')
+            return json.dumps(data)
+        return result
+
+    def classify(self,prompt):
+        data=json.loads(super().classify(prompt))
+        # Deliberately report ambiguous ownership; the product must not hide it
+        # as routine progress even though the provider suggested history_only.
+        rows=json.loads(prompt.split('待判断资料：',1)[1])
+        for item,row in zip(data['items'],rows):
+            if 'Evo 演示项目和 DSH 项目之间' in row['text']:
+                item['targets']=[{'project':p,'role':'owner','quote':row['text'][:1000]} for p in ('evo','dsh')]
+                item['decision']='uncertain'
+        return json.dumps(data)
+
     def segment(self, prompt):
         result=json.loads(super().segment(prompt))
         for unit in result['units']:

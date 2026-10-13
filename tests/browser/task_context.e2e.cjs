@@ -6,14 +6,15 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  page.on('pageerror',e=>errors.push(e.message));page.setDefaultTimeout(30000);
  try{
   await page.goto(process.env.EVOLVMEM_TEST_URL+'/#knowledge/organization');
-  await page.locator('[data-rg-list] > *').filter({hasText:'集中审核演示'}).locator('button').click();
+  await page.locator('[data-rg-list] > *').filter({hasText:'审核条目'}).first().locator('button').click();
   const form=page.locator('[data-rg-form]'),source=form.locator('[data-rg-source]');
+  await source.locator('summary').first().click();
   await source.locator('.task-context-source').waitFor();
   assert.equal(await source.evaluate(el=>el.open),true);
   assert.match(await source.innerText(),/审核条目00/);
   assert.match(await source.innerText(),/审核条目11/);
-  const choices=await form.locator('[name=unit] option').evaluateAll(es=>es.map(e=>e.value));
-  await form.locator('[name=unit]').selectOption(choices.at(-1));
+  await page.locator('[data-rg-list] button').filter({hasText:'审核条目11'}).click();
+  await source.locator('summary').first().click();
   await page.waitForFunction(()=>document.querySelector('[data-rg-source] [data-context-focus]')?.textContent.includes('审核条目11'));
   assert.match(await source.innerText(),/审核条目00/);
   await source.locator('[data-context-locate]').click();
