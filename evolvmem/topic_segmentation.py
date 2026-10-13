@@ -454,6 +454,17 @@ def unit_messages(unit: dict, spans: list[dict]) -> list[dict]:
     role is preserved and it can never become user evidence or be presented as
     the assistant's own words.
     """
+    ranges = unit_ranges(unit)
+    if ranges:
+        messages = []
+        for span in spans:
+            for a, b in ranges:
+                start, end = max(a, span['content_start']), min(b, span['content_end'])
+                if end > start:
+                    content = span['content'][start-span['content_start']:end-span['content_start']].strip()
+                    if content:
+                        messages.append({'role':str(span.get('role') or 'unknown'),'content':content})
+        return messages
     messages = []
     for span in spans:
         start = max(unit['source_start'], span['content_start'])
@@ -464,3 +475,10 @@ def unit_messages(unit: dict, spans: list[dict]) -> list[dict]:
         if content:
             messages.append({'role': str(span.get('role') or 'unknown'), 'content': content})
     return messages
+
+
+def unit_ranges(unit):
+    value = unit.get('source_ranges') or []
+    if isinstance(value,str):
+        value = json.loads(value)
+    return value

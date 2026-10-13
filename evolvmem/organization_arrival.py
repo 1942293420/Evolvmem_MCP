@@ -54,7 +54,8 @@ def discover_new(service, *, limit=DISCOVER_LIMIT):
     current = settings(service)
     if not current['auto_new']:
         return {'enabled': False, 'items': [], 'created': 0}
-    from evolvmem.auto_organization import (enqueue, link_superseded_successors,
+    from evolvmem.conversation_tasks import enqueue
+    from evolvmem.auto_organization import (link_superseded_successors,
                                             reconcile_sources)
     reconcile = reconcile_sources(service)
     keys = [ref['key'] for ref in _pending_sources(service)
@@ -72,8 +73,8 @@ def backlog(service, body=None):
     limit = min(BACKLOG_LIMIT, max(1, int(body.get('limit', BACKLOG_LIMIT) or BACKLOG_LIMIT)))
     pending = [ref['key'] for ref in _pending_sources(service)]
     keys = pending[:limit]
-    from evolvmem.auto_organization import enqueue
-    result = enqueue(service, keys) if keys else {'items': [], 'created': 0, 'duplicates': 0}
+    from evolvmem.conversation_tasks import enqueue
+    result = enqueue(service, keys, expand=True) if keys else {'items': [], 'created': 0, 'duplicates': 0}
     return {**result, 'remaining': max(0, len(pending) - len(keys)), 'queue_total': len(pending)}
 
 

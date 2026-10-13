@@ -72,6 +72,9 @@ def _unassigned_archives(service):
 
 
 def _source_record(service, key, *, visible=None):
+    from evolvmem import conversation_tasks
+    if conversation_tasks.is_conversation(key):
+        return conversation_tasks.snapshot(service,key,visible=visible)
     match = re.fullmatch(r'(archive|item):([1-9][0-9]*)', str(key))
     if not match:
         raise ValueError('invalid_items')
@@ -120,7 +123,8 @@ def _handled_sources(service):
     if conn.execute("SELECT 1 FROM sqlite_master WHERE name='organization_tasks'").fetchone():
         for row in conn.execute("SELECT source_key FROM organization_tasks WHERE status IN ('completed','review','running','pending')"):
             handled.add(row['source_key'])
-    return handled
+    from evolvmem.conversation_tasks import handled_members
+    return handled | handled_members(service)
 
 
 def _deleted_sources(service):

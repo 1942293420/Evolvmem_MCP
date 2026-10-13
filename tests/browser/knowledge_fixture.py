@@ -79,6 +79,9 @@ with s.store.transaction():
 
 # Only the external provider is substituted; HTTP, parsing and policy checks remain real.
 def model(prompt, *a, **kw):
+    if '完整任务识别员' in prompt or '任务资料整理员' in prompt:
+        from tests.unit_model_fixture import UnitProvider
+        return UnitProvider()(prompt)
     if '你是业务资料归类核对员' in prompt:
         from tests.unit_model_fixture import UnitProvider
         result=UnitProvider().classify(prompt)
@@ -256,7 +259,22 @@ if os.environ.get('EVOLVMEM_WORKSPACE_FIXTURE')=='1':
         if failed:
             with s.store.transaction():
                 s.store._connection().execute("UPDATE organization_tasks SET status='failed',stage='extraction',error_code='extraction_failed' WHERE id=?",(task['id'],))
+if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
+    from evolvmem.conversation_tasks import enqueue as enqueue_complete
+    source=_Archiver(config,s.store).archive_session('','kimi','完整任务审核演示',json.dumps({'messages':[
+        {'role':'user','content':'增加写入开关，默认关闭，需要时开启。'},
+        {'role':'assistant','content':'增加设置后发现更新失败，原因是旧配置缺少迁移。'},
+        {'role':'user','content':'继续修复同一个开关的更新问题和连接提示。'},
+        {'role':'assistant','content':'已修复迁移和连接提示。尚需你在电脑上验证。'}]},ensure_ascii=False))
+    enqueue_complete(s,[f'archive:{source.id}'])
 _worker=OrganizationWorker(config,mode=ContextMode.SHADOW).start() if _auto else None
+if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
+    import time
+    for _ in range(100):
+        tasks=_worker.tasks()
+        if all(t['status'] in ('completed','review','failed','superseded') for t in tasks):break
+        time.sleep(.1)
+    print(json.dumps([{k:t.get(k) for k in ('source_key','status','stage','error_code','error_detail')} for t in tasks]),flush=True)
 print('Temporary browser fixture ready',flush=True)
 try:server.serve_forever()
 finally:

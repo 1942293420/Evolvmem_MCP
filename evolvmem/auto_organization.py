@@ -68,9 +68,16 @@ def unit_digest(source_key, source_start, source_end, text) -> str:
 def _unit_revision(row) -> str:
     if isinstance(row, sqlite3.Row):
         row = dict(row)
-    return hashlib.sha256(_canonical({k: row.get(k) for k in
+    values = {k: row.get(k) for k in
         ('revision', 'project', 'projects', 'knowledge_scope', 'decision', 'reason', 'disposition', 'evidence_quote', 'cleaned_text',
-         'continues_context', 'context_basis', 'applied_guidance_id')}).encode()).hexdigest()[:16]
+         'continues_context', 'context_basis', 'applied_guidance_id')}
+    for key in ('source_ranges','task_record'):
+        value = row.get(key)
+        if isinstance(value,str):
+            value = json.loads(value or 'null')
+        if value:
+            values[key] = value
+    return hashlib.sha256(_canonical(values).encode()).hexdigest()[:16]
 
 
 def _load_llm():
@@ -417,6 +424,11 @@ def _mark_outputs_stale(service, source_key, *, current_task):
     if not retired:
         return
     own_keys, own_archives = {str(source_key)}, _own_archive_ids(source_key)
+    from evolvmem import conversation_tasks
+    if conversation_tasks.is_conversation(source_key):
+        for key in conversation_tasks.members(service,source_key):
+            own_keys.add(key)
+            own_archives.update(_own_archive_ids(key))
     with service.store.transaction():
         candidates = set()
         for task in retired:
@@ -463,6 +475,7 @@ def _task_row(service, task_id):
 def task_view(service, task_id, *, visible=None):
     view = _task_row(service, task_id)
     view.pop('source_snapshot', None)
+    view.pop('task_draft',None)
     view['context'] = organization_context.decode(view.get('context_basis'))
     view['source_current'] = _source_current(service, view, visible=visible)
     return view
@@ -978,7 +991,7 @@ def task_detail(service, task_id):
         'SELECT * FROM organization_tasks WHERE id=?', (task_id,)).fetchone()
     if row is None:
         raise ValueError('task_not_found')
-    task = {k: v for k, v in dict(row).items() if k != 'source_snapshot'}
+    task = {k: v for k, v in dict(row).items() if k not in ('source_snapshot','task_draft')}
     task['context'] = organization_context.decode(row['context_basis'])
     return {**task, 'source_current': _source_current(service, task),
             'source_text': row['source_snapshot'], 'units': unit_views(service, task_id)}
@@ -996,7 +1009,8 @@ def unit_views(service, task_id):
              'feedback': feedback.get(row['digest'], {}).get('verdict', '')
                          if feedback.get(row['digest'], {}).get('unit_revision') == _unit_revision(row) else '',
              'context': organization_context.decode(row['context_basis']),
-             'business_analysis': decode(row['ownership_analysis'])} for row in rows]
+             'business_analysis': decode(row['ownership_analysis']),
+             'task_record': decode(row['task_record'])} for row in rows]
 
 
 def find_unit(service, task_id, digest):
@@ -1050,7 +1064,7 @@ def resegment(service, task_id):
     with service.store.transaction():
         service.store._connection().execute(
             "UPDATE organization_tasks SET source_snapshot=?,source_title=?,status='pending',stage='queued',"
-            "unit_count=0,review_count=0,error_code='',error_detail='',finished_at=NULL,updated_at=? WHERE id=?",
+            "task_draft='[]',unit_count=0,review_count=0,error_code='',error_detail='',finished_at=NULL,updated_at=? WHERE id=?",
             (text, _source_title(service, task['source_key'], text), _now_iso(), task_id))
     return {'ok': True, 'status': 'pending', 'stage': 'queued', 'task': task_view(service, task_id)}
 
@@ -1327,7 +1341,7 @@ class OrganizationWorker:
                 # A race that changed eligibility after the claim: settle it
                 # truthfully instead of calling the model.
                 return
-            elif task['stage'] in ('queued', 'cleaning', 'segmentation'):
+            elif task['stage'] in ('queued', 'cleaning', 'segmentation', 'narrative'):
                 self._segment(service, task)
             elif task['stage'] == 'assignment':
                 self._assign(service, task)
@@ -1382,6 +1396,9 @@ class OrganizationWorker:
     # -- stage 1: whole-source segmentation --
 
     def _segment(self, service, task):
+        from evolvmem import conversation_tasks
+        if conversation_tasks.is_conversation(task['source_key']):
+            return self._segment_complete(service, task)
         row = _task_row(service, task['id'])
         text = row['source_snapshot'] or ''
         if not text.strip():
@@ -1467,6 +1484,56 @@ class OrganizationWorker:
         self._store_units(service, row, units)
         self._touch(service, task['id'], 'assignment')
 
+    def _segment_complete(self, service, task):
+        from evolvmem import task_segmentation, task_narrative, conversation_tasks
+        row = _task_row(service, task['id'])
+        _, text = source_snapshot(service, task['source_key'])
+        _assert_current(service, task)
+        with service.store.transaction():
+            service.store._connection().execute(
+                'UPDATE organization_tasks SET source_snapshot=?,stage=? WHERE id=?',
+                (text,'segmentation',task['id']))
+        policy = service.knowledge().rules.read()
+        spans = _source_records(service, task)
+        config, call = _load_llm()
+
+        def provider(prompt):
+            if self._stop.is_set():
+                raise ValueError('worker_stopped')
+            return call(prompt,config,deadline=time.monotonic()+90)
+
+        units = json.loads(row.get('task_draft') or '[]')
+        def save_draft():
+            with service.store.transaction():
+                _assert_current(service,task)
+                service.store._connection().execute('UPDATE organization_tasks SET task_draft=? WHERE id=?',
+                    (json.dumps(units,ensure_ascii=False),task['id']))
+        if not units:
+            previous=service.store._connection().execute(
+                "SELECT source_snapshot,task_draft FROM organization_tasks WHERE source_key=? AND id<? AND rule_revision=? AND task_draft!='[]' ORDER BY id DESC LIMIT 1",
+                (task['source_key'],task['id'],task['rule_revision'])).fetchone()
+            seed=[];processed_end=0
+            if previous and previous['source_snapshot'] and text.startswith(previous['source_snapshot']+'\n\n'):
+                seed=json.loads(previous['task_draft'])
+                processed_end=len(previous['source_snapshot'])
+            units = task_segmentation.segment(text,provider,records=spans,
+                        cleaning_instructions=policy['settings']['cleaning_instructions'],seed=seed,processed_end=processed_end)
+            save_draft()
+        self._touch(service,task['id'],'narrative','running')
+        for unit in units:
+            if unit.get('task_record'):
+                continue
+            unit['task_record'] = task_narrative.organize(
+                topic_segmentation.unit_messages(unit,spans),provider,
+                instructions=policy['settings']['cleaning_instructions'])
+            unit['cleaned_text'] = task_narrative.render(unit['task_record'])
+            save_draft()
+        _assert_current(service,task)
+        row = _task_row(service,task['id'])
+        self._store_units(service,row,units)
+        conversation_tasks.protect_prior_decisions(service,task)
+        self._touch(service,task['id'],'assignment')
+
     def _store_units(self, service, task, units):
         conn = service.store._connection()
         # Structural spans from the original messages; the snapshot text is only
@@ -1479,6 +1546,10 @@ class OrganizationWorker:
             prior = {r['digest']: dict(r) for r in conn.execute(
                 "SELECT u.* FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id "
                 "WHERE t.source_key=? AND u.decision='manual' ORDER BY t.id", (task['source_key'],))}
+            cached = {r['digest']:dict(r) for r in conn.execute(
+                'SELECT u.* FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id '
+                'WHERE t.source_key=? AND t.id<? AND t.rule_revision=? ORDER BY t.id',
+                (task['source_key'],task['id'],task['rule_revision']))}
             conn.execute('DELETE FROM organization_units WHERE task_id=?', (task['id'],))
             # Re-segmentation replaces every unit of this task, so a dependency
             # recorded against an old digest must not survive as a live link.
@@ -1511,6 +1582,12 @@ class OrganizationWorker:
                      1 if unit.get('continues_context') is True else 0, _now_iso(), _now_iso()))
                 conn.execute('UPDATE organization_units SET ownership_analysis=? WHERE task_id=? AND digest=?',
                              (json.dumps(unit.get('ownership_analysis',{}),ensure_ascii=False),task['id'],digest))
+                conn.execute('UPDATE organization_units SET source_ranges=?,task_record=? WHERE task_id=? AND digest=?',
+                             (json.dumps(unit.get('source_ranges',[])),json.dumps(unit.get('task_record',{}),ensure_ascii=False),task['id'],digest))
+                old_cache=cached.get(digest)
+                if unit.get('task_record') and old_cache and json.loads(old_cache['task_record'])==unit['task_record']:
+                    conn.execute('UPDATE organization_units SET ownership_analysis=?,extraction_stage=?,extraction_signature=? WHERE task_id=? AND digest=?',
+                                 (old_cache['ownership_analysis'],'done' if old_cache['extraction_stage']=='done' else 'pending',old_cache['extraction_signature'],task['id'],digest))
                 old = prior.get(digest)
                 if old:
                     conn.execute("UPDATE organization_units SET project=?,decision='manual',reason=?,"
@@ -1534,7 +1611,9 @@ class OrganizationWorker:
         names = set(project_names(service))
         basis = self._valid_basis(service, task)
         from evolvmem import ownership_reasoning as reasoning
-        candidates = [u for u in units if u['decision']!='manual' and u['disposition'] in ('keep','history_only')]
+        from evolvmem.task_narrative import read as narrative
+        protected = {u['digest'] for u in units if narrative(u.get('task_record')).get('prior_decisions')}
+        candidates = [u for u in units if u['decision']!='manual' and u['disposition'] in ('keep','history_only') and u['digest'] not in protected]
         analyzed = {f"{u['task_id']}:{u['digest']}":reasoning.validated(u,policy['revision']) for u in candidates}
         pending=[u for u in candidates if analyzed[f"{u['task_id']}:{u['digest']}"].get('input_stamp')!=reasoning.stamp(service,u)]
         analyzed.update(reasoning.analyze(service,pending) if pending else {})
@@ -1546,6 +1625,12 @@ class OrganizationWorker:
                 # A human decision is never re-decided by a later automatic pass.
                 continue
             if unit['disposition'] == 'set_aside':
+                continue
+            if unit['digest'] in protected:
+                self._update_unit(service,task['id'],unit['digest'],project='',decision='review',
+                                  expected_revision=unit,context_basis='',
+                                  reason='完整任务包含你以前确认或排除过的资料，请核对整段任务的适用范围。')
+                review += 1
                 continue
             # Only a successfully located quote is replaced by the real source
             # substring. An unlocatable quote stays exactly as the model wrote
@@ -2188,6 +2273,9 @@ def dispatch(service, method, route, body):
         return organization_arrival.backlog(service, body)
     if method == 'POST' and route == '/tasks':
         return enqueue(service, _keys(body))
+    if method == 'POST' and route == '/organize':
+        from evolvmem import conversation_tasks
+        return conversation_tasks.enqueue(service, _keys(body), expand=True)
     if method == 'POST' and route == '/retry':
         return retry(service, body.get('task_id'))
     if method == 'POST' and route == '/resegment':

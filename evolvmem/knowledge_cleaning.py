@@ -38,7 +38,7 @@ def record(service, key, **kwargs):
     row['cleaning_ready']=bool(saved and saved['state']=='ready' and saved['source_revision']==row['source_revision'])
     row['cleaned_text']=saved['cleaned_text'] if row['cleaning_ready'] else ''
     row['category']=saved['category'] if row['cleaning_ready'] else 'reference'
-    row['dialogue_available']=row['kind']!='archive' or _archive_dialogue_available(service,row)
+    row['dialogue_available']=row.get('dialogue_available',True) if row['kind']=='conversation' else row['kind']!='archive' or _archive_dialogue_available(service,row)
     return row
 
 
@@ -172,6 +172,8 @@ def cleaned_messages(service,row,policy):
     ``unknown`` rather than being presented as the user's own words; archive
     sources keep their original roles.
     """
+    if row['kind']=='conversation':
+        return row['messages']
     messages=[{'role':'user','content':row['body']}]
     if row['kind']=='archive':
         identity=int(row['key'].split(':')[1])
@@ -190,7 +192,7 @@ def cleaned_messages(service,row,policy):
 
 def _clean_input(service,row,policy):
     safe=cleaned_messages(service,row,policy)
-    return render(safe) if row['kind']=='archive' else safe[0]['content'] if safe else ''
+    return render(safe) if row['kind'] in ('archive','conversation') else safe[0]['content'] if safe else ''
 
 
 def preview(service,body):

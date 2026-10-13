@@ -25,6 +25,7 @@ PUBLIC_DOCS = (
     "2026-10-02-memory-trust.md",
     "2026-10-03-knowledge-management.md",
     "2026-10-04-memory-learning.md",
+    "2026-10-13-task-organization.md",
 )
 EXCLUDED_DIRECTORIES = {
     ".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache",

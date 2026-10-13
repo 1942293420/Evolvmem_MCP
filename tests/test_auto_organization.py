@@ -680,7 +680,8 @@ def test_arrival_mode_queues_only_sources_after_activation(service, monkeypatch)
     new_source = many_topic_archive(service, session='arrival-new')
     discovered = discover_new(service)
     assert discovered['created'] == 1
-    assert discovered['items'][0]['source_key'] == f'archive:{new_source.id}'
+    from evolvmem.conversation_tasks import members
+    assert members(service,discovered['items'][0]['source_key']) == [f'archive:{new_source.id}']
     # The same source is never queued twice.
     assert discover_new(service)['created'] == 0
     tasks = run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))

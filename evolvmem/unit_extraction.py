@@ -34,10 +34,14 @@ def signature(unit, project, rule_revision) -> str:
     The unit's same-session context basis is part of the signature: the same
     text attributed by a different predecessor is a different result.
     """
-    return hashlib.sha256(json.dumps(
-        [unit.get('digest'), unit.get('text'), unit.get('cleaned_text'), unit.get('title'),
-         unit.get('category'), project, ks.projects(unit), ks.scope(unit), rule_revision, unit.get('context_basis') or ''],
-        ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:32]
+    values = [unit.get('digest'), unit.get('text'), unit.get('cleaned_text'), unit.get('title'),
+         unit.get('category'), project, ks.projects(unit), ks.scope(unit), rule_revision, unit.get('context_basis') or '',
+    ]
+    for key in ('task_record','source_ranges'):
+        value=unit.get(key)
+        if isinstance(value,str):value=json.loads(value or 'null')
+        if value:values.append({key:value})
+    return hashlib.sha256(json.dumps(values,ensure_ascii=False,sort_keys=True).encode()).hexdigest()[:32]
 
 
 def _summary_item(unit, project, digest) -> LegacyExtractionItem:
@@ -92,9 +96,30 @@ def _link_provenance(service, item_id, archive_id, task, unit):
             "INSERT OR IGNORE INTO context_sources(item_id,archive_id,source_kind,source_ref,"
             "extraction_version,created_at) VALUES(?,?,'organization',?,'auto-organization.v1',?)",
             (item_id, archive_id, source_ref, _now_iso()))
+        for identity, _ in _originals(service,task,unit):
+            conn.execute(
+                "INSERT OR IGNORE INTO context_sources(item_id,archive_id,source_kind,source_ref,extraction_version,created_at) "
+                "VALUES(?,?,'organization',?,'complete-task.v1',?)",
+                (item_id,identity,source_ref+f'/archive:{identity}',_now_iso()))
         conn.execute('UPDATE context_items SET source_count=(SELECT COUNT(*) FROM context_sources '
                      'WHERE item_id=?) WHERE id=?', (item_id, item_id))
         service.store.recompute_source_states([item_id])
+
+
+def _originals(service,task,unit):
+    """Only native sources and message ranges that actually form this task."""
+    from evolvmem import conversation_tasks
+    if not conversation_tasks.is_conversation(task['source_key']):
+        return []
+    source=conversation_tasks.snapshot(service,task['source_key'])
+    spans=topic_segmentation.message_spans(source['messages'])
+    ranges=topic_segmentation.unit_ranges(unit)
+    originals=[]
+    for part in source['records']:
+        own=[[max(a,part['start']),min(b,part['end'])] for a,b in ranges if a<part['end'] and b>part['start']]
+        if own and part['source_key'].startswith('archive:'):
+            originals.append((int(part['source_key'].split(':')[1]),topic_segmentation.unit_messages({'source_ranges':own},spans)))
+    return originals
 
 
 def extract_unit(service, task, unit, spans, *, llm_config=None):
@@ -172,6 +197,7 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
                     continue
                 apply_scope(service, mutation.context_id, unit)
                 item_ids.append(mutation.context_id)
+                _link_provenance(service,mutation.context_id,_archive_id(task),task,unit)
                 record_derivation(service, task['id'], unit['digest'], mutation.context_id,
                                   kind='knowledge', project=unit['project'])
                 detail = service.knowledge().detail(mutation.context_id)
@@ -184,10 +210,16 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
                     continue
                 apply_scope(service, mutation.context_id, unit, reuse=True)
                 item_ids.append(mutation.context_id)
+                _link_provenance(service,mutation.context_id,_archive_id(task),task,unit)
                 record_derivation(service, task['id'], unit['digest'], mutation.context_id,
                                   kind='knowledge', project=unit['project'])
             for item_id in experience_ids:
-                _bind_experience(service, item_id, messages, archive_id=_archive_id(task))
+                originals=_originals(service,task,unit)
+                if originals:
+                    for archive_id, own_messages in originals:
+                        if _bind_experience(service,item_id,own_messages,archive_id=archive_id):break
+                else:
+                    _bind_experience(service, item_id, messages, archive_id=_archive_id(task))
             _set_stage(service, task['id'], unit['digest'], 'done', want, '')
     except Exception as error:  # provider/parse/persistence failure is visible per unit
         from evolvmem.organization_diagnostics import capture
@@ -234,7 +266,7 @@ def _set_stage(service, task_id, digest, stage, want, error, diagnostic=''):
 def pending_units(service, task_id):
     return [dict(row) for row in service.store._connection().execute(
         "SELECT * FROM organization_units WHERE task_id=? AND (project!='' OR knowledge_scope='global') AND decision!='review' "
-        "AND disposition NOT IN ('set_aside','history_only') AND extraction_stage IN ('pending','running') "
+        "AND disposition NOT IN ('set_aside','history_only') AND extraction_stage IN ('pending','running','done') "
         'ORDER BY ordinal', (task_id,))]
 
 

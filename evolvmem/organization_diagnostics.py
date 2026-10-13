@@ -8,7 +8,7 @@ from evolvmem.context_store import _now_iso
 
 LABELS = {'model_request': '模型请求失败', 'model_parse': '模型响应解析或摘要校验失败',
           'persistence': '入库失败', 'related_lookup': '关联知识读取失败',
-          'segmentation': '分段失败', 'assignment': '归属处理失败',
+          'segmentation': '任务识别失败', 'narrative':'任务经过整理失败', 'assignment': '归属处理失败',
           'cleaning': '清洗失败', 'queued': '任务启动失败', 'extraction': '提炼失败', 'index': '索引同步失败'}
 
 
@@ -37,6 +37,8 @@ def classify(error):
         return 'provider_unavailable', False
     if getattr(error, 'rate_limited', False):
         return 'rate_limited', True
+    if getattr(error, 'extraction_summary_invalid', False):
+        return 'summary_invalid', True
     if isinstance(error, LanError) and str(error) in ('extraction_summary_missing', 'extraction_summary_rejected'):
         return 'summary_invalid', True
     if isinstance(error, HTTPError):

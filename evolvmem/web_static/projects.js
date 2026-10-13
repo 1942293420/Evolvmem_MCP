@@ -70,8 +70,8 @@ window.EvolvTaskContext={async render({mount,api,esc,query}){
       function draw(index){
         page=Math.max(0,Math.min(index,total-1));
         box.innerHTML=parts.slice(page*pageSize,(page+1)*pageSize).map(({r,ri,start,end})=>{
-          const a=r.unit_start,b=r.unit_end,selected=r.focus&&Number.isInteger(a)&&a>=0&&b>a&&b<=r.text.length&&a<end&&b>start;
-          const text=selected?esc(r.text.slice(start,Math.max(start,a)))+`<mark data-context-focus>${esc(r.text.slice(Math.max(start,a),Math.min(end,b)))}</mark>`+esc(r.text.slice(Math.min(end,b),end)):esc((r.text||'').slice(start,end));
+          const ranges=(r.unit_ranges||[[r.unit_start,r.unit_end]]).filter(([a,b])=>r.focus&&Number.isInteger(a)&&a>=0&&b>a&&b<=r.text.length&&a<end&&b>start);
+          let cursor=start,text='';for(const [a,b]of ranges){text+=esc(r.text.slice(cursor,Math.max(cursor,a)))+`<mark data-context-focus>${esc(r.text.slice(Math.max(cursor,a),Math.min(end,b)))}</mark>`;cursor=Math.min(end,b);}text+=esc((r.text||'').slice(cursor,end));
           return `<article class="task-context-source" data-context-record="${ci}-${ri}-${start}"><h4>${esc(r.title)}${start?'（续文）':''}</h4><p>${esc(r.adapter||'资料')} · ${esc(r.created_at||'时间未记录')} · ${esc(r.source_key)}${r.start_line?` · 原始记录 ${r.start_line}–${r.end_line} 行`:''}${r.focus?' · 当前记忆的来源':r.relation==='successor'?' · 后续过程与结果':r.relation==='session_background'?' · 同会话原文，任务关系尚待核对':' · 关联前文'}${r.current?'':' · 原文版本已变化'}</p><pre class="review-original task-context-text">${text}</pre></article>`;
         }).join('')||'<p>没有可读取的原始上下文。</p>';
         box.scrollTop=0;

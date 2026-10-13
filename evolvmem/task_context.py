@@ -80,6 +80,28 @@ def collect(service, unit, *, include_background=True):
     row=conn.execute('SELECT * FROM organization_tasks WHERE id=?',(unit.get('task_id'),)).fetchone()
     if row is None:
         return {'records':[],'notices':['未找到关联的原始会话，请核对资料来源。'],'revision':_hash(['missing',unit.get('task_id')])}
+    from evolvmem import conversation_tasks, topic_segmentation
+    if conversation_tasks.is_conversation(row['source_key']):
+        from evolvmem import auto_organization as org, task_narrative
+        task=dict(row)
+        source=conversation_tasks.snapshot(service,task['source_key'])
+        current=org._source_current(service,task)
+        ranges=topic_segmentation.unit_ranges(unit)
+        records=[]
+        for part in source['records']:
+            overlaps=[[max(a,part['start'])-part['start'],min(b,part['end'])-part['start']]
+                      for a,b in ranges if a<part['end'] and b>part['start']]
+            if not include_background and not overlaps:continue
+            records.append({**part,'task_id':task['id'],'current':current,'focus':bool(overlaps),
+                            'unit_digest':unit['digest'],'unit_ranges':overlaps,
+                            'unit_start':overlaps[0][0] if overlaps else 0,
+                            'unit_end':overlaps[0][1] if overlaps else 0,
+                            'relation':'current' if overlaps else 'session_background',
+                            'evidence_eligible':bool(overlaps)})
+        return {'records':records,'notices':[] if current else ['原文或整理规则已更新，请重新整理后核对。'],
+                'task_record':task_narrative.read(unit.get('task_record')),
+                'focus':{'task_id':task['id'],'digest':unit['digest'],'text':unit['text']},
+                'revision':_hash([VERSION,task['source_revision'],records])}
     task=dict(row);current_unit=dict(unit);records=[];notices=[];seen=set()
     while True:
         identity=(task['id'],current_unit['digest'])

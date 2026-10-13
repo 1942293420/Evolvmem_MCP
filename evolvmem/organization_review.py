@@ -53,9 +53,11 @@ def _groups(service):
         if not task['source_current']:
             continue
         family = _family(unit)
-        gid = _hash([identity, family, unit['category']])[:24]
+        complete = bool(unit.get('task_record') and unit['task_record']!='{}')
+        gid = _hash([identity, unit['digest']] if complete else [identity, family, unit['category']])[:24]
         group = groups.setdefault(gid, {'id': gid, 'reason': family, 'category': unit['category'],
-                                       'title': task['source_title'] or task['source_key'], 'members': []})
+                                       'title': unit['title'] if complete else task['source_title'] or task['source_key'],
+                                       'complete_task':complete, 'members': []})
         group['members'].append({**unit, 'revision': org._unit_revision(unit),
                                  'source_key': task['source_key'], 'rule_revision': task['rule_revision'],
                                  'source_revision': task['source_revision']})
@@ -83,7 +85,8 @@ def detail(service, body):
     if not group:
         raise ValueError('review_preview_changed')
     return {k: v for k, v in group.items() if k != 'members'} | {
-        'items': [_brief(u) | {k: u[k] for k in ('text', 'reason', 'disposition', 'disposition_reason')}
+        'items': [_brief(u) | {k: u[k] for k in ('text', 'reason', 'disposition', 'disposition_reason')} |
+                  {'task_record':json.loads(u.get('task_record') or '{}')}
                   for u in group['members']]}
 
 

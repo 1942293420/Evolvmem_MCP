@@ -306,7 +306,9 @@ def test_the_backlog_orders_same_session_batches_before_organizing(
         assert scan(service)['archives'] == 1
         ids.append(latest(service, SESSION))
     result = org(service, '/backlog', {'limit': 20})
-    assert [item['source_key'] for item in result['items']] == [f'archive:{i}' for i in ids]
+    from evolvmem.conversation_tasks import members
+    assert len(result['items']) == 1
+    assert members(service,result['items'][0]['source_key']) == [f'archive:{i}' for i in ids]
     provider = model_for(service, projects={'demo', 'other', 'dsh'}, topics=[
         ('用户要求：demo 项目先明确验收条件。', '', 'task_requirement'),
         ('第一步：批量删除必须逐条确认。', '', 'task_requirement', True),
@@ -314,7 +316,8 @@ def test_the_backlog_orders_same_session_batches_before_organizing(
     ])
     run_worker(service, monkeypatch, provider)
     got = [units(service, item['id']) for item in result['items']]
-    assert [unit[0]['project'] for unit in got] == ['demo'] * 3, [u[0]['reason'] for u in got]
+    assert [unit[0]['project'] for unit in got] == ['demo'], [u[0]['reason'] for u in got]
+    assert len(got[0])==1 and all(text in got[0][0]['text'] for text in ('验收条件','批量删除','撤销'))
 
 
 def test_a_three_batch_chain_stays_stable(service, config, tmp_path, monkeypatch):
@@ -819,23 +822,21 @@ def test_discovery_across_the_five_source_limit_keeps_session_order(
     provider = model_for(service, projects={'demo', 'other', 'dsh'}, topics=topics)
 
     first = discover_new(service)
-    assert first['created'] == DISCOVER_LIMIT
-    assert [item['source_key'] for item in first['items']] == \
-        [f'archive:{archive}' for archive in ids[:DISCOVER_LIMIT]], 'oldest batch first'
-    # The production tick keeps feeding the remaining batches, so the chain must
-    # survive the limit without any manual enqueue. The loop drives the real
-    # ``discover_new`` and the worker's own ``tick`` one explicit step at a time
-    # and waits for every expected source to reach a terminal status; the shared
-    # ``run_worker`` helper is deliberately not used here, because its stop can
-    # race the worker's own idle discovery and leave the last batches unprocessed.
-    settled = _drive_to_settled(service, monkeypatch, provider, ids)
-    assert set(settled) == {f'archive:{archive}' for archive in ids}, settled
-    conn = service.store._connection()
-    assert conn.execute('SELECT COUNT(*) c FROM organization_tasks').fetchone()['c'] == len(ids)
-    rows = [dict(row) for row in conn.execute(
-        'SELECT project,decision FROM organization_units ORDER BY task_id')]
-    assert len(rows) == len(ids)
-    assert all(row['project'] == 'demo' and row['decision'] == 'auto' for row in rows), rows
+    from evolvmem.conversation_tasks import members
+    assert first['created'] == 1
+    key=first['items'][0]['source_key']
+    assert members(service,key)==[f'archive:{i}' for i in ids[:DISCOVER_LIMIT]]
+    second=discover_new(service)
+    assert second['created']==1 and second['items'][0]['source_key']==key
+    assert members(service,key)==[f'archive:{i}' for i in ids]
+    assert discover_new(service)['created']==0
+    run_worker(service,monkeypatch,provider)
+    current=org(service,'/detail',{'task_id':second['items'][0]['id']})
+    assert current['status']=='completed'
+    assert len(current['units'])==1
+    assert current['units'][0]['project']=='demo'
+    assert all(text in current['units'][0]['text'] for text in texts)
+    assert org(service,'/detail',{'task_id':first['items'][0]['id']})['status']=='superseded'
 
 
 TERMINAL_STATUSES = ('completed', 'review', 'failed', 'superseded')

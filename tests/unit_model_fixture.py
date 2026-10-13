@@ -155,6 +155,19 @@ class UnitProvider:
 
     def __call__(self, prompt, *args, **kwargs):
         self.calls.append(prompt)
+        if '完整任务识别员' in prompt:
+            records=json.loads(prompt.split('本批原文：',1)[1])
+            catalog=json.loads(prompt.split('已识别任务：',1)[1].split('本批原文：',1)[0])
+            quote=next((re.sub(r'^用户：','',r['text'])[:100] for r in records if r['role']=='user'),'')
+            return json.dumps({'segments':[{'task':catalog[0]['task'] if catalog else 'new',
+                'start_id':records[0]['id'],'end_id':records[-1]['id'],
+                'title':'完整任务演示','need_quote':quote}]},ensure_ascii=False)
+        if '任务资料整理员' in prompt:
+            records=json.loads(prompt.split('本批原文：',1)[1])
+            def entry(r):return {'text':r['content'][:100],'evidence':[{'message':r['id'],'quote':r['content'][:100]}]}
+            return json.dumps({'requirement':entry(records[0]),'analysis':None,
+                'steps':[entry(r) for r in records[1:-1]],'result':entry(records[-1]),
+                'outstanding':[],'state':'unknown'},ensure_ascii=False)
         if '你是业务资料归类核对员' in prompt:
             return self.classify(prompt)
         if '独立核对员' in prompt:

@@ -1,4 +1,13 @@
 import json
+
+
+def test_explicit_missing_summary_is_retryable_without_class_name_guessing():
+    from evolvmem import organization_diagnostics as diagnostics
+    from evolvmem.kimi_hooks import RetryableExtractionError
+    error=RetryableExtractionError('provider omitted mandatory summary')
+    assert diagnostics.classify(error)==('unclassified_failure',False)
+    error.extraction_summary_invalid=True
+    assert diagnostics.classify(error)==('summary_invalid',True)
 import pytest
 from tests.test_auto_organization_extraction import service, base_service, org, _task_for
 from tests.unit_model_fixture import many_topic_archive, model_for, run_worker

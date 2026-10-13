@@ -49,6 +49,14 @@ def context_for(service, unit):
         org._assert_current(service, task)
     except ValueError:
         return {}
+    from evolvmem import task_narrative, topic_segmentation
+    organized = task_narrative.read(unit.get('task_record'))
+    if organized.get('version') == task_narrative.VERSION:
+        # The narrative has read every task span; unrelated conversation is not
+        # a classification input. Quotes are still checked against raw text.
+        return {'organized_task':{k:v for k,v in organized.items() if k!='prior_decisions'},
+                'source_key':task['source_key'], 'task_text_hash':digest(unit['text']),
+                'source_ranges':topic_segmentation.unit_ranges(unit)}
     snapshot = task.get('source_snapshot') or ''
     start, end = unit.get('source_start'), unit.get('source_end')
     out = {}
@@ -170,8 +178,11 @@ def analyze(service, units, *, criteria='', exceptions='', target=None):
         contexts = [context_for(service,u) for u in chunk]
         stamps = [stamp(service,u,c) for u,c in zip(chunk,contexts)]
         from evolvmem.task_context import MODEL_MAX_CHARS
-        too_long={i for i,u in enumerate(chunk) if len(u['text'])+sum(len(r['text']) for r in contexts[i].get('task_history',{}).get('records',[]))>MODEL_MAX_CHARS}
-        rows = [{'id':i,'title':u.get('title',''),'text':u['text'],'context':contexts[i]} for i,u in enumerate(chunk) if len(u['text'])<=10000 and i not in too_long]
+        from evolvmem import task_narrative
+        complete = {i for i,c in enumerate(contexts) if c.get('organized_task')}
+        inputs = ['\n\n'.join(task_narrative.evidence(contexts[i]['organized_task'])) if i in complete and len(u['text'])>10000 else u['text'] for i,u in enumerate(chunk)]
+        too_long={i for i,u in enumerate(chunk) if len(inputs[i])+len(json.dumps(contexts[i],ensure_ascii=False))>MODEL_MAX_CHARS}
+        rows = [{'id':i,'title':u.get('title',''),'text':inputs[i],'context':contexts[i]} for i,u in enumerate(chunk) if (i in complete or len(u['text'])<=10000) and i not in too_long]
         prompt = ('你是业务资料归类核对员。\n'+INSTRUCTIONS+
             '\n这是'+('依据用户分类标准核对适用范围。' if target is not None else '自动识别实际归属项目。')+
             '\n返回 {"items":[{"id":0,"decision":"include|exclude|uncertain","reason":"业务理由",'
@@ -180,6 +191,7 @@ def analyze(service, units, *, criteria='', exceptions='', target=None):
             '"continues_context":false,"knowledge_scope":"project","general_quote":""}]}。'
             '\ntask_history 按时间保留各份任务来源全文，从起始需求理解过程和结果；同一来源可能含其他任务，只引用与本条可明确关联的原话。缺失阶段留空，不把会话相同当作项目相同。'
             '\n逐项核对当前任务已经出现的需求、分析、修改和结果：这些原话可能在 predecessor 或 successor 记录中。已有关联结果就引用到 result，不要只重复当前片段而忽略起始需求和后续结果。'
+            '\norganized_task 是先阅读全文整理的完整任务，按需求、原因、处理、结果判断实际影响对象；evidence 引用才是原话，text 是摘要，不能把摘要当作逐字证据。'
             '\n有目标范围时，decision 只回答是否归入该目标；即使另一个项目是实际负责方，也不能因此把当前目标写成 include。'
             '\nrelation=session_background 的记录尚未建立有效任务关联，只供人工核查背景；不能作为自动归类的 chain 或 targets 引用。若归属必须依赖这些记录才能确定，返回 uncertain，请人工先核对任务关联。'
             '\n已登记项目：'+json.dumps(registry,ensure_ascii=False)+
@@ -197,7 +209,7 @@ def analyze(service, units, *, criteria='', exceptions='', target=None):
         for i,unit in enumerate(chunk):
             matches = [r for r in parsed if isinstance(r,dict) and type(r.get('id')) is int and r['id']==i]
             result = validate(matches[0] if len(matches)==1 else {},unit,contexts[i],names,target)
-            if len(unit['text'])>10000:
+            if len(unit['text'])>10000 and i not in complete:
                 result.update(decision='uncertain',projects=[],reason='资料过长，尚未完成全文判断；请先分段整理。')
             if i in too_long:
                 result.update(decision='uncertain',projects=[],reason='完整任务上下文超出本次自动阅读范围；原文已保留，请人工核查，不能仅凭片段归类。')

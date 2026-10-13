@@ -8,9 +8,10 @@
     const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
     mount.innerHTML=`<section class="review-groups"><div class="section-head"><h2>待你确认的资料</h2><button data-rg="refresh">刷新资料</button></div><p data-rg-status role="status"></p><div class="review-workspace"><div class="review-list-column"><h3>1. 选择要审核的资料</h3><p data-rg-total></p><div data-rg-list></div><div class="actions"><button data-rg="previous">上一页</button><span data-rg-page></span><button data-rg="next">下一页</button></div></div>
     <div class="review-editor"><div data-rg-empty><h3>点击左侧资料，在这里核对原文和归属</h3></div><form data-rg-form hidden>
-      <h3>2. 核对原文</h3><h4 data-rg-title></h4><p data-rg-source-label></p>
+      <h3>2. 看清需求、处理经过和结果</h3><h4 data-rg-title></h4><p data-rg-source-label></p>
       <label data-rg-unit-picker>这份会话中需要确认的资料<select name="unit"></select></label>
-      <p class="review-question" data-rg-reason></p><pre class="review-original" data-rg-original></pre>
+      <p class="review-question" data-rg-reason></p><div data-rg-narrative></div><pre class="review-original" data-rg-original></pre>
+      <div data-rg-legacy hidden><p>这份旧资料按片段保存，可先还原完整任务再分类。</p><button type="button" data-rg="complete-task">按完整任务重新整理这段会话</button></div>
       <details data-rg-source open><summary>原始任务上下文</summary><div data-rg-source-text></div></details>
       <div class="actions" data-rg-value hidden><button type="button" data-rg="keep">保留这条资料</button><button type="button" data-rg="aside">暂存，稍后再判断</button></div>
       <h3>3. 选择这条知识适用于哪里</h3><div data-rg-scope></div><div class="organization-settings">
@@ -31,6 +32,12 @@
     function remember(){if(selectedGroup)drafts.set(selectedGroup,{values:values(),proposal});}
     function invalidate(){form.elements.continue_job_id.value='';manualPreviews.clear();$('[data-rg="preview"]').disabled=false;analyses.delete(selectedGroup);proposal=null;$('[data-rg="apply"]').hidden=false;$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='先预览，再确认归类';$('[data-rg-preview]').replaceChildren();$('[data-rg-save-status]').textContent='选择已修改，请预览本次归类结果。';remember();onDirty(true);}
     function highlight(){mount.querySelectorAll('[data-rg="choose"]').forEach(b=>{const yes=b.dataset.id===selectedGroup;b.setAttribute('aria-pressed',String(yes));b.closest('.review-source-card').classList.toggle('selected',yes);});}
+    function narrative(record){
+      const rows=[['requirement','用户当时要做什么'],['analysis','为什么需要处理'],['steps','处理经过与各次修复'],['result','最后记录的结果']];
+      const body=rows.map(([key,title])=>{const entries=Array.isArray(record[key])?record[key]:record[key]?[record[key]]:[];return `<section class="task-narrative-section"><h4>${title}</h4>${entries.length?`<ol>${entries.map(e=>`<li><p>${esc(e.text)}</p><details><summary>核对原话</summary>${e.evidence.map(ref=>`<blockquote>${esc(ref.quote)}</blockquote>`).join('')}</details></li>`).join('')}</ol>`:'<p>原文中尚未明确</p>'}</section>`;}).join('');
+      const previous=record.prior_decisions||[];
+      return `<div class="task-narrative">${body}${record.outstanding?.length?`<section><h4>尚未完成</h4><ul>${record.outstanding.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></section>`:''}${previous.length?`<section><h4>你以前做过的判断</h4>${previous.map(p=>`<p>${esc(p.title)}：${p.decision==='manual'?`已确认用于「${esc(EvolvProjects.scopeLabel(p,projects))}」`:''}${p.excluded_scopes?.length?` 不归入「${esc(p.excluded_scopes.map(x=>x==='global'?'个人通用':projectName(x.replace('project:',''))).join('、'))}」`:''}</p>`).join('')}</section>`:''}</div>`;
+    }
     async function load(){
       const sequence=++loadSequence;
       const result=await api('organization/groups?'+new URLSearchParams({page}));
@@ -48,9 +55,14 @@
       const u=detail?.items.find(x=>`${x.task_id}:${x.digest}`===form.elements.unit.value);if(!u)return;
       form.elements.task_id.value=u.task_id;form.elements.digest.value=u.digest;
       $('[data-rg-title]').textContent=u.title;$('[data-rg-source-label]').textContent=`来源：${detail.title}`;
-      $('[data-rg-original]').textContent=u.text;
+      const complete=!!u.task_record?.version;
+      $('[data-rg-narrative]').innerHTML=complete?narrative(u.task_record):'';
+      $('[data-rg-original]').hidden=complete;$('[data-rg-original]').textContent=complete?'':u.text;
+      $('[data-rg-legacy]').hidden=complete;
       $('[data-rg-reason]').textContent=u.disposition==='review'?'需要你确认是否保留：'+(u.disposition_reason||u.reason):'需要你确认适用范围：'+(u.reason||'系统无法确定这条知识是个人通用还是用于哪些项目');
-      $('[data-rg-value]').hidden=u.disposition!=='review';$('[data-rg-source]').open=true;EvolvTaskContext.render({mount:$('[data-rg-source-text]'),api,esc,query:'organization/context?'+new URLSearchParams({task_id:u.task_id,digest:u.digest})});
+      $('[data-rg-value]').hidden=u.disposition!=='review';
+      const source=$('[data-rg-source]');source.ontoggle=null;source.open=!complete;$('[data-rg-source-text]').replaceChildren();
+      let loaded=false;const show=()=>{if(loaded||!source.open)return;loaded=true;EvolvTaskContext.render({mount:$('[data-rg-source-text]'),api,esc,query:'organization/context?'+new URLSearchParams({task_id:u.task_id,digest:u.digest})});};source.ontoggle=show;show();
     }
     async function choose(id,{preserve=false,member=null}={}){
       if(!preserve)remember();
@@ -141,6 +153,13 @@
       try{
         const action=b.dataset.rg;
         if(action==='choose'){await choose(b.dataset.id);}
+        else if(action==='complete-task'){
+          if(pendingTasks.length){notice('会话正在整理，请等待完成。');return;}
+          const u=detail.items.find(x=>x.digest===form.elements.digest.value&&x.task_id===Number(form.elements.task_id.value));
+          const result=await api('organization/organize',{items:[{key:u.source_key}]});
+          pendingTasks=result.items.map(t=>t.id);recoveryGroup=selectedGroup;
+          invalidate();notice('已开始按完整任务整理。原文与以前的人工判断会保留，完成后请在左侧选择完整任务。');checkRecovery();
+        }
         else if(action==='preview'){
           if(pendingTasks.length&&selectedGroup===recoveryGroup){notice('这份资料正在重新整理，请完成后再预览。');return;}
           await refreshPreview();
