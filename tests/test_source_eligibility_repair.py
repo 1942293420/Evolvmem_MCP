@@ -820,3 +820,7 @@ def test_sql_identity_mirror_matches_logical_identity():
         else:
             assert got == logical_identity(adapter, value), (adapter, value, got)
     conn.close()
+
+# Seed pre-migration task rows for the retained raw-archive repair contract.
+# Current conversation defaults/retirement are covered by test_task_defaults.
+from tests.legacy_organization_fixture import legacy_stored_history

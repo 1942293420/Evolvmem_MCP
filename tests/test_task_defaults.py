@@ -48,3 +48,22 @@ def test_retry_of_legacy_task_also_uses_complete_task(service):
     old,_=legacy_unit(service)
     task=org.dispatch(service,'POST','/resegment',{'task_id':old['id']})['task']
     assert task['source_key'].startswith('conversation:')
+
+
+def test_obsolete_whole_snapshot_conversation_retires_without_model_retry(service):
+    from evolvmem.session_archive import SessionArchiver
+    from tests.test_source_eligibility_repair import windows_external,payload_for
+    from evolvmem import conversation_tasks
+    archiver=SessionArchiver(service.config,service.store)
+    identity=['test-device','test-session']
+    old=archiver.archive_session('','codex',windows_external(identity,'1'*64),payload_for('最初要求保留编号。'))
+    task=conversation_tasks.enqueue(service,[f'archive:{old.id}'])['items'][0]
+    with service.store.transaction():
+        service.store._connection().execute("UPDATE organization_tasks SET status='failed',error_code='classification_source_changed' WHERE id=?",(task['id'],))
+    new=archiver.archive_session('','codex',windows_external(identity,'2'*64),payload_for('最初要求保留编号。现在完成修改。'))
+    current=conversation_tasks.enqueue(service,[f'archive:{new.id}'])['items'][0]
+    org.reconcile_sources(service)
+    retired=org.task_view(service,task['id'])
+    assert retired['status']=='superseded' and retired['superseded_by']==current['id']
+    assert retired['attempts']==0
+    assert org.task_view(service,current['id'])['status']=='pending'

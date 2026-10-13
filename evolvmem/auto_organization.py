@@ -652,8 +652,8 @@ def _successor_task_id(service, successor_archive_id):
     if successor_archive_id is None:
         return None
     row = service.store._connection().execute(
-        'SELECT id FROM organization_tasks WHERE source_key=? ORDER BY id DESC',
-        (f'archive:{successor_archive_id}',)).fetchone()
+        "SELECT t.id FROM organization_tasks t WHERE t.source_key=? OR EXISTS(SELECT 1 FROM organization_conversations c WHERE c.source_key=t.source_key AND json_array_length(c.members)=1 AND json_extract(c.members,'$[0]')=?) ORDER BY t.id DESC",
+        (f'archive:{successor_archive_id}',f'archive:{successor_archive_id}')).fetchone()
     return row['id'] if row else None
 
 
@@ -791,7 +791,7 @@ def _retire_task(service, task_id, *, status, reason, successor=None):
                      (status, reason, '', successor, _now_iso(), _now_iso(), int(task_id)))
         source_key = row['source_key']
     if status == 'superseded' and isinstance(source_key, str):
-        _downgrade_superseded_outputs(service, source_key, before_id=int(task_id) + 1)
+        _downgrade_superseded_outputs(service, row['source_key'], before_id=int(task_id) + 1)
     # Only finish retirement after output settlement succeeds. Shared outputs
     # intentionally stay active; they must not keep this retired task scanning.
     with service.store.transaction():
@@ -812,7 +812,7 @@ def _reconcile_candidates(service, *, limit):
     retired source; a task with any manual unit is never a candidate.
     """
     conn = service.store._connection()
-    archive_id_sql = _archive_id_sql('t')
+    archive_id_sql = "CAST(substr(t.retirement_source,9) AS INTEGER)"
     not_manual = ("NOT EXISTS (SELECT 1 FROM organization_units mu WHERE mu.task_id=t.id "
                   "AND mu.decision='manual')")
     human_guard = ""
@@ -865,7 +865,10 @@ def _reconcile_candidates(service, *, limit):
     branches.append(
         f"({head_absent} AND {_legacy_sibling_sql(archive_id_sql)} "
         f"AND ({unsettled} OR {own_active}))")
-    sql = ("SELECT t.id,t.source_key FROM organization_tasks t WHERE t.source_key LIKE 'archive:%' "
+    sql = ("SELECT t.id,t.source_key FROM (SELECT ot.*,CASE WHEN ot.source_key LIKE 'archive:%' THEN ot.source_key "
+           "WHEN json_array_length(oc.members)=1 THEN json_extract(oc.members,'$[0]') END retirement_source "
+           "FROM organization_tasks ot LEFT JOIN organization_conversations oc ON oc.source_key=ot.source_key) t "
+           "WHERE t.retirement_source LIKE 'archive:%' "
            "AND NOT (t.status='superseded' AND t.stage='retired') "
            "AND " + not_manual + " AND (" + " OR ".join(branches) + ") ORDER BY t.id LIMIT ?")
     rows = conn.execute(sql, (*params, max(1, int(limit)))).fetchall()
@@ -883,6 +886,11 @@ def _settle_ineligible(service, task_id, source_key):
     """
     from evolvmem.history_organization import source_excluded
     conn = service.store._connection()
+    if isinstance(source_key,str) and source_key.startswith('conversation:'):
+        from evolvmem.conversation_tasks import members
+        sources=members(service,source_key)
+        if len(sources)!=1:return None
+        source_key=sources[0]
     if task_id is None or not isinstance(source_key, str) or not source_key.startswith('archive:'):
         return None
     row = conn.execute('SELECT id,status,stage,source_key FROM organization_tasks WHERE id=?',
@@ -902,7 +910,7 @@ def _settle_ineligible(service, task_id, source_key):
     retired = reason_for_retirement(service, source_key)
     if row['status'] == 'superseded':
         if retired is not None:
-            _downgrade_superseded_outputs(service, source_key, before_id=int(task_id) + 1)
+            _downgrade_superseded_outputs(service, row['source_key'], before_id=int(task_id) + 1)
             with service.store.transaction():
                 conn.execute("UPDATE organization_tasks SET stage='retired',updated_at=? WHERE id=?",
                              (_now_iso(), int(task_id)))
