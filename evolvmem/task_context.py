@@ -42,6 +42,9 @@ def _session_background(service, focus_source, records, notices):
     from evolvmem import auto_organization as org, organization_context as ctx
     info=ctx.archive_info(service,focus_source)
     if not info:return
+    from evolvmem.history_organization import _unassigned_archives
+    visible={r['id'] for r in _unassigned_archives(service)}
+    policy=service.knowledge().rules.read()
     existing={r['source_key'] for r in records}
     spans=[(r['start_line'],r['end_line']) for r in records if r.get('start_line')]
     rows=service.store._connection().execute(ctx._sibling_sql(),ctx._sibling_params(info)).fetchall()
@@ -52,11 +55,12 @@ def _session_background(service, focus_source, records, notices):
         if not other or other['head']!=info['head']:continue
         if any(other['start_line']<=end and other['end_line']>=start for start,end in spans):
             notices.append('原始会话存在重叠批次，重叠部分未自动拼接。');continue
-        try:source,text=org.source_snapshot(service,key)
+        try:source,text=org.source_snapshot(service,key,visible=visible,policy=policy)
         except ValueError:
             notices.append('同会话的部分原文暂时不可读取。');continue
         archive=service.store.get_session_archive(row['id']) or {}
-        records.append({'task_id':0,'source_key':key,'title':org._source_title(service,key,text),
+        title=(str(source.get('source') or '')+' · '+text.strip().split('\n',1)[0][:80]).strip(' ·')[:200]
+        records.append({'task_id':0,'source_key':key,'title':title,
             'adapter':archive.get('adapter',''),'created_at':archive.get('created_at',''),
             'session_id':other['session_id'],'start_line':other['start_line'],'end_line':other['end_line'],
             'text':text,'current':True,'focus':False,'relation':'session_background',
@@ -64,7 +68,7 @@ def _session_background(service, focus_source, records, notices):
         spans.append((other['start_line'],other['end_line']))
 
 
-def collect(service, unit):
+def collect(service, unit, *, include_background=True):
     """Current source plus the complete verified predecessor chain, oldest first.
 
     Keep entire original sources: the first demand can be outside the selected
@@ -129,7 +133,8 @@ def collect(service, unit):
             if not added['current']:continue
             added['relation']='successor';records.append(added);queue.append(identity)
     focus_source=next(r['source_key'] for r in records if r['focus'])
-    _session_background(service,focus_source,records,notices)
+    if include_background:
+        _session_background(service,focus_source,records,notices)
     if any(r['relation']=='session_background' and r.get('start_line',0)<next((f.get('start_line') or 0 for f in records if f['focus']),0) for r in records):
         notices=[n.replace('尚未关联到更早的任务原文，不能据此认定需求从这里开始。',
                            '已显示同会话的早期原文，任务关联尚待核对。') for n in notices]

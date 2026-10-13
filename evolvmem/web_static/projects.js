@@ -48,24 +48,43 @@ EvolvProjects.businessEvidence=(analysis,projects,esc)=>{
   return `<details class="business-evidence"><summary>查看归类依据</summary>${targets?`<div>${targets}</div>`:''}${rows}</details>`;
 };
 
-/* One source reader for classification review and saved knowledge. */
+/* Keep all source text available while rendering only the current reading page. */
 window.EvolvTaskContext={async render({mount,api,esc,query}){
   const token={};mount._contextRequest=token;mount.textContent='正在读取需求起点与任务原文…';
   try{
     const data=await api(query);
-    if(mount._contextRequest!==token||!mount.isConnected)return;
-    const contexts=data.contexts||[data];
+    if(mount._contextRequest!==token||!mount.isConnected)return false;
+    const contexts=data.contexts||[data],pageSize=12,partSize=8000;
     mount.innerHTML=contexts.map((context,ci)=>{
       const stages=(context.stages||[]).map(s=>`<div class="task-context-stage"><strong>${esc(s.title)}</strong>${s.quote?`<blockquote>${esc(s.quote)}</blockquote>`:'<p>尚未识别到对应原话，请结合下方原文核对。</p>'}</div>`).join('');
-      const records=(context.records||[]).map((r,ri)=>{
-        const a=r.unit_start,b=r.unit_end,selected=r.focus&&Number.isInteger(a)&&a>=0&&b>a&&b<=r.text.length;
-        const text=selected?esc(r.text.slice(0,a))+`<mark data-context-focus>${esc(r.text.slice(a,b))}</mark>`+esc(r.text.slice(b)):esc(r.text);
-        return `<article class="task-context-source" data-context-record="${ci}-${ri}"><h4>${esc(r.title)}</h4><p>${esc(r.adapter||'资料')} · ${esc(r.created_at||'时间未记录')} · ${esc(r.source_key)}${r.start_line?` · 原始记录 ${r.start_line}–${r.end_line} 行`:''}${r.focus?' · 当前记忆的来源':r.relation==='successor'?' · 后续过程与结果':r.relation==='session_background'?' · 同会话原文，任务关系尚待核对':' · 关联前文'}${r.current?'':' · 原文版本已变化'}</p><pre class="review-original task-context-text">${text}</pre></article>`;
-      }).join('');
-      return `<section class="task-context"><h3>需求起点与任务原文</h3>${(context.notices||[]).map(t=>`<p class="review-question">${esc(t)}</p>`).join('')}${stages?`<details class="task-context-stages"><summary>需求、过程与结果的核对依据</summary>${stages}</details>`:''}<div class="actions"><button type="button" data-context-start="${ci}">回到原文开头</button><button type="button" data-context-locate="${ci}">定位当前记忆</button></div><div data-context-records="${ci}">${records||'<p>没有可读取的原始上下文。</p>'}</div></section>`;
+      return `<section class="task-context"><h3>需求起点与任务原文</h3>${(context.notices||[]).map(t=>`<p class="review-question">${esc(t)}</p>`).join('')}${stages?`<details class="task-context-stages"><summary>需求、过程与结果的核对依据</summary>${stages}</details>`:''}<div class="actions"><button type="button" data-context-start="${ci}">回到原文开头</button><button type="button" data-context-locate="${ci}">定位当前记忆</button></div><div class="actions task-context-pager"><button type="button" data-context-previous="${ci}">上一页原文</button><span data-context-page="${ci}" role="status"></span><button type="button" data-context-next="${ci}">下一页原文</button></div><div data-context-records="${ci}"></div></section>`;
     }).join('');
-    mount.querySelectorAll('[data-context-start]').forEach(b=>b.onclick=()=>mount.querySelector(`[data-context-records="${b.dataset.contextStart}"]`)?.scrollIntoView({block:'start'}));
-    mount.querySelectorAll('[data-context-locate]').forEach(b=>b.onclick=()=>mount.querySelector(`[data-context-records="${b.dataset.contextLocate}"] [data-context-focus]`)?.scrollIntoView({block:'center'}));
+    contexts.forEach((context,ci)=>{
+      const parts=[];
+      for(const [ri,r]of (context.records||[]).entries()){
+        const length=(r.text||'').length;
+        for(let start=0;start<Math.max(1,length);start+=partSize)parts.push({r,ri,start,end:Math.min(start+partSize,length)});
+      }
+      const box=mount.querySelector(`[data-context-records="${ci}"]`),prev=mount.querySelector(`[data-context-previous="${ci}"]`),next=mount.querySelector(`[data-context-next="${ci}"]`),label=mount.querySelector(`[data-context-page="${ci}"]`);
+      const total=Math.max(1,Math.ceil(parts.length/pageSize));let page=0;
+      function draw(index){
+        page=Math.max(0,Math.min(index,total-1));
+        box.innerHTML=parts.slice(page*pageSize,(page+1)*pageSize).map(({r,ri,start,end})=>{
+          const a=r.unit_start,b=r.unit_end,selected=r.focus&&Number.isInteger(a)&&a>=0&&b>a&&b<=r.text.length&&a<end&&b>start;
+          const text=selected?esc(r.text.slice(start,Math.max(start,a)))+`<mark data-context-focus>${esc(r.text.slice(Math.max(start,a),Math.min(end,b)))}</mark>`+esc(r.text.slice(Math.min(end,b),end)):esc((r.text||'').slice(start,end));
+          return `<article class="task-context-source" data-context-record="${ci}-${ri}-${start}"><h4>${esc(r.title)}${start?'（续文）':''}</h4><p>${esc(r.adapter||'资料')} · ${esc(r.created_at||'时间未记录')} · ${esc(r.source_key)}${r.start_line?` · 原始记录 ${r.start_line}–${r.end_line} 行`:''}${r.focus?' · 当前记忆的来源':r.relation==='successor'?' · 后续过程与结果':r.relation==='session_background'?' · 同会话原文，任务关系尚待核对':' · 关联前文'}${r.current?'':' · 原文版本已变化'}</p><pre class="review-original task-context-text">${text}</pre></article>`;
+        }).join('')||'<p>没有可读取的原始上下文。</p>';
+        box.scrollTop=0;
+        prev.disabled=page===0;next.disabled=page>=total-1;
+        label.textContent=`${(context.records||[]).length} 份来源 · 原文第 ${page+1} / ${total} 页`;
+      }
+      const locate=mount.querySelector(`[data-context-locate="${ci}"]`),focusPart=parts.findIndex(({r,start,end})=>r.focus&&Number.isInteger(r.unit_start)&&r.unit_start>=start&&r.unit_start<end);
+      locate.disabled=focusPart<0;
+      locate.onclick=()=>{draw(Math.floor(focusPart/pageSize));box.querySelector('[data-context-focus]')?.scrollIntoView({block:'center'});};
+      mount.querySelector(`[data-context-start="${ci}"]`).onclick=()=>{draw(0);box.scrollIntoView({block:'start'});};
+      prev.onclick=()=>{draw(page-1);label.scrollIntoView({block:'center'});};next.onclick=()=>{draw(page+1);label.scrollIntoView({block:'center'});};
+      draw(0);
+    });
     return true;
   }catch(error){if(mount._contextRequest===token)mount.textContent='原始上下文读取失败，请重新打开核查。';}
   return false;

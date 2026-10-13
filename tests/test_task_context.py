@@ -145,3 +145,28 @@ def test_stored_link_must_also_match_current_native_session(service,monkeypatch)
         conn.execute('UPDATE organization_units SET context_basis=? WHERE task_id=?',(basis,tc))
     got=org(service,'/context',{'task_id':tc,'digest':uc['digest']})
     assert '本会话需求' not in '\n'.join(r['text'] for r in got['records'])
+
+
+def test_many_unorganized_batches_do_not_rescan_library_for_each_source(service,monkeypatch):
+    from evolvmem import history_organization
+    for n in range(30):
+        craft(service,session=SESSION,start=n*3+1,end=n*3+3,text=f'早期原始需求与过程 {n}。')
+    tid,u=make_task(service,monkeypatch,'继续核查当前结果。',start=91,end=93)
+    calls=[];original=history_organization._unassigned_archives
+    def counted(*args,**kwargs):
+        calls.append(1);return original(*args,**kwargs)
+    monkeypatch.setattr(history_organization,'_unassigned_archives',counted)
+    got=org(service,'/context',{'task_id':tid,'digest':u['digest']})
+    assert len(got['records'])==31
+    assert '早期原始需求与过程 0' in got['records'][0]['text']
+    assert len(calls)<=6, f'full-library scans: {len(calls)}'
+
+
+def test_automatic_judgment_does_not_load_unlinked_session_background(service,monkeypatch):
+    from evolvmem import task_context
+    tid,u=make_task(service,monkeypatch,'demo 当前独立需求明确。')
+    def forbidden(*args,**kwargs):
+        pytest.fail('unlinked original conversation must not be reloaded by every AI verdict stamp')
+    monkeypatch.setattr(task_context,'_session_background',forbidden)
+    got=reasoning.context_for(service,u)
+    assert u['text'] in '\n'.join(reasoning.evidence_texts(u,got))

@@ -65,7 +65,9 @@ def context_for(service, unit):
             prior=dict(previous)
             out['predecessor']['task_evidence']={k:q[:1000] for k,q in validated(prior).get('chain',{}).items() if isinstance(q,str) and q and q in prior['text']}
     from evolvmem.task_context import collect
-    out['task_history']=collect(service,unit)
+    # Unlinked conversation batches are readable by humans but cannot be cited
+    # by automatic ownership. Do not reload them for every verdict/cache check.
+    out['task_history']=collect(service,unit,include_background=False)
     return out
 
 

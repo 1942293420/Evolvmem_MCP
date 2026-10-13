@@ -88,7 +88,7 @@ def project_names(service):
 
 # ------------------------------------------------- deterministic source snapshot
 
-def source_snapshot(service, source_key):
+def source_snapshot(service, source_key, *, visible=None, policy=None):
     """Deterministic clean input for the automatic pipeline, without a manual gate.
 
     Reuses the shared cleaning core (transport/injected noise removed, saved
@@ -103,10 +103,10 @@ def source_snapshot(service, source_key):
     the existing ``cleaning_source_unavailable`` error.
     """
     from evolvmem.knowledge_cleaning import _clean_input, record, source_readable
-    row = record(service, source_key)
+    row = record(service, source_key, visible=visible)
     if not row.get('dialogue_available', True):
         raise SourceNoDialogue(NO_DIALOGUE_CODE)
-    policy = service.knowledge().rules.read()
+    policy = policy if policy is not None else service.knowledge().rules.read()
     text = _clean_input(service, row, policy)
     if not isinstance(text, str) or not text.strip():
         if source_readable(service, row):
