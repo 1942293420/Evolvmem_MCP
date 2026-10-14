@@ -198,3 +198,28 @@ def test_manual_confirmation_is_saved_and_removed_from_uncertain_batch(service,m
     assert review.apply(service,{'proposal':single})['succeeded']==1
     p=semantic.get(service,job['id'])['proposal']
     assert p['handled_count']==1 and len(p['excluded'])==2
+
+
+def test_restore_old_batches_scans_current_sources_once(service, monkeypatch):
+    """Expired saved batches must not multiply full-source reads on page load."""
+    from evolvmem import organization_review as review
+    tid, request, _ = setup_job(service, monkeypatch, count=3)
+    job = semantic.start(service, request)
+    semantic.tick(service)
+    conn = service.store._connection()
+    row = dict(conn.execute('SELECT * FROM organization_review_jobs WHERE id=?', (job['id'],)).fetchone())
+    with service.store.transaction():
+        conn.execute("UPDATE organization_tasks SET status='superseded' WHERE id=?", (tid,))
+        for i in range(8):
+            conn.execute('INSERT INTO organization_review_jobs(id,status,request,base_revision,judgments,error,processed,total,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+                         (f'expired-{i}', *[row[k] for k in ('status','request','base_revision','judgments','error','processed','total','created_at','updated_at')]))
+    # An unrelated current task still needs to be available for review.
+    group_source(service, monkeypatch, session='new-current-source', count=1)
+    scans=[]
+    original=review._groups
+    def measured(*args, **kwargs):
+        scans.append(1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(review, '_groups', measured)
+    assert semantic.recent(service) == {'job':None}
+    assert len(scans) == 1, 'restoring expired batches repeatedly scans every current source'

@@ -3,7 +3,7 @@
   // One live instance at a time. A detach invalidates the old polling chain, so
   // navigating between views cannot leave detached timers or stale drafts.
   let active = null;
-  window.EvolvOrganization = {async render({mount, api, esc, toast, projects, onDirty, onBusy, initialTab="review", onTab=()=>{}}) {
+  window.EvolvOrganization = {async render({mount, api, esc, toast, projects, onDirty, onBusy, initialTab="review", onTab=()=>{}, onReady=()=>{}}) {
   const token = {};
   active = {mount, token};
   const [queue, guidance, settings] = await Promise.all([
@@ -90,7 +90,7 @@
     onTab(tab);await load();
   }
   mount.addEventListener('click',e=>{const b=e.target.closest('[data-org-tab]');if(!b||busy)return;e.preventDefault();selectTab(b.dataset.orgTab).catch(error=>notice(errorText(error.message)));});
-  const groupHandle=await EvolvReviewGroups.render({mount:$('#org-review-groups'),historyMount:$('#org-history-mount'),api,esc,projects,onBusy,
+  const groupHandle=await EvolvReviewGroups.render({mount:$('#org-review-groups'),historyMount:$('#org-history-mount'),api,esc,projects,onBusy,onReady,
     onDirty:value=>{groupDirty=value;dirty();},onSaved:async()=>{guidanceRows=(await api('organization/guidance')).items;await load();drawGuidance();}});
   async function loadMetrics(){try{$('#org-metrics').innerHTML=EvolvOrganizationMetrics.html(await api('organization/metrics'),esc);}catch(error){$('#org-metrics').textContent='整理效果暂不可用，可刷新重试。';}}
   await loadMetrics();

@@ -1,8 +1,8 @@
 /* Review the original in place; every write is bound to an explicit preview. */
 (() => {
-  window.EvolvReviewGroups = {async render({mount, api, esc, projects, onSaved, onDirty, onBusy, historyMount=mount}) {
+  window.EvolvReviewGroups = {async render({mount, api, esc, projects, onSaved, onDirty, onBusy, historyMount=mount, onReady=()=>{}}) {
     let page=1, proposal=null, busy=false, selectedGroup='', detail=null, pendingTasks=[], recoveryTimer=null, recoveryGroup='', listSnapshot='', loadSequence=0;
-    const drafts=new Map(), analyses=new Map(), manualPreviews=new Map(), decisionDrafts=new Map();let analysisTimer=null;
+    const drafts=new Map(), analyses=new Map(), manualPreviews=new Map(), decisionDrafts=new Map();let analysisTimer=null,chooseSequence=0;
     const $=s=>mount.querySelector(s);
     const projectName=p=>projects.find(x=>x.project===p)?.display_name||p;
     const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
@@ -83,8 +83,10 @@
       let loaded=false;const show=()=>{if(loaded||!source.open)return;loaded=true;EvolvTaskContext.render({mount:$('[data-rg-source-text]'),api,esc,query:'organization/context?'+new URLSearchParams({task_id:u.task_id,digest:u.digest})});};source.ontoggle=show;show();
     }
     async function choose(id,{preserve=false,member=null}={}){
+      const sequence=++chooseSequence;
       if(!preserve)remember();
       const next=await api('organization/groups/detail?'+new URLSearchParams(member?{task_id:member.task_id,digest:member.digest}:{group_id:id}));
+      if(sequence!==chooseSequence||!mount.isConnected)return false;
       if(member){const old=drafts.get(selectedGroup);drafts.delete(selectedGroup);if(old)drafts.set(next.id,old);id=next.id;}
       selectedGroup=id;detail=next;form.hidden=false;$('[data-rg-empty]').hidden=true;$('[data-rg-empty]').textContent='点击左侧资料，在这里核对原文和归属';
       const draft=drafts.get(id);form.reset();form.elements.group_id.value=id;
@@ -99,9 +101,11 @@
       $('[data-rg-batch]').hidden=form.elements.selection.value==='item';proposal=draft?.proposal||null;
       if(proposal?.job_id){
         const job=await api('organization/groups/analysis?'+new URLSearchParams({id:proposal.job_id}));
+        if(sequence!==chooseSequence||!mount.isConnected)return false;
         proposal=job.proposal;remember();
       }
       checkAnalysis();highlight();if(proposal)drawPreview();else{$('[data-rg-preview]').replaceChildren();$('[data-rg="apply"]').hidden=false;$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='保存审核结果';$('[data-rg-save-status]').textContent='选择适用范围后，先预览再保存。';}
+      return true;
     }
     const unitKey=u=>`${u.task_id}:${u.digest}`;
     const selectable=u=>!u.reason_code||['ai_uncertain','ai_excluded','manual_excluded'].includes(u.reason_code);
@@ -213,14 +217,20 @@
     form.onsubmit=e=>e.preventDefault();
     mount.addEventListener('click',async e=>{
       const b=e.target.closest('[data-rg]');if(!b)return;e.preventDefault();e.stopPropagation();if(busy)return;
+      if(b.dataset.rg==='choose'){
+        notice('正在打开这条资料…');form.inert=true;
+        const opening=choose(b.dataset.id),sequence=chooseSequence;
+        try{if(await opening)notice('');}catch(error){if(sequence===chooseSequence)notice(messages[error.message]||error.message);}
+        finally{if(sequence===chooseSequence)form.inert=false;}
+        return;
+      }
       busy=true;onBusy(true);
       try{
         const action=b.dataset.rg;
         if(['select-batch','clear-batch','batch-include','batch-exclude'].includes(action)){
           const state=decisionState();if(action==='select-batch')state.picked=[...mount.querySelectorAll('[data-rg-pick]')].slice(0,100).map(x=>x.dataset.rgPick);
           else if(action==='clear-batch')state.picked=[];else setDecision(state.picked,action==='batch-include'?'include':'exclude');updateDecisions();
-        }else if(action==='choose'){await choose(b.dataset.id);}
-        else if(action==='preview'){
+        }else if(action==='preview'){
           if(pendingTasks.length&&selectedGroup===recoveryGroup){notice('这份资料正在重新整理，请完成后再预览。');return;}
           await refreshPreview();
         }else if(action==='next-batch'){
@@ -279,16 +289,22 @@
       finally{busy=false;onBusy(false);}
     });
     await load();
-    try{
-      const {job}=await api('organization/groups/recent-analysis');
-      if(job){
-        const resumeGroup=job.resume_group_id||job.request.group_id;
-        drafts.set(resumeGroup,{values:job.request,proposal:job.proposal||null});
-        if(job.status!=='completed')analyses.set(resumeGroup,{id:job.id});
-        await choose(resumeGroup);
-        notice(job.status==='completed'?'已恢复上次判断结果和项目选择，可继续核对并确认归类。':'已恢复上次判断任务，请等待处理结果。');
-      }
-    }catch(error){notice(messages[error.message]||error.message);}
+    onReady();
+    async function restoreRecent(){
+      const sequence=chooseSequence;
+      try{
+        const {job}=await api('organization/groups/recent-analysis');
+        if(sequence!==chooseSequence||selectedGroup||!mount.isConnected)return;
+        if(job){
+          const resumeGroup=job.resume_group_id||job.request.group_id;
+          drafts.set(resumeGroup,{values:job.request,proposal:job.proposal||null});
+          if(job.status!=='completed')analyses.set(resumeGroup,{id:job.id});
+          if(await choose(resumeGroup))notice(job.status==='completed'?'已恢复上次判断结果和项目选择，可继续核对并确认归类。':'已恢复上次判断任务，请等待处理结果。');
+        }
+      }catch(error){if(!selectedGroup&&sequence===chooseSequence&&mount.isConnected)notice(messages[error.message]||error.message);}
+    }
+    // Optional saved-work recovery must not hold the visible list inert.
+    restoreRecent();
     const history=document.createElement('section');history.className='progress-history';historyMount.appendChild(history);
     history.innerHTML='<h2>进度已保存，无需审核</h2><form><label>查找进度原文<input name="query" maxlength="200"></label><button type="submit">查找</button></form><p data-history-status role="status"></p><div data-history-list></div><div class="actions"><button data-history-page="previous">上一页</button><span data-history-page-label></span><button data-history-page="next">下一页</button></div>';
     let historyPage=1, historyItems=[];

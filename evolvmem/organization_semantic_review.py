@@ -143,7 +143,7 @@ def _row(service, job_id):
     return dict(row)
 
 
-def get(service, job_id):
+def get(service, job_id, *, _current_units=None):
     row=_row(service,job_id)
     result={k:row[k] for k in ('id','status','error','processed','total')}
     request=json.loads(row['request'])
@@ -151,42 +151,48 @@ def get(service, job_id):
     if request.get('_signature') != _signature(service,request):
         result['request'].pop('continue_job_id',None)
     if row['status']=='completed':
-        result['proposal']=proposal(service, {'job_id':row['id']})
+        result['proposal']=proposal(service, {'job_id':row['id']}, _current_units=_current_units)
     return result
 
 
 def recent(service):
     """Recover saved work on refresh, without starting any AI or applying changes."""
     rows=service.store._connection().execute('SELECT * FROM organization_review_jobs ORDER BY created_at DESC,rowid DESC LIMIT 20').fetchall()
+    from evolvmem import organization_review as review
+    # One request-local view: expired batches must not each re-read every
+    # current conversation (and block all other Web requests behind the lock).
+    groups=review._groups(service) if rows else []
+    by_group={g['id']:g for g in groups}
+    by_member={_key(u):g for g in groups for u in g['members']}
+    by_source={u['source_key']:g for g in groups for u in g['members']}
+    units={_key(u):u for g in groups for u in g['members']}
     for row in rows:
         request=json.loads(row['request'])
         if request.get('_applied'):continue
+        group=by_group.get(request.get('group_id'))
+        if group is None:
+            # The anchor may have been saved while other frozen members still
+            # need review. Only non-judged entries may follow a reprocessed source.
+            entries=request.get('_preview',{}).get('excluded',[])
+            group=next((by_member[_key(u)] for u in entries if _key(u) in by_member),None)
+            if group is None:
+                group=next((by_source[u['source_key']] for u in entries
+                            if u.get('reason_code')!='ai_pending' and u.get('source_key') in by_source),None)
+        if group is None:continue
         try:
-            from evolvmem import organization_review as review
-            job = get(service,row['id'])
-            try:
-                group = review.detail(service,request)
-            except ValueError:
-                # The first task may already have been admitted while other
-                # choices in this same frozen batch still need review.
-                remaining = {(u['task_id'],u['digest']) for u in
-                             job.get('proposal',{}).get('eligible',[]) + job.get('proposal',{}).get('excluded',[])}
-                group = next((g for g in review._groups(service)
-                              if any((u['task_id'],u['digest']) in remaining for u in g['members'])), None)
-                if group is None:
-                    continue
+            job = get(service,row['id'],_current_units=units)
             return {'job':job | {'resume_group_id':group['id']}}
         except ValueError:
             continue
     return {'job':None}
 
 
-def proposal(service, body):
+def proposal(service, body, *, _current_units=None):
     from evolvmem import organization_review as review
     row=_row(service,body.get('job_id'))
     if row['status']!='completed':
         raise ValueError('review_ai_not_ready')
-    units=_units(service)
+    units=_units(service) if _current_units is None else _current_units
     request=_restore_request(service,row,units)
     current_signature=_signature(service,request)
     judgments=json.loads(row['judgments'])
