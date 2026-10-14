@@ -9,14 +9,14 @@ window.EvolvProjects={create({api,esc,onSaved}) {
     dialog.addEventListener('cancel',e=>{if(busy)e.preventDefault();});
     dialog.addEventListener('close',()=>{dialog.remove();resolve(created);},{once:true});
     dialog.querySelectorAll('[data-project-cancel]').forEach(b=>b.onclick=()=>{if(!busy)dialog.close();});
-    dialog.querySelector('form').onsubmit=async e=>{e.preventDefault();if(busy)return;busy=true;dialog.setAttribute('aria-busy','true');const submit=dialog.querySelector('[type=submit]');submit.disabled=true;
+    dialog.querySelector('form').onsubmit=async e=>{e.preventDefault();if(busy)return;busy=true;dialog.setAttribute('aria-busy','true');const submit=dialog.querySelector('[type=submit]'),finish=EvolvUI.busy(submit);
       try{const project=dialog.querySelector('#new-project-id').value.trim();
         if(!project)throw Error('请填写项目标识。');
         if(!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(project))throw Error('项目标识需以小写字母或数字开头，只能包含小写字母、数字、点、下划线或连字符，最长 64 个字符。');
         const list=await api('projects');if(list.projects.some(p=>p.project===project))throw Error('项目标识已存在，请选用已有项目或换一个标识。');
         await api('projects',{project,display_name:dialog.querySelector('#new-project-name').value.trim()||project,aliases:dialog.querySelector('#new-project-aliases').value.split('\n').map(s=>s.trim()).filter(Boolean)});
-        created=project;await onSaved?.(project);dialog.close();
-      }catch(error){dialog.querySelector('[data-project-error]').textContent=serverErrors[error.message]||error.message;}finally{busy=false;dialog.setAttribute('aria-busy','false');submit.disabled=false;}
+        created=project;try{await onSaved?.(project);dialog.close();}catch{dialog.innerHTML='<div class=dialog-header><h2>项目已创建</h2></div><div class=dialog-body><p role=status>选择列表暂未更新，无需重复创建。</p></div><div class=dialog-footer><button data-created-close>关闭</button><button data-created-refresh>刷新并选中</button></div>';dialog.querySelector('[data-created-close]').onclick=()=>dialog.close();dialog.querySelector('[data-created-refresh]').onclick=async()=>{const button=dialog.querySelector('[data-created-refresh]');if(button.disabled)return;const end=EvolvUI.busy(button);try{await onSaved?.(created);dialog.close();}catch{dialog.querySelector('[role=status]').textContent='项目已创建，列表仍未更新。可以稍后刷新。';}finally{end();}};}
+      }catch(error){dialog.querySelector('[data-project-error]').textContent=serverErrors[error.message]||error.message;}finally{busy=false;dialog.setAttribute('aria-busy','false');finish();}
     };dialog.showModal();
   });
 }};

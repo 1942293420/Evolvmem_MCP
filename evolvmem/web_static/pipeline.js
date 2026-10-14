@@ -27,33 +27,35 @@ window.EvolvPipeline={async render({mount,api,esc,toast,onDirty,onBusy}) {
  function instructionsHint(s){if(s.id==='collaboration')return'协作说明供 AI 处理时参考；请保留 --- 之间的 name 与 description 文件头，只修改正文。';return `自然语言说明供 AI 处理时参考${Object.keys(s.settings).length?'，下方条件由程序执行':''}。原话依据、来源检查与疑难待确认仍然保留。`;}
  function payload(){const s=stage(),settings={};mount.querySelectorAll('[data-stage-setting]').forEach(e=>{const k=e.dataset.stageSetting,v=s.settings[k];settings[k]=typeof v==='boolean'?e.checked:Array.isArray(v)?e.value.split('\n').map(x=>x.trim()).filter(Boolean):Number(e.value);});return {expected_revision:s.revision,instructions:$('#stage-instructions').value,admission_instructions:$('#stage-admission').value,settings};}
  function messages(){const result=[];for(const line of $('#stage-sample').value.split('\n')){const m=line.match(/^(用户|助手|工具)[：:]\s*(.*)$/);if(m)result.push({role:({用户:'user',助手:'assistant',工具:'tool'})[m[1]],content:m[2]});else if(result.length)result.at(-1).content+='\n'+line;else if(line.trim())throw Error('请以“用户：”“助手：”或“工具：”标明角色。');}return result;}
- function draw(){const s=stage(),trial=trials[active];mount.querySelectorAll('[data-pipeline-stage]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.pipelineStage===active)));
+ function acceptSaved(saved){catalog.skills=catalog.skills.map(s=>s.id===saved.id?saved:{...s,revision:saved.revision});setDirty(false);}
+ function draw(keep=false){const previous=keep?{sample:$('#stage-sample')?.value,project:$('#stage-project')?.value}:null;const s=stage(),trial=trials[active];mount.querySelectorAll('[data-pipeline-stage]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.pipelineStage===active)));
   $('#stage-editor').innerHTML=`<section class="panel"><div class="section-head"><div><h2>${esc(s.title)} Skill</h2><p class="hint">${esc(s.execution)} · 版本 ${esc(String(s.revision).slice(0,12))}</p></div><div class="actions"><span id="stage-state" role="status">已保存</span><button data-pipeline-action="download">下载已保存 Skill</button><button class="primary write" data-pipeline-action="save">保存本环节</button></div></div><div class="field"><label for="stage-instructions">AI 执行说明</label><textarea id="stage-instructions" class="stage-instructions">${esc(s.instructions)}</textarea></div><div class="field"><label for="stage-admission">提取结果的准入说明</label><textarea id="stage-admission" class="stage-instructions">${esc(s.admission_instructions)}</textarea></div><div class="form-grid">${controls(s)}</div>${active==='cleaning'?'<p class="rule-note">原话正文只做去噪；需求表达是引用原话的派生知识。保存影响新对话与后续提炼，已入库历史不会静默改写。</p>':''}
   <details class="skill-trial" open><summary>用样例检查效果与验证</summary>${trial.sample?`<div class="field"><label for="stage-sample">样例${trial.sample==='material'?'资料':'对话'}</label><textarea id="stage-sample">${trial.sample==='material'?'Evo 项目需要在经验问答里新增项目。':'用户：我想在经验里直接加项目，不要让我到处找。\n工具：这段工具记录应移除。\n助手：会把新增项目入口放在问答编辑处。'}</textarea></div>`:''}<div class="field"><label for="stage-project">已确认项目${trial.projectHint||''}</label><select id="stage-project"><option value="">${trial.projectEmpty}</option></select></div><div class="actions">${trial.buttons}<button class="write" data-pipeline-action="verify">${active==='collaboration'?'保存框架并分析验证':'提取并保存待验证候选'}</button></div><div id="stage-result" role="status"></div></details></section>`;
-  if($('#stage-project'))allProjects.then(rows=>{if($('#stage-project'))rows.filter(p=>p.status==='active').forEach(p=>{const label=p.display_name&&p.display_name!==p.project?`${p.display_name}（${p.project}）`:p.project;$('#stage-project').add(new Option(label,p.project));});});
+  if(previous?.sample!==undefined&&$('#stage-sample'))$('#stage-sample').value=previous.sample;
+  if($('#stage-project'))allProjects.then(rows=>{if($('#stage-project')){rows.filter(p=>p.status==='active').forEach(p=>{const label=p.display_name&&p.display_name!==p.project?`${p.display_name}（${p.project}）`:p.project;$('#stage-project').add(new Option(label,p.project));});if(previous)$('#stage-project').value=previous.project||'';}});
  }
  async function fullSkill(){const r=await api('rules');$('#stage-full-skill').innerHTML=`<details><summary>完整管理 SKILL.md</summary><textarea id="skill-text" class="code skill-editor" aria-label="管理 Skill 内容">${esc(r.skill)}</textarea><div class="actions"><button data-pipeline-action="full-download">下载文件</button><button class="write" data-pipeline-action="full-save">保存完整 Skill</button></div></details>`;$('#stage-full-skill').dataset.revision=r.revision;}
  const download=(text,name)=>{const url=URL.createObjectURL(new Blob([text],{type:'text/markdown;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
  mount.oninput=e=>{if(['stage-instructions','stage-admission','skill-text'].includes(e.target.id)||e.target.hasAttribute('data-stage-setting'))setDirty(true);};mount.onchange=e=>{if(e.target.hasAttribute('data-stage-setting'))setDirty(true);};
  mount.onclick=async e=>{const tab=e.target.closest('[data-pipeline-stage]'),b=e.target.closest('[data-pipeline-action]');if((!tab&&!b)||busy)return;e.preventDefault();
   if(tab){if(tab.dataset.pipelineStage===active)return;if(dirty&&!confirm('有未保存的修改，放弃并切换 Skill？'))return;active=tab.dataset.pipelineStage;setDirty(false);draw();await fullSkill();return;}
-  busy=true;b.disabled=true;onBusy(true);
+  busy=true;const finish=EvolvUI.busy(b);onBusy(true);
   try{const action=b.dataset.pipelineAction;
-   if(action==='save'){const saved=await api('skills/'+active,payload());catalog.skills=(await api('skills')).skills;setDirty(false);draw();await fullSkill();toast(saved.title+' Skill 已保存，后续处理读取新版本');}
+   if(action==='save'){const saved=await api('skills/'+active,payload());acceptSaved(saved);await EvolvUI.saved(saved.title+'规则已保存',fullSkill,toast);}
    else if(action==='download')download(stage().skill,'SKILL.md');
    else if(action==='full-download')download($('#skill-text').value,'SKILL.md');
-   else if(action==='full-save'){await api('rules',{expected_revision:$('#stage-full-skill').dataset.revision,skill:$('#skill-text').value});catalog.skills=(await api('skills')).skills;setDirty(false);draw();await fullSkill();toast('完整管理 Skill 已保存');}
+   else if(action==='full-save'){const saved=await api('rules',{expected_revision:$('#stage-full-skill').dataset.revision,skill:$('#skill-text').value});$('#stage-full-skill').dataset.revision=saved.revision;catalog.skills.forEach(s=>s.revision=saved.revision);setDirty(false);await EvolvUI.saved('完整管理 Skill 已保存',async()=>{catalog.skills=(await api('skills')).skills;draw(true);await fullSkill();},toast);}
    else if(action==='clean-preview'){const r=await api('skills/cleaning/preview',{...payload(),messages:messages()});$('#stage-result').innerHTML=`<h3>去噪结果</h3><p>${r.input_messages} 轮 → ${r.dialogue_messages} 轮；模型调用 0 次，入库 0 条。</p><pre class="project-memory-text">${esc(r.text)}</pre>`;}
    else if(action==='verify'){
     let saved=false;
-    if(dirty){await api('skills/'+active,payload());catalog.skills=(await api('skills')).skills;setDirty(false);saved=true;}
+    if(dirty){acceptSaved(await api('skills/'+active,payload()));saved=true;}
     const kind=trials[active].sample;let body;
     if(kind==='material')body={body:$('#stage-sample').value,project:$('#stage-project').value};
     else if(kind==='dialogue'){body={messages:messages(),project:$('#stage-project').value};if(active==='extraction'&&!body.project)throw Error('请先选择样例所属项目。');}
     else body={project:$('#stage-project').value};
     if($('#stage-result'))$('#stage-result').textContent='正在按已保存规则处理…';
     const r=await api('skills/'+active+'/verify',body);
-    if(saved){draw();await fullSkill();}
+    if(saved)await EvolvUI.saved('规则已保存，候选已提取',fullSkill,toast);
     const link=active==='collaboration'?'<a href="#knowledge/learning" data-view="learning">到「协作学习成果」确认</a>':'<a href="#knowledge/intake" data-view="intake">到「资料待确认」确认成果</a>';
     $('#stage-result').innerHTML=active==='collaboration'
       ?(r.created?`分析完成，新增 ${r.created} 条待确认规则。${link}`:esc(r.reason||(r.status==='complete'?'分析完成，没有新增待确认规则。':'该范围暂时没有可分析的记忆。')))
@@ -63,6 +65,6 @@ window.EvolvPipeline={async render({mount,api,esc,toast,onDirty,onBusy}) {
     if(action==='judge-preview'){const r=await api('preview',{body:$('#stage-sample').value,project:$('#stage-project').value,source:'Skill 样例',rules});$('#stage-result').innerHTML=`<h3>${esc(({auto:'明确，可入库',review:'待确认',ignore:'不入库'})[r.action])}</h3><p>项目：${esc(r.project?await projectLabel(r.project):'未确定')} · ${esc(r.reason)}</p>`;}
     else {if(!$('#stage-project').value)throw Error('请先选择样例所属项目。');$('#stage-result').textContent='正在比较提炼结果…';const r=await api('extraction/preview',{project:$('#stage-project').value,messages:messages(),rules});$('#stage-result').innerHTML=`<p>模型调用 ${r.model_calls} 次；入库 0 条。草稿只用于本次对比，保存后才正式生效。</p><div class="extraction-comparison">${[['已保存规则',r.current],['当前草稿',r.draft]].map(([title,v])=>`<section><h3>${title}</h3><details><summary>去噪后的对话</summary><pre class="project-memory-text">${esc(v.cleaned_messages.map(m=>(m.role==='user'?'用户：':'AI：')+m.content).join('\n\n'))}</pre></details>${v.candidates.map(c=>`<article class="extraction-candidate"><span class="badge">${c.status==='active'?'依据明确，可保存':'待核对 / 待验证'}</span><p>${esc(c.body)}</p><p class="hint">${esc(c.reason)}</p>${EvolvExtraction.process(c,esc)}</article>`).join('')||'<p>未提炼出需要保存的知识。</p>'}</section>`).join('')}</div>`;}
    }
-  }catch(error){toast(error.message);if($('#stage-result'))$('#stage-result').textContent=error.message;}finally{busy=false;b.disabled=false;onBusy(false);}
+  }catch(error){toast(error.message);if($('#stage-result'))$('#stage-result').textContent=error.message;}finally{busy=false;finish();onBusy(false);}
  };draw();await fullSkill();
 }};

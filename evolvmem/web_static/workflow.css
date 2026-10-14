@@ -115,3 +115,9 @@ body[data-design=signal] .ui-detail-section,body[data-design=signal] .ui-detail-
 @media(prefers-reduced-motion:reduce){.review-spinner{animation:none}}
 .review-batch-toolbar .actions{flex-wrap:wrap}
 @media(max-width:480px){.review-batch-toolbar button{white-space:normal}.review-choice-row{gap:12px}.review-editor .review-apply-bar{position:static}}
+
+/* Visible feedback for foreground actions, including slow reads and saves. */
+#knowledge-loading,#knowledge-receipt{font-size:16px;padding:14px 18px;border:1px solid #cdd8ef;border-radius:10px;background:#edf3ff;color:#142d54;margin:12px 0;overflow-wrap:anywhere}
+#knowledge-loading{position:sticky;top:12px;z-index:5}
+#knowledge-loading[hidden],#knowledge-receipt[hidden]{display:none}
+#knowledge-receipt button{margin-left:12px}

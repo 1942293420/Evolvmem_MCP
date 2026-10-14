@@ -87,7 +87,7 @@ class KnowledgeBase:
             raise ValueError('item_not_found')
         return dict(row)
 
-    def detail(self, item_id):
+    def detail(self, item_id, *, include_legacy_ids=True):
         row = self._row(item_id)
         layers = {r['layer']: r['content'] for r in self.conn.execute('SELECT layer,content FROM context_layers WHERE item_id=?', (item_id,))}
         meta = self.conn.execute('SELECT * FROM knowledge_metadata WHERE item_id=?', (item_id,)).fetchone()
@@ -114,7 +114,7 @@ class KnowledgeBase:
                 'ingestion_reason': meta['ingestion_reason'] if meta else '',
                 'rule_revision': meta['rule_revision'] if meta else '',
                 'managed_content': managed, 'workstream_id': workstream.group(1) if workstream else '',
-                'legacy_ids': list(self.store.legacy_ids_mapped_to_items([item_id]))}
+                'legacy_ids': list(self.store.legacy_ids_mapped_to_items([item_id])) if include_legacy_ids else []}
 
     def list_items(self, params=None):
         p = params or {}

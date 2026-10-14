@@ -89,7 +89,7 @@
     filter=({review:'review',failed:'failed',completed:'completed'})[tab]||'current';page=1;
     onTab(tab);await load();
   }
-  mount.addEventListener('click',e=>{const b=e.target.closest('[data-org-tab]');if(!b||busy)return;e.preventDefault();selectTab(b.dataset.orgTab).catch(error=>notice(errorText(error.message)));});
+  mount.addEventListener('click',e=>{const b=e.target.closest('[data-org-tab]');if(!b||busy)return;e.preventDefault();const finish=EvolvUI.busy(b);selectTab(b.dataset.orgTab).catch(error=>notice(errorText(error.message))).finally(finish);});
   const groupHandle=await EvolvReviewGroups.render({mount:$('#org-review-groups'),historyMount:$('#org-history-mount'),api,esc,projects,onBusy,onReady,
     onDirty:value=>{groupDirty=value;dirty();},onSaved:async()=>{guidanceRows=(await api('organization/guidance')).items;await load();drawGuidance();}});
   async function loadMetrics(){if(tab!=='all'||!$('#org-metrics').parentElement.open)return;try{$('#org-metrics').innerHTML=EvolvOrganizationMetrics.html(await api('organization/metrics'),esc);}catch(error){$('#org-metrics').textContent='整理效果暂不可用，可刷新重试。';}}
@@ -168,9 +168,9 @@
     dialog.innerHTML=`<form><div class="dialog-header"><h2>修改业务归类依据</h2></div><div class="dialog-body"><div data-rule-scope></div><label>归类依据<textarea name="condition" rows="5" maxlength="1000" required>${esc(row.condition)}</textarea></label><label>不适用的情况<textarea name="exceptions" rows="3" maxlength="500">${esc(row.exceptions)}</textarea></label><p data-rule-status role="status"></p></div><div class="dialog-footer"><button type="button" data-rule-close>取消</button><button class="primary" type="submit">保存并用于后续资料</button></div></form>`;
     document.body.append(dialog);const picker=EvolvProjects.scopePicker({mount:dialog.querySelector('[data-rule-scope]'),projects,esc,value:row});
     dialog.querySelector('[data-rule-close]').onclick=()=>dialog.close();dialog.addEventListener('close',()=>dialog.remove(),{once:true});
-    dialog.querySelector('form').onsubmit=async e=>{e.preventDefault();const button=dialog.querySelector('[type=submit]');button.disabled=true;try{
-      await api('organization/guidance',{id:row.id,expected_revision:row.revision,matching_mode:'semantic',...picker.read(),condition:dialog.querySelector('[name=condition]').value,exceptions:dialog.querySelector('[name=exceptions]').value});guidanceRows=(await api('organization/guidance')).items;drawGuidance();dialog.close();notice('业务依据已保存；后续资料由 AI 阅读后判断。');
-    }catch(error){dialog.querySelector('[data-rule-status]').textContent=errorText(error.message);}finally{button.disabled=false;}};dialog.showModal();
+    dialog.querySelector('form').onsubmit=async e=>{e.preventDefault();const button=dialog.querySelector('[type=submit]');if(button.disabled)return;const finish=EvolvUI.busy(button);try{
+      await api('organization/guidance',{id:row.id,expected_revision:row.revision,matching_mode:'semantic',...picker.read(),condition:dialog.querySelector('[name=condition]').value,exceptions:dialog.querySelector('[name=exceptions]').value});dialog.close();await EvolvUI.saved('业务依据已保存；后续资料由 AI 阅读后判断。',async()=>{guidanceRows=(await api('organization/guidance')).items;drawGuidance();},notice);
+    }catch(error){dialog.querySelector('[data-rule-status]').textContent=errorText(error.message);}finally{finish();}};dialog.addEventListener('cancel',e=>{if(dialog.querySelector('[type=submit]')?.disabled)e.preventDefault();});dialog.showModal();
   }
   function focusState(){
     const el = document.activeElement;
@@ -251,10 +251,10 @@
         if(row.guidance?.scope==='future' && row.guidance?.state==='reusable') future++;
       } else { errors.set(key,errorText(row.error)); failed++; }
     }
-    guidanceRows = (await api('organization/guidance')).items;
     notice(`已保存 ${saved} 条，失败 ${failed} 条。${failed?'失败项保留修改，可核对后重试。':''}${future?`其中 ${future} 条指导会在后续匹配单元中沿用。`:''}`);
-    await load();await groupHandle.refresh();draw();
+    draw();await refreshSaved(async()=>{guidanceRows=(await api('organization/guidance')).items;await load();await groupHandle.refresh();draw();});
   }
+  async function refreshSaved(refresh=load){await EvolvUI.saved($('#org-notice').textContent,refresh,notice);}
   mount.oninput = e => {const el = e.target;
     if(el.dataset.orgGuidance){const d = drafts.get(el.dataset.orgGuidance)||{};drafts.set(el.dataset.orgGuidance,{...d,guidance:el.value});dirty();}
     else if(el.dataset.orgCondition){const d = drafts.get(el.dataset.orgCondition)||{};drafts.set(el.dataset.orgCondition,{...d,condition:el.value});dirty();}
@@ -263,10 +263,10 @@
   mount.onchange = e => {const el = e.target;
     if(el.id === 'org-filter'){filter = el.value; page = 1; load().catch(error=>notice(errorText(error.message)));return;}
     if(el.dataset.orgArrival !== undefined){
-      arrival = {...arrival, auto_new: el.checked?1:0};
+      if(el.disabled)return;el.disabled=true;notice('正在保存自动处理设置…');
       api('organization/settings',{auto_new:el.checked, expected_revision:arrival.revision}).then(result=>{
         arrival = result; notice(result.auto_new?'已开启：只处理开启后新到的来源，历史存量请用“整理待处理资料”。':'已关闭新资料自动处理；排队中的任务不受影响。'); draw();
-      }).catch(error=>{notice(errorText(error.message)); draw();});
+      }).catch(error=>{el.checked=!!arrival.auto_new;notice(errorText(error.message)); draw();}).finally(()=>el.disabled=false);
       return;
     }
     if(el.dataset.orgSelectUnit){el.checked?selected.add(el.dataset.orgSelectUnit):selected.delete(el.dataset.orgSelectUnit);draw();return;}
@@ -280,7 +280,7 @@
   };
   mount.onclick = async e => {const button = e.target.closest('[data-org-action]');if(!button||busy)return;e.preventDefault();const action = button.dataset.orgAction;
     if(action==='context'){const [task_id,digest]=button.dataset.key.split(':');const dest=button.nextElementSibling;dest.hidden=false;await EvolvTaskContext.render({mount:dest,api,esc,query:'organization/context?'+new URLSearchParams({task_id,digest})});return;}
-    if(action==='toggle'){await openTask(Number(button.dataset.id));return;}
+    if(action==='toggle'){const finish=EvolvUI.busy(button);try{await openTask(Number(button.dataset.id));}catch(error){notice(errorText(error.message));}finally{finish();}return;}
     if(action==='stage-group'){
       const id = Number(button.dataset.id), project = $(`[data-org-group-project="${id}"]`).value;
       if(!project) throw Error('请先选择要批量应用的项目。');
@@ -289,7 +289,7 @@
       for(const key of keys){const d = drafts.get(key)||{};drafts.set(key,{...d,project,scope:d.scope||'batch'});}
       notice(`已为 ${keys.length} 条待确认单元预填项目；仍需核对后保存，未勾选单元不受影响。`);draw();return;
     }
-    busy = true;onBusy(true);
+    busy = true;const finish=EvolvUI.busy(button);onBusy(true);
     try{
       if(action==='correct') await saveKeys([button.dataset.key]);
       else if(action==='correct-selected') await saveKeys([...selected]);
@@ -297,7 +297,7 @@
       else if(action==='feedback'){
         const [id,digest]=button.dataset.key.split(':');
         await api('organization/feedback',{task_id:Number(id),digest,expected_revision:button.dataset.revision,verdict:button.dataset.verdict});
-        notice('已记录本条抽检反馈；需要修正时可在下方保存项目或恢复处理。');await load();await loadMetrics();
+        notice('已记录本条抽检反馈；需要修正时可在下方保存项目或恢复处理。');await refreshSaved(async()=>{await load();await loadMetrics();});
       }
       else if(action==='retry'||action==='retry-failed'||action==='resegment'){
         const targets = action==='retry'||action==='resegment' ? [Number(button.dataset.id)] : tasks.filter(t=>t.status==='failed').map(t=>t.id);
@@ -306,7 +306,7 @@
         for(const id of targets) await api(route,{task_id:id});
         if(action==='resegment') open.delete(Number(button.dataset.id));
         notice(action==='resegment'?`已丢弃旧分段并重新排队 ${targets.length} 个任务。`:`已重新排队 ${targets.length} 个任务。`);
-        await load();
+        await refreshSaved();
       }
       else if(action==='disposition'){
         const value = button.dataset.value === 'set_aside' ? 'set_aside' : 'keep';
@@ -318,9 +318,9 @@
         const id = Number(button.dataset.key.split(':')[0]);
         open.set(id, (open.get(id)||[]).map(u => u.digest === result.unit.digest ? {...result.unit, revision: result.unit.revision} : u));
         notice(value === 'set_aside' ? '已暂存这一条：不再进入当前项目历史，可随时恢复，原文未删除。' : '已保留；项目明确的内容会继续提炼。');
-        await load();await groupHandle.refresh();draw();
+        draw();await refreshSaved(async()=>{await load();await groupHandle.refresh();draw();});
       }
-      else if(action==='backlog'){const result = await api('organization/backlog',{limit:20});notice(`已排队 ${result.created} 条，队列剩 ${result.remaining} 条（本次共 ${result.queue_total} 条待整理）。`);await load();}
+      else if(action==='backlog'){const result = await api('organization/backlog',{limit:20});notice(`已排队 ${result.created} 条，队列剩 ${result.remaining} 条（本次共 ${result.queue_total} 条待整理）。`);await refreshSaved();}
       else if(action==='edit-guidance'){editGuidance(Number(button.dataset.id));}
       else if(action==='toggle-guidance'){
         const id = Number(button.dataset.id);
@@ -333,7 +333,7 @@
       }
       else {if(action==='previous')page = Math.max(1,page-1);if(action==='next')page++;await load();}
     }catch(error){notice(errorText(error.message));toast(errorText(error.message));}
-    finally{busy = false;onBusy(false);}
+    finally{busy = false;finish();onBusy(false);}
   };
   await selectTab(initialTab);draw();
   await loadCapture();

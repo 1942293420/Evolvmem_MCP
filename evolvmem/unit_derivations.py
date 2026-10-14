@@ -36,19 +36,41 @@ def derived_for_digest(service, digest):
     return [dict(row) for row in rows]
 
 
-def currently_backed(store, item_id):
+_BACKING_SQL = (
+        'SELECT d.item_id,t.source_key,t.status,u.decision,u.disposition,u.project,u.projects,u.knowledge_scope,'
+        'i.project AS item_project,i.projects AS item_projects,i.scope AS item_scope '
+        'FROM unit_derivations d JOIN organization_tasks t ON t.id=d.unit_task_id '
+        'JOIN context_items i ON i.id=d.item_id LEFT JOIN organization_units u '
+        'ON u.task_id=d.unit_task_id AND u.digest=d.unit_digest'
+)
+
+
+class BackingRead:
+    """Transient read inputs, rebuilt for each batch; never retained by a service."""
+    def __init__(self, store, ids):
+        self.rows = {}
+        self.sources = {}
+        self.archives = {}
+        conn = store._connection()
+        ids = list(set(ids))
+        for offset in range(0, len(ids), 500):
+            batch = ids[offset:offset+500]
+            placeholders = ','.join('?' * len(batch))
+            for row in conn.execute(_BACKING_SQL + f' WHERE d.item_id IN ({placeholders})', batch):
+                self.rows.setdefault(row['item_id'], []).append(row)
+            for row in conn.execute(f'SELECT item_id,source_kind,archive_id,source_ref FROM context_sources WHERE item_id IN ({placeholders})', batch):
+                self.sources.setdefault(row['item_id'], []).append(row)
+
+
+def currently_backed(store, item_id, *, read=None):
     """A withdrawn unit cannot keep supplying knowledge to current recall.
 
     An independent source or another current unit can still back a shared item.
     The source rows remain intact for provenance and restoration.
     """
     conn = store._connection()
-    rows = conn.execute(
-        'SELECT t.source_key,t.status,u.decision,u.disposition,u.project,u.projects,u.knowledge_scope,'
-        'i.project AS item_project,i.projects AS item_projects,i.scope AS item_scope '
-        'FROM unit_derivations d JOIN organization_tasks t ON t.id=d.unit_task_id '
-        'JOIN context_items i ON i.id=d.item_id LEFT JOIN organization_units u '
-        'ON u.task_id=d.unit_task_id AND u.digest=d.unit_digest WHERE d.item_id=?', (item_id,)).fetchall()
+    rows = read.rows.get(item_id, []) if read is not None else conn.execute(
+        _BACKING_SQL + ' WHERE d.item_id=?', (item_id,)).fetchall()
     if not rows:
         return True
     if any(r['status'] != 'superseded' and r['decision'] in ('auto', 'manual')
@@ -62,10 +84,18 @@ def currently_backed(store, item_id):
     archives = {int(k.split(':')[1]) for k in keys if k.startswith('archive:')}
     for key in keys:
         if key.startswith('conversation:'):
-            row=conn.execute('SELECT members FROM organization_conversations WHERE source_key=?',(key,)).fetchone()
-            if row:archives.update(int(k.split(':')[1]) for k in json.loads(row['members']) if k.startswith('archive:'))
+            if read is not None and key in read.archives:
+                archives.update(read.archives[key])
+            else:
+                row=conn.execute('SELECT members FROM organization_conversations WHERE source_key=?',(key,)).fetchone()
+                linked = {int(k.split(':')[1]) for k in json.loads(row['members']) if k.startswith('archive:')} if row else set()
+                archives.update(linked)
+                if read is not None:
+                    read.archives[key] = linked
 
-    for source in conn.execute('SELECT * FROM context_sources WHERE item_id=?', (item_id,)):
+    sources = read.sources.get(item_id, []) if read is not None else conn.execute(
+        'SELECT * FROM context_sources WHERE item_id=?', (item_id,))
+    for source in sources:
         if source['source_kind'] == 'session' and source['archive_id'] in archives:
             continue
         if source['source_kind'] in ('organization', 'extraction') and any(

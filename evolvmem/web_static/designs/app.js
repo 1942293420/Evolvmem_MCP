@@ -142,23 +142,24 @@
   setInterval(()=>{if(state.ready&&state.page==='home'&&!document.hidden)refreshOrganizationMetrics(state.boot);},15000);
   async function boot(refreshBrowser=true) {
     const token=++state.boot;
-    $$('[data-data-status]').forEach(el=>el.textContent='正在连接记忆库…');
+    $$('[data-data-status]').forEach(el=>{el.textContent='正在读取页面资料…';el.classList.add('ui-loading');});
     if(state.page!=='home') {
       // Other pages have their own data loaders. Do not queue expensive hidden
       // dashboard reads ahead of a review click or progress poll.
       let data;
       try{data=await get('/api/knowledge/projects');}
-      catch(error){if(token===state.boot)$$('[data-data-status]').forEach(el=>el.textContent=error.message);return;}
+      catch(error){if(token===state.boot)$$('[data-data-status]').forEach(el=>{el.textContent=error.message;el.classList.remove('ui-loading');});return;}
       if(token!==state.boot)return;
-      state.projects=data.projects||[];
+      state.projects=data.projects||[];$$('[data-data-status]').forEach(el=>{el.textContent='实时数据已连接';el.classList.remove('ui-loading');});
       const controller=[...browsers.values()].find(c=>c.kind===state.page);
-      if(refreshBrowser&&controller&&!controller.integrated){controller.draw();controller.load();}
+      if(refreshBrowser&&controller&&!controller.integrated){controller.draw();await controller.load();}
       return;
     }
     const urls=['/api/stats','/api/insights','/api/projects','/api/memories?status=active&page_size=200&sort=access_count','/api/experiences?status=verified&page_size=3','/api/workstreams?status=unfinished&page_size=3','/api/memories?status=active&sort=created_at&order=desc&page_size=3','/api/knowledge/qa?state=active&page_size=1','/api/knowledge/projects'];
-    const responses=await Promise.allSettled(urls.map(get));
+    const needed=['[data-stat],[data-slot=metrics],[data-galaxy]','[data-stat],[data-slot=metrics]','[data-slot=project-list],[data-galaxy]','[data-galaxy]','[data-slot=featured-experiences]','[data-slot=task-list]','[data-slot=recent-memories]','[data-stat=qa_active]','[data-stat=pending_items]'];
+    const overview=refreshOrganizationMetrics(token);
+    const responses=await Promise.allSettled(urls.map((url,i)=>$(needed[i])?get(url):Promise.resolve(null)));
     if(token!==state.boot) return;
-    refreshOrganizationMetrics(token);
     const [stats,insights,projects,memories,experiences,tasks,recent,qa,knowledge]=responses.map(r=>r.status==='fulfilled'?r.value:null);
     state.stats=stats;state.insights=insights;state.projects=projects?.projects || insights?.projects || [];
     memories?.rows.forEach(row=>memoryCache.set(String(row.id),row));
@@ -178,9 +179,10 @@
       if(projects&&memories) window.EvolvGalaxy.mount(el,{projects:projects.projects,memories:memories.rows,total:stats?.total_active});
       else {const error=document.createElement('div');error.className='galaxy-error';error.innerHTML=errorBox('星图数据暂不可用。');el.append(error);}
     });
+    await overview;if(token!==state.boot)return;
     const failures=responses.filter(r=>r.status==='rejected').length;
-    $$('[data-data-status]').forEach(el=>{el.textContent=failures?'部分数据未能加载 · 可刷新重试':'实时数据已连接';el.classList.toggle('ui-status-error',!!failures);});
-    if(refreshBrowser&&state.page!=='home') {const controller=[...browsers.values()].find(c=>c.kind===state.page);if(controller){controller.draw();controller.load();}}
+    $$('[data-data-status]').forEach(el=>{el.textContent=failures?'部分数据未能加载 · 可刷新重试':'实时数据已连接';el.classList.toggle('ui-status-error',!!failures);el.classList.remove('ui-loading');});
+    if(refreshBrowser&&state.page!=='home') {const controller=[...browsers.values()].find(c=>c.kind===state.page);if(controller){controller.draw();await controller.load();}}
   }
 
   // Browser controllers and the exact-record dialog are defined below.
@@ -209,7 +211,7 @@
     c.load=async()=>{
       const token=++c.request;clearTimeout(c.timer);
       const area=$('[data-results]',mount);area.setAttribute('aria-busy','true');
-      area.innerHTML='<div class="ui-empty">正在读取记录…</div>';$('[data-pager]',mount).innerHTML='';
+      area.innerHTML='<div class="ui-empty ui-loading" role="status">正在读取记录…</div>';$('[data-pager]',mount).innerHTML='';
       const endpoint=kind==='memories'?'memories':kind==='experiences'?'experiences':c.mode==='summary'?'project-summaries':'workstreams';
       const params=new URLSearchParams({q:c.query,status:c.status,page:c.page,page_size:18,[kind==='memories'?'attribution':'project']:c.project});
       if(kind==='memories'){params.set('sort','created_at');params.set('order','desc');}
@@ -282,7 +284,7 @@
     const project=event.target.closest('[data-project]');if(project){navigate('memories',project.dataset.project);return;}
     const current=[...browsers.values()].find(c=>c.kind===state.page);
     if(event.target.closest('[data-refresh]')) {
-      if(!current?.canLeave||current.canLeave())boot();
+      if(!current?.canLeave||current.canLeave()){const button=event.target.closest('[data-refresh]');if(button.disabled)return;const finish=EvolvUI.busy(button,'正在刷新…');Promise.resolve(current?.integrated?current.load():boot()).finally(finish);}
       return;
     }
     const link=event.target.closest('a[href]');

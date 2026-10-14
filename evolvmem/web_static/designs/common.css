@@ -216,3 +216,7 @@ body .org-dialog .ui-button.primary { background:var(--accent); border-color:var
 .auth-status button:hover{background:#eeeaf5}.auth-status button:focus-visible{outline:2px solid #8b5cf6;outline-offset:3px}.auth-status button:disabled{opacity:.5;cursor:wait}
 .signal-masthead .auth-status{margin-left:16px}.signal-masthead:has(.auth-status:not([hidden])){flex-wrap:wrap;row-gap:12px}
 @media(max-width:700px){.signal-masthead .auth-status{margin-left:0;width:100%;justify-content:flex-end}}
+
+button[aria-busy="true"]::before,.ui-loading::before{content:"";display:inline-block;width:1em;height:1em;margin-right:.6em;vertical-align:-.1em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:evo-action-spin .8s linear infinite}
+@keyframes evo-action-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){button[aria-busy="true"]::before,.ui-loading::before{animation:none}}

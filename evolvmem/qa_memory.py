@@ -116,14 +116,15 @@ def validate(question, answer):
     return question.strip(), answer.strip()
 
 
-def detail(service, item_id):
-    row = service.knowledge().detail(item_id)
+def detail(service, item_id, *, proof_ready=None, kb=None):
+    row = (kb or service.knowledge()).detail(item_id, include_legacy_ids=False)
     if row['content_type'] in HISTORY_TYPES:
         raise ValueError('history_is_not_qa')
     saved = service.store._connection().execute('SELECT * FROM knowledge_qa WHERE item_id=?', (item_id,)).fetchone()
     current = fingerprint(row)
     from evolvmem.memory_eligibility import eligible
-    proof_ready = eligible(service.store, item_id)
+    if proof_ready is None:
+        proof_ready = eligible(service.store, item_id)
     effective = bool(proof_ready and saved and saved['status'] == 'active' and saved['source_fingerprint'] == current
                      and service.learning().usable(row)
                      and window_contains(row['effective_from'], row['effective_until'], _now_iso()))
@@ -209,11 +210,15 @@ def list_items(service, params=None):
     # knowledge. ``currently_backed`` is the single canonical rule (it keeps an
     # item backed by another current unit, another source or a human decision),
     # so nothing is deleted and no row is rewritten here.
-    from evolvmem.unit_derivations import currently_backed
-    rows = [r for r in rows if currently_backed(service.store, r['id'])]
+    from evolvmem.unit_derivations import currently_backed, BackingRead
+    from evolvmem.memory_eligibility import eligible_ids
+    backing = BackingRead(service.store, [r['id'] for r in rows])
+    rows = [r for r in rows if currently_backed(service.store, r['id'], read=backing)]
+    allowed = eligible_ids(service.store, [r['id'] for r in rows], read=backing)
+    kb = service.knowledge()
     items, groups = [], {}
     for r in rows:
-        item = detail(service, r['id'])
+        item = detail(service, r['id'], proof_ready=r['id'] in allowed, kb=kb)
         if p.get('category') and item['category'] != p['category']:
             continue
         state = p.get('state', '')

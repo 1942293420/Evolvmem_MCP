@@ -31,7 +31,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  await page.waitForFunction(()=>!document.querySelector('.memory-dialog')?.open&&document.querySelector('.qa-cards')?.textContent.includes('先画出交互草图'));
  assert.equal(await page.locator('.qa-card').filter({hasText:'界面开发应该先明确什么？'}).count(),1);
  await page.screenshot({path:'/tmp/evo-dual-qa-desktop.png',fullPage:true});
- const hist=await (await page.request.get(base+'/api/knowledge/recall?project=evo&kind=history&query=以前讨论')).json();
+ const hist=await (await page.request.get(base+'/api/knowledge/recall?project=evo&kind=history&query=以前讨论过什么')).json();
  const qa=await (await page.request.get(base+'/api/knowledge/recall?project=evo&kind=experience&query=界面开发')).json();
  assert.equal(hist.qa.length,0);assert.ok(hist.history.length);assert.equal(qa.history.length,0);assert.ok(qa.qa.length);
  for(const width of [390,768,1024]){await page.setViewportSize({width,height:900});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));await tab('历史记录').click();await tab('经验问答').click();if(width===390)await page.screenshot({path:'/tmp/evo-dual-qa-mobile.png',fullPage:true});}

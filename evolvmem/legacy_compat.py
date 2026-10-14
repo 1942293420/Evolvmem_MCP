@@ -34,6 +34,22 @@ class LegacyCompatibilityFacade:
         cid = self._service.store.resolve_legacy_mapping(mem_id)
         return cid is None or eligible(self._service.store, cid)
 
+    def _eligible_ids(self, ids):
+        from evolvmem.memory_eligibility import eligible_ids
+        mapping = {}
+        for offset in range(0, len(ids), 500):
+            batch = ids[offset:offset+500]
+            placeholders = ','.join('?' * len(batch))
+            mapping.update(self._service.store._connection().execute(
+                'SELECT legacy_memory_id,context_item_id FROM legacy_memory_migrations '
+                f'WHERE legacy_memory_id IN ({placeholders})', batch).fetchall())
+        allowed = eligible_ids(self._service.store, mapping.values())
+        return {mid for mid in ids if mid not in mapping or mapping[mid] in allowed}
+
+    def _filter_eligible(self, rows):
+        allowed = self._eligible_ids([r['id'] for r in rows])
+        return [r for r in rows if r['id'] in allowed]
+
     # ---- narrow legacy reads ----
 
     def get_by_id(self, mem_id: int) -> dict | None:
@@ -45,11 +61,11 @@ class LegacyCompatibilityFacade:
 
     def get_by_ids(self, ids: list[int]) -> list[dict]:
         """Batch fetch records by id."""
-        return [row for row in self._reader().get_by_ids(ids) if self._eligible(row["id"])]
+        return self._filter_eligible(self._reader().get_by_ids(ids))
 
     def get_active(self) -> list[dict]:
         """Return all status='active' and unexpired memories, ordered by updated_at descending."""
-        return [row for row in self._reader().get_active() if self._eligible(row["id"])]
+        return self._filter_eligible(self._reader().get_active())
 
     def search_fts(self, query: str, top_k: int = 20) -> list[dict]:
         """FTS5 full-text search over the legacy projection."""
@@ -57,7 +73,9 @@ class LegacyCompatibilityFacade:
 
     def all_ids(self) -> list[int]:
         """Return ids of all non-deleted records (for USearch sync)."""
-        return [mid for mid in self._reader().all_ids() if self._eligible(mid)]
+        ids = self._reader().all_ids()
+        allowed = self._eligible_ids(ids)
+        return [mid for mid in ids if mid in allowed]
 
     def count_active(self) -> int:
         """Count status='active' and unexpired memories (same scope as get_active)."""

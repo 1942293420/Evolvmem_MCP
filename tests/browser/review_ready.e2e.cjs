@@ -41,7 +41,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.locator('[data-org-tab=all]').click();
   const metricsLoaded=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/knowledge/organization/metrics');
   await page.locator('#org-metrics').locator('..').locator('summary').click();await metricsLoaded;
-  const homeLoaded=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/stats');
+  const homeLoaded=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/projects');
   await page.locator('.signal-nav [data-page-link=home]').click();await homeLoaded;
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({checks:['旧结果恢复期间可点击资料','可切换第二条资料','后台返回不覆盖当前选择','快速切换只显示最后选择'],errors}));

@@ -364,16 +364,19 @@
 
   // ---- knowledge load ----
 
+  let knowledgeRequest=0;
   async function loadKnowledge() {
+    const sequence=++knowledgeRequest;
     if (!state.project) {
       $('trust-rollup').innerHTML = empty('请选择一个已登记项目。');
       $('trust-rules').innerHTML = $('trust-progress').innerHTML = $('trust-issues').innerHTML = '';
       $('trust-backlog-count').textContent = '';
       return;
     }
-    $('trust-generated').textContent = `正在读取 ${state.project} …`;
+    $('trust-generated').textContent = `正在读取 ${state.project} …`;$('trust-generated').classList.add('ui-loading');
     try {
       const knowledge = await getJson(`/api/knowledge?project=${encodeURIComponent(state.project)}`);
+      if(sequence!==knowledgeRequest)return false;
       state.knowledge = knowledge;
       $('trust-generated').textContent = `${knowledge.display_name || knowledge.project} · 读取于 ${knowledge.generated_at} UTC`;
       renderRollup(knowledge);
@@ -381,11 +384,13 @@
       renderProgress(knowledge.latest_progress, knowledge.workstreams);
       renderIssues(knowledge.open_issues, knowledge.workstreams);
       renderSources(knowledge);
-      renderTech(knowledge, state.sync);
+      renderTech(knowledge, state.sync);return true;
     } catch (error) {
+      if(sequence!==knowledgeRequest)return false;
       $('trust-generated').innerHTML = `<span class="trust-error">${esc(error.message)}</span>`;
       $('trust-rollup').innerHTML = empty('知识页暂时无法读取，请点击刷新重试。');
-    }
+      for(const id of ['trust-rules','trust-progress','trust-issues','trust-backlog','trust-sources'])$(id).replaceChildren();return false;
+    }finally{if(sequence===knowledgeRequest)$('trust-generated').classList.remove('ui-loading');}
   }
 
   async function loadSync() {
@@ -401,7 +406,7 @@
 
   // ---- review actions ----
 
-  async function review(itemId, revision, action, targetProject) {
+  async function review(itemId, revision, action, targetProject, card) {
     $('trust-generated').textContent = action === 'accept' ? '正在确认归属…' : '正在拒绝归属…';
     const body = action === 'accept'
       ? {project: targetProject, expected_revision: revision}
@@ -418,7 +423,8 @@
       $('trust-generated').innerHTML = `<span class="trust-error">${esc(note)}</span>`;
       return;
     }
-    await loadKnowledge();
+    card?.remove();const refreshed=await loadKnowledge();
+    const status=document.createElement('p');status.setAttribute('role','status');status.textContent=refreshed?'归属决定已保存。':'归属决定已保存；列表暂未刷新，请点击刷新重试，无需重复保存。';$('trust-generated').replaceChildren(status);
   }
 
   // ---- decision window ----
@@ -478,7 +484,13 @@
       return;
     }
     state.window = result;
-    renderWindow(result);
+    renderWindow(result);const status=document.createElement('p');status.setAttribute('role','status');status.textContent='生效时间已保存';$('trust-window-readout').prepend(status);
+  }
+
+  let actionBusy=false;
+  async function run(button,action,output='trust-generated'){
+    if(actionBusy||button.disabled)return;actionBusy=true;const finish=EvolvUI.busy(button);$('trust-project').disabled=true;
+    try{await action();}catch(error){$(output).textContent=error.message;}finally{actionBusy=false;finish();$('trust-project').disabled=false;}
   }
 
   // ---- events ----
@@ -490,25 +502,25 @@
     history.replaceState(null, '', url);
     loadKnowledge();
   });
-  $('trust-refresh').addEventListener('click', () => { loadKnowledge(); loadSync(); });
+  $('trust-refresh').addEventListener('click', e => run(e.currentTarget,async()=>{await loadProjects();await Promise.all([loadKnowledge(),loadSync()]);}));
   $('trust-backlog').addEventListener('click', event => {
     const confirm = event.target.closest('[data-confirm]');
     if (confirm) {
       const itemId = confirm.dataset.confirm;
       const select = $('trust-backlog').querySelector(`[data-target="${CSS.escape(itemId)}"]`);
-      review(itemId, Number(confirm.dataset.revision), 'accept', select ? select.value : state.project);
+      run(confirm,()=>review(itemId, Number(confirm.dataset.revision), 'accept', select ? select.value : state.project,confirm.closest('.trust-item')));
       return;
     }
     const reject = event.target.closest('[data-reject]');
-    if (reject) review(reject.dataset.reject, Number(reject.dataset.revision), 'reject');
+    if (reject) run(reject,()=>review(reject.dataset.reject, Number(reject.dataset.revision), 'reject',null,reject.closest('.trust-item')));
   });
-  $('trust-window-load').addEventListener('click', loadWindow);
-  $('trust-window-save').addEventListener('click', saveWindow);
+  $('trust-window-load').addEventListener('click', e=>run(e.currentTarget,loadWindow,'trust-window-readout'));
+  $('trust-window-save').addEventListener('click', e=>run(e.currentTarget,saveWindow,'trust-window-readout'));
   $('trust-sources').addEventListener('click', event => {
     const button = event.target.closest('[data-source-id]');
     if (!button) return;
     $('trust-window-id').value = button.dataset.sourceId;
-    loadWindow();
+    run(button,loadWindow,'trust-window-readout');
     $('trust-window-readout').scrollIntoView({block: 'center'});
   });
 
@@ -517,7 +529,6 @@
       try { await window.EvolvAuth.ready; } catch { return; }
       state.canWrite = window.EvolvAuth.canWrite === true;
     }
-    await loadProjects();
-    await Promise.all([loadSync(), loadKnowledge()]);
+    try{await loadProjects();await Promise.all([loadSync(), loadKnowledge()]);}catch(error){$('trust-generated').textContent=error.message;}
   })();
 })();

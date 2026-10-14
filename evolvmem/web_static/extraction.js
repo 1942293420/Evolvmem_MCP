@@ -37,6 +37,7 @@ window.EvolvExtraction = {
     const button=preview.querySelector('#extraction-preview-button');
     button.onclick=async()=>{
       if(button.disabled)return;
+      const finish=EvolvUI.busy(button);
       try{
         const project=preview.querySelector('#extraction-project').value;
         if(!project)throw Error('请先选择样例所属项目。');
@@ -52,7 +53,7 @@ window.EvolvExtraction = {
         const result=await api('extraction/preview',{project,messages,rules,include_related:preview.querySelector('#extraction-related').checked});
         const card=(label,r)=>`<section><h4>${label}</h4><p class="version">参考旧知识 ${r.related_ids.length} 条</p>${r.candidates.map(c=>`<article class="extraction-candidate"><span class="badge ${c.status==='active'?'green':'amber'}">${esc(c.action==='skip'?'跳过':({active:'自动入库',candidate:'待确认',archived:'不入库',ignored:'跳过'})[c.status]||c.status)}</span> <strong>${esc(({add:'新增',supplement:'补充',replace:'替代',skip:'重复',review:'待核对'})[c.action]||c.action)}</strong><p>${c.question?`问：${esc(c.question)}<br>答：${esc(c.answer||c.body)}`:esc(c.body)}</p><small>${esc(c.reason)}</small>${window.EvolvExtraction.process(c,esc)}${window.EvolvExtraction.support(c,esc)}</article>`).join('')||'<p>没有可保存的知识。</p>'}<details><summary>查看本次完整提炼提示</summary><pre>${esc(r.prompt)}</pre></details></section>`;
         output.innerHTML=`<div class="rules-result-heading"><h3>提炼结果对比</h3><span class="hint">修改规则或样例后，请重新试运行</span></div><p class="hint">保留 ${result.cleaning?.dialogue_messages ?? "—"} 轮对话 · 仅预览，尚未入库</p><div class="extraction-comparison">${card('已保存规则',result.current)}${card('当前草稿',result.draft)}</div>`;
-      }catch(error){output.textContent=error.message;}finally{button.disabled=false;onBusy(false);}
+      }catch(error){output.textContent=error.message;}finally{finish();onBusy(false);}
     };
   }
 };

@@ -1,7 +1,7 @@
 /* Project history and concise Q&A share one workbench and source links. */
-window.EvolvMemory = {async render({mount, doc, projects, api, esc, toast, lane='overview', onLane, onBusy, onChanged, onSource, onDirty=()=>{}, standalone=false}) {
+window.EvolvMemory = {async render({mount, doc, projects, api, esc, toast, lane='overview', onLane, onBusy, onChanged, onSource, onDirty=()=>{}, filters={}, onFilters=()=>{}, standalone=false}) {
   const labels={habit:'长期习惯',project_convention:'项目约定',task_requirement:'任务要求',environment:'环境配置',decision:'决策依据',experience:'技术经验',reference:'参考知识'};
-  const state={project:doc.project||'__global__',lane,category:'',status:'',q:'',reason:'',page:1,editing:null,busy:false,dirty:false};
+  const state={project:doc.project||'__global__',lane,category:'',status:'',q:'',reason:'',page:1,...filters,editing:null,busy:false,dirty:false};
   let scopePicker=null;
   const $=s=>mount.querySelector(s);
   const params=()=>new URLSearchParams({project:state.project,category:state.category,state:state.status,q:state.q,reason_code:state.reason,page:state.page});
@@ -23,15 +23,18 @@ window.EvolvMemory = {async render({mount, doc, projects, api, esc, toast, lane=
   }
   let qaRequest=0;
   async function qa(){
-    const request=++qaRequest;onBusy(true);
+    onFilters({project:state.project,category:state.category,status:state.status,q:state.q,reason:state.reason,page:state.page});
+    const request=++qaRequest;onBusy(true);const pane=$('.memory-pane');pane.setAttribute('aria-busy','true');const loading=document.createElement('p');loading.className='ui-loading';loading.setAttribute('role','status');loading.textContent='正在加载问答…';pane.prepend(loading);
     try{
-    const r=await api('qa?'+params());
+    let r=await api('qa?'+params());
+    if(request!==qaRequest||!mount.isConnected)return;
+    if(state.page>1&&!r.items.length){state.page=Math.max(1,Math.ceil(r.total/r.page_size));r=await api('qa?'+params());onFilters({project:state.project,category:state.category,status:state.status,q:state.q,reason:state.reason,page:state.page});}
     if(request!==qaRequest||!mount.isConnected)return;
     $('.memory-pane').innerHTML=`<section class="panel"><div class="section-head"><div><h3>经验问答</h3></div><div class="actions"><a href="#experiences">经验案例与验证记录 →</a><button class="primary write" data-memory-action="new">＋ 新增问答</button></div></div>
       <div class="toolbar qa-filters"><input id="qa-search" type="search" aria-label="搜索问答" placeholder="搜索问题、答案或来源" value="${esc(state.q)}">${standalone?`<select id="qa-project-filter" aria-label="问答项目">${options({'__all__':'所有项目','__global__':'个人通用',...Object.fromEntries(projects.filter(p=>p.status==='active').map(p=>{const name=p.display_name||p.project;return [p.project,name===p.project?name:`${name}（${p.project}）`];}))},state.project)}</select>`:''}<select id="qa-category-filter" aria-label="问答分类">${options({'':'全部分类',...labels},state.category)}</select><select id="qa-state-filter" aria-label="问答状态">${options({'':'全部状态',active:'可用问答',pending:'待确认 / 待整理',unformatted:'旧资料待整理'},state.status)}</select><select id="qa-reason-filter" aria-label="待确认原因">${reasonOptions(r)}</select><button data-memory-action="search">搜索</button></div>
       <p class="hint">${r.total} 组 · ${r.record_count} 份来源资料</p><div class="qa-cards">${r.items.map(row=>`<article class="qa-card"><div class="meta-line"><span class="badge">${esc(EvolvProjects.scopeLabel(row,projects))}</span><span class="badge">${esc(labels[row.category])}</span><span class="badge ${row.effective?'green':'amber'}">${row.effective?'可用问答':row.status==='unformatted'?'旧资料待整理':'待确认'}</span>${row.source_ids.length>1?`<span class="badge">同文 ${row.source_ids.length} 份</span>`:''}</div><h4>${esc(row.question?'问：'+row.question:row.source_title)}</h4><p>${esc(row.answer?'答：'+row.answer:row.source_body.slice(0,160))}</p>${row.trigger?`<p class="hint">适用：${esc(row.trigger)}</p>`:''}${reasonLines(row)}<button data-memory-action="context" data-id="${row.id}">核查记忆</button><button data-memory-action="edit" data-id="${row.id}">${row.question?'查看 / 编辑问答':row.managed_content?'提炼为独立问答':'整理成简洁问答'}</button>${row.source_ids.length>1?`<details><summary>查看重复来源</summary>${row.source_ids.map(id=>`<button data-memory-action="source" data-id="${id}">资料 #${id}</button>`).join('')}</details>`:''}</article>`).join('')||'<div class="empty">没有符合筛选条件的问答。旧资料可在“待确认 / 待整理”中整理。</div>'}</div>
       <div class="pagination"><span>第 ${r.page} / ${Math.max(1,Math.ceil(r.total/r.page_size))} 页</span><div><button data-memory-action="prev" ${r.page<=1?'disabled':''}>上一页</button><button data-memory-action="next" ${r.page*r.page_size>=r.total?'disabled':''}>下一页</button></div></div></section>`;
-    }finally{if(request===qaRequest)onBusy(false);}
+    }finally{loading.remove();if(request===qaRequest&&mount.isConnected){onBusy(false);pane.setAttribute('aria-busy','false');}}
   }
   async function draw(){
     mount.querySelectorAll('.memory-lanes button').forEach(b=>{b.classList.toggle('active',b.dataset.memoryLane===state.lane);b.setAttribute('aria-pressed',String(b.dataset.memoryLane===state.lane));});
@@ -72,14 +75,14 @@ window.EvolvMemory = {async render({mount, doc, projects, api, esc, toast, lane=
     }
     if(action==='publish'||action==='draft'){
       const r=state.editing;await api(r?'qa/'+r.id:'qa',{expected_revision:r?.revision,question:$('#qa-question').value,answer:$('#qa-answer').value,...scopePicker.read(),category:$('#qa-category').value,trigger:$('#qa-trigger').value,action:action==='publish'?'publish':'draft',replace_conflicts:$('#qa-replace').checked});
-      dirty(false);$('.memory-dialog').close();toast(action==='publish'?'问答已确认入库，后续经验检索可使用。':'问答已保存到待确认。');await onChanged();return;
+      dirty(false);$('.memory-dialog').close();await EvolvUI.saved(action==='publish'?'问答已确认入库。':'问答已保存到待确认。',onChanged,toast);return;
     }
-    if(action==='archive'){if(!discard())return;const r=await api('items/'+state.editing.id);await api('items/'+r.id+'/transition',{expected_revision:r.revision,action:'archive'});$('.memory-dialog').close();toast('资料已归档，对应问答停止使用。');await onChanged();}
+    if(action==='archive'){if(!discard())return;const r=await api('items/'+state.editing.id);await api('items/'+r.id+'/transition',{expected_revision:r.revision,action:'archive'});$('.memory-dialog').close();await EvolvUI.saved('资料已归档，对应问答停止使用。',onChanged,toast);}
   }
   mount.onclick=async e=>{
     const b=e.target.closest('[data-memory-action],[data-memory-lane]');if(!b||state.busy)return;
-    e.preventDefault();state.busy=true;b.disabled=true;onBusy(true);
-    try{if(b.dataset.memoryLane){state.lane=b.dataset.memoryLane;onLane(state.lane);await draw();}else await act(b.dataset.memoryAction,b);}catch(error){toast(error.message);}finally{state.busy=false;b.disabled=false;onBusy(false);}
+    e.preventDefault();state.busy=true;const finish=EvolvUI.busy(b);onBusy(true);
+    try{if(b.dataset.memoryLane){state.lane=b.dataset.memoryLane;onLane(state.lane);await draw();}else await act(b.dataset.memoryAction,b);}catch(error){toast(error.message);}finally{state.busy=false;finish();onBusy(false);}
   };
   mount.onchange=async e=>{if(e.target.closest('.memory-dialog'))dirty(true);const keys={'qa-project-filter':'project','qa-category-filter':'category','qa-state-filter':'status','qa-reason-filter':'reason'};const key=keys[e.target.id];if(key){state[key]=e.target.value;state.page=1;try{await qa();}catch(error){toast(error.message);}}};
   mount.onkeydown=e=>{if(e.key==='Enter'&&e.target.id==='qa-search'){e.preventDefault();act('search').catch(error=>toast(error.message));}};
