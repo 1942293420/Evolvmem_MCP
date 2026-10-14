@@ -22,19 +22,34 @@
         <label>以后遇到同样内容<select name="scope"><option value="batch">只处理本次预览中的资料</option><option value="future">让 AI 继续按这份依据判断</option></select></label>
       </div><details><summary>补充说明（选填）</summary><input name="guidance" maxlength="1000" aria-label="补充归类说明"></details>
       <input type="hidden" name="group_id"><input type="hidden" name="task_id"><input type="hidden" name="digest"><input type="hidden" name="continue_job_id">
-      <button type="button" data-rg="preview">预览归类结果</button><div data-rg-reprocess-status role="status"></div><div data-rg-preview></div>
+      <button type="button" data-rg="preview">预览归类结果</button><div data-rg-analysis class="review-analysis-status" role="status" aria-live="polite" hidden><span class="review-spinner" aria-hidden="true"></span><span data-rg-analysis-text></span><progress aria-label="归类判断进度"></progress></div><div data-rg-reprocess-status role="status"></div><div data-rg-preview></div>
       <div class="review-apply-bar"><p data-rg-save-status role="status">选择适用范围后，先预览再保存。</p><button type="button" class="primary write" data-rg="apply" disabled>保存审核结果</button></div>
     </div></form></div></div></section>`;
     const form=$('[data-rg-form]');
     const scopePicker=EvolvProjects.scopePicker({mount:$('[data-rg-scope]'),projects,esc});
     function notice(text){$('[data-rg-status]').textContent=text;}
+    function previewState(stage='',job={},error=''){
+      const button=$('[data-rg=preview]'),status=$('[data-rg-analysis]'),active=!!stage&&stage!=='failed';
+      button.disabled=active;button.setAttribute('aria-busy',String(active));
+      button.textContent=stage==='preparing'?'正在准备预览…':stage==='pending'?'等待 AI 开始…':stage==='running'?'AI 正在判断…':stage==='failed'?'重试预览':'预览归类结果';
+      status.hidden=!stage;status.classList.toggle('is-error',stage==='failed');
+      status.querySelector('.review-spinner').hidden=!active;
+      let text=stage==='preparing'?'正在准备预览…':stage==='pending'?(job.waiting_for==='organization'?'等待当前整理任务结束后开始判断':'已提交，等待 AI 开始判断'):stage==='running'?'AI 正在阅读资料并判断归属':error;
+      if(active&&Number.isFinite(job.total))text+=` · 已完成 ${job.processed} / ${job.total} 条`;
+      if(active&&job.elapsed_seconds)text+=` · 已用时 ${job.elapsed_seconds} 秒`;
+      $('[data-rg-analysis-text]').textContent=text;
+      const progress=status.querySelector('progress');progress.hidden=!active;progress.max=job.total||1;
+      if(Number.isFinite(job.processed))progress.value=job.processed;else progress.removeAttribute('value');
+      if(active){$('[data-rg=apply]').disabled=true;$('[data-rg-save-status]').textContent='';}
+    }
     function setBusy(value){busy=value;onBusy(value);const resume=$('[data-rg=resume-batch]');if(resume)resume.disabled=value;}
     function values(){const data=Object.fromEntries(new FormData(form));data.task_id=Number(data.task_id);return {...data,...scopePicker.read(),matching_mode:data.selection==='item'?'phrase':'semantic'};}
     function remember(){if(selectedGroup)drafts.set(selectedGroup,{values:values(),proposal});}
-    function invalidate(){form.elements.continue_job_id.value='';manualPreviews.clear();$('[data-rg="preview"]').disabled=false;analyses.delete(selectedGroup);proposal=null;$('[data-rg="apply"]').hidden=false;$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='保存审核结果';$('[data-rg-preview]').replaceChildren();$('[data-rg-save-status]').textContent='选择已修改，请预览本次归类结果。';remember();onDirty(true);}
+    function invalidate(){form.elements.continue_job_id.value='';manualPreviews.clear();previewState();analyses.delete(selectedGroup);proposal=null;$('[data-rg="apply"]').hidden=false;$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='保存审核结果';$('[data-rg-preview]').replaceChildren();$('[data-rg-save-status]').textContent='选择已修改，请预览本次归类结果。';remember();onDirty(true);}
     function highlight(){mount.querySelectorAll('[data-rg="choose"]').forEach(b=>{const yes=b.dataset.id===selectedGroup;b.setAttribute('aria-pressed',String(yes));b.closest('.review-source-card').classList.toggle('selected',yes);});}
     function closeEditor(){
       ++chooseSequence;clearTimeout(analysisTimer);
+      previewState();
       analyses.delete(selectedGroup);drafts.delete(selectedGroup);
       selectedGroup='';detail=null;proposal=null;manualPreviews.clear();
       form.hidden=true;form.inert=false;form.reset();scopePicker.set({});
@@ -152,7 +167,7 @@
         if(sequence!==chooseSequence||!mount.isConnected)return false;
         proposal=job.proposal;remember();
       }
-      checkAnalysis();highlight();if(proposal)drawPreview();else{$('[data-rg-preview]').replaceChildren();$('[data-rg="apply"]').hidden=false;$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='保存审核结果';$('[data-rg-save-status]').textContent='选择适用范围后，先预览再保存。';}
+      previewState();checkAnalysis();highlight();if(proposal)drawPreview();else{$('[data-rg-preview]').replaceChildren();$('[data-rg="apply"]').hidden=false;$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='保存审核结果';$('[data-rg-save-status]').textContent='选择适用范围后，先预览再保存。';}
       return true;
     }
     const unitKey=u=>`${u.task_id}:${u.digest}`;
@@ -228,16 +243,17 @@
     async function checkAnalysis(){
       clearTimeout(analysisTimer);if(!mount.isConnected)return;
       const group=selectedGroup, pending=analyses.get(group);
-      if(!pending){$('[data-rg=preview]').disabled=false;return;}
+      if(!pending){previewState();return;}
+      if($('[data-rg-analysis]').hidden)previewState('pending');
       try{
         const job=await api('organization/groups/analysis?'+new URLSearchParams({id:pending.id}));
         if(selectedGroup!==group||analyses.get(group)?.id!==pending.id)return;
         if(job.status==='completed'){
-          proposal=job.proposal;analyses.delete(group);drawPreview();remember();$('[data-rg=preview]').disabled=false;notice('判断结果已保留，符合的资料已列入归类清单。核对后即可保存。');return;
+          proposal=job.proposal;analyses.delete(group);previewState();drawPreview();remember();notice('判断结果已保留，符合的资料已列入归类清单。核对后即可保存。');return;
         }
         if(job.status==='failed')throw Error(messages[job.error]||job.error||'AI 判断未完成，请重试。');
-        $('[data-rg-save-status]').textContent=`AI ${job.status==='pending'?'等待开始':'正在阅读资料'}：已判断 ${job.processed} / ${job.total} 条`;
-      }catch(error){analyses.delete(group);$('[data-rg=preview]').disabled=false;$('[data-rg-save-status]').textContent=messages[error.message]||error.message;return;}
+        previewState(job.status,job);
+      }catch(error){if(selectedGroup!==group||analyses.get(group)?.id!==pending.id||!mount.isConnected)return;analyses.delete(group);previewState('failed',{},messages[error.message]||error.message);return;}
       analysisTimer=setTimeout(checkAnalysis,1500);
     }
     async function checkRecovery(){
@@ -254,10 +270,11 @@
     async function refreshPreview(){
       const request=values(), requestGroup=selectedGroup;
       const unchanged=()=>selectedGroup===requestGroup&&JSON.stringify(values())===JSON.stringify(request);
+      previewState('preparing');
       if(request.selection==='item'){
-        const result=await api('organization/groups/preview',request);if(!unchanged())return;proposal=result;drawPreview();remember();notice(proposal.eligible.length?'预览已更新，请核对归类清单。':'预览已更新，暂时没有可保存的资料。');
+        const result=await api('organization/groups/preview',request);if(!unchanged())return;proposal=result;previewState();drawPreview();remember();notice(proposal.eligible.length?'预览已更新，请核对归类清单。':'预览已更新，暂时没有可保存的资料。');
       }else{
-        const job=await api('organization/groups/analyze',request);if(!unchanged())return;proposal=null;analyses.set(selectedGroup,{id:job.id});$('[data-rg=apply]').disabled=true;$('[data-rg-preview]').replaceChildren();$('[data-rg-save-status]').textContent=`AI 待判断 ${job.total-job.processed} 条，已保存 ${job.processed} 条判断…`;$('[data-rg=preview]').disabled=true;remember();await checkAnalysis();
+        const job=await api('organization/groups/analyze',request);if(!unchanged())return;proposal=null;analyses.set(selectedGroup,{id:job.id});$('[data-rg-preview]').replaceChildren();previewState(job.status,job);remember();await checkAnalysis();
       }
     }
     mount.addEventListener('input',e=>{if(e.target.closest('[data-rg-form]')&&!e.target.matches('select,[data-scope-search],[data-rg-pick],[data-rg-choice]'))invalidate();});
@@ -343,6 +360,7 @@
           try{const job=await api('organization/groups/analysis?'+new URLSearchParams({id:proposal.job_id}));proposal=job.proposal;drawPreview();remember();notice('已重新核对资料变化，未变化的判断已保留。请确认更新后的清单。');}
           catch(_){invalidate();}
         }else if(['apply','preview','reprocess'].includes(b.dataset.rg))invalidate();
+        if(['preview','next-batch'].includes(b.dataset.rg))previewState('failed',{},messages[error.message]||error.message);
       }
       finally{setBusy(false);}
     });

@@ -83,15 +83,15 @@ def register(service,source_keys,*,expand=False):
     return [row[0] for row in prepared]
 
 
-def revision(service,key,*,visible=None):
+def revision(service,key,*,visible=None,excluded=None):
     """Check current membership/revisions without assembling every message."""
     from evolvmem.history_organization import _unassigned_archives, source_excluded
-    if source_excluded(service,key):raise ValueError('classification_source_changed')
+    if source_excluded(service,key,excluded=excluded):raise ValueError('classification_source_changed')
     from evolvmem.knowledge_cleaning import record,review
-    if visible is None:visible={r['id'] for r in _unassigned_archives(service)}
+    if visible is None:visible={r['id'] for r in _unassigned_archives(service,excluded=excluded)}
     values=[]
     for member in members(service,key):
-        row=record(service,member,visible=visible)
+        row=record(service,member,visible=visible,excluded=excluded)
         if member.startswith('archive:'):
             archive=service.store.get_session_archive(int(member.split(':')[1]))
             if not archive or archive['state']!='available':raise ValueError('cleaning_source_unavailable')

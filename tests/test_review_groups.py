@@ -176,3 +176,73 @@ def test_rule_reprocess_preserves_other_human_project_decisions(service, monkeyp
     units = org(service, '/units', {'task_id': result['items'][0]['id']})['items']
     retained = next(u for u in units if u['digest'] == first['digest'])
     assert retained['decision'] == 'manual' and retained['project'] == 'shop'
+
+
+@pytest.mark.parametrize('by_member', [False, True])
+def test_open_detail_checks_only_its_source_and_rechecks_changes(service, monkeypatch, by_member):
+    from evolvmem import auto_organization, history_organization
+    tid, source = group_source(service, monkeypatch, session='selected', count=2)
+    group_source(service, monkeypatch, session='unrelated', count=2)
+    group = org(service, '/groups')['items'][0]
+    query = {'task_id': tid, 'digest': group['examples'][0]['digest']} if by_member else {'group_id': group['id']}
+    checked, exclusion_reads = [], []
+    original, exclusions = auto_organization._source_current, history_organization._excluded_archive_ids
+    def measured(service, task, **kwargs):
+        checked.append(task['id'])
+        return original(service, task, **kwargs)
+    def measured_exclusions(service):
+        exclusion_reads.append(True)
+        return exclusions(service)
+    monkeypatch.setattr(auto_organization, '_source_current', measured)
+    monkeypatch.setattr(history_organization, '_excluded_archive_ids', measured_exclusions)
+    assert org(service, '/groups/detail', query)['id'] == group['id']
+    assert checked == [tid], 'opening one task must not read unrelated conversation bodies'
+    assert len(exclusion_reads) == 1, 'source exclusions are shared only within this read'
+    with service.store.transaction():
+        service.store._connection().execute("UPDATE conversation_history SET body=body || '新增需求' WHERE archive_id=?", (source.id,))
+    with pytest.raises(ValueError, match='review_preview_changed'):
+        org(service, '/groups/detail', query)
+
+
+def test_group_list_reads_exclusions_once_per_request(service, monkeypatch):
+    from evolvmem import history_organization
+    group_source(service, monkeypatch, session='one', count=2)
+    group_source(service, monkeypatch, session='two', count=2)
+    calls=[]
+    original=history_organization._excluded_archive_ids
+    def measured(service):
+        calls.append(True)
+        return original(service)
+    monkeypatch.setattr(history_organization, '_excluded_archive_ids', measured)
+    assert org(service, '/groups')['total']==4
+    assert len(calls)==1
+    assert org(service, '/groups')['total']==4
+    assert len(calls)==2, 'each request must read current exclusions again'
+
+
+def test_detail_rechecks_new_source_exclusion(service, monkeypatch):
+    _, source = group_source(service, monkeypatch, count=2)
+    query = {'group_id': org(service, '/groups')['items'][0]['id']}
+    assert org(service, '/groups/detail', query)['items']
+    with service.store.transaction():
+        service.store._connection().execute('INSERT INTO archive_source_exclusions '
+            '(archive_id,payload_sha256,reason,verified_at) SELECT id,payload_sha256,?,? '
+            'FROM session_archives WHERE id=?', ('system-source', '2026-10-14 00:00:00', source.id))
+    with pytest.raises(ValueError, match='review_preview_changed'):
+        org(service, '/groups/detail', query)
+
+
+def test_member_lookup_never_substitutes_a_current_sibling_for_a_stale_member(service, monkeypatch):
+    from evolvmem import auto_organization
+    tid, _ = group_source(service, monkeypatch, session='older', count=2)
+    other, _ = group_source(service, monkeypatch, session='newer', count=2)
+    conn = service.store._connection()
+    with service.store.transaction():
+        conn.execute('UPDATE organization_tasks SET source_key=(SELECT source_key FROM organization_tasks WHERE id=?) WHERE id=?', (tid, other))
+        conn.execute("UPDATE organization_units SET task_record='{}' WHERE task_id IN (?,?)", (tid, other))
+    monkeypatch.setattr(auto_organization, '_source_current', lambda _service, task, **_: task['id'] == other)
+    group = org(service, '/groups')['items'][0]
+    stale = dict(conn.execute('SELECT task_id,digest FROM organization_units WHERE task_id=? LIMIT 1', (tid,)).fetchone())
+    assert all(u['task_id'] == other for u in org(service, '/groups/detail', {'group_id': group['id']})['items'])
+    with pytest.raises(ValueError, match='review_preview_changed'):
+        org(service, '/groups/detail', stale)

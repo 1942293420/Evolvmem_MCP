@@ -118,7 +118,7 @@
     }
     if(location.hash!==targetHash)history[replace?'replaceState':'pushState'](null,'',targetHash);
     window.scrollTo({top:0,behavior:'instant'});
-    if(page==='home') {requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));refreshOrganizationMetrics(state.boot);}
+    if(page==='home') {requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));boot(false);}
   }
   function countUp(el,value) {
     if(typeof value!=='number') {el.textContent='—';return;}
@@ -143,6 +143,18 @@
   async function boot(refreshBrowser=true) {
     const token=++state.boot;
     $$('[data-data-status]').forEach(el=>el.textContent='正在连接记忆库…');
+    if(state.page!=='home') {
+      // Other pages have their own data loaders. Do not queue expensive hidden
+      // dashboard reads ahead of a review click or progress poll.
+      let data;
+      try{data=await get('/api/knowledge/projects');}
+      catch(error){if(token===state.boot)$$('[data-data-status]').forEach(el=>el.textContent=error.message);return;}
+      if(token!==state.boot)return;
+      state.projects=data.projects||[];
+      const controller=[...browsers.values()].find(c=>c.kind===state.page);
+      if(refreshBrowser&&controller&&!controller.integrated){controller.draw();controller.load();}
+      return;
+    }
     const urls=['/api/stats','/api/insights','/api/projects','/api/memories?status=active&page_size=200&sort=access_count','/api/experiences?status=verified&page_size=3','/api/workstreams?status=unfinished&page_size=3','/api/memories?status=active&sort=created_at&order=desc&page_size=3','/api/knowledge/qa?state=active&page_size=1','/api/knowledge/projects'];
     const responses=await Promise.allSettled(urls.map(get));
     if(token!==state.boot) return;
@@ -288,7 +300,7 @@
   window.EvolvAuth.ready.then(()=>{
     state.ready=true;
     navigateFromLocation();
-    boot(![...browsers.values()].some(c=>c.integrated));
+    if(state.page!=='home')boot(![...browsers.values()].some(c=>c.integrated));
   }).catch(error=>{
     $$('[data-data-status]').forEach(el=>{el.textContent=error.message;el.classList.add('ui-status-error');});
   });

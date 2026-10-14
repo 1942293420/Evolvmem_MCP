@@ -24,11 +24,10 @@ def _family(unit):
     return '项目待确认'
 
 
-def _groups(service):
+def _groups(service, *, selection=None):
     from evolvmem import auto_organization as org
-    from evolvmem.history_organization import _unassigned_archives
+    from evolvmem.history_organization import _unassigned_archives, _excluded_archive_ids
     conn = service.store._connection()
-    visible = {r['id'] for r in _unassigned_archives(service)}
     rows = conn.execute("SELECT u.* FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id "
                         "WHERE (t.status IN ('review','completed','failed') OR "
                         "(t.status IN ('pending','running') AND t.stage='extraction')) AND u.decision='review' "
@@ -38,7 +37,10 @@ def _groups(service):
         unit = dict(row)
         tid = unit['task_id']
         if tid not in tasks:
-            task = org.task_view(service, tid, visible=visible)
+            # Group identity needs metadata only, never the large frozen source
+            # snapshot. Validate bodies after selecting the requested group.
+            task = dict(conn.execute('SELECT id,source_key,source_title,status,error_code,'
+                'source_revision,rule_revision FROM organization_tasks WHERE id=?',(tid,)).fetchone())
             source = None
             if task['source_key'].startswith('archive:'):
                 source = conn.execute('SELECT adapter,external_session_id FROM session_archives WHERE id=?',
@@ -50,8 +52,6 @@ def _groups(service):
                             is_incremental_batch(external) else logical_identity(adapter, external))
             tasks[tid] = (task, identity)
         task, identity = tasks[tid]
-        if not task['source_current']:
-            continue
         family = _family(unit)
         complete = bool(unit.get('task_record') and unit['task_record']!='{}')
         gid = _hash([identity, unit['digest']] if complete else [identity, family, unit['category']])[:24]
@@ -61,7 +61,29 @@ def _groups(service):
         group['members'].append({**unit, 'revision': org._unit_revision(unit),
                                  'source_key': task['source_key'], 'rule_revision': task['rule_revision'],
                                  'source_revision': task['source_revision']})
-    return list(groups.values())
+    def selected(group):
+        return selection is None or group['id'] == selection.get('group_id') or (
+            not selection.get('group_id') and any(str(u['task_id']) == str(selection.get('task_id'))
+                and u['digest'] == selection.get('digest') for u in group['members']))
+    candidates = [g for g in groups.values() if selected(g)]
+    if not candidates:
+        return []
+    # Request-local policy snapshot: no cache survives into the next request.
+    excluded = _excluded_archive_ids(service)
+    visible = {r['id'] for r in _unassigned_archives(service, excluded=excluded)}
+    current, result = {}, []
+    for group in candidates:
+        kept = []
+        for unit in group['members']:
+            tid = unit['task_id']
+            if tid not in current:
+                current[tid] = org._source_current(service, tasks[tid][0], visible=visible, excluded=excluded)
+            if current[tid]:kept.append(unit)
+        if kept and selected({**group, 'members':kept}):
+            first = kept[0]
+            task = tasks[first['task_id']][0]
+            result.append({**group, 'title': first['title'] if group['complete_task'] else task['source_title'] or task['source_key'], 'members':kept})
+    return result
 
 
 def _brief(unit):
@@ -82,9 +104,7 @@ def groups(service, options=None):
 
 def detail(service, body):
     from evolvmem.task_narrative import read as narrative
-    group = next((g for g in _groups(service) if g['id'] == body.get('group_id') or
-                  (not body.get('group_id') and any(str(u['task_id']) == str(body.get('task_id')) and
-                   u['digest'] == body.get('digest') for u in g['members']))), None)
+    group = next(iter(_groups(service, selection=body)), None)
     if not group:
         raise ValueError('review_preview_changed')
     return {k: v for k, v in group.items() if k != 'members'} | {

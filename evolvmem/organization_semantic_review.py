@@ -2,6 +2,7 @@
 import json
 import time
 import uuid
+from datetime import datetime, timezone
 
 from evolvmem import knowledge_scope as ks
 from evolvmem.context_store import _now_iso
@@ -160,6 +161,12 @@ def _row(service, job_id):
 def get(service, job_id, *, _current_units=None):
     row=_row(service,job_id)
     result={k:row[k] for k in ('id','status','error','processed','total')}
+    result['elapsed_seconds'] = max(0, int((datetime.now(timezone.utc) -
+        datetime.fromisoformat(row['created_at']).replace(tzinfo=timezone.utc)).total_seconds()))
+    result['waiting_for'] = ''
+    if row['status'] == 'pending':
+        active = service.store._connection().execute("SELECT 1 FROM organization_tasks WHERE status='running' LIMIT 1").fetchone()
+        result['waiting_for'] = 'organization' if active else 'queue'
     request=json.loads(row['request'])
     result['request']={k:request[k] for k in _REQUEST_FIELDS if k in request}
     if request.get('_signature') != _signature(service,request):

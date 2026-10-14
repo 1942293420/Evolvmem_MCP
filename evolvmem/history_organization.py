@@ -38,17 +38,17 @@ def _excluded_archive_ids(service):
         return excluded
 
 
-def source_excluded(service, key):
+def source_excluded(service, key, *, excluded=None):
     """True when this source key is a verified system source, at any stage."""
     if str(key).startswith('conversation:'):
         from evolvmem.conversation_tasks import members
-        excluded=_excluded_archive_ids(service)
+        if excluded is None:excluded=_excluded_archive_ids(service)
         return any(k.startswith('archive:') and int(k.split(':')[1]) in excluded for k in members(service,key))
     match = re.fullmatch(r'archive:([1-9][0-9]*)', str(key))
-    return bool(match) and int(match[1]) in _excluded_archive_ids(service)
+    return bool(match) and int(match[1]) in (_excluded_archive_ids(service) if excluded is None else excluded)
 
 
-def _unassigned_archives(service):
+def _unassigned_archives(service, *, excluded=None):
     """Deduplicate across all projects so assigning a head never exposes an old version.
 
     This stays the revision/visibility oracle for every source, including ones a
@@ -61,7 +61,7 @@ def _unassigned_archives(service):
         ignored = {r[0] for r in conn.execute('SELECT u.archive_id FROM lan_session_uploads u '
             'JOIN lan_session_heads h ON h.device_id=u.device_id AND h.session_id=u.session_id '
             'WHERE h.sha256 IS NOT u.sha256 AND u.archive_id IS NOT NULL')}
-    ignored |= _excluded_archive_ids(service)
+    ignored |= _excluded_archive_ids(service) if excluded is None else excluded
     rows, seen = [], set()
     for row in conn.execute('SELECT id,project,adapter,external_session_id,created_at FROM session_archives ORDER BY created_at DESC,id DESC'):
         if row['id'] in ignored:
@@ -78,9 +78,9 @@ def _unassigned_archives(service):
     return rows
 
 
-def _source_record(service, key, *, visible=None):
+def _source_record(service, key, *, visible=None, excluded=None):
     from evolvmem import conversation_tasks
-    if source_excluded(service,key):raise ValueError('classification_source_changed')
+    if source_excluded(service,key,excluded=excluded):raise ValueError('classification_source_changed')
     if conversation_tasks.is_conversation(key):
         return conversation_tasks.snapshot(service,key,visible=visible)
     match = re.fullmatch(r'(archive|item):([1-9][0-9]*)', str(key))

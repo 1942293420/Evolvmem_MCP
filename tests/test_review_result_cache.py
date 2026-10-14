@@ -16,6 +16,22 @@ def setup_job(service, monkeypatch, count=8):
     return tid,request,calls
 
 
+def test_pending_review_reports_real_wait_and_elapsed_time(service, monkeypatch):
+    tid, request, _ = setup_job(service, monkeypatch)
+    job = semantic.start(service, request)
+    assert job['status'] == 'pending'
+    assert job['waiting_for'] == 'queue'
+    assert job['elapsed_seconds'] >= 0
+    with service.store.transaction():
+        service.store._connection().execute("UPDATE organization_tasks SET status='running' WHERE id=?", (tid,))
+    waiting = semantic.get(service, job['id'])
+    assert waiting['waiting_for'] == 'organization'
+    assert waiting['processed'] == 0 and waiting['total'] == 8
+    with service.store.transaction():
+        service.store._connection().execute("UPDATE organization_review_jobs SET status='running' WHERE id=?", (job['id'],))
+    assert semantic.get(service, job['id'])['waiting_for'] == ''
+
+
 def test_repeated_click_reuses_pending_and_completed_job(service, monkeypatch):
     _,request,calls=setup_job(service,monkeypatch)
     first=semantic.start(service,request)

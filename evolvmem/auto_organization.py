@@ -484,7 +484,7 @@ def task_view(service, task_id, *, visible=None):
     return view
 
 
-def _source_current(service, task, *, visible=None):
+def _source_current(service, task, *, visible=None, excluded=None):
     """False when the stored source revision is no longer the latest one.
 
     A task whose source changed but has not been re-enqueued yet must not be
@@ -497,8 +497,8 @@ def _source_current(service, task, *, visible=None):
         from evolvmem.knowledge_cleaning import record
         from evolvmem import conversation_tasks
         if conversation_tasks.is_conversation(task['source_key']):
-            return conversation_tasks.revision(service,task['source_key'],visible=visible)==task['source_revision']
-        return record(service, task['source_key'], visible=visible)['expected_revision'] == task['source_revision']
+            return conversation_tasks.revision(service,task['source_key'],visible=visible,excluded=excluded)==task['source_revision']
+        return record(service, task['source_key'], visible=visible,excluded=excluded)['expected_revision'] == task['source_revision']
     except (ValueError, KeyError, OSError):
         return False
 
