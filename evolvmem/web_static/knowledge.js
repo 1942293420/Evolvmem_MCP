@@ -74,7 +74,13 @@
     if(['rules'].includes(state.view)){state.rules=await api('rules');if(seq!==renderSequence)return;renderRules();return;}
     const params=new URLSearchParams({project:state.project,q:state.q,status:state.status,content_type:state.type,category:state.category,page:state.page});
     if(state.view==='intake')params.set('queue',state.queue);
-    const result=await api('items?'+params);if(seq!==renderSequence)return;
+    let result=await api('items?'+params);if(seq!==renderSequence)return;
+    const lastPage=Math.max(1,Math.ceil(result.total/result.page_size));
+    if(state.page>lastPage){
+      state.page=lastPage;params.set('page',state.page);
+      result=await api('items?'+params);if(seq!==renderSequence)return;
+      history.replaceState(null,'',hash());
+    }
     state.document=null;
     if(state.view==='library'&&state.projects.some(p=>p.project===state.project&&p.status==='active')){
       state.document=await api('project-memory?'+new URLSearchParams({project:state.project}));if(seq!==renderSequence)return;

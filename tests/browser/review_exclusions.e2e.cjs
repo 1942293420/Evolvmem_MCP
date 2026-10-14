@@ -12,7 +12,7 @@ const assert=require('node:assert/strict');const {chromium}=require(process.env.
   await row.locator('[data-rg=exclude-one]').waitFor();assert.match(await row.locator('.review-original').innerText(),/审核条目/);
   for(const width of [1512,390]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'overflow '+width);}
   await page.setViewportSize({width:1512,height:1000});
-  await row.locator('[data-rg=exclude-one]').click();assert.equal(await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).count(),0,'not persisted before save');await form.locator('[data-rg=apply]').click();await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).waitFor();
+  await row.locator('[data-rg=exclude-one]').click();assert.equal(await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).count(),0,'not persisted before save');await form.locator('[data-rg=apply]').click();await page.locator('[data-rg=resume-batch]').click();await ready();await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).waitFor();
   assert.equal(await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).count(),1);assert.equal(await form.locator('[name=exceptions]').inputValue(),'');
   assert.match(await form.locator('[data-rg-preview]').innerText(),/你已确认不归入/);
   await page.reload();await ready();assert.equal(await form.locator('[data-rg-choice]').filter({has:page.locator('option', {hasText:'已保存：不录入'})}).count(),1);assert.equal(analyzes,1,'refresh must not start AI');

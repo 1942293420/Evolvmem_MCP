@@ -223,3 +223,34 @@ def test_restore_old_batches_scans_current_sources_once(service, monkeypatch):
     monkeypatch.setattr(review, '_groups', measured)
     assert semantic.recent(service) == {'job':None}
     assert len(scans) == 1, 'restoring expired batches repeatedly scans every current source'
+
+
+@pytest.mark.parametrize('selection', ['group', 'all'])
+def test_next_batch_after_saving_original_selection_uses_remaining_member(service, monkeypatch, selection):
+    from evolvmem import organization_review as review
+    from tests.test_review_decisions import save, choice
+    _, request, calls = setup_job(service, monkeypatch, count=105)
+    request['selection'] = selection
+    job = semantic.start(service, request)
+    semantic.tick(service)
+    proposal = semantic.get(service, job['id'])['proposal']
+    assert save(service, proposal, [choice(u, 'include') for u in proposal['eligible']])['included'] == 100
+    current = review.groups(service)['items'][0]
+    assert current['id'] != request['group_id']
+    continued = {**request, 'group_id': current['id'], 'continue_job_id': job['id']}
+    next_job = semantic.start(service, continued)
+    semantic.tick(service)
+    assert len(calls) == 105
+    assert len(semantic.get(service, next_job['id'])['proposal']['eligible']) == 5
+    assert semantic.start(service, continued)['id'] == next_job['id']
+
+
+def test_next_batch_rejects_reanchoring_to_another_conversation(service, monkeypatch):
+    _, request, _ = setup_job(service, monkeypatch, count=3)
+    request['selection'] = 'group'
+    job = semantic.start(service, request)
+    semantic.tick(service)
+    other, _ = group_source(service, monkeypatch, session='different-conversation', count=1)
+    group = org(service, '/groups', {'task_id': other})['items'][0]
+    with pytest.raises(ValueError, match='review_preview_changed'):
+        semantic.start(service, {**request, 'group_id': group['id'], 'continue_job_id': job['id']})

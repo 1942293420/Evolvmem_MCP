@@ -2,7 +2,7 @@
 (() => {
   window.EvolvReviewGroups = {async render({mount, api, esc, projects, onSaved, onDirty, onBusy, historyMount=mount, onReady=()=>{}}) {
     let page=1, proposal=null, busy=false, selectedGroup='', detail=null, pendingTasks=[], recoveryTimer=null, recoveryGroup='', listSnapshot='', loadSequence=0;
-    const drafts=new Map(), analyses=new Map(), manualPreviews=new Map(), decisionDrafts=new Map();let analysisTimer=null,chooseSequence=0;
+    const drafts=new Map(), analyses=new Map(), manualPreviews=new Map(), decisionDrafts=new Map();let analysisTimer=null,chooseSequence=0,savedBatch=null;
     const $=s=>mount.querySelector(s);
     const projectName=p=>projects.find(x=>x.project===p)?.display_name||p;
     const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
@@ -28,10 +28,55 @@
     const form=$('[data-rg-form]');
     const scopePicker=EvolvProjects.scopePicker({mount:$('[data-rg-scope]'),projects,esc});
     function notice(text){$('[data-rg-status]').textContent=text;}
+    function setBusy(value){busy=value;onBusy(value);const resume=$('[data-rg=resume-batch]');if(resume)resume.disabled=value;}
     function values(){const data=Object.fromEntries(new FormData(form));data.task_id=Number(data.task_id);return {...data,...scopePicker.read(),matching_mode:data.selection==='item'?'phrase':'semantic'};}
     function remember(){if(selectedGroup)drafts.set(selectedGroup,{values:values(),proposal});}
     function invalidate(){form.elements.continue_job_id.value='';manualPreviews.clear();$('[data-rg="preview"]').disabled=false;analyses.delete(selectedGroup);proposal=null;$('[data-rg="apply"]').hidden=false;$('[data-rg="apply"]').disabled=true;$('[data-rg="apply"]').textContent='保存审核结果';$('[data-rg-preview]').replaceChildren();$('[data-rg-save-status]').textContent='选择已修改，请预览本次归类结果。';remember();onDirty(true);}
     function highlight(){mount.querySelectorAll('[data-rg="choose"]').forEach(b=>{const yes=b.dataset.id===selectedGroup;b.setAttribute('aria-pressed',String(yes));b.closest('.review-source-card').classList.toggle('selected',yes);});}
+    function closeEditor(){
+      ++chooseSequence;clearTimeout(analysisTimer);
+      analyses.delete(selectedGroup);drafts.delete(selectedGroup);
+      selectedGroup='';detail=null;proposal=null;manualPreviews.clear();
+      form.hidden=true;form.inert=false;form.reset();scopePicker.set({});
+      $('[data-rg-narrative]').replaceChildren();$('[data-rg-original]').textContent='';
+      $('[data-rg-source]').ontoggle=null;$('[data-rg-source-text]').replaceChildren();
+      $('[data-rg-preview]').replaceChildren();$('[data-rg-reprocess-status]').textContent='';
+      $('[data-rg=apply]').disabled=true;highlight();onDirty(false);
+    }
+    function receipt(title,body,jobId=null){
+      closeEditor();savedBatch=jobId;
+      const pane=$('[data-rg-empty]');pane.hidden=false;
+      pane.innerHTML=`<h3>${esc(title)}</h3><p>${esc(body)}</p>${jobId?'<button type="button" data-rg="resume-batch">继续核对本批资料</button>':''}`;
+      const resume=pane.querySelector('[data-rg=resume-batch]');if(resume)resume.disabled=busy;
+      pane.scrollIntoView({block:'nearest'});
+    }
+    async function refreshSaved(message){
+      notice(message);
+      try{await load();await onSaved();}
+      catch(_){notice(message+' 页面刷新失败，请点击“刷新资料”重试，无需再次保存。');}
+    }
+    async function refreshEditor(){
+      if(!selectedGroup||form.hidden)return;
+      try{await choose(selectedGroup,{preserve:true});}
+      catch(error){
+        if(error.message!=='review_preview_changed')throw error;
+        receipt('这条资料已处理','可以选择左侧其他资料继续审核。');
+      }
+    }
+    async function resumeBatch(jobId=savedBatch){
+      const job=await api('organization/groups/analysis?'+new URLSearchParams({id:jobId}));
+      const entries=[...job.proposal.eligible,...job.proposal.excluded];
+      const candidates=[...entries.filter(selectable),...entries.filter(u=>!selectable(u))];
+      let group=null;
+      for(const u of candidates){
+        try{group=await api('organization/groups/detail?'+new URLSearchParams({task_id:u.task_id,digest:u.digest}));break;}
+        catch(error){if(error.message!=='review_preview_changed')throw error;}
+      }
+      if(!group){receipt('本批审核已完成','审核结果已保存，可以选择其他资料继续处理。');return;}
+      drafts.set(group.id,{values:job.request,proposal:job.proposal});
+      await choose(group.id,{preserve:true});savedBatch=null;
+      notice('已打开保存后的本批结果，可继续核对剩余资料，或修改之前的不录入决定。');
+    }
     function narrative(record){
       const rows=[['requirement','用户当时要做什么'],['analysis','为什么需要处理'],['steps','处理经过与各次修复'],['result','最后记录的结果']];
       const body=rows.map(([key,title])=>{const entries=Array.isArray(record[key])?record[key]:record[key]?[record[key]]:[];return `<section class="task-narrative-section"><h4>${title}</h4>${entries.length?`<ol>${entries.map(e=>`<li><p>${esc(e.text)}</p><details><summary>核对原话</summary>${e.evidence.map(ref=>`<blockquote>${esc(ref.quote)}</blockquote>`).join('')}</details></li>`).join('')}</ol>`:'<p>原文中尚未明确</p>'}</section>`;}).join('');
@@ -40,7 +85,10 @@
     }
     async function load(){
       const sequence=++loadSequence;
-      const result=await api('organization/groups?'+new URLSearchParams({page}));
+      let result=await api('organization/groups?'+new URLSearchParams({page}));
+      if(sequence!==loadSequence)return;
+      const lastPage=Math.max(1,Math.ceil(result.total/result.page_size));
+      if(page>lastPage){page=lastPage;result=await api('organization/groups?'+new URLSearchParams({page}));}
       if(sequence!==loadSequence)return;
       await refreshLegacy();
       const snapshot=JSON.stringify(result);
@@ -88,7 +136,7 @@
       const next=await api('organization/groups/detail?'+new URLSearchParams(member?{task_id:member.task_id,digest:member.digest}:{group_id:id}));
       if(sequence!==chooseSequence||!mount.isConnected)return false;
       if(member){const old=drafts.get(selectedGroup);drafts.delete(selectedGroup);if(old)drafts.set(next.id,old);id=next.id;}
-      selectedGroup=id;detail=next;form.hidden=false;$('[data-rg-empty]').hidden=true;$('[data-rg-empty]').textContent='点击左侧资料，在这里核对原文和归属';
+      selectedGroup=id;detail=next;savedBatch=null;form.hidden=false;$('[data-rg-empty]').hidden=true;$('[data-rg-empty]').textContent='点击左侧资料，在这里核对原文和归属';
       const draft=drafts.get(id);form.reset();form.elements.group_id.value=id;
       form.elements.unit.innerHTML=detail.items.map((u,i)=>`<option value="${esc(u.task_id+':'+u.digest)}">${i+1}. ${esc(u.title)}</option>`).join('');
       if(draft)for(const [k,v]of Object.entries(draft.values))if(!['projects','knowledge_scope'].includes(k)&&form.elements[k])form.elements[k].value=v;
@@ -224,7 +272,7 @@
         finally{if(sequence===chooseSequence)form.inert=false;}
         return;
       }
-      busy=true;onBusy(true);
+      setBusy(true);
       try{
         const action=b.dataset.rg;
         if(['select-batch','clear-batch','batch-include','batch-exclude'].includes(action)){
@@ -236,8 +284,7 @@
         }else if(action==='next-batch'){
           form.elements.continue_job_id.value=proposal.job_id;await refreshPreview();
         }else if(action==='previous-batch'){
-          const job=await api('organization/groups/analysis?'+new URLSearchParams({id:form.elements.continue_job_id.value}));
-          drafts.set(job.request.group_id,{values:job.request,proposal:job.proposal});await choose(job.request.group_id,{preserve:true});
+          await resumeBatch(form.elements.continue_job_id.value);
         }else if(action==='review-one'){
           const reviewedBatch=proposal,requestGroup=selectedGroup;
           const member={task_id:Number(b.dataset.task),digest:b.dataset.digest};
@@ -259,10 +306,12 @@
           const saved=proposal, decisions=selectedDecisions();
           const result=await api('organization/groups/decisions',{proposal:saved,decisions});
           decisionDrafts.delete(saved.revision);try{sessionStorage.removeItem('evolvmem.review.decisions.'+saved.group_id);}catch(_){}
-          if(saved.job_id){const job=await api('organization/groups/analysis?'+new URLSearchParams({id:saved.job_id}));proposal=job.proposal;drawPreview();remember();}
-          else{proposal=null;$('[data-rg-preview]').replaceChildren();$('[data-rg=apply]').disabled=true;$('[data-rg-save-status]').textContent='审核结果已保存。';drafts.delete(selectedGroup);}
-          notice(`已保存审核结果：录入 ${result.included} 条；不录入 ${result.excluded} 条${result.guidance?'；已保存以后同类资料的归类依据':''}。`);
-          onDirty(false);await load();await onSaved();
+          const target=EvolvProjects.scopeLabel(saved,projects);
+          const message=`已保存审核结果：录入 ${result.included} 条；不录入 ${result.excluded} 条${result.guidance?'；已保存以后同类资料的归类依据':''}。`;
+          // Close the saved editor before refreshing anything. A failed refresh
+          // must never resurrect its stale prompt or invite a duplicate write.
+          receipt('审核结果已保存',`录入「${target}」${result.included} 条；不录入 ${result.excluded} 条。${result.excluded?'不录入仅针对这次选择的范围，资料仍可用于其他项目。':'可以选择左侧其他资料继续审核。'}`,saved.job_id);
+          await refreshSaved(message);
         }else if(action==='reprocess'){
           if(pendingTasks.length){notice('上一批来源还在重新整理，完成后可继续处理下一批。');return;}
           const result=await api('organization/groups/reprocess',{proposal});pendingTasks=result.items.map(t=>t.id);recoveryGroup=selectedGroup;
@@ -274,19 +323,28 @@
         }else if(action==='keep'||action==='aside'){
           const u=detail.items.find(x=>x.digest===form.elements.digest.value&&x.task_id===Number(form.elements.task_id.value));
           await api('organization/disposition',{task_id:u.task_id,digest:u.digest,expected_revision:u.revision,disposition:action==='keep'?'keep':'set_aside',reason:action==='aside'?'用户选择暂存，稍后判断':''});
-          invalidate();await load();if(action==='keep')try{await choose(null,{preserve:true,member:u});}catch(error){if(error.message!=='review_preview_changed')throw error;form.hidden=true;$('[data-rg-empty]').hidden=false;}else{form.hidden=true;$('[data-rg-empty]').hidden=false;}await onSaved();notice(action==='keep'?'已确认保留；未确定项目的资料可继续预览归类，已确定项目的会继续整理。':'已暂存，可在运行记录中恢复。');
+          const message=action==='keep'?'已确认保留；未确定项目的资料可继续归类，已确定项目的会继续整理。':'已暂存，可在运行记录中恢复。';
+          receipt(action==='keep'?'已确认保留':'这条资料已暂存',message);
+          await refreshSaved(message);
+          if(action==='keep')try{await choose(null,{preserve:true,member:u});}
+          catch(error){if(error.message!=='review_preview_changed')notice(message+' 详情暂时无法更新，请点击“刷新资料”。');}
+        }else if(action==='resume-batch'){
+          await resumeBatch();
         }else{
           if(action==='previous')page=Math.max(1,page-1);if(action==='next')page++;
-          remember();await load();if(action==='refresh'){if(pendingTasks.length)await checkRecovery();else if(selectedGroup)try{await choose(selectedGroup,{preserve:true});}catch(error){notice(messages[error.message]||error.message);}}
+          remember();await load();if(action==='refresh'){if(pendingTasks.length)await checkRecovery();else await refreshEditor();await onSaved();notice('资料已刷新。');}
         }
       }catch(error){
         notice(messages[error.message]||error.message);
-        if(['apply','reprocess'].includes(b.dataset.rg)&&proposal?.job_id){
+        if(b.dataset.rg==='apply'&&!['review_preview_changed','revision_conflict'].includes(error.message)){
+          // A failed write retains the user's choices for an explicit retry.
+          remember();
+        }else if(['apply','reprocess'].includes(b.dataset.rg)&&proposal?.job_id){
           try{const job=await api('organization/groups/analysis?'+new URLSearchParams({id:proposal.job_id}));proposal=job.proposal;drawPreview();remember();notice('已重新核对资料变化，未变化的判断已保留。请确认更新后的清单。');}
           catch(_){invalidate();}
         }else if(['apply','preview','reprocess'].includes(b.dataset.rg))invalidate();
       }
-      finally{busy=false;onBusy(false);}
+      finally{setBusy(false);}
     });
     await load();
     onReady();
@@ -318,15 +376,15 @@
     }
     history.querySelector('form').onsubmit=async e=>{e.preventDefault();historyPage=1;try{await historyLoad();}catch(error){history.querySelector('[data-history-status]').textContent=error.message;}};
     history.addEventListener('click',async e=>{
-      const b=e.target.closest('[data-progress-restore],[data-history-page]');if(!b||busy)return;e.preventDefault();e.stopPropagation();busy=true;onBusy(true);
+      const b=e.target.closest('[data-progress-restore],[data-history-page]');if(!b||busy)return;e.preventDefault();e.stopPropagation();setBusy(true);
       try{
         if(b.dataset.progressRestore!==undefined){const u=historyItems[Number(b.dataset.progressRestore)];await api('organization/disposition',{task_id:u.task_id,digest:u.digest,expected_revision:u.revision,disposition:'keep'});history.querySelector('[data-history-status]').textContent='已恢复，归属或价值尚未确认的条目会回到待审核。';await onSaved();await load();}
         else historyPage+=b.dataset.historyPage==='next'?1:-1;
         await historyLoad();
       }catch(error){history.querySelector('[data-history-status]').textContent=error.message;}
-      finally{busy=false;onBusy(false);}
+      finally{setBusy(false);}
     });
     await historyLoad();
-    return {refresh:load,poll:async()=>{if(!busy)await load();},resume:()=>{checkRecovery();checkAnalysis();}};
+    return {refresh:async()=>{await load();await refreshEditor();},poll:async()=>{if(!busy)await load();},resume:()=>{checkRecovery();checkAnalysis();}};
   }};
 })();

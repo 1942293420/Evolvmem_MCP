@@ -87,7 +87,7 @@ def model(prompt, *a, **kw):
             for row in data['segments']:
                 text=next(r['text'] for r in records if r['id']==row['start_id'])
                 if '审核条目' in text:row['title']=text.removeprefix('用户：')[:40]
-                if '保留价值演示' in text:row.update(disposition='review',disposition_reason='是否有长期价值需要用户决定')
+                if '保留价值演示' in text:row.update(title='保留价值演示二' if '保留价值演示二' in text else '保留价值演示',disposition='review',disposition_reason='是否有长期价值需要用户决定')
                 if '纯进度演示' in text:row.update(disposition='history_only',category='reference')
             return json.dumps(data,ensure_ascii=False)
         return result
@@ -262,7 +262,7 @@ if os.environ.get('EVOLVMEM_EFFICIENCY_FIXTURE')=='1':
         source=_Archiver(config,s.store).archive_session('','kimi',session,json.dumps({'messages':messages},ensure_ascii=False))
         knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{source.id}'}]})
 if os.environ.get('EVOLVMEM_WORKSPACE_FIXTURE')=='1':
-    for title,failed in [('保留价值演示',False),('重试失败演示',True)]:
+    for title,failed in [('保留价值演示',False),('保留价值演示二',False),('重试失败演示',True)]:
         source=_Archiver(config,s.store).archive_session('','kimi',title,json.dumps({'messages':[{'role':'user','content':'Evo 演示项目：'+title+'，导出必须保留编号与日期。'}]},ensure_ascii=False))
         task=knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{source.id}'}]})['items'][0]
         if failed:

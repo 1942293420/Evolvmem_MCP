@@ -18,6 +18,7 @@ const assert=require('node:assert/strict');const {chromium}=require(process.env.
   assert.equal(writes,1);await page.reload();await ready();assert.match(await form.locator('[data-rg-preview]').innerText(),/已人工处理：1 条/);
   const excluded=form.locator('li').filter({hasText:'已保存：不录入'});assert.equal(await excluded.count(),4);
   await excluded.nth(0).locator('[data-rg-pick]').check();await excluded.nth(1).locator('[data-rg-pick]').check();await form.locator('[data-rg=batch-include]').click();await save.click();await page.waitForFunction(()=>document.querySelector('[data-rg-status]')?.textContent.includes('录入 2 条'));
+  await page.locator('[data-rg=resume-batch]').click();await ready();
   assert.equal(writes,2);assert.equal(analyzes,1,'reversing saved exclusions does not call AI');assert.equal(await excluded.count(),2);
   await form.locator('.review-batch-toolbar').scrollIntoViewIfNeeded();await page.screenshot({path:'/tmp/evo-review-batch-decisions.png'});assert.deepEqual(errors,[]);
   console.log(JSON.stringify({checks:['零推荐仍显示保存按钮','批量勾选录入和不录入，保存前不写库','刷新保留待保存选择','混合结果一次保存','批量将已排除资料改为录入','宽屏手机无横向溢出'],errors}));

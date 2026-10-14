@@ -86,6 +86,20 @@ def _same_request(a,b):
     return all(a.get(k)==b.get(k) for k in keys)
 
 
+def _same_continuation(current, previous):
+    # A complete task leaves the review list after saving. Another task may
+    # anchor the next batch, but the business criteria and conversation stay bound.
+    if not _same_request({**current, 'group_id': previous.get('group_id')}, previous):
+        return False
+    if current.get('selection') == 'all':
+        return True
+    if current.get('selection') != 'group':
+        return False
+    sources = {u['source_key'] for u in previous['eligible'] + previous['excluded']}
+    current_sources = {u['source_key'] for u in current['eligible'] + current['excluded']}
+    return bool(current_sources) and current_sources <= sources
+
+
 def start(service, body, *, _cached_only=False):
     from evolvmem import organization_review as review
     request={k:body[k] for k in _REQUEST_FIELDS if k in body}
@@ -98,7 +112,7 @@ def start(service, body, *, _cached_only=False):
         if request.get('continue_job_id'):
             parent=_row(service,request['continue_job_id'])
             previous=_restore_request(service,parent,units)
-            if parent['status']!='completed' or not _same_request(base,previous['_preview']) or _signature(service,request)!=previous['_signature']:
+            if parent['status']!='completed' or not _same_continuation(base,previous['_preview']) or _signature(service,request)!=previous['_signature']:
                 raise ValueError('review_preview_changed')
             cutoff=conn.execute('SELECT rowid FROM organization_review_jobs WHERE id=?',(parent['id'],)).fetchone()[0]
             skipped=set()
