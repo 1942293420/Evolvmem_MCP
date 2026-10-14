@@ -163,3 +163,65 @@ def test_merging_fully_reviewed_fragments_preserves_their_common_decision(servic
     assert json.loads(current['projects']) == ['demo']
     worker._assign(service, org.task_view(service, task['id']))
     assert len(calls) == 2, 'already reviewed content must not be classified again'
+
+
+def test_reviewed_requirement_keeps_ownership_when_task_adds_assistant_progress(service, monkeypatch):
+    old, unit = legacy_unit(service)
+    # Legacy segmentation confirmed the user's request, but left the following
+    # assistant update outside its range (the production executor-heartbeat case).
+    end = unit['text'].index('\n\nAI：')
+    with service.store.transaction():
+        service.store._connection().execute(
+            "UPDATE organization_units SET decision='manual',project='demo',projects='[\"demo\"]',"
+            "text=?,source_end=? WHERE task_id=?", (unit['text'][:end], end, old['id']))
+    task = conversation_tasks.enqueue(service, [old['source_key']])['items'][0]
+    row = org._task_row(service, task['id'])
+    worker = org.OrganizationWorker(service.config)
+    worker._store_units(service, row, [{
+        'source_start':0, 'source_end':len(row['source_snapshot']),
+        'source_ranges':[[0,len(row['source_snapshot'])]],
+        'text':row['source_snapshot'], 'title':'原需求及后续处理',
+        'category':'task_requirement', 'project_hint':'', 'evidence_quote':''}])
+    conversation_tasks.protect_prior_decisions(service, row)
+    current = org.unit_views(service, task['id'])[0]
+    assert current['decision'] == 'manual'
+    assert json.loads(current['projects']) == ['demo']
+    assert current['task_record']['prior_decisions'][0]['project'] == 'demo'
+    monkeypatch.setattr(ownership_reasoning, 'analyze', lambda *a, **kw: (_ for _ in ()).throw(
+        AssertionError('an already reviewed task must not go back to ownership AI')))
+    worker._assign(service, org.task_view(service, task['id']))
+    from evolvmem.organization_review import groups
+    assert groups(service, {'task_id':task['id']})['total'] == 0
+
+
+def test_progress_inheritance_requires_reviewed_user_content_and_agreement():
+    from evolvmem.conversation import render
+    messages = [{'role':'user','content':'修复 Demo 心跳刷新'},
+                {'role':'assistant','content':'已补上进入页面和切回窗口刷新'}]
+    spans = message_spans(messages)
+    text = render(messages)
+    decision = {'project':'demo','projects':'["demo"]','knowledge_scope':'project','disposition':'keep'}
+    confirmed = [(decision, [[0,spans[0]['end']]])]
+    ranges = [[0,len(text)]]
+    assert conversation_tasks._covered_decision(text, ranges, confirmed, messages=messages) == decision
+    # Assistant-only fragments are not enough to establish a new task's owner.
+    assert conversation_tasks._covered_decision(text, ranges, [(decision, [[spans[1]['start'],spans[1]['end']]])], messages=messages) is None
+    conflicting = {**decision,'project':'other','projects':'["other"]'}
+    assert conversation_tasks._covered_decision(text, ranges, [*confirmed,(conflicting,[[spans[1]['start'],spans[1]['end']]])], messages=messages) is None
+    for role in ('user','unknown'):
+        changed = [messages[0], {'role':role,'content':'AI：另一个项目也需要修改'}]
+        changed_text = render(changed)
+        assert conversation_tasks._covered_decision(changed_text, [[0,len(changed_text)]], confirmed, messages=changed) is None
+
+
+def test_progress_inheritance_respects_disjoint_tasks_and_shared_scopes():
+    from evolvmem.conversation import render
+    messages = [{'role':'user','content':'修复心跳刷新'},
+                {'role':'user','content':'另一个任务：创建报表'},
+                {'role':'assistant','content':'心跳刷新修复完成'}]
+    spans = message_spans(messages)
+    ranges = [[0,spans[0]['end']],[spans[2]['start'],spans[2]['end']]]
+    for scope, projects in [('project',['demo','other']),('global',[])]:
+        decision = {'knowledge_scope':scope,'projects':projects,'disposition':'keep'}
+        confirmed = [(decision, [[0,spans[0]['end']]])]
+        assert conversation_tasks._covered_decision(render(messages), ranges, confirmed, messages=messages) == decision

@@ -9,6 +9,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.locator('[data-rg-list] button').filter({hasText:'完整任务演示'}).click();
   const narrative=page.locator('[data-rg-narrative]');
   await narrative.locator('dt').first().waitFor();
+  assert.equal(await page.locator('[data-rg-list] button').filter({hasText:'已确认归属演示'}).count(),0,'confirmed requirements with later repair progress must not reappear');
   for(const label of ['需求','原因','处理重点','结果'])assert.match(await narrative.innerText(),new RegExp(label));
   assert.match(await narrative.innerText(),/旧配置缺少迁移/);
   assert.match(await narrative.innerText(),/尚需你在电脑上验证/);
@@ -45,6 +46,6 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(await page.locator('[data-rg=complete-task]').count(),0);
   assert.match(await page.locator('#org-complete-status').innerText(),/已整理/);
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({checks:['完整任务单项审核','需求过程结果可读','同一窗口全文','多项目归类保存','默认完整任务流程无需转换按钮','三种宽度无溢出'],errors}));
+  console.log(JSON.stringify({checks:['已确认需求不因后续修复而再次待确认','完整任务单项审核','需求过程结果可读','同一窗口全文','多项目归类保存','默认完整任务流程无需转换按钮','三种宽度无溢出'],errors}));
  }catch(e){await page.screenshot({path:'/tmp/evo-complete-task-failed.png',fullPage:true});throw e;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

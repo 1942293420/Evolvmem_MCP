@@ -165,7 +165,7 @@ def enqueue(service,source_keys,*,expand=False):
 
 
 def protect_prior_decisions(service,task):
-    """Changed task boundaries cannot silently expand a previous human decision."""
+    """Keep reviewed ownership through regrouping and same-task progress."""
     from evolvmem import topic_segmentation, task_narrative
     conn=service.store._connection()
     source=snapshot(service,task['source_key'])
@@ -210,7 +210,7 @@ def protect_prior_decisions(service,task):
                 if old['text']==unit['text'] and old['decision']=='manual':
                     conn.execute("UPDATE organization_units SET decision='manual',project=?,projects=?,knowledge_scope=?,reason=?,disposition=? WHERE task_id=? AND digest=?",
                                  (old['project'],old['projects'],old['knowledge_scope'],old['reason'],old['disposition'],task['id'],unit['digest']))
-            target = _covered_decision(source['body'], ranges, confirmed)
+            target = _covered_decision(source['body'], ranges, confirmed, messages=source['messages'])
             if target:
                 conn.execute("UPDATE organization_units SET decision='manual',project=?,projects=?,knowledge_scope=?,reason=?,disposition=?,revision=revision+1 WHERE task_id=? AND digest=?",
                              (target['project'],target['projects'],target['knowledge_scope'],target['reason'],target['disposition'],task['id'],unit['digest']))
@@ -225,21 +225,43 @@ def protect_prior_decisions(service,task):
                                  (task['source_key'],unit['digest'],scope,_stamp(full),_now_iso()))
 
 
-def _covered_decision(text, ranges, confirmed):
-    """Reuse a unanimous decision only when it covers every nonblank source byte."""
+def _covered_decision(text, ranges, confirmed, *, messages=None):
+    """Keep unanimous ownership when only assistant progress extends a task.
+
+    User requirements must already be covered by exact reviewed coordinates.
+    Structural roles, not role-like text or a model summary, determine which
+    additions are assistant progress. Unknown authors and new user messages
+    still require review. Conflicting reviewed targets never inherit.
+    """
     if not confirmed or not ranges:return None
     from evolvmem import knowledge_scope as ks
     targets={(ks.scope(old),tuple(sorted(ks.projects(old))),old['disposition']) for old,_ in confirmed}
     if len(targets)!=1 or not ks.assigned(confirmed[0][0]):return None
     coverage=sorted(span for _,spans in confirmed for span in spans)
+    if _covered(text, ranges, coverage):return confirmed[0][0]
+    if not messages:return None
+    from evolvmem.topic_segmentation import message_spans
+    required=[];has_user=False
+    for message in message_spans(messages):
+        if message['role']=='assistant':continue
+        for start,end in ranges:
+            left,right=max(start,message['start']),min(end,message['end'])
+            if left>=right:continue
+            required.append([left,right])
+            has_user=has_user or message['role']=='user'
+    if has_user and _covered(text, required, coverage):return confirmed[0][0]
+    return None
+
+
+def _covered(text, ranges, coverage):
     for start,end in ranges:
         cursor=start
         for left,right in coverage:
             if right<=cursor or left>=end:continue
-            if text[cursor:min(left,end)].strip():return None
+            if text[cursor:min(left,end)].strip():return False
             cursor=max(cursor,min(right,end))
-        if text[cursor:end].strip():return None
-    return confirmed[0][0]
+        if text[cursor:end].strip():return False
+    return True
 
 
 def handled_members(service,*,finished=False):

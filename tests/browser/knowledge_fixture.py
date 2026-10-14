@@ -91,6 +91,7 @@ def model(prompt, *a, **kw):
                 if '审核条目' in text:row['title']=text.removeprefix('用户：')[:40]
                 if '保留价值演示' in text:row.update(title='保留价值演示二' if '保留价值演示二' in text else '保留价值演示',disposition='review',disposition_reason='是否有长期价值需要用户决定')
                 if '纯进度演示' in text:row.update(disposition='history_only',category='reference')
+                if '已确认归属演示' in text:row['title']='已确认归属演示'
             return json.dumps(data,ensure_ascii=False)
         return result
     if '你是业务资料归类核对员' in prompt:
@@ -278,6 +279,19 @@ if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
         {'role':'user','content':'继续修复同一个开关的更新问题和连接提示。'},
         {'role':'assistant','content':'已修复迁移和连接提示。尚需你在电脑上验证。'}]},ensure_ascii=False))
     enqueue_complete(s,[f'archive:{source.id}'])
+    # A confirmed requirement must stay confirmed when the complete-task view
+    # adds assistant progress that legacy fragment review did not cover.
+    from evolvmem import auto_organization as org
+    source=_Archiver(config,s.store).archive_session('','kimi','已确认归属演示',json.dumps({'messages':[
+        {'role':'user','content':'已确认归属演示：增加写入开关，默认关闭。'},
+        {'role':'assistant','content':'已修复开关更新，验收通过。'}]},ensure_ascii=False))
+    old=org.enqueue(s,[f'archive:{source.id}'])['items'][0]
+    row=org._task_row(s,old['id']);body=row['source_snapshot'];end=body.index('\n\nAI：')
+    OrganizationWorker(config)._store_units(s,row,[{'source_start':0,'source_end':end,'text':body[:end],
+        'title':'已确认的原需求','category':'task_requirement','project_hint':'','evidence_quote':''}])
+    with s.store.transaction():
+        s.store._connection().execute("UPDATE organization_units SET decision='manual',project='evo',projects='[\"evo\"]' WHERE task_id=?",(old['id'],))
+    progress_task=enqueue_complete(s,[f'archive:{source.id}'])['items'][0]
 if os.environ.get('EVOLVMEM_DEFAULT_UPGRADE_FIXTURE')=='1':
     import time
     from evolvmem import auto_organization as org, organization_task_upgrade as upgrade
@@ -302,6 +316,9 @@ if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
         if all(t['status'] in ('completed','review','failed','superseded') for t in tasks):break
         time.sleep(.1)
     print(json.dumps([{k:t.get(k) for k in ('source_key','status','stage','error_code','error_detail')} for t in tasks]),flush=True)
+    assert all(u['decision']=='manual' for u in org.unit_views(s,progress_task['id']))
+    from evolvmem.organization_review import groups
+    assert groups(s,{'task_id':progress_task['id']})['total']==0
     # Historical window stitching repeated the same requirement, and manual
     # classification legitimately has no ownership_analysis chain.
     with s.store.transaction():
