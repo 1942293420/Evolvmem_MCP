@@ -17,26 +17,33 @@ def _has_uploads(service):
 
 
 def _excluded_archive_ids(service):
-    """Archives whose upload recorded a verified system source. Never organized.
+    """Archives with verified native system-source metadata. Never organized.
 
-    Only the native attribution reason decides; the archived body is never read
-    here. A store without LAN uploads has no such source, and an unreadable
-    state degrades to "nothing excluded" instead of breaking discovery.
+    Both explicit local repair and LAN receipts contribute verified exclusions;
+    archived body text is never read here. Local verification is bound to the
+    payload digest, so replacement bytes do not inherit an old exclusion.
     """
     from evolvmem.lan_capture import EXCLUDED_REASONS
+    conn=service.store._connection()
+    excluded={r[0] for r in conn.execute('SELECT e.archive_id FROM archive_source_exclusions e '
+        'JOIN session_archives a ON a.id=e.archive_id AND a.payload_sha256=e.payload_sha256')}
     if not _has_uploads(service) or not EXCLUDED_REASONS:
-        return set()
+        return excluded
     placeholders = ','.join('?' for _ in EXCLUDED_REASONS)
     try:
-        return {int(row[0]) for row in service.store._connection().execute(
+        return excluded | {int(row[0]) for row in conn.execute(
             f'SELECT DISTINCT archive_id FROM lan_session_uploads WHERE archive_id IS NOT NULL '
             f'AND attribution_reason IN ({placeholders})', tuple(sorted(EXCLUDED_REASONS)))}
     except sqlite3.Error:
-        return set()
+        return excluded
 
 
 def source_excluded(service, key):
     """True when this source key is a verified system source, at any stage."""
+    if str(key).startswith('conversation:'):
+        from evolvmem.conversation_tasks import members
+        excluded=_excluded_archive_ids(service)
+        return any(k.startswith('archive:') and int(k.split(':')[1]) in excluded for k in members(service,key))
     match = re.fullmatch(r'archive:([1-9][0-9]*)', str(key))
     return bool(match) and int(match[1]) in _excluded_archive_ids(service)
 
@@ -73,6 +80,7 @@ def _unassigned_archives(service):
 
 def _source_record(service, key, *, visible=None):
     from evolvmem import conversation_tasks
+    if source_excluded(service,key):raise ValueError('classification_source_changed')
     if conversation_tasks.is_conversation(key):
         return conversation_tasks.snapshot(service,key,visible=visible)
     match = re.fullmatch(r'(archive|item):([1-9][0-9]*)', str(key))

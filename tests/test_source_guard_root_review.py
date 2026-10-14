@@ -8,6 +8,15 @@ from evolvmem.session_archive import SessionArchiver
 from evolvmem.auto_organization import reconcile_sources, unit_views
 
 
+def task_for_archive(service, archive_id):
+    from evolvmem.auto_organization import task_view
+    row=service.store._connection().execute(
+        "SELECT t.id FROM organization_tasks t JOIN organization_conversations c ON c.source_key=t.source_key "
+        "WHERE ? IN (SELECT value FROM json_each(c.members)) ORDER BY t.id DESC LIMIT 1",
+        (f'archive:{archive_id}',)).fetchone()
+    return task_view(service,row[0]) if row else tasks(service)[f'archive:{archive_id}']
+
+
 def test_completed_automatic_history_is_retired_when_full_snapshot_advances(service, config, monkeypatch):
     archiver = SessionArchiver(config, service.store)
     auto_new(service)
@@ -15,14 +24,14 @@ def test_completed_automatic_history_is_retired_when_full_snapshot_advances(serv
                                   payload_for('demo 项目必须保留导入来源。'))
     discover(service)
     run_worker(service, monkeypatch, model_for(service, projects={'demo'}))
-    before = tasks(service)[f'archive:{old.id}']
+    before = task_for_archive(service,old.id)
     assert before['status'] == 'completed'
     units = unit_views(service, before['id'])
     assert units and all(u['decision'] != 'manual' for u in units)
     newer = archiver.archive_session('', 'codex', windows_external(['device', 'done-session'], 'b'*64),
                                     payload_for('demo 项目必须保留导入来源和时间。'))
     discover(service)
-    assert tasks(service)[f'archive:{old.id}']['status'] == 'superseded'
+    assert task_for_archive(service,old.id)['status'] == 'superseded'
 
 
 def test_legacy_newer_version_is_not_hidden_by_twenty_unrelated_archives(service, config):
@@ -38,7 +47,7 @@ def test_legacy_newer_version_is_not_hidden_by_twenty_unrelated_archives(service
                                     payload_for('新来源正文。'))
     for _ in range(3):
         reconcile_sources(service, limit=2)
-    assert tasks(service)[f'archive:{old.id}']['status'] == 'superseded'
+    assert task_for_archive(service,old.id)['status'] == 'superseded'
 
 
 def test_independent_source_keeps_shared_history_active_after_task_retires(service, config, monkeypatch):
@@ -50,7 +59,7 @@ def test_independent_source_keeps_shared_history_active_after_task_retires(servi
                                   payload_for('demo 项目必须保留导入来源。'))
     discover(service)
     run_worker(service, monkeypatch, model_for(service, projects={'demo'}))
-    task = tasks(service)[f'archive:{old.id}']
+    task = task_for_archive(service,old.id)
     unit = unit_views(service, task['id'])[0]
     other = archiver.archive_session('demo', 'kimi', 'independent-chat', payload_for('独立的业务依据。'))
     with service.store.transaction():
@@ -70,7 +79,7 @@ def test_retired_shared_outputs_do_not_spend_the_next_reconcile_budget(service, 
                                   payload_for('demo 项目必须保留导入来源。'))
     discover(service)
     run_worker(service, monkeypatch, model_for(service, projects={'demo'}))
-    task = tasks(service)[f'archive:{old.id}']
+    task = task_for_archive(service,old.id)
     iid = unit_views(service, task['id'])[0]['item_id']
     other = archiver.archive_session('demo', 'kimi', 'other-provenance', payload_for('独立依据。'))
     with service.store.transaction():

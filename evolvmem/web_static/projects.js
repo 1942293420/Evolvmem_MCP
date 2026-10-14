@@ -56,8 +56,8 @@ window.EvolvTaskContext={async render({mount,api,esc,query}){
     if(mount._contextRequest!==token||!mount.isConnected)return false;
     const contexts=data.contexts||[data],pageSize=12,partSize=8000;
     mount.innerHTML=contexts.map((context,ci)=>{
-      const stages=(context.stages||[]).map(s=>`<div class="task-context-stage"><strong>${esc(s.title)}</strong>${s.quote?`<blockquote>${esc(s.quote)}</blockquote>`:'<p>尚未识别到对应原话，请结合下方原文核对。</p>'}</div>`).join('');
-      return `<section class="task-context"><h3>需求起点与任务原文</h3>${(context.notices||[]).map(t=>`<p class="review-question">${esc(t)}</p>`).join('')}${stages?`<details class="task-context-stages"><summary>需求、过程与结果的核对依据</summary>${stages}</details>`:''}<div class="actions"><button type="button" data-context-start="${ci}">回到原文开头</button><button type="button" data-context-locate="${ci}">定位当前记忆</button></div><div class="actions task-context-pager"><button type="button" data-context-previous="${ci}">上一页原文</button><span data-context-page="${ci}" role="status"></span><button type="button" data-context-next="${ci}">下一页原文</button></div><div data-context-records="${ci}"></div></section>`;
+      const stages=(context.stages||[]).filter(s=>s.quote).map(s=>`<div class="task-context-stage"><strong>${esc(s.title)}</strong><blockquote>${esc(s.quote)}</blockquote></div>`).join('');
+      return `<section class="task-context"><h3>需求起点与任务原文</h3>${(context.notices||[]).map(t=>`<p class="review-question">${esc(t)}</p>`).join('')}${stages?`<details class="task-context-stages"><summary>需求、过程与结果的核对依据</summary>${stages}</details>`:context.source_excluded?'':'<p>这条资料尚未整理出任务经过，下面保留完整原文供核查。</p>'}<div class="actions"><button type="button" data-context-start="${ci}">回到原文开头</button><button type="button" data-context-locate="${ci}">定位当前记忆</button></div><div class="actions task-context-pager"><button type="button" data-context-previous="${ci}">上一页原文</button><span data-context-page="${ci}" role="status"></span><button type="button" data-context-next="${ci}">下一页原文</button></div><div data-context-records="${ci}"></div></section>`;
     }).join('');
     contexts.forEach((context,ci)=>{
       const parts=[];

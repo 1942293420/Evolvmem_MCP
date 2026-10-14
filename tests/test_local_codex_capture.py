@@ -898,7 +898,8 @@ def test_archived_batch_is_discoverable_by_auto_new(service, roots):
     from evolvmem.organization_arrival import discover_new
     result = discover_new(service)
     assert result['enabled'] is True and result['created'] == 1
-    assert result['items'][0]['source_key'] == 'archive:%d' % archives(service)[-1]['id']
+    from evolvmem.conversation_tasks import members
+    assert members(service,result['items'][0]['source_key']) == ['archive:%d' % archives(service)[-1]['id']]
 
 
 def test_disabled_config_is_never_scanned(service, roots):

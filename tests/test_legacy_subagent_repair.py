@@ -1,5 +1,6 @@
 """Historical uploads predating native source validation must not poison recall."""
 import json
+import hashlib
 
 from tests.test_source_eligibility_repair import (
     lan, upload, system_subagent_transcript, user_fork_transcript,
@@ -8,6 +9,53 @@ from evolvmem import history_memory, memory_recall
 from evolvmem.context_store import _now_iso
 from evolvmem.legacy_models import LegacyExtractionItem, LegacyExtractionRequest
 from evolvmem.session_archive import SessionArchiver
+
+
+def test_local_archive_without_upload_receipt_is_repaired_and_cannot_be_organized(lan):
+    from evolvmem import history_organization, conversation_tasks, auto_organization as org
+    runtime,_=lan;service=runtime.server_for('jiangli').context_service
+    raw=system_subagent_transcript('local-guardian').decode()
+    archive=SessionArchiver(service.config,service.store).archive_session('', 'codex', 'local-old',
+        json.dumps({'session_id':'local-guardian','transcript':raw}))
+    key=f'archive:{archive.id}'
+    # Emulate an already organized local archive, before this repair existed.
+    with service.store.transaction():
+        service.store._connection().execute("UPDATE conversation_history SET messages=?,body=? WHERE archive_id=?",
+            (json.dumps([{'role':'user','content':'重复检查副本'}]),'用户：重复检查副本',archive.id))
+    task=conversation_tasks.enqueue(service,[key])['items'][0]
+    result=repair(service,apply=True)
+    assert archive.id in result['excluded_archive_ids']
+    assert history_organization.source_excluded(service,key)
+    assert history_organization.source_excluded(service,task['source_key'])
+    assert not org.task_view(service,task['id'])['source_current']
+    assert org.task_view(service,task['id'])['status']=='superseded'
+    assert SessionArchiver(service.config,service.store).read_payload(archive.id)
+    assert not conversation_tasks.enqueue(service,[task['source_key']])['items']
+
+
+def test_native_subagent_payload_is_not_readable_user_dialogue():
+    from evolvmem.conversation import from_payload
+    payload={'session_id':'guardian-1','transcript':system_subagent_transcript('guardian-1').decode(),
+             'conversation':[{'role':'user','content':'内部复制的用户问题'}]}
+    assert from_payload(payload)==[]
+    payload['session_id']='user-fork';payload['transcript']=user_fork_transcript('user-fork').decode()
+    assert from_payload(payload), 'ordinary user forks and quoted keywords remain dialogue'
+
+
+def test_later_local_batch_uses_matching_native_header_not_body_keywords(lan,tmp_path):
+    runtime,_=lan;service=runtime.server_for('jiangli').context_service
+    sid='later-guardian';path=tmp_path/'rollout.jsonl';path.write_bytes(system_subagent_transcript(sid))
+    external=hashlib.sha256(sid.encode()).hexdigest()[:32]+':401-412:'+'a'*16
+    payload={'conversation':[{'role':'user','content':'任意业务文字，正文不参与判断。'}],
+             'transcript':'', 'source':{'kind':'local_codex_jsonl','session_id':sid,'file':str(path)}}
+    archive=SessionArchiver(service.config,service.store).archive_session('','codex',external,json.dumps(payload))
+    assert archive.id in repair(service)['excluded_archive_ids']
+    path.write_bytes(system_subagent_transcript('different-session'))
+    assert archive.id not in repair(service)['excluded_archive_ids']
+    path.write_bytes(user_fork_transcript(sid))
+    assert archive.id not in repair(service)['excluded_archive_ids']
+    path.unlink()
+    assert archive.id not in repair(service)['excluded_archive_ids']
 
 
 def legacy(lan, session='guardian-1'):

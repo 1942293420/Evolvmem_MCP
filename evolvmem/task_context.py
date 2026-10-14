@@ -80,6 +80,10 @@ def collect(service, unit, *, include_background=True):
     row=conn.execute('SELECT * FROM organization_tasks WHERE id=?',(unit.get('task_id'),)).fetchone()
     if row is None:
         return {'records':[],'notices':['未找到关联的原始会话，请核对资料来源。'],'revision':_hash(['missing',unit.get('task_id')])}
+    from evolvmem.history_organization import source_excluded
+    if source_excluded(service,row['source_key']):
+        return {'records':[],'notices':['这份来源是系统内部检查副本，已停止作为业务原文使用。原始档案与人工判断仍保留，请从真实会话核查。'],
+                'source_excluded':True,'revision':_hash(['excluded',row['source_key']])}
     from evolvmem import conversation_tasks, topic_segmentation
     if conversation_tasks.is_conversation(row['source_key']):
         from evolvmem import auto_organization as org, task_narrative
@@ -171,11 +175,29 @@ def read(service, body):
     from evolvmem import auto_organization as org, ownership_reasoning as reasoning
     unit=org.find_unit(service,int(body.get('task_id') or 0),str(body.get('digest') or ''))
     result=collect(service,unit)
+    if result.get('source_excluded'):
+        result.update(analysis={},stages=[])
+        return result
     analysis=reasoning.validated(unit)
     result['analysis']=analysis
-    result['stages']=[{'key':k,'title':label,'quote':analysis.get('chain',{}).get(k,''),
-                      'state':'recorded' if analysis.get('chain',{}).get(k) else 'not_identified'}
-                     for k,label in reasoning.STAGES.items()]
+    from evolvmem import task_narrative
+    narrative=task_narrative.read(unit.get('task_record'))
+    stages=[]
+    for key,label in reasoning.STAGES.items():
+        field={'need':'requirement','analysis':'analysis','change':'steps','result':'result'}[key]
+        entries=narrative.get(field) or []
+        if isinstance(entries,dict):entries=[entries]
+        refs=[]
+        for entry in entries:
+            for ref in entry.get('evidence',[]):
+                if ref.get('quote') and ref['quote'] in unit['text'] and ref not in refs:refs.append(ref)
+        # Task reconstruction precedes classification. An undecided project or
+        # manual classification need not have an ownership chain at all.
+        quote='\n\n'.join(dict.fromkeys(r['quote'] for r in refs))
+        if not quote:quote=analysis.get('chain',{}).get(key,'')
+        stages.append({'key':key,'title':label,'quote':quote,'evidence':refs,
+                       'state':'recorded' if quote else 'not_identified'})
+    result['stages']=stages
     return result
 
 

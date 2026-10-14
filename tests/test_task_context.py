@@ -6,6 +6,32 @@ from tests.unit_model_fixture import model_for, run_worker
 from evolvmem import ownership_reasoning as reasoning
 
 
+def test_complete_task_stages_use_narrative_evidence_without_ownership_analysis(service,monkeypatch):
+    from evolvmem import task_context, task_narrative
+    tid,unit=make_task(service,monkeypatch,'需求：增加开关。原因：缺少配置。处理：补充设置。结果：尚待验收。')
+    record={'version':task_narrative.VERSION}
+    for key,quote in [('requirement','增加开关'),('analysis','缺少配置'),('steps','补充设置'),('result','尚待验收')]:
+        entry={'text':quote,'evidence':[{'message':1,'role':'user','quote':quote}]}
+        record[key]=entry if key=='result' else [entry]
+    with service.store.transaction():
+        service.store._connection().execute('UPDATE organization_units SET task_record=?,ownership_analysis=? WHERE task_id=?',
+            (json.dumps(record),'{}',tid))
+    got=task_context.read(service,{'task_id':tid,'digest':unit['digest']})
+    assert [x['quote'] for x in got['stages']]==['增加开关','缺少配置','补充设置','尚待验收']
+    assert all(x['state']=='recorded' for x in got['stages'])
+
+
+def test_stages_never_show_narrative_quotes_absent_from_task_source(service,monkeypatch):
+    from evolvmem import task_context,task_narrative
+    tid,unit=make_task(service,monkeypatch,'增加开关，尚无结果。')
+    record={'version':task_narrative.VERSION,'result':{'text':'成功','evidence':[{'role':'user','quote':'验收通过'}]}}
+    with service.store.transaction():
+        service.store._connection().execute('UPDATE organization_units SET task_record=?,ownership_analysis=? WHERE task_id=?',
+            (json.dumps(record),'{}',tid))
+    got=task_context.read(service,{'task_id':tid,'digest':unit['digest']})
+    assert not any(s['quote']=='验收通过' for s in got['stages'])
+
+
 def make_task(service,monkeypatch,text,*,start=1,end=3,session=SESSION):
     source=craft(service,session=session,start=start,end=end,text=text)
     tid=enqueue(service,source.id)

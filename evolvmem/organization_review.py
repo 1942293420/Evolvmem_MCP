@@ -81,6 +81,7 @@ def groups(service, options=None):
 
 
 def detail(service, body):
+    from evolvmem.task_narrative import read as narrative
     group = next((g for g in _groups(service) if g['id'] == body.get('group_id') or
                   (not body.get('group_id') and any(str(u['task_id']) == str(body.get('task_id')) and
                    u['digest'] == body.get('digest') for u in g['members']))), None)
@@ -88,7 +89,7 @@ def detail(service, body):
         raise ValueError('review_preview_changed')
     return {k: v for k, v in group.items() if k != 'members'} | {
         'items': [_brief(u) | {k: u[k] for k in ('text', 'reason', 'disposition', 'disposition_reason')} |
-                  {'task_record':json.loads(u.get('task_record') or '{}')}
+                  {'task_record':narrative(u.get('task_record'))}
                   for u in group['members']]}
 
 

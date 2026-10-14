@@ -80,6 +80,9 @@ def from_payload(payload, *, policy=None):
         payload = json.loads(payload)
     if not isinstance(payload, dict):
         return []
+    from evolvmem.codex_transcript import payload_is_subagent
+    if payload_is_subagent(payload):
+        return []
     if isinstance(payload.get('conversation'), list):
         return clean_messages(payload['conversation'], policy=policy)
     if isinstance(payload.get('messages'), list):

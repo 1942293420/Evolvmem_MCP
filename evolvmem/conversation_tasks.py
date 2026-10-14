@@ -44,6 +44,7 @@ def register(service,source_keys,*,expand=False):
     visible={r['id'] for r in _unassigned_archives(service)}
     groups={}
     for key in dict.fromkeys(source_keys):
+        if source_excluded(service,key):continue
         if is_conversation(key):
             row=service.store._connection().execute('SELECT identity FROM organization_conversations WHERE source_key=?',(key,)).fetchone()
             if row is None:raise ValueError('conversation_not_found')
@@ -84,7 +85,8 @@ def register(service,source_keys,*,expand=False):
 
 def revision(service,key,*,visible=None):
     """Check current membership/revisions without assembling every message."""
-    from evolvmem.history_organization import _unassigned_archives
+    from evolvmem.history_organization import _unassigned_archives, source_excluded
+    if source_excluded(service,key):raise ValueError('classification_source_changed')
     from evolvmem.knowledge_cleaning import record,review
     if visible is None:visible={r['id'] for r in _unassigned_archives(service)}
     values=[]

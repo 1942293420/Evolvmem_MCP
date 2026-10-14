@@ -299,6 +299,14 @@ if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
         if all(t['status'] in ('completed','review','failed','superseded') for t in tasks):break
         time.sleep(.1)
     print(json.dumps([{k:t.get(k) for k in ('source_key','status','stage','error_code','error_detail')} for t in tasks]),flush=True)
+    # Historical window stitching repeated the same requirement, and manual
+    # classification legitimately has no ownership_analysis chain.
+    with s.store.transaction():
+        for row in s.store._connection().execute("SELECT task_id,digest,task_record FROM organization_units WHERE task_record!='{}'").fetchall():
+            value=json.loads(row['task_record'])
+            if value.get('requirement'):value['requirement']*=10
+            s.store._connection().execute("UPDATE organization_units SET task_record=?,ownership_analysis='{}' WHERE task_id=? AND digest=?",
+                (json.dumps(value,ensure_ascii=False),row['task_id'],row['digest']))
 print('Temporary browser fixture ready',flush=True)
 try:server.serve_forever()
 finally:

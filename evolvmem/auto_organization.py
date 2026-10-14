@@ -1015,6 +1015,7 @@ def task_detail(service, task_id):
 def unit_views(service, task_id):
     from evolvmem.organization_diagnostics import describe
     from evolvmem.ownership_reasoning import decode
+    from evolvmem.task_narrative import read as narrative
     feedback = {r['digest']: dict(r) for r in service.store._connection().execute(
         'SELECT * FROM organization_review_feedback WHERE task_id=?', (task_id,))}
     rows = service.store._connection().execute(
@@ -1025,7 +1026,7 @@ def unit_views(service, task_id):
                          if feedback.get(row['digest'], {}).get('unit_revision') == _unit_revision(row) else '',
              'context': organization_context.decode(row['context_basis']),
              'business_analysis': decode(row['ownership_analysis']),
-             'task_record': decode(row['task_record'])} for row in rows]
+             'task_record': narrative(row['task_record'])} for row in rows]
 
 
 def find_unit(service, task_id, digest):
