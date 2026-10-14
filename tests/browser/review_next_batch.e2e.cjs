@@ -1,4 +1,4 @@
-// Real provider stub and HTTP fixture with 105 review fragments.
+// Real provider stub and HTTP fixture with 25 review fragments.
 const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 (async()=>{
@@ -11,19 +11,19 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.locator('[data-rg-list] > *').filter({hasText:'审核条目'}).first().locator('button').click();
   const form=page.locator('[data-rg-form]');await form.locator('[name=projects][value=evo]').check();await form.locator('[name=selection]').selectOption('group');
   await form.locator('[name=condition]').fill('编号处理保留原始值。');await form.locator('[name=exceptions]').fill('跨平台条件另行判断。');
-  await form.locator('[data-rg=preview]').click();await ready(100);
-  assert.match(await form.locator('[data-rg-preview]').innerText(),/判断 100 条/);
+  await form.locator('[data-rg=preview]').click();await ready(20);
+  assert.match(await form.locator('[data-rg-preview]').innerText(),/判断 20 条/);
   await form.locator('[data-rg=select-batch]').click();await form.locator('[data-rg=batch-include]').click();await form.locator('[data-rg=apply]').click();
   await page.waitForFunction(()=>document.querySelector('[data-rg-form]').hidden);
-  await page.locator('[data-rg=resume-batch]').click();await ready(100);
+  await page.locator('[data-rg=resume-batch]').click();await ready(20);
   assert.equal(jobs.length,1,'continuing saved review reads existing results');
   await Promise.all([page.waitForResponse(r=>r.url().endsWith('/groups/analyze')),form.locator('[data-rg=next-batch]').click()]);await ready(5);
   assert.match(await form.locator('[data-rg-preview]').innerText(),/判断 5 条/);assert.equal(jobs[1].total,5);
   const second=jobs[1].id;
-  await form.locator('[data-rg=previous-batch]').click();await ready(100);assert.match(await form.locator('[data-rg-preview]').innerText(),/判断 100 条/);
+  await form.locator('[data-rg=previous-batch]').click();await ready(20);assert.match(await form.locator('[data-rg-preview]').innerText(),/判断 20 条/);
   assert.equal(await form.locator('[data-rg=apply]').isEnabled(),false,'previously saved decisions must not be offered again');
   await Promise.all([page.waitForResponse(r=>r.url().endsWith('/groups/analyze')),form.locator('[data-rg=next-batch]').click()]);await ready(5);assert.equal(jobs[2].id,second);
   await page.reload();await ready(5);assert.match(await form.locator('[data-rg-preview]').innerText(),/判断 5 条/);assert.equal(jobs.length,3,'reload creates no job');
-  assert.deepEqual(errors,[]);console.log(JSON.stringify({checks:['保存前 100 条后继续剩余 5 条，未切到其他会话','原先选中项已处理后仍可返回上一批，已保存项不再提供','重复下一批复用结果，刷新保留批次且不启动 AI'],errors},null,2));
+  assert.deepEqual(errors,[]);console.log(JSON.stringify({checks:['保存前 20 条后继续剩余 5 条，未切到其他会话','原先选中项已处理后仍可返回上一批，已保存项不再提供','重复下一批复用结果，刷新保留批次且不启动 AI'],errors},null,2));
  }catch(e){await page.screenshot({path:'/tmp/evo-next-batch-failed.png',fullPage:true});throw e;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

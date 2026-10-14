@@ -141,3 +141,25 @@ def test_new_arrival_does_not_summarize_unchanged_task_again(service,monkeypatch
     units=org.unit_views(service,current['id'])
     assert len(units)==2 and units[0]['task_record']==previous
     assert len(calls)==2
+
+
+def test_merging_fully_reviewed_fragments_preserves_their_common_decision(service, monkeypatch):
+    old, unit = legacy_unit(service)
+    second = craft(service, session=SESSION, start=5, end=8,
+                   text='同一开关更新失败，修复后仍待实际验收。')
+    other = org.enqueue(service, [f'archive:{second.id}'])['items'][0]
+    row = org._task_row(service, other['id'])
+    text = row['source_snapshot']
+    org.OrganizationWorker(service.config)._store_units(service, row, [{
+        'source_start':0, 'source_end':len(text), 'text':text, 'title':'已确认的后续修复',
+        'category':'task_requirement', 'project_hint':'', 'evidence_quote':''}])
+    with service.store.transaction():
+        service.store._connection().execute(
+            "UPDATE organization_units SET decision='manual',project='demo',projects='[\"demo\"]' WHERE task_id IN (?,?)",
+            (old['id'], other['id']))
+    task, worker, calls = prepare(service, monkeypatch)
+    current = org.unit_views(service, task['id'])[0]
+    assert current['decision'] == 'manual'
+    assert json.loads(current['projects']) == ['demo']
+    worker._assign(service, org.task_view(service, task['id']))
+    assert len(calls) == 2, 'already reviewed content must not be classified again'

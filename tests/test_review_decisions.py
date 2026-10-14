@@ -28,6 +28,18 @@ def test_save_mixed_choices_only_changes_named_rows(service, monkeypatch):
     assert len(calls) == 3
 
 
+def test_saved_complete_batch_is_not_offered_for_review_again(service, monkeypatch):
+    _, request, calls, job, p = prepare(service, monkeypatch)
+    save(service,p,[choice(u,'include' if i==0 else 'exclude') for i,u in enumerate(p['eligible'])])
+    assert semantic.recent(service)['job'] is None
+    assert semantic.get(service,job['id'])['proposal']['handled_count']==1
+    import json
+    old=json.loads(semantic._row(service,job['id'])['request']);old.pop('_applied')
+    with service.store.transaction():
+        service.store._connection().execute('UPDATE organization_review_jobs SET request=? WHERE id=?',(json.dumps(old),job['id']))
+    assert semantic.recent(service)['job'] is None, 'old saved batches must also stay closed'
+
+
 def test_all_excluded_can_be_batch_included_without_new_ai(service, monkeypatch):
     tid, request, calls, job, p = prepare(service, monkeypatch)
     save(service, p, [choice(u, 'exclude') for u in p['eligible']])
@@ -87,14 +99,12 @@ def test_reversing_one_scope_preserves_other_scope_exclusion(service, monkeypatc
     assert [r[0] for r in service.store._connection().execute('SELECT scope_key FROM organization_scope_exclusions')] == ['project:dsh']
 
 
-def test_refresh_can_reopen_remaining_choices_after_anchor_was_included(service, monkeypatch):
+def test_completed_choices_remain_readable_without_automatic_reopening(service, monkeypatch):
     tid, request, calls, job, p = prepare(service, monkeypatch)
     a, b, c = p['eligible']
     save(service, p, [choice(a, 'include'), choice(b, 'exclude'), choice(c, 'exclude')])
-    restored = semantic.recent(service)['job']
-    assert restored is not None
-    from evolvmem import organization_review as review
-    assert review.detail(service, {'group_id': restored['resume_group_id']})['items']
+    assert semantic.recent(service)['job'] is None
+    restored = semantic.get(service,job['id'])
     assert len(restored['proposal']['excluded']) == 2 and len(calls) == 3
 
 
@@ -142,7 +152,7 @@ def test_hundred_item_batch_saves_mixed_choices(service, monkeypatch):
     tid, request, calls = setup_job(service, monkeypatch, count=100)
     job = semantic.start(service, request); semantic.tick(service)
     p = semantic.get(service, job['id'])['proposal']
-    result = save(service, p, [choice(u, 'include' if i < 50 else 'exclude') for i, u in enumerate(p['eligible'])])
-    assert result['included'] == result['excluded'] == 50
-    assert service.store._connection().execute('SELECT COUNT(*) FROM organization_scope_exclusions').fetchone()[0] == 50
-    assert len(calls) == 100
+    result = save(service, p, [choice(u, 'include' if i < 10 else 'exclude') for i, u in enumerate(p['eligible'])])
+    assert result['included'] == result['excluded'] == 10
+    assert service.store._connection().execute('SELECT COUNT(*) FROM organization_scope_exclusions').fetchone()[0] == 10
+    assert len(calls) == 20

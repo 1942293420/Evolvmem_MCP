@@ -13,6 +13,8 @@ HINTS['纯进度演示']=''
 PROJECTS={'evo','dsh-a','dsh-b'}
 config=Config(data_dir=Path(tempfile.mkdtemp(prefix='evo-p1-browser-')))
 s=_make_service(config,mode=ContextMode.SHADOW)
+from tests.review_embedding_fixture import ReviewEmbedding
+s.embedding_engine = ReviewEmbedding()
 s.knowledge().save_project({'project':'evo','display_name':'Evo 演示项目'})
 s.knowledge().save_project({'project':'old-evo','display_name':'旧版 Evo 演示项目'})
 s.knowledge().save_project({'project':'dsh-a','display_name':'DSH'})
@@ -257,7 +259,7 @@ if _auto:
         knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{_batch.id}'}]})
 if os.environ.get('EVOLVMEM_EFFICIENCY_FIXTURE')=='1':
     for session,messages in [
-        ('集中审核演示',[{'role':'user','content':f'审核条目{i:02d}：编号处理必须保留原始编号。'+('跨平台条件需要另行核对。' if i>=10 else '')} for i in range(105 if os.environ.get('EVOLVMEM_REVIEW_MANY_FIXTURE')=='1' else 12)]),
+        ('集中审核演示',[{'role':'user','content':f'审核条目{i:02d}：编号处理必须保留原始编号。'+('跨平台条件需要另行核对。' if i>=10 else '')} for i in range(25 if os.environ.get('EVOLVMEM_REVIEW_MANY_FIXTURE')=='1' else 12)]),
         ('进度历史演示',[{'role':'assistant','content':'纯进度演示：正在核对上一轮测试，接下来继续检查界面。'}])]:
         source=_Archiver(config,s.store).archive_session('','kimi',session,json.dumps({'messages':messages},ensure_ascii=False))
         knowledge_dispatch(s,'POST','organization/tasks',{'items':[{'key':f'archive:{source.id}'}]})
@@ -292,6 +294,7 @@ if os.environ.get('EVOLVMEM_DEFAULT_UPGRADE_FIXTURE')=='1':
         return {'created':0,'examined':0} if time.monotonic()<deadline else advance(service,**kwargs)
     upgrade.advance=delayed
 _worker=OrganizationWorker(config,mode=ContextMode.SHADOW).start() if _auto else None
+if _worker:_worker._connect().embedding_engine=ReviewEmbedding()
 if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
     import time
     for _ in range(100):

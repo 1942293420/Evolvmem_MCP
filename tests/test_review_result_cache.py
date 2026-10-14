@@ -129,8 +129,8 @@ def test_hundred_results_remain_saveable_after_unrelated_arrival(service,monkeyp
     before=semantic.get(service,job['id'])['proposal']
     group_source(service,monkeypatch,session='after-hundred',count=1)
     after=semantic.get(service,job['id'])['proposal']
-    assert before==after and len(after['eligible'])==100 and len(calls)==100
-    assert org(service,'/groups/apply',{'proposal':after})['succeeded']==100
+    assert before==after and len(after['eligible'])==20 and len(calls)==20
+    assert org(service,'/groups/apply',{'proposal':after})['succeeded']==20
 
 
 def test_extraction_bookkeeping_does_not_invalidate_review(service,monkeypatch):
@@ -180,13 +180,13 @@ def test_reprocessed_source_leaves_stale_cache_without_rejudging_unchanged_items
 
 
 def test_next_batch_judges_unseen_items_and_repeated_preview_reuses_it(service,monkeypatch):
-    _,request,calls=setup_job(service,monkeypatch,count=105)
+    _,request,calls=setup_job(service,monkeypatch,count=25)
     job=semantic.start(service,request);semantic.tick(service)
-    assert len(calls)==100
+    assert len(calls)==20
     continued={**request,'continue_job_id':job['id']}
     next_job=semantic.start(service,continued);semantic.tick(service)
     result=semantic.get(service,next_job['id'])
-    assert next_job['id']!=job['id'] and len(calls)==105
+    assert next_job['id']!=job['id'] and len(calls)==25
     assert len(result['proposal']['eligible'])==5
     assert semantic.start(service,continued)['id']==next_job['id']
     assert result['request']['continue_job_id']==job['id']
@@ -245,18 +245,18 @@ def test_restore_old_batches_scans_current_sources_once(service, monkeypatch):
 def test_next_batch_after_saving_original_selection_uses_remaining_member(service, monkeypatch, selection):
     from evolvmem import organization_review as review
     from tests.test_review_decisions import save, choice
-    _, request, calls = setup_job(service, monkeypatch, count=105)
+    _, request, calls = setup_job(service, monkeypatch, count=25)
     request['selection'] = selection
     job = semantic.start(service, request)
     semantic.tick(service)
     proposal = semantic.get(service, job['id'])['proposal']
-    assert save(service, proposal, [choice(u, 'include') for u in proposal['eligible']])['included'] == 100
+    assert save(service, proposal, [choice(u, 'include') for u in proposal['eligible']])['included'] == 20
     current = review.groups(service)['items'][0]
     assert current['id'] != request['group_id']
     continued = {**request, 'group_id': current['id'], 'continue_job_id': job['id']}
     next_job = semantic.start(service, continued)
     semantic.tick(service)
-    assert len(calls) == 105
+    assert len(calls) == 25
     assert len(semantic.get(service, next_job['id'])['proposal']['eligible']) == 5
     assert semantic.start(service, continued)['id'] == next_job['id']
 

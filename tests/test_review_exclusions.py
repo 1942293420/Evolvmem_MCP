@@ -142,7 +142,7 @@ def test_exclusion_remains_undoable_after_other_recommendations_are_saved(servic
     unit=p['eligible'][0];decide(service,p,unit)
     current=semantic.get(service,job['id'])['proposal']
     assert review.apply(service,{'proposal':current})['succeeded']==2
-    resumed=semantic.recent(service)['job']
-    assert resumed is not None
+    assert semantic.recent(service)['job'] is None
+    resumed=semantic.get(service,job['id'])
     restored=decide(service,resumed['proposal'],resumed['proposal']['excluded'][0],'undo')['proposal']
     assert len(restored['eligible'])==1 and len(calls)==3

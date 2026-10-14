@@ -149,3 +149,20 @@ def test_assistant_progress_cannot_be_presented_as_new_user_requirement():
           'steps':[],'result':None,'outstanding':[],'state':'open'}
     with pytest.raises(ValueError,match='task_narrative_evidence'):
         engine().organize([{'role':'assistant','content':'继续跑回归测试。'}],lambda _:json.dumps(data))
+
+
+def test_compact_overview_keeps_key_repairs_without_per_evidence_controls():
+    record={'requirement':[{'text':'刷新执行器状态','evidence':[]}],
+            'analysis':[{'text':'页面没有刷新清单','evidence':[]}],
+            'steps':[{'text':text,'evidence':[]} for text in [
+                '检查接口返回的状态。','修复缓存导致的状态过期。','补上切回页面立即刷新。',
+                '补上切回页面立即刷新。','修复下拉框焦点阻止刷新的问题。',
+                '助手报告已上线；仍待用户验收。']],
+            'result':{'text':'助手报告已上线；仍待用户验收。','evidence':[]}}
+    before=json.dumps(record)
+    result=engine().overview(record)
+    assert '缓存' in result['steps'] and '焦点' in result['steps']
+    assert result['steps'].count('切回页面')==1
+    assert '仍待用户验收' in result['result']
+    assert len(result['steps'])<160
+    assert json.dumps(record)==before

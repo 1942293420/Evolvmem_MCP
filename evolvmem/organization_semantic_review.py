@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from evolvmem import knowledge_scope as ks
 from evolvmem.context_store import _now_iso
+from evolvmem import organization_review_retrieval as retrieval
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS organization_review_jobs(
  id TEXT PRIMARY KEY, status TEXT NOT NULL, request TEXT NOT NULL,
@@ -46,13 +47,17 @@ def _signature(service, request):
     names={p['project']:p['display_name'] or p['project'] for p in service.knowledge().registry()}
     from evolvmem.ownership_reasoning import VERSION
     from evolvmem.task_context import VERSION as CONTEXT_VERSION
-    return _hash([VERSION, CONTEXT_VERSION, target, [names.get(p,p) for p in target['projects']],
+    return _hash([VERSION, CONTEXT_VERSION, retrieval.VERSION, target, [names.get(p,p) for p in target['projects']],
                   str(request.get('condition','')).strip(), str(request.get('exceptions','')).strip(),
+                  service.config.context_vector_min_similarity,service.config.context_reranker_min_score,
+                  str(service.config.model_path),service.config.embedding_dim,
                   service.knowledge().rules.read()['revision']])
 
 
 def _prepare(service, request, base, units):
     return {**request, '_preview':base, '_signature':_signature(service,request),
+            '_candidate_snapshots':{_key(u):_stamp(units[_key(u)],service) for u in base['excluded']
+                          if u.get('reason_code') in ('ai_pending','batch_limit') and _key(u) in units},
             '_snapshots':{_key(u):_stamp(units[_key(u)],service) for u in base['excluded']
                           if u.get('reason_code')=='ai_pending' and _key(u) in units}}
 
@@ -125,7 +130,28 @@ def start(service, body, *, _cached_only=False):
             request['_skip_keys']=sorted(skipped)
             groups=[{**g,'members':[u for u in g['members'] if _key(u) not in skipped]} for g in review._groups(service)]
             base=review.preview(service,request,_judgments={},_groups_snapshot=groups)
+            # Continue only the original recalled pool, in its original order.
+            parent_request=json.loads(parent['request'])
+            if parent_request.get('_ranking') is not None:
+                request['_ranking']=[r for r in parent_request['_ranking'] if r['key'] not in skipped]
+                request['_retrieval']=parent_request.get('_retrieval',{})
         request=_prepare(service,request,base,units)
+        for old in rows:
+            previous=json.loads(old['request'])
+            if previous.get('_signature')!=request['_signature']:continue
+            if (all(previous.get('_candidate_snapshots',{}).get(k)==v for k,v in request['_candidate_snapshots'].items())
+                    and _same_request(base,previous['_preview']) and not request.get('continue_job_id')):
+                if old['status'] in ('pending','running','completed') and not previous.get('_applied') and not _cached_only:
+                    return get(service,old['id'])
+                if previous.get('_ranking') is not None:
+                    request['_ranking']=previous['_ranking']
+                    request['_retrieval']=previous.get('_retrieval',{})
+                    break
+        if '_ranking' in request:
+            base=retrieval.select(base,request['_ranking'])
+            request['_preview']={**base,**request.get('_retrieval',{})}
+            request['_snapshots']={_key(u):_stamp(units[_key(u)],service) for u in base['excluded']
+                                  if u.get('reason_code')=='ai_pending' and _key(u) in units}
         cached={}
         for old in rows:
             try:
@@ -142,9 +168,9 @@ def start(service, body, *, _cached_only=False):
                     cached[key]=verdict
         request['_reused']=len(cached)
         total=len(request['_snapshots'])
-        if _cached_only and len(cached)!=total:
+        if _cached_only and (len(cached)!=total or '_ranking' not in request):
             return None
-        status='completed' if len(cached)==total else 'pending'
+        status='completed' if len(cached)==total and '_ranking' in request else 'pending'
         conn.execute('INSERT INTO organization_review_jobs(id,status,request,base_revision,judgments,processed,total,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
                      (request['job_id'],status,json.dumps(request,ensure_ascii=False),base['revision'],
                       json.dumps(cached,ensure_ascii=False),len(cached),total,_now_iso(),_now_iso()))
@@ -168,10 +194,12 @@ def get(service, job_id, *, _current_units=None):
         active = service.store._connection().execute("SELECT 1 FROM organization_tasks WHERE status='running' LIMIT 1").fetchone()
         result['waiting_for'] = 'organization' if active else 'queue'
     request=json.loads(row['request'])
+    result.update(request.get('_retrieval',{}))
+    result['phase']=request.get('_phase','retrieval')
     result['request']={k:request[k] for k in _REQUEST_FIELDS if k in request}
     if request.get('_signature') != _signature(service,request):
         result['request'].pop('continue_job_id',None)
-    if row['status']=='completed':
+    if row['status'] in ('completed','stopped'):
         result['proposal']=proposal(service, {'job_id':row['id']}, _current_units=_current_units)
     return result
 
@@ -202,6 +230,12 @@ def recent(service):
         if group is None:continue
         try:
             job = get(service,row['id'],_current_units=units)
+            p=job.get('proposal')
+            if p and p.get('ai_judged_count') and not p['eligible'] and not any(
+                    u.get('reason_code') in ('ai_uncertain','ai_excluded','ai_pending','review_changed') for u in p['excluded']):
+                # Older releases did not persist _applied for mixed decisions.
+                # Reading history must not invite the user to repeat them.
+                continue
             return {'job':job | {'resume_group_id':group['id']}}
         except ValueError:
             continue
@@ -211,7 +245,7 @@ def recent(service):
 def proposal(service, body, *, _current_units=None):
     from evolvmem import organization_review as review
     row=_row(service,body.get('job_id'))
-    if row['status']!='completed':
+    if row['status'] not in ('completed','stopped'):
         raise ValueError('review_ai_not_ready')
     units=_units(service) if _current_units is None else _current_units
     request=_restore_request(service,row,units)
@@ -292,6 +326,15 @@ def mark_applied(service, job_id):
                                             (json.dumps(request,ensure_ascii=False),job_id))
 
 
+def stop(service, job_id):
+    row=_row(service,job_id)
+    with service.store.transaction():
+        service.store._connection().execute(
+            "UPDATE organization_review_jobs SET status='stopped',updated_at=? WHERE id=? AND status IN ('pending','running')",
+            (_now_iso(),row['id']))
+    return get(service,job_id)
+
+
 def tick(service):
     conn=service.store._connection()
     with service.store.transaction():
@@ -299,23 +342,55 @@ def tick(service):
         if row is None:return False
         row=dict(row)
         conn.execute("UPDATE organization_review_jobs SET status='running',updated_at=? WHERE id=?",(_now_iso(),row['id']))
+    request={}
     try:
         available=_units(service)
         request=_restore_request(service,row,available)
         results=json.loads(row['judgments'])
-        units=[u for key,u in available.items() if key in request['_snapshots'] and key not in results
-               and _stamp(u,service)==request['_snapshots'][key]] if _signature(service,request)==request['_signature'] else []
+        if '_ranking' not in request:
+            candidates=[available[key] for key,stamp in request['_candidate_snapshots'].items()
+                        if key in available and _stamp(available[key],service)==stamp]
+            from evolvmem import organization_exclusions
+            exclusions=organization_exclusions.rows(service)
+            candidates=[u for u in candidates if not organization_exclusions.active(service,u,request,exclusions)]
+            def progress(**values):
+                if _row(service,row['id'])['status']=='stopped':raise ValueError('review_stopped')
+                request['_phase']=values.pop('phase',request.get('_phase','retrieval'))
+                request.setdefault('_retrieval',{}).update(values)
+                with service.store.transaction():
+                    conn.execute('UPDATE organization_review_jobs SET request=?,updated_at=? WHERE id=?',
+                                 (json.dumps(request,ensure_ascii=False),_now_iso(),row['id']))
+            request['_ranking']=retrieval.rank(service,candidates,request,progress)
+            request['_preview']={**retrieval.select(request['_preview'],request['_ranking']),**request.get('_retrieval',{})}
+            request['_snapshots']={_key(u):_stamp(available[_key(u)],service) for u in request['_preview']['excluded']
+                                  if u.get('reason_code')=='ai_pending'}
+            results={key:value for key,value in results.items() if key in request['_snapshots']}
+            progress(phase='judging')
+            with service.store.transaction():
+                conn.execute('UPDATE organization_review_jobs SET total=?,processed=? WHERE id=?',
+                             (len(request['_snapshots']),len(results),row['id']))
+        units=[available[key] for key in request['_snapshots'] if key in available and key not in results
+               and _stamp(available[key],service)==request['_snapshots'][key]] if _signature(service,request)==request['_signature'] else []
         for offset in range(0,len(units),4):
-            results.update(judge(service,units[offset:offset+4],request['condition'],request.get('exceptions',''),request))
+            if _row(service,row['id'])['status']=='stopped':return True
+            from evolvmem import organization_exclusions
+            exclusions=organization_exclusions.rows(service)
+            current=_units(service)
+            batch=[current[_key(u)] for u in units[offset:offset+4] if _key(u) in current
+                   and _stamp(current[_key(u)],service)==request['_snapshots'][_key(u)]
+                   and not organization_exclusions.active(service,current[_key(u)],request,exclusions)]
+            if batch:results.update(judge(service,batch,request['condition'],request.get('exceptions',''),request))
             with service.store.transaction():
                 conn.execute('UPDATE organization_review_jobs SET judgments=?,processed=?,updated_at=? WHERE id=?',
                              (json.dumps(results,ensure_ascii=False),len(results),_now_iso(),row['id']))
         with service.store.transaction():
-            conn.execute("UPDATE organization_review_jobs SET status='completed',updated_at=? WHERE id=?",(_now_iso(),row['id']))
+            conn.execute("UPDATE organization_review_jobs SET status='completed',updated_at=? WHERE id=? AND status='running'",(_now_iso(),row['id']))
     except Exception as error:
         code=str(error) if isinstance(error,ValueError) else 'review_ai_failed'
+        if request.get('_phase','retrieval') in ('retrieval','reranking') and code!='review_stopped':
+            code='review_retrieval_unavailable'
         with service.store.transaction():
-            conn.execute("UPDATE organization_review_jobs SET status='failed',error=?,updated_at=? WHERE id=?",(code[:200],_now_iso(),row['id']))
+            conn.execute("UPDATE organization_review_jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status!='stopped'",(code[:200],_now_iso(),row['id']))
     return True
 
 

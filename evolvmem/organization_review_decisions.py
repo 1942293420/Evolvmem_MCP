@@ -50,4 +50,10 @@ def save(service, body):
                 knowledge_scope=current['knowledge_scope'], condition=current['condition'], exceptions=current['exceptions'],
                 scope='future', source_task_id=next(k[0] for k, v in selected.items() if v == 'include'),
                 matching_mode=current['matching_mode'])
+        if current.get('job_id'):
+            from evolvmem import organization_semantic_review as semantic
+            remaining=semantic.proposal(service,{'job_id':current['job_id']})
+            if not remaining['eligible'] and not any(u.get('reason_code') in ('ai_uncertain','ai_excluded','ai_pending','review_changed')
+                                                    for u in remaining['excluded']):
+                semantic.mark_applied(service,current['job_id'])
     return {'ok': True, 'included': included, 'excluded': len(selected) - included, 'guidance': stored}

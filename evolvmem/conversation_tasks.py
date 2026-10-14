@@ -184,7 +184,7 @@ def protect_prior_decisions(service,task):
             unit=dict(row)
             if unit['decision']=='manual':continue
             ranges=topic_segmentation.unit_ranges(unit)
-            decisions=[];seen=set()
+            decisions=[];seen=set();confirmed=[]
             for old in previous:
                 token=(old['source_key'],old['digest'])
                 if token in seen:continue
@@ -201,9 +201,19 @@ def protect_prior_decisions(service,task):
                                   'projects':json.loads(old['projects'] or '[]'),
                                   'knowledge_scope':old['knowledge_scope'], 'decision':old['decision'],
                                   'excluded_scopes':exclusions,'text':old['text']})
+                # Only unchanged source coordinates can carry a decision. The
+                # transport boundaries may change; the reviewed content may not.
+                original = part['text'] if part else source['body']
+                if old['decision']=='manual' and original.startswith(old['source_snapshot']):
+                    confirmed.append((old, [[base+x,base+y] for x,y in topic_segmentation.unit_ranges(old)
+                                            or [[old['source_start'],old['source_end']]]]))
                 if old['text']==unit['text'] and old['decision']=='manual':
                     conn.execute("UPDATE organization_units SET decision='manual',project=?,projects=?,knowledge_scope=?,reason=?,disposition=? WHERE task_id=? AND digest=?",
                                  (old['project'],old['projects'],old['knowledge_scope'],old['reason'],old['disposition'],task['id'],unit['digest']))
+            target = _covered_decision(source['body'], ranges, confirmed)
+            if target:
+                conn.execute("UPDATE organization_units SET decision='manual',project=?,projects=?,knowledge_scope=?,reason=?,disposition=?,revision=revision+1 WHERE task_id=? AND digest=?",
+                             (target['project'],target['projects'],target['knowledge_scope'],target['reason'],target['disposition'],task['id'],unit['digest']))
             if decisions:
                 record=task_narrative.read(unit['task_record']);record['prior_decisions']=decisions
                 conn.execute('UPDATE organization_units SET task_record=? WHERE task_id=? AND digest=?',
@@ -213,6 +223,23 @@ def protect_prior_decisions(service,task):
                 for scope in {s for d in decisions for s in d['excluded_scopes']}:
                     conn.execute('INSERT OR IGNORE INTO organization_scope_exclusions(source_key,digest,scope_key,content_stamp,revision,updated_at) VALUES(?,?,?,?,1,?)',
                                  (task['source_key'],unit['digest'],scope,_stamp(full),_now_iso()))
+
+
+def _covered_decision(text, ranges, confirmed):
+    """Reuse a unanimous decision only when it covers every nonblank source byte."""
+    if not confirmed or not ranges:return None
+    from evolvmem import knowledge_scope as ks
+    targets={(ks.scope(old),tuple(sorted(ks.projects(old))),old['disposition']) for old,_ in confirmed}
+    if len(targets)!=1 or not ks.assigned(confirmed[0][0]):return None
+    coverage=sorted(span for _,spans in confirmed for span in spans)
+    for start,end in ranges:
+        cursor=start
+        for left,right in coverage:
+            if right<=cursor or left>=end:continue
+            if text[cursor:min(left,end)].strip():return None
+            cursor=max(cursor,min(right,end))
+        if text[cursor:end].strip():return None
+    return confirmed[0][0]
 
 
 def handled_members(service,*,finished=False):

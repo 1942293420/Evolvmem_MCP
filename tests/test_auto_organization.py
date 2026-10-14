@@ -19,6 +19,8 @@ from evolvmem.knowledge_api import dispatch
 def service(base_service):
     # The shared fixture registers evo/shop; add the second project used here.
     base_service.knowledge().save_project({'project': 'dsh', 'display_name': 'DSH 演示项目'})
+    from tests.review_embedding_fixture import ReviewEmbedding
+    base_service.embedding_engine = ReviewEmbedding()
     return base_service
 
 

@@ -103,19 +103,20 @@ def groups(service, options=None):
 
 
 def detail(service, body):
-    from evolvmem.task_narrative import read as narrative
+    from evolvmem.task_narrative import read as narrative, overview
     group = next(iter(_groups(service, selection=body)), None)
     if not group:
         raise ValueError('review_preview_changed')
     return {k: v for k, v in group.items() if k != 'members'} | {
         'items': [_brief(u) | {k: u[k] for k in ('text', 'reason', 'disposition', 'disposition_reason')} |
-                  {'task_record':narrative(u.get('task_record'))}
+                  {'task_record':narrative(u.get('task_record')), 'overview':overview(u.get('task_record'))}
                   for u in group['members']]}
 
 
 def preview(service, body, *, _judgments=None, _groups_snapshot=None):
     from evolvmem import auto_organization as org
     semantic = body.get('matching_mode') == 'semantic' and body.get('selection') != 'item'
+    from evolvmem.organization_review_retrieval import BATCH_SIZE
     if semantic and _judgments is None:
         from evolvmem.organization_semantic_review import proposal
         return proposal(service, body)
@@ -184,8 +185,8 @@ def preview(service, body, *, _judgments=None, _groups_snapshot=None):
             result['excluded'].append(entry|excluded)
             continue
         if semantic and not reason:
-            if len(result['eligible']) + sum(u.get('reason_code','').startswith('ai_') for u in result['excluded']) >= 100:
-                reason, code = '本批最多判断 100 条，其余资料留在待确认列表。', 'batch_limit'
+            if len(result['eligible']) + sum(u.get('reason_code','').startswith('ai_') for u in result['excluded']) >= BATCH_SIZE:
+                reason, code = f'本批最多判断 {BATCH_SIZE} 条，其余资料留在待确认列表。', 'batch_limit'
                 result['remaining'] += 1
             else:
                 verdict = (_judgments or {}).get(f"{unit['task_id']}:{unit['digest']}")

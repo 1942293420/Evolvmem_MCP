@@ -5,24 +5,24 @@
     const drafts=new Map(), analyses=new Map(), manualPreviews=new Map(), decisionDrafts=new Map();let analysisTimer=null,chooseSequence=0,savedBatch=null;
     const $=s=>mount.querySelector(s);
     const projectName=p=>projects.find(x=>x.project===p)?.display_name||p;
-    const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
+    const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_retrieval_unavailable:'相似资料检索暂不可用，本次未启动 AI 判断。请稍后重试。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
     mount.innerHTML=`<section class="review-groups"><div class="section-head"><h2>待你确认的资料</h2><button data-rg="refresh">刷新资料</button></div><p data-rg-status role="status"></p><div class="review-workspace"><div class="review-list-column"><h3>1. 选择要审核的资料</h3><p data-rg-total></p><div data-rg-list></div><div class="actions"><button data-rg="previous">上一页</button><span data-rg-page></span><button data-rg="next">下一页</button></div></div>
     <div class="review-editor"><div data-rg-empty><h3>点击左侧资料，在这里核对原文和归属</h3></div><form data-rg-form hidden>
       <h3>2. 看清需求、处理经过和结果</h3><h4 data-rg-title></h4><p data-rg-source-label></p>
-      <label data-rg-unit-picker>这份会话中需要确认的资料<select name="unit"></select></label>
+      <label data-rg-unit-picker>这份来源会话中的待确认任务<select name="unit"></select></label>
       <p class="review-question" data-rg-reason></p><div data-rg-narrative></div><pre class="review-original" data-rg-original></pre>
       <div data-rg-legacy hidden role="status"><p>这段会话正在等待自动整理成完整任务。完成后会显示需求、处理经过和结果。</p></div>
-      <details data-rg-source open><summary>原始任务上下文</summary><div data-rg-source-text></div></details>
+      <details data-rg-source open><summary>查看完整上下文</summary><div data-rg-source-text></div></details>
       <div data-rg-decision><div class="actions" data-rg-value hidden><button type="button" data-rg="keep">保留这条资料</button><button type="button" data-rg="aside">暂存，稍后再判断</button></div>
       <h3>3. 选择这条知识适用于哪里</h3><div data-rg-scope></div><div class="organization-settings">
 
-        <label>本次处理哪些资料<select name="selection"><option value="item">只处理正在看的这一条</option><option value="group">在这段会话的待确认任务中交给 AI 判断</option><option value="all">在全部待确认资料中交给 AI 判断</option></select></label>
+        <label>本次处理哪些资料<select name="selection"><option value="item">只处理正在看的这一条</option><option value="group">从这份来源会话的待确认任务中查找</option><option value="all">从全部待确认资料中查找相似记忆</option></select></label>
       </div><div data-rg-batch hidden><label>归类依据<textarea rows="4" name="condition" maxlength="1000" placeholder="例如：介绍技术概念、原理或通用使用方法的资料，归入知识问答；实际修改某个项目的需求不属于这一类。"></textarea></label>
         <label>不适用的情况（选填）<textarea name="exceptions" rows="2" maxlength="500" placeholder="例如：虽提到某项技术，但主要是在安排具体项目的开发任务。"></textarea></label>
         <label>以后遇到同样内容<select name="scope"><option value="batch">只处理本次预览中的资料</option><option value="future">让 AI 继续按这份依据判断</option></select></label>
       </div><details><summary>补充说明（选填）</summary><input name="guidance" maxlength="1000" aria-label="补充归类说明"></details>
       <input type="hidden" name="group_id"><input type="hidden" name="task_id"><input type="hidden" name="digest"><input type="hidden" name="continue_job_id">
-      <button type="button" data-rg="preview">预览归类结果</button><div data-rg-analysis class="review-analysis-status" role="status" aria-live="polite" hidden><span class="review-spinner" aria-hidden="true"></span><span data-rg-analysis-text></span><progress aria-label="归类判断进度"></progress></div><div data-rg-reprocess-status role="status"></div><div data-rg-preview></div>
+      <button type="button" data-rg="preview">预览归类结果</button><div data-rg-analysis class="review-analysis-status" role="status" aria-live="polite" hidden><span class="review-spinner" aria-hidden="true"></span><span data-rg-analysis-text></span><button type="button" data-rg="stop-analysis">停止判断</button><progress aria-label="归类判断进度"></progress></div><div data-rg-reprocess-status role="status"></div><div data-rg-preview></div>
       <div class="review-apply-bar"><p data-rg-save-status role="status">选择适用范围后，先预览再保存。</p><button type="button" class="primary write" data-rg="apply" disabled>保存审核结果</button></div>
     </div></form></div></div></section>`;
     const form=$('[data-rg-form]');
@@ -35,7 +35,10 @@
       status.hidden=!stage;status.classList.toggle('is-error',stage==='failed');
       status.querySelector('.review-spinner').hidden=!active;
       let text=stage==='preparing'?'正在准备预览…':stage==='pending'?(job.waiting_for==='organization'?'等待当前整理任务结束后开始判断':'已提交，等待 AI 开始判断'):stage==='running'?'AI 正在阅读资料并判断归属':error;
-      if(active&&Number.isFinite(job.total))text+=` · 已完成 ${job.processed} / ${job.total} 条`;
+      if(stage==='running'&&job.phase==='retrieval')text=`正在查找相似记忆${Number.isFinite(job.pool_count)?` · 待确认 ${job.pool_count} 条，已准备 ${job.indexed||0} 条`:''}`;
+      if(stage==='running'&&job.phase==='reranking')text=`已召回 ${job.recalled_count||0} 条相似记忆，正在按相关度排序`;
+      if(stage==='running'&&job.phase==='judging')text=`召回 ${job.recalled_count||0} 条相似记忆 · 本批已判断 ${job.processed} / ${job.total} 条`;
+      $('[data-rg=stop-analysis]').hidden=!active;
       if(active&&job.elapsed_seconds)text+=` · 已用时 ${job.elapsed_seconds} 秒`;
       $('[data-rg-analysis-text]').textContent=text;
       const progress=status.querySelector('progress');progress.hidden=!active;progress.max=job.total||1;
@@ -92,11 +95,12 @@
       await choose(group.id,{preserve:true});savedBatch=null;
       notice('已打开保存后的本批结果，可继续核对剩余资料，或修改之前的不录入决定。');
     }
-    function narrative(record){
-      const rows=[['requirement','用户当时要做什么'],['analysis','为什么需要处理'],['steps','处理经过与各次修复'],['result','最后记录的结果']];
-      const body=rows.map(([key,title])=>{const entries=Array.isArray(record[key])?record[key]:record[key]?[record[key]]:[];return `<section class="task-narrative-section"><h4>${title}</h4>${entries.length?`<ol>${entries.map(e=>`<li><p>${esc(e.text)}</p><details><summary>核对原话</summary>${e.evidence.map(ref=>`<blockquote>${esc(ref.quote)}</blockquote>`).join('')}</details></li>`).join('')}</ol>`:'<p>原文中尚未明确</p>'}</section>`;}).join('');
+    function narrative(record,overview={}){
+      const rows=[['requirement','需求'],['analysis','原因'],['steps','处理重点'],['result','结果'],['outstanding','待完成']];
+      const body=rows.map(([key,title])=>{const text=overview[key]||'';return text?`<div class="task-summary-row"><dt>${title}</dt><dd>${esc(text)}</dd></div>`:'';}).join('');
       const previous=record.prior_decisions||[];
-      return `<div class="task-narrative">${body}${record.outstanding?.length?`<section><h4>尚未完成</h4><ul>${record.outstanding.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></section>`:''}${previous.length?`<section><h4>你以前做过的判断</h4>${previous.map(p=>`<p>${esc(p.title)}：${p.decision==='manual'?`已确认用于「${esc(EvolvProjects.scopeLabel(p,projects))}」`:''}${p.excluded_scopes?.length?` 不归入「${esc(p.excluded_scopes.map(x=>x==='global'?'个人通用':projectName(x.replace('project:',''))).join('、'))}」`:''}</p>`).join('')}</section>`:''}</div>`;
+      const decisions=[...new Set(previous.map(p=>`${p.decision==='manual'?`已确认用于「${EvolvProjects.scopeLabel(p,projects)}」`:''}${p.excluded_scopes?.length?` 不归入「${p.excluded_scopes.map(x=>x==='global'?'个人通用':projectName(x.replace('project:',''))).join('、')}」`:''}`).filter(Boolean))];
+      return `<div class="task-narrative"><dl>${body}${decisions.length?`<div class="task-summary-row"><dt>已有判断</dt><dd>${esc(decisions.join('；'))}</dd></div>`:''}</dl></div>`;
     }
     async function load(){
       const sequence=++loadSequence;
@@ -136,7 +140,7 @@
       form.elements.task_id.value=u.task_id;form.elements.digest.value=u.digest;
       $('[data-rg-title]').textContent=u.title;$('[data-rg-source-label]').textContent=`来源：${detail.title}`;
       const complete=!!u.task_record?.version;
-      $('[data-rg-narrative]').innerHTML=complete?narrative(u.task_record):'';
+      $('[data-rg-narrative]').innerHTML=complete?narrative(u.task_record,u.overview):'';
       $('[data-rg-original]').hidden=complete;$('[data-rg-original]').textContent=complete?'':u.text;
       $('[data-rg-legacy]').hidden=complete;
       $('[data-rg-decision]').hidden=!complete;
@@ -226,16 +230,16 @@
       const manuallyExcluded=p.excluded.filter(u=>u.reason_code==='manual_excluded');
       const unjudged=p.excluded.filter(u=>!['ai_uncertain','review_changed','ai_excluded','manual_excluded'].includes(u.reason_code));
       const judged=p.ai_judged_count??(p.eligible.length+rejected.length+p.excluded.filter(u=>u.reason_code==='ai_uncertain').length+(p.handled_count||0));
-      const rows=(items,manual=false)=>items.map(u=>`<li data-review-key="${esc(unitKey(u))}"><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}<blockquote>${esc(u.evidence_quote||u.quote)}</blockquote>${EvolvProjects.businessEvidence(u,projects,esc)}${manual?`<button type="button" data-rg="review-one" data-task="${u.task_id}" data-digest="${esc(u.digest)}">核查记忆</button><div data-rg-manual-original hidden></div>`:`<button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div>`}</li>`).join('');
+      const rows=(items,manual=false)=>items.map(u=>`<li data-review-key="${esc(unitKey(u))}"><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}${Number.isFinite(u.relevance)?`<p>相关度 ${Math.round(u.relevance*100)}% · ${u.reason_code==='ai_excluded'?'AI 判断不符合':u.reason_code==='ai_uncertain'?'需要你判断':'AI 建议录入'}</p>`:''}${manual?`<button type="button" data-rg="review-one" data-task="${u.task_id}" data-digest="${esc(u.digest)}">核查记忆</button><div data-rg-manual-original hidden></div>`:`<button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div>`}</li>`).join('');
       const section=(name,items,open=false,manual=false)=>items.length?`<details ${open?'open':''}><summary>${name} · ${items.length} 条</summary><ul>${rows(items,manual)}</ul></details>`:'';
       const stale=[...new Set(p.excluded.filter(u=>u.reason_code==='rule_changed').map(u=>u.source_key))];
-      $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${p.selection==='all'?'全部待确认资料':p.selection==='group'?'左侧选中这组资料':'正在看的这一条'}：共 ${p.searched_count} 条${semantic?`，AI 已按业务依据判断 ${judged} 条`:''}。</p>
+      $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${semantic&&!Number.isFinite(p.recalled_count)?`这是之前完成的判断结果。点击预览，按相似度重新查找候选。已判断 ${judged} 条。`:semantic?`本次查找范围：${p.selection==='all'?'全部待确认资料':'这份来源会话的待确认任务'}。待确认 ${p.pool_count} 条，召回 ${p.recalled_count} 条相似记忆，重排后保留 ${p.ranked_count} 条；本批已判断 ${judged} 条。`:`正在看的这一条：共 ${p.searched_count} 条。`}</p>
         ${semantic?`<p>判断依据：${esc(p.condition)}</p><p>AI 判断不符合：${rejected.length} 条；需要你判断：${pending.length} 条${manuallyExcluded.length?`；你已确认不归入：${manuallyExcluded.length} 条`:''}${p.handled_count?`；已人工处理：${p.handled_count} 条`:''}</p>`:''}<div class="review-counts"><strong>${semantic?'AI 建议录入':'可录入'}「${esc(target)}」：${p.eligible.length} 条</strong><strong>未推荐或此前不录入：${semantic?rejected.length+pending.length+manuallyExcluded.length:p.excluded.length} 条</strong></div>
         ${p.scope==='future'?`<p>保存后，AI 将按“${esc(p.condition)}”及不适用情况判断新资料，符合时归入「${esc(target)}」。</p>`:''}
         ${stale.length?`<div class="review-recovery"><p>${stale.length} 份来源还需按最新规则整理。完成后会自动更新本次归类结果。</p><button type="button" class="write" data-rg="reprocess">按最新规则重新整理 ${Math.min(20,stale.length)} 份来源</button>${stale.length>20?'<p>其余来源留待下一批处理。</p>':''}</div>`:''}
-        ${p.eligible.length?`<details open><summary>将归入的资料 · ${p.eligible.length} 条</summary><ul>${rows(p.eligible,semantic)}</ul></details>`:''}
-        ${semantic?section('需要你判断',pending,true,true)+section('你已确认不归入当前范围',manuallyExcluded,true)+section('AI 判断不符合',rejected,true,true)+section('尚未进行归类判断',unjudged):section('本次未归入',p.excluded,true)}
-        ${semantic&&p.remaining&&!p.needs_recheck?`<p>还有 ${p.remaining} 条可继续交给 AI 判断。</p><button type="button" data-rg="next-batch">继续判断下一批（最多 100 条）</button>`:''}
+        ${semantic?section('按相关度排序的判断结果',[...p.eligible,...pending,...rejected].sort((a,b)=>(b.relevance||0)-(a.relevance||0)),true,true):section('将归入的资料',p.eligible,true)}
+        ${semantic?section('以前已确认不归入',manuallyExcluded)+section('尚未判断的相似记忆',unjudged):section('本次未归入',p.excluded,true)}
+        ${semantic&&p.remaining&&!p.needs_recheck?`<p>还有 ${p.remaining} 条相似记忆尚未判断；不相关时可到此结束。</p><button type="button" data-rg="next-batch">继续判断下一批（最多 20 条）</button>`:''}
         ${semantic&&form.elements.continue_job_id.value?'<button type="button" data-rg="previous-batch">查看上一批结果</button>':''}`;
       decorateDecisions();
       if(!pendingTasks.length&&$('[data-rg-reprocess-status]').textContent.includes('自动更新'))$('[data-rg-reprocess-status]').textContent='重新整理完成，归类结果已更新。';
@@ -248,8 +252,8 @@
       try{
         const job=await api('organization/groups/analysis?'+new URLSearchParams({id:pending.id}));
         if(selectedGroup!==group||analyses.get(group)?.id!==pending.id)return;
-        if(job.status==='completed'){
-          proposal=job.proposal;analyses.delete(group);previewState();drawPreview();remember();notice('判断结果已保留，符合的资料已列入归类清单。核对后即可保存。');return;
+        if(['completed','stopped'].includes(job.status)){
+          proposal=job.proposal;analyses.delete(group);previewState();drawPreview();remember();notice(job.status==='stopped'?'已停止，已完成的判断仍可核对和保存。':'判断结果已保留，按相关度从高到低排列。核对后即可保存。');return;
         }
         if(job.status==='failed')throw Error(messages[job.error]||job.error||'AI 判断未完成，请重试。');
         previewState(job.status,job);
@@ -298,6 +302,8 @@
         }else if(action==='preview'){
           if(pendingTasks.length&&selectedGroup===recoveryGroup){notice('这份资料正在重新整理，请完成后再预览。');return;}
           await refreshPreview();
+        }else if(action==='stop-analysis'){
+          const pending=analyses.get(selectedGroup);if(pending){await api('organization/groups/stop',{id:pending.id});await checkAnalysis();}
         }else if(action==='next-batch'){
           form.elements.continue_job_id.value=proposal.job_id;await refreshPreview();
         }else if(action==='previous-batch'){

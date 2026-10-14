@@ -2297,6 +2297,9 @@ def dispatch(service, method, route, body):
         if method == 'POST' and route == '/groups/analyze':
             from evolvmem.organization_semantic_review import start
             return start(service, body)
+        if method == 'POST' and route == '/groups/stop':
+            from evolvmem.organization_semantic_review import stop
+            return stop(service, body.get('id'))
         if method == 'GET' and route == '/groups/recent-analysis':
             from evolvmem.organization_semantic_review import recent
             return recent(service)
