@@ -36,18 +36,26 @@ def decode(value):
         return {}
 
 
-def context_for(service, unit):
+def context_for(service, unit, *, source_checks=None):
     """Current original source and verified task history, with source identity."""
     from evolvmem import auto_organization as org, organization_context as ctx
     if not unit.get('task_id'):
         return {}
-    row = service.store._connection().execute('SELECT * FROM organization_tasks WHERE id=?', (unit['task_id'],)).fetchone()
-    if row is None:
-        return {}
-    task = dict(row)
-    try:
-        org._assert_current(service, task)
-    except ValueError:
+    # A batch may contain many units from one frozen task. Share only its
+    # source check within this read; each unit still builds its own evidence.
+    checks = {} if source_checks is None else source_checks
+    task_id = unit['task_id']
+    if task_id not in checks:
+        row = service.store._connection().execute('SELECT * FROM organization_tasks WHERE id=?', (task_id,)).fetchone()
+        task = dict(row) if row is not None else None
+        if task is not None:
+            try:
+                org._assert_current(service, task)
+            except ValueError:
+                task = None
+        checks[task_id] = task
+    task = checks[task_id]
+    if task is None:
         return {}
     from evolvmem import task_narrative, topic_segmentation
     organized = task_narrative.read(unit.get('task_record'))

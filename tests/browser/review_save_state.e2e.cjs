@@ -47,7 +47,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.match(await page.locator('[data-rg-page]').innerText(),new RegExp(`第 ${lastPage-1} / ${lastPage-1} 页`));assert.ok(await page.locator('[data-rg-list] button').count()>0);
   const current=await api('organization/groups');assert.match(await page.locator('[data-rg-total]').innerText(),new RegExp(`共 ${current.unit_count} 条`));
   // External handling followed by Refresh must not leave an obsolete editor.
-  await page.locator('[data-rg-list] button').first().click();await form.locator('[data-rg-narrative] h4').first().waitFor();
+  await page.locator('[data-rg-list] button').first().click();await form.locator('[data-rg-title]').waitFor();await page.waitForFunction(()=>!document.querySelector('[data-rg-form]').inert);
   const detail=await api('organization/groups/detail?group_id='+await form.locator('[name=group_id]').inputValue());
   for(const unit of detail.items)await api('organization/disposition',{task_id:unit.task_id,digest:unit.digest,expected_revision:unit.revision,disposition:'set_aside',reason:'测试其他入口已处理'});
   await click('[data-rg=refresh]');await receipt();assert.match(await page.locator('[data-rg-empty]').innerText(),/已处理/);

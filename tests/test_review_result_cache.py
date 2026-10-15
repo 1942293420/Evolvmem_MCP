@@ -241,6 +241,51 @@ def test_restore_old_batches_scans_current_sources_once(service, monkeypatch):
     assert len(scans) == 1, 'restoring expired batches repeatedly scans every current source'
 
 
+def test_restore_valid_batch_checks_shared_task_source_once_per_request(service, monkeypatch):
+    """A saved batch must not reassemble its conversation for every member."""
+    from evolvmem import auto_organization
+    tid, request, _ = setup_job(service, monkeypatch, count=8)
+    job = semantic.start(service, request)
+    semantic.tick(service)
+    before = semantic.get(service, job['id'])['proposal']
+    checked = []
+    original = auto_organization._assert_current
+
+    def measured(svc, task, **kwargs):
+        checked.append(task['id'])
+        return original(svc, task, **kwargs)
+
+    monkeypatch.setattr(auto_organization, '_assert_current', measured)
+    assert semantic.recent(service)['job']['proposal'] == before
+    assert checked == [tid], 'one source read is enough for members of the same task'
+    checked.clear()
+    assert semantic.get(service, job['id'])['proposal'] == before
+    assert checked == [tid], 'source validation must run again in a new request'
+
+
+def test_restore_obsolete_criteria_does_not_read_each_members_context(service, monkeypatch):
+    """Known-invalid cached criteria can be rejected before costly evidence reads."""
+    from evolvmem import ownership_reasoning
+    _, request, _ = setup_job(service, monkeypatch, count=8)
+    job = semantic.start(service, request)
+    semantic.tick(service)
+    rules = service.knowledge().rules.read()
+    service.knowledge().rules.save({'expected_revision': rules['revision'],
+        'instructions': rules['instructions'] + '\n按更新后的业务依据核对。'})
+    calls = []
+    original = ownership_reasoning.context_for
+
+    def measured(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ownership_reasoning, 'context_for', measured)
+    proposal = semantic.get(service, job['id'])['proposal']
+    assert proposal['needs_recheck'] and not proposal['eligible']
+    assert len(proposal['excluded']) == 8
+    assert not calls, 'obsolete rules already invalidate every old verdict'
+
+
 @pytest.mark.parametrize('selection', ['group', 'all'])
 def test_next_batch_after_saving_original_selection_uses_remaining_member(service, monkeypatch, selection):
     from evolvmem import organization_review as review

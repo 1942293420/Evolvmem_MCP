@@ -14,7 +14,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  await page.route('**/groups/analysis?*',async route=>{
   if(phase==='complete')return route.continue();
   if(phase==='error')return route.fulfill({json:{...job,status:'failed',error:'review_ai_failed',processed:4,total:12}});
-  await route.fulfill({json:{...job,status:phase,processed:phase==='running'?4:0,total:12,waiting_for:'organization',elapsed_seconds:8}});
+  await route.fulfill({json:{...job,status:phase,phase:phase==='running'?'judging':'retrieval',processed:phase==='running'?4:0,total:12,waiting_for:'organization',elapsed_seconds:8}});
  });
  try{
   await page.goto(process.env.EVOLVMEM_TEST_URL+'/#knowledge/organization');
@@ -29,7 +29,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.match(await status.innerText(),/正在准备预览/);
   assert.notEqual(await status.locator('.review-spinner').evaluate(el=>getComputedStyle(el).animationName),'none');
   release();await page.waitForFunction(()=>document.querySelector('[data-rg-analysis]').textContent.includes('等待当前整理任务'));
-  assert.match(await status.innerText(),/0 \/ 12/);
+  assert.equal(await status.locator('progress').getAttribute('value'),'0');
+  assert.equal(await status.locator('progress').getAttribute('max'),'12');
   phase='running';await page.waitForFunction(()=>document.querySelector('[data-rg-analysis]').textContent.includes('4 / 12'));
   assert.equal(await status.locator('progress').getAttribute('value'),'4');
   await status.scrollIntoViewIfNeeded();await page.screenshot({path:'/tmp/evo-review-progress.png'});

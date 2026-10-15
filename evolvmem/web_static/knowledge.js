@@ -16,8 +16,8 @@
   let cleaningNode=null;let organizationNode=null,organizationHandle=null;const cleaningState={dirty:false,busy:false,background:false};
   function syncCleaning(){if(state.view==='cleaning'){rulesDirty=cleaningState.dirty;actionBusy=cleaningState.busy&&!cleaningState.background;mount.setAttribute('aria-busy',String(cleaningState.busy));}}
   function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,6500); }
-  async function api(route, body) {
-    const response=await EvolvAuth.fetch('/api/knowledge/'+route,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  async function api(route, body, options={}) {
+    const response=await EvolvAuth.fetch('/api/knowledge/'+route,{...options,...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})});
     const result=await response.json();
     if(!response.ok || result.ok===false) throw new Error(errors[result.error] || result.error || '操作失败，请重试。');
     if(body!==undefined&&!['rules','preview','extraction/preview'].includes(route)&&!/^organization(\/|$)/.test(route)&&(route!=='organize'||body.apply))hooks.changed?.();

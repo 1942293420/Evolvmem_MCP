@@ -34,11 +34,12 @@ def _units(service):
     return {_key(u):u for g in review._groups(service) for u in g['members']}
 
 
-def _stamp(unit, service):
+def _stamp(unit, service, *, source_checks=None):
     from evolvmem.organization_review import _hash
     # Extraction progress and updated_at do not change the reviewed content.
-    from evolvmem.ownership_reasoning import stamp
-    return _hash([{k:unit[k] for k in ('revision','text','title','source_revision','rule_revision')}, stamp(service,unit)])
+    from evolvmem.ownership_reasoning import stamp, context_for
+    context = context_for(service, unit, source_checks=source_checks)
+    return _hash([{k:unit[k] for k in ('revision','text','title','source_revision','rule_revision')}, stamp(service,unit,context)])
 
 
 def _signature(service, request):
@@ -260,6 +261,7 @@ def proposal(service, body, *, _current_units=None):
     result['handled_count']=0
     result['ai_judged_count']=len(judgments)
     policy=service.knowledge().rules.read()['revision']
+    source_checks = {}
     seen=set()
     by_source={}
     for unit in units.values():by_source.setdefault(unit['source_key'],[]).append(unit)
@@ -294,8 +296,8 @@ def proposal(service, body, *, _current_units=None):
             continue
         unit=units.get(key)
         verdict=judgments.get(key)
-        valid=(unit is not None and _stamp(unit,service)==request['_snapshots'].get(key)
-               and current_signature==request['_signature'])
+        valid=(unit is not None and not result['needs_recheck']
+               and _stamp(unit,service,source_checks=source_checks)==request['_snapshots'].get(key))
         entry={k:v for k,v in entry.items() if k not in ('reason','reason_code')}
         if not valid:
             handled=service.store._connection().execute("SELECT 1 FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id WHERE u.task_id=? AND u.digest=? AND u.decision IN ('manual','auto') AND t.status!='superseded'",(entry['task_id'],entry['digest'])).fetchone()
