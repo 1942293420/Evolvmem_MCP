@@ -109,6 +109,7 @@ body[data-design=signal] .ui-detail-section,body[data-design=signal] .ui-detail-
 .review-analysis-status{display:grid;grid-template-columns:24px minmax(0,1fr);gap:12px;align-items:center;padding:16px;background:#eef4ff;border:1px solid var(--line);border-radius:8px;font-size:16px;color:var(--text)}
 .review-analysis-status[hidden],.review-analysis-status [hidden]{display:none}
 .review-analysis-status progress{grid-column:1 / -1;width:100%;height:10px;accent-color:var(--accent)}
+.review-analysis-status button{grid-column:2;justify-self:start;min-width:100px;white-space:nowrap}
 .review-analysis-status.is-error{display:block;background:#fff4ed;color:#8b3514}
 .review-spinner{width:20px;height:20px;border:3px solid #cdd9f8;border-top-color:var(--accent);border-radius:50%;animation:review-spin .8s linear infinite}
 @keyframes review-spin{to{transform:rotate(360deg)}}

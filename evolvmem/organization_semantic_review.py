@@ -197,6 +197,7 @@ def get(service, job_id, *, _current_units=None):
     request=json.loads(row['request'])
     result.update(request.get('_retrieval',{}))
     result['phase']=request.get('_phase','retrieval')
+    result['model_status']=request.get('_model_status',{})
     result['request']={k:request[k] for k in _REQUEST_FIELDS if k in request}
     if request.get('_signature') != _signature(service,request):
         result['request'].pop('continue_job_id',None)
@@ -373,6 +374,13 @@ def tick(service):
                              (len(request['_snapshots']),len(results),row['id']))
         units=[available[key] for key in request['_snapshots'] if key in available and key not in results
                and _stamp(available[key],service)==request['_snapshots'][key]] if _signature(service,request)==request['_signature'] else []
+        def model_progress(status):
+            if _row(service,row['id'])['status']=='stopped':raise ValueError('review_stopped')
+            request['_phase']='judging'
+            request['_model_status']=status
+            with service.store.transaction():
+                conn.execute('UPDATE organization_review_jobs SET request=?,updated_at=? WHERE id=?',
+                             (json.dumps(request,ensure_ascii=False),_now_iso(),row['id']))
         for offset in range(0,len(units),4):
             if _row(service,row['id'])['status']=='stopped':return True
             from evolvmem import organization_exclusions
@@ -381,7 +389,10 @@ def tick(service):
             batch=[current[_key(u)] for u in units[offset:offset+4] if _key(u) in current
                    and _stamp(current[_key(u)],service)==request['_snapshots'][_key(u)]
                    and not organization_exclusions.active(service,current[_key(u)],request,exclusions)]
-            if batch:results.update(judge(service,batch,request['condition'],request.get('exceptions',''),request))
+            if batch:
+                from evolvmem.kimi_hooks import llm_provider_status
+                with llm_provider_status(model_progress):
+                    results.update(judge(service,batch,request['condition'],request.get('exceptions',''),request))
             with service.store.transaction():
                 conn.execute('UPDATE organization_review_jobs SET judgments=?,processed=?,updated_at=? WHERE id=?',
                              (json.dumps(results,ensure_ascii=False),len(results),_now_iso(),row['id']))

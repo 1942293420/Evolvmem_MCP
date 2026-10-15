@@ -32,6 +32,24 @@ def test_pending_review_reports_real_wait_and_elapsed_time(service, monkeypatch)
     assert semantic.get(service, job['id'])['waiting_for'] == ''
 
 
+def test_review_reports_backup_provider_without_credentials(service, monkeypatch):
+    from evolvmem import kimi_hooks as hooks
+    _, request, _ = setup_job(service, monkeypatch)
+    job = semantic.start(service, request)
+    original = semantic.judge
+    def judging(*args):
+        hooks._report_provider(hooks.LLMConfig('mimo', 'private-test-key', 'https://backup.test', 'mimo-v2.6-flash'), fallback=True)
+        progress = semantic.get(service, job['id'])
+        assert progress['model_status'] == {'provider': 'mimo', 'model': 'mimo-v2.6-flash', 'fallback': True}
+        assert 'private-test-key' not in json.dumps(progress)
+        return original(*args)
+    monkeypatch.setattr(semantic, 'judge', judging)
+    semantic.tick(service)
+    result = semantic.get(service, job['id'])
+    assert result['status'] == 'completed'
+    assert result['processed'] == 8
+
+
 def test_repeated_click_reuses_pending_and_completed_job(service, monkeypatch):
     _,request,calls=setup_job(service,monkeypatch)
     first=semantic.start(service,request)

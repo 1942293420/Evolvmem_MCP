@@ -39,6 +39,10 @@
       if(stage==='running'&&job.phase==='retrieval')text=`正在查找相似记忆${Number.isFinite(job.pool_count)?` · 待确认 ${job.pool_count} 条，已准备 ${job.indexed||0} 条`:''}`;
       if(stage==='running'&&job.phase==='reranking')text=`已召回 ${job.recalled_count||0} 条相似记忆，正在按相关度排序`;
       if(stage==='running'&&job.phase==='judging')text=`召回 ${job.recalled_count||0} 条相似记忆 · 本批已判断 ${job.processed} / ${job.total} 条`;
+      if(stage==='running'&&job.model_status?.fallback){
+        const provider={mimo:'MiMo',deepseek:'DeepSeek',kimi:'Kimi'}[job.model_status.provider]||'';
+        text+=` · 已切换备用模型${provider?' '+provider:''}`;
+      }
       $('[data-rg=stop-analysis]').hidden=!active;
       if(active&&job.elapsed_seconds)text+=` · 已用时 ${job.elapsed_seconds} 秒`;
       $('[data-rg-analysis-text]').textContent=text;

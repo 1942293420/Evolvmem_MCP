@@ -14,7 +14,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  await page.route('**/groups/analysis?*',async route=>{
   if(phase==='complete')return route.continue();
   if(phase==='error')return route.fulfill({json:{...job,status:'failed',error:'review_ai_failed',processed:4,total:12}});
-  await route.fulfill({json:{...job,status:phase,phase:phase==='running'?'judging':'retrieval',processed:phase==='running'?4:0,total:12,waiting_for:'organization',elapsed_seconds:8}});
+  await route.fulfill({json:{...job,status:phase,phase:phase==='running'?'judging':'retrieval',processed:phase==='running'?4:0,total:12,waiting_for:'organization',elapsed_seconds:8,model_status:{provider:'mimo',model:'mimo-v2.6-flash',fallback:true}}});
  });
  try{
   await page.goto(process.env.EVOLVMEM_TEST_URL+'/#knowledge/organization');
@@ -33,9 +33,11 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(await status.locator('progress').getAttribute('max'),'12');
   phase='running';await page.waitForFunction(()=>document.querySelector('[data-rg-analysis]').textContent.includes('4 / 12'));
   assert.equal(await status.locator('progress').getAttribute('value'),'4');
+  assert.match(await status.innerText(),/已切换备用模型 MiMo/);
   await status.scrollIntoViewIfNeeded();await page.screenshot({path:'/tmp/evo-review-progress.png'});
   await page.setViewportSize({width:390,height:1000});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'progress must fit narrow screens');
+  assert.ok(await status.locator('[data-rg=stop-analysis]').evaluate(el=>el.getBoundingClientRect().width>=100),'stop button remains readable');
   await status.scrollIntoViewIfNeeded();await page.screenshot({path:'/tmp/evo-review-progress-mobile.png'});
   await page.emulateMedia({reducedMotion:'reduce'});
   assert.equal(await status.locator('.review-spinner').evaluate(el=>getComputedStyle(el).animationName),'none');

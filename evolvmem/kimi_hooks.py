@@ -20,7 +20,9 @@ import sys
 import time
 import urllib.request
 from collections import Counter
-from dataclasses import dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from pathlib import Path
@@ -46,10 +48,18 @@ _PROVIDER_DEFAULTS = {
         "deepseek-v4-flash",
     ),
     "kimi": (_KIMI_API, _MODEL),
+    "mimo": (
+        "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+        "mimo-v2.6-flash",
+    ),
 }
 _FALLBACK_CHUNK_CHARS = 120000
 _EXTRACTION_BUDGET_S = 240
 _REQUEST_TIMEOUT_S = 120.0
+_PRIMARY_FAILOVER_TIMEOUT_S = 25.0
+_PROVIDER_COOLDOWN_S = 60.0
+_PROVIDER_RETRY_AFTER: dict[tuple, float] = {}
+_PROVIDER_STATUS = ContextVar("llm_provider_status", default=None)
 _MAX_RESPONSE_BYTES = 1024 * 1024
 _MAX_ERROR_BODY_BYTES = 64 * 1024
 _MAX_MEMORIES_PER_SESSION = 8
@@ -93,9 +103,27 @@ class LLMConfig:
     """Credentials and endpoint for the session extraction provider."""
 
     provider: str
-    api_key: str
+    api_key: str = field(repr=False)
     base_url: str
     model: str
+    fallback: "LLMConfig | None" = None
+
+
+@contextmanager
+def llm_provider_status(callback):
+    """Report the provider to this job only, without credentials or prompts."""
+    token = _PROVIDER_STATUS.set(callback)
+    try:
+        yield
+    finally:
+        _PROVIDER_STATUS.reset(token)
+
+
+def _report_provider(config: LLMConfig, *, fallback: bool = False) -> None:
+    callback = _PROVIDER_STATUS.get()
+    if callback is not None:
+        callback({"provider": config.provider, "model": config.model,
+                  "fallback": fallback})
 
 
 def _url_origin(url: str) -> tuple[str, str, int] | None:
@@ -172,8 +200,9 @@ def session_start(payload: dict | None = None) -> None:
 
 def _load_llm_config(*, log_errors: bool = True, config_path=None) -> LLMConfig | None:
     credential_path = config_path if config_path is not None else _LLM_CONFIG_PATH
-    try:
-        data = json.loads(credential_path.read_text(encoding="utf-8"))
+    def parse(data):
+        if not isinstance(data, dict):
+            return None
         provider = str(data.get("provider", "deepseek")).strip().casefold()
         if provider not in _PROVIDER_DEFAULTS:
             if log_errors:
@@ -191,6 +220,14 @@ def _load_llm_config(*, log_errors: bool = True, config_path=None) -> LLMConfig 
             base_url=str(data.get("base_url") or default_url).strip(),
             model=str(data.get("model") or default_model).strip(),
         )
+    try:
+        data = json.loads(credential_path.read_text(encoding="utf-8"))
+        primary = parse(data)
+        if primary is None:
+            return None
+        backup = parse(data.get("fallback"))
+        return LLMConfig(primary.provider, primary.api_key, primary.base_url,
+                         primary.model, fallback=backup)
     except Exception as e:
         if log_errors:
             _log(f"LLM credential read failed: {e}")
@@ -307,17 +344,21 @@ def _call_llm(
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 4096,
     }
-    if llm_config.provider == "deepseek":
+    if llm_config.provider in {"deepseek", "mimo"}:
         request_body.update({
             "temperature": 0.2,
             "thinking": {"type": "disabled"},
             "response_format": {"type": "json_object"},
         })
+    headers = {"Authorization": f"Bearer {llm_config.api_key}",
+               "Content-Type": "application/json"}
+    if llm_config.provider == "mimo":
+        request_body["max_completion_tokens"] = request_body.pop("max_tokens")
+        headers = {"api-key": llm_config.api_key, "Content-Type": "application/json"}
     body = json.dumps(request_body).encode("utf-8")
     req = urllib.request.Request(
         llm_config.base_url, data=body,
-        headers={"Authorization": f"Bearer {llm_config.api_key}",
-                 "Content-Type": "application/json"})
+        headers=headers)
     if deadline is None:
         deadline = time.monotonic() + _REQUEST_TIMEOUT_S
         timeout = _REQUEST_TIMEOUT_S
@@ -329,7 +370,26 @@ def _call_llm(
             )
     opener = urllib.request.build_opener(_SafeRedirectHandler())
     with opener.open(req, timeout=timeout) as resp:
-        raw = resp.read(_MAX_RESPONSE_BYTES + 1)
+        read1 = getattr(resp, "read1", None)
+        if read1 is None:
+            raw = resp.read(_MAX_RESPONSE_BYTES + 1)
+        else:
+            # Header wait and body reads share one deadline. A fresh socket
+            # timeout for every read would let a stalled provider overrun it.
+            chunks, size = [], 0
+            while size <= _MAX_RESPONSE_BYTES:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RetryableExtractionError("extraction retry budget exhausted")
+                sock = getattr(getattr(getattr(resp, "fp", None), "raw", None), "_sock", None)
+                if sock is not None:
+                    sock.settimeout(min(_REQUEST_TIMEOUT_S, remaining))
+                chunk = read1(min(65536, _MAX_RESPONSE_BYTES + 1 - size))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+            raw = b"".join(chunks)
         if time.monotonic() >= deadline:
             raise RetryableExtractionError(
                 "extraction retry budget exhausted"
@@ -338,8 +398,14 @@ def _call_llm(
             raise RetryableExtractionError(
                 "provider response body exceeded limit"
             )
-        data = json.loads(raw.decode("utf-8"))
-    return data["choices"][0]["message"]["content"]
+        try:
+            data = json.loads(raw.decode("utf-8"))
+            content = data["choices"][0]["message"]["content"]
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError()
+        except (ValueError, KeyError, IndexError, TypeError):
+            raise RetryableExtractionError("provider returned no usable response") from None
+    return content
 
 
 def _http_error_body(
@@ -366,8 +432,39 @@ def _http_error_body(
 
 def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
                          deadline: float | None = None) -> str:
-    """Retry transient provider failures within one extraction budget."""
-    max_attempts = 3
+    """Try the primary briefly, then the backup within the original budget."""
+    backup = llm_config.fallback
+    if backup is None:
+        _report_provider(llm_config)
+        return _call_single_provider_with_retry(prompt, llm_config, deadline=deadline)
+    now = time.monotonic()
+    if deadline is None:
+        deadline = now + _EXTRACTION_BUDGET_S
+    if now >= deadline:
+        raise RetryableExtractionError("extraction retry budget exhausted")
+    key = (llm_config.provider, llm_config.base_url, llm_config.model,
+           hashlib.sha256(llm_config.api_key.encode()).hexdigest())
+    for old_key, expires in list(_PROVIDER_RETRY_AFTER.items()):
+        if expires <= now:
+            _PROVIDER_RETRY_AFTER.pop(old_key, None)
+    if key not in _PROVIDER_RETRY_AFTER:
+        _report_provider(llm_config)
+        # Reserve at least two thirds of a short request's budget for backup.
+        primary_deadline = now + min(_PRIMARY_FAILOVER_TIMEOUT_S, (deadline - now) / 3)
+        try:
+            return _call_single_provider_with_retry(
+                prompt, llm_config, deadline=primary_deadline, max_attempts=1)
+        except RetryableExtractionError:
+            _PROVIDER_RETRY_AFTER[key] = time.monotonic() + _PROVIDER_COOLDOWN_S
+            _log(f"{llm_config.provider} unavailable; switching to {backup.provider}")
+    _report_provider(backup, fallback=True)
+    return _call_single_provider_with_retry(prompt, backup, deadline=deadline)
+
+
+def _call_single_provider_with_retry(prompt: str, llm_config: LLMConfig,
+                                    deadline: float | None = None,
+                                    *, max_attempts: int = 3) -> str:
+    """Retry one provider without resetting the caller's remaining budget."""
     if deadline is None:
         deadline = time.monotonic() + _EXTRACTION_BUDGET_S
     for attempt in range(max_attempts):
@@ -417,7 +514,7 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
         except (TimeoutError, socket.timeout, URLError) as error:
             # A second blocking read timeout can already consume the hook's
             # 240-second budget, so timeout-like failures get one retry only.
-            if attempt >= 1:
+            if attempt >= min(1, max_attempts - 1):
                 raise RetryableExtractionError(
                     f"{llm_config.provider} network retries exhausted"
                 ) from error
