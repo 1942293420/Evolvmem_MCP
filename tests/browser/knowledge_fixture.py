@@ -92,6 +92,7 @@ def model(prompt, *a, **kw):
                 if '保留价值演示' in text:row.update(title='保留价值演示二' if '保留价值演示二' in text else '保留价值演示',disposition='review',disposition_reason='是否有长期价值需要用户决定')
                 if '纯进度演示' in text:row.update(disposition='history_only',category='reference')
                 if '已确认归属演示' in text:row['title']='已确认归属演示'
+                if '已确认结果演示' in text:row['title']='已确认结果演示'
             return json.dumps(data,ensure_ascii=False)
         return result
     if '你是业务资料归类核对员' in prompt:
@@ -292,6 +293,16 @@ if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
     with s.store.transaction():
         s.store._connection().execute("UPDATE organization_units SET decision='manual',project='evo',projects='[\"evo\"]' WHERE task_id=?",(old['id'],))
     progress_task=enqueue_complete(s,[f'archive:{source.id}'])['items'][0]
+    source=_Archiver(config,s.store).archive_session('','kimi','已确认结果演示',json.dumps({'messages':[
+        {'role':'user','content':'已确认结果演示：采集进度一直卡住。'},
+        {'role':'assistant','content':'已修复执行器目标，采集恢复。'}]},ensure_ascii=False))
+    old=org.enqueue(s,[f'archive:{source.id}'])['items'][0]
+    row=org._task_row(s,old['id']);body=row['source_snapshot'];start=body.index('AI：')
+    OrganizationWorker(config)._store_units(s,row,[{'source_start':start,'source_end':len(body),'text':body[start:],
+        'title':'已确认的采集修复结果','category':'task_requirement','project_hint':'','evidence_quote':''}])
+    with s.store.transaction():
+        s.store._connection().execute("UPDATE organization_units SET decision='manual',project='evo',projects='[\"evo\"]' WHERE task_id=?",(old['id'],))
+    reply_task=enqueue_complete(s,[f'archive:{source.id}'])['items'][0]
 if os.environ.get('EVOLVMEM_DEFAULT_UPGRADE_FIXTURE')=='1':
     import time
     from evolvmem import auto_organization as org, organization_task_upgrade as upgrade
@@ -319,12 +330,17 @@ if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
     assert all(u['decision']=='manual' for u in org.unit_views(s,progress_task['id']))
     from evolvmem.organization_review import groups
     assert groups(s,{'task_id':progress_task['id']})['total']==0
+    assert all(u['decision']=='manual' for u in org.unit_views(s,reply_task['id']))
+    assert groups(s,{'task_id':reply_task['id']})['total']==0
     # Historical window stitching repeated the same requirement, and manual
     # classification legitimately has no ownership_analysis chain.
     with s.store.transaction():
         for row in s.store._connection().execute("SELECT task_id,digest,task_record FROM organization_units WHERE task_record!='{}'").fetchall():
             value=json.loads(row['task_record'])
             if value.get('requirement'):value['requirement']*=10
+            if any('增加写入开关' in r.get('text','') for r in value.get('requirement',[])):
+                value['prior_decisions']=[{'title':'写入开关的旧处理结果','decision':'manual',
+                    'projects':['evo'],'knowledge_scope':'project','excluded_scopes':[]}]
             s.store._connection().execute("UPDATE organization_units SET task_record=?,ownership_analysis='{}' WHERE task_id=? AND digest=?",
                 (json.dumps(value,ensure_ascii=False),row['task_id'],row['digest']))
 print('Temporary browser fixture ready',flush=True)

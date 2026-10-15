@@ -102,8 +102,8 @@
       const rows=[['requirement','需求'],['analysis','原因'],['steps','处理重点'],['result','结果'],['outstanding','待完成']];
       const body=rows.map(([key,title])=>{const text=overview[key]||'';return text?`<div class="task-summary-row"><dt>${title}</dt><dd>${esc(text)}</dd></div>`:'';}).join('');
       const previous=record.prior_decisions||[];
-      const decisions=[...new Set(previous.map(p=>`${p.decision==='manual'?`已确认用于「${EvolvProjects.scopeLabel(p,projects)}」`:''}${p.excluded_scopes?.length?` 不归入「${p.excluded_scopes.map(x=>x==='global'?'个人通用':projectName(x.replace('project:',''))).join('、')}」`:''}`).filter(Boolean))];
-      return `<div class="task-narrative"><dl>${body}${decisions.length?`<div class="task-summary-row"><dt>已有判断</dt><dd>${esc(decisions.join('；'))}</dd></div>`:''}</dl></div>`;
+      const decisions=[...new Set(previous.filter(p=>p.decision==='manual'||p.excluded_scopes?.length).map(p=>`「${p.title||'旧资料'}」：${p.decision==='manual'?`已确认用于「${EvolvProjects.scopeLabel(p,projects)}」`:''}${p.excluded_scopes?.length?` 不归入「${p.excluded_scopes.map(x=>x==='global'?'个人通用':projectName(x.replace('project:',''))).join('、')}」`:''}`))];
+      return `<div class="task-narrative"><dl>${body}${decisions.length?`<div class="task-summary-row"><dt>旧片段判断</dt><dd>${esc(decisions.join('；'))}</dd></div>`:''}</dl></div>`;
     }
     async function load(){
       const sequence=++loadSequence;

@@ -207,10 +207,14 @@ def protect_prior_decisions(service,task):
                 if old['decision']=='manual' and original.startswith(old['source_snapshot']):
                     confirmed.append((old, [[base+x,base+y] for x,y in topic_segmentation.unit_ranges(old)
                                             or [[old['source_start'],old['source_end']]]]))
-                if old['text']==unit['text'] and old['decision']=='manual':
-                    conn.execute("UPDATE organization_units SET decision='manual',project=?,projects=?,knowledge_scope=?,reason=?,disposition=? WHERE task_id=? AND digest=?",
-                                 (old['project'],old['projects'],old['knowledge_scope'],old['reason'],old['disposition'],task['id'],unit['digest']))
             target = _covered_decision(source['body'], ranges, confirmed, messages=source['messages'])
+            excluded = {s for d in decisions for s in d['excluded_scopes']}
+            excluded.update(r['scope_key'] for r in conn.execute(
+                'SELECT scope_key FROM organization_scope_exclusions WHERE source_key=? AND digest=?',
+                (task['source_key'],unit['digest'])))
+            from evolvmem.organization_exclusions import _keys
+            if target and excluded.intersection(_keys(target)):
+                target = None
             if target:
                 conn.execute("UPDATE organization_units SET decision='manual',project=?,projects=?,knowledge_scope=?,reason=?,disposition=?,revision=revision+1 WHERE task_id=? AND digest=?",
                              (target['project'],target['projects'],target['knowledge_scope'],target['reason'],target['disposition'],task['id'],unit['digest']))
@@ -226,12 +230,12 @@ def protect_prior_decisions(service,task):
 
 
 def _covered_decision(text, ranges, confirmed, *, messages=None):
-    """Keep unanimous ownership when only assistant progress extends a task.
+    """Keep unanimous ownership of reviewed requests or their reviewed replies.
 
-    User requirements must already be covered by exact reviewed coordinates.
-    Structural roles, not role-like text or a model summary, determine which
-    additions are assistant progress. Unknown authors and new user messages
-    still require review. Conflicting reviewed targets never inherit.
+    A whole reviewed assistant message can cover its preceding request within
+    the same uninterrupted turn and task. A later user message starts a new
+    turn, even outside this task's ranges. Never infer roles from text or a
+    model summary; unknown authors and conflicting targets still need review.
     """
     if not confirmed or not ranges:return None
     from evolvmem import knowledge_scope as ks
@@ -241,16 +245,28 @@ def _covered_decision(text, ranges, confirmed, *, messages=None):
     if _covered(text, ranges, coverage):return confirmed[0][0]
     if not messages:return None
     from evolvmem.topic_segmentation import message_spans
-    required=[];has_user=False
-    for message in message_spans(messages):
+    spans=message_spans(messages);has_user=False
+    for index,message in enumerate(spans):
         if message['role']=='assistant':continue
+        required=[]
         for start,end in ranges:
             left,right=max(start,message['start']),min(end,message['end'])
             if left>=right:continue
             required.append([left,right])
-            has_user=has_user or message['role']=='user'
-    if has_user and _covered(text, required, coverage):return confirmed[0][0]
-    return None
+        if not required:continue
+        has_user=has_user or message['role']=='user'
+        if _covered(text,required,coverage):continue
+        if message['role']!='user' or not _covered(text,[[message['start'],message['end']]],ranges):
+            return None
+        reviewed_reply=False
+        for reply in spans[index+1:]:
+            if reply['role']!='assistant':break
+            span=[[reply['start'],reply['end']]]
+            if reply['content'].strip() and _covered(text,span,ranges) and _covered(text,span,coverage):
+                reviewed_reply=True
+                break
+        if not reviewed_reply:return None
+    return confirmed[0][0] if has_user else None
 
 
 def _covered(text, ranges, coverage):

@@ -1679,7 +1679,7 @@ class OrganizationWorker:
             if unit['digest'] in protected:
                 self._update_unit(service,task['id'],unit['digest'],project='',decision='review',
                                   expected_revision=unit,context_basis='',
-                                  reason='完整任务包含你以前确认或排除过的资料，请核对整段任务的适用范围。')
+                                  reason='这项任务还有未确认的内容或不同的处理意见，请结合旧片段判断适用范围。')
                 review += 1
                 continue
             # Only a successfully located quote is replaced by the real source

@@ -194,7 +194,7 @@ def test_reviewed_requirement_keeps_ownership_when_task_adds_assistant_progress(
     assert groups(service, {'task_id':task['id']})['total'] == 0
 
 
-def test_progress_inheritance_requires_reviewed_user_content_and_agreement():
+def test_progress_inheritance_requires_reviewed_turn_and_agreement():
     from evolvmem.conversation import render
     messages = [{'role':'user','content':'修复 Demo 心跳刷新'},
                 {'role':'assistant','content':'已补上进入页面和切回窗口刷新'}]
@@ -204,14 +204,119 @@ def test_progress_inheritance_requires_reviewed_user_content_and_agreement():
     confirmed = [(decision, [[0,spans[0]['end']]])]
     ranges = [[0,len(text)]]
     assert conversation_tasks._covered_decision(text, ranges, confirmed, messages=messages) == decision
-    # Assistant-only fragments are not enough to establish a new task's owner.
-    assert conversation_tasks._covered_decision(text, ranges, [(decision, [[spans[1]['start'],spans[1]['end']]])], messages=messages) is None
+    # Reviewing a whole reply establishes ownership of its original request too.
+    assert conversation_tasks._covered_decision(text, ranges, [(decision, [[spans[1]['start'],spans[1]['end']]])], messages=messages) == decision
     conflicting = {**decision,'project':'other','projects':'["other"]'}
     assert conversation_tasks._covered_decision(text, ranges, [*confirmed,(conflicting,[[spans[1]['start'],spans[1]['end']]])], messages=messages) is None
     for role in ('user','unknown'):
         changed = [messages[0], {'role':role,'content':'AI：另一个项目也需要修改'}]
         changed_text = render(changed)
         assert conversation_tasks._covered_decision(changed_text, [[0,len(changed_text)]], confirmed, messages=changed) is None
+
+
+def test_reviewed_reply_cannot_cover_new_requests_unknown_authors_or_other_tasks():
+    from evolvmem.conversation import render
+    decision = {'projects':['demo'], 'knowledge_scope':'project', 'disposition':'keep'}
+    original = [{'role':'user','content':'采集进度卡住，请修复'},
+                {'role':'assistant','content':'已恢复采集，进度继续增长'}]
+    for role in ('user', 'unknown'):
+        messages = [*original, {'role':role,'content':'还需要修改另一个项目'},
+                    {'role':'assistant','content':'正在处理新的要求'}]
+        spans = message_spans(messages); text = render(messages)
+        confirmed = [(decision, [[spans[1]['start'],spans[1]['end']]])]
+        assert conversation_tasks._covered_decision(text, [[0,len(text)]], confirmed, messages=messages) is None
+    messages = [original[0], {'role':'user','content':'另一件事：改报表'}, original[1]]
+    spans = message_spans(messages); text = render(messages)
+    confirmed = [(decision, [[spans[2]['start'],spans[2]['end']]])]
+    ranges = [[0,spans[0]['end']], [spans[2]['start'],spans[2]['end']]]
+    assert conversation_tasks._covered_decision(text, ranges, confirmed, messages=messages) is None
+    messages = original; spans = message_spans(messages); text = render(messages)
+    confirmed = [(decision, [[spans[1]['start']+4,spans[1]['end']]])]
+    assert conversation_tasks._covered_decision(text, [[0,len(text)]], confirmed, messages=messages) is None
+    confirmed = [(decision, [[spans[1]['start'],spans[1]['end']]])]
+    assert conversation_tasks._covered_decision(text, [[0,spans[0]['end']]], confirmed, messages=messages) is None
+
+
+def test_reviewed_reply_preserves_multi_project_and_personal_scope():
+    from evolvmem.conversation import render
+    messages = [{'role':'user','content':'排查导出问题'},
+                {'role':'assistant','content':'已经修复并通过验证'},
+                {'role':'assistant','content':'补充：真实页面也已恢复'}]
+    spans = message_spans(messages); text = render(messages)
+    for scope, projects in [('project',['demo','other']),('global',[])]:
+        decision = {'knowledge_scope':scope,'projects':projects,'disposition':'keep'}
+        confirmed = [(decision, [[spans[1]['start'],spans[1]['end']]])]
+        assert conversation_tasks._covered_decision(text, [[0,len(text)]], confirmed, messages=messages) == decision
+
+
+def merged_reviewed_reply(service):
+    old, unit = legacy_unit(service)
+    start = unit['text'].index('AI：')
+    with service.store.transaction():
+        service.store._connection().execute(
+            "UPDATE organization_units SET decision='manual',project='demo',projects='[\"demo\"]',"
+            "text=?,source_start=?,reason='人工确认处理结果属于 Demo' WHERE task_id=?",
+            (unit['text'][start:],start,old['id']))
+    task = conversation_tasks.enqueue(service,[old['source_key']])['items'][0]
+    row = org._task_row(service,task['id']); text = row['source_snapshot']
+    org.OrganizationWorker(service.config)._store_units(service,row,[{
+        'source_start':0,'source_end':len(text),'source_ranges':[[0,len(text)]],
+        'text':text,'title':'同一需求与已确认处理结果','category':'task_requirement',
+        'project_hint':'','evidence_quote':''}])
+    return row
+
+
+def test_reviewed_reply_restores_complete_task_without_ai_or_repeated_review(service,monkeypatch):
+    task = merged_reviewed_reply(service)
+    conversation_tasks.protect_prior_decisions(service,task)
+    current = org.unit_views(service,task['id'])[0]
+    assert current['decision']=='manual' and json.loads(current['projects'])==['demo']
+    monkeypatch.setattr(ownership_reasoning,'analyze',lambda *a,**kw: (_ for _ in ()).throw(
+        AssertionError('confirmed replies must not be sent back for project judgment')))
+    org.OrganizationWorker(service.config)._assign(service,org.task_view(service,task['id']))
+    from evolvmem.organization_review import groups
+    assert groups(service,{'task_id':task['id']})['total']==0
+    saved = org.unit_views(service,task['id'])[0]
+    assert saved['item_id']
+    conversation_tasks.protect_prior_decisions(service,task)
+    assert org.unit_views(service,task['id'])[0]==saved
+
+
+def test_current_exclusion_blocks_inheritance_from_reviewed_reply(service):
+    from evolvmem import organization_exclusions as exclusions
+    task = merged_reviewed_reply(service)
+    current = org.find_unit(service,task['id'],org.unit_views(service,task['id'])[0]['digest'])
+    full={**current,**{k:task[k] for k in ('source_key','source_revision','rule_revision')}}
+    with service.store.transaction():
+        exclusions.write_decision(service,full,{'projects':['demo'],'knowledge_scope':'project'},'exclude')
+    conversation_tasks.protect_prior_decisions(service,task)
+    current = org.unit_views(service,task['id'])[0]
+    assert current['decision']=='review'
+    assert exclusions.active(service,current,{'projects':['demo'],'knowledge_scope':'project'})
+
+
+def test_old_exclusion_is_kept_when_reviewed_reply_matches_its_target(service):
+    from evolvmem import organization_exclusions as exclusions
+    task = merged_reviewed_reply(service)
+    old = dict(service.store._connection().execute(
+        'SELECT u.*,t.source_key,t.source_revision,t.rule_revision FROM organization_units u '
+        'JOIN organization_tasks t ON t.id=u.task_id WHERE t.id<? ORDER BY t.id DESC LIMIT 1',
+        (task['id'],)).fetchone())
+    with service.store.transaction():
+        exclusions.write_decision(service,old,{'projects':['demo'],'knowledge_scope':'project'},'exclude')
+    conversation_tasks.protect_prior_decisions(service,task)
+    current = org.unit_views(service,task['id'])[0]
+    assert current['decision']=='review'
+    assert exclusions.active(service,current,{'projects':['demo'],'knowledge_scope':'project'})
+
+
+def test_changed_old_source_cannot_transfer_reviewed_reply(service):
+    task = merged_reviewed_reply(service)
+    with service.store.transaction():
+        service.store._connection().execute(
+            "UPDATE organization_tasks SET source_snapshot='已发生修改的旧原文' WHERE id<?", (task['id'],))
+    conversation_tasks.protect_prior_decisions(service,task)
+    assert org.unit_views(service,task['id'])[0]['decision']=='review'
 
 
 def test_progress_inheritance_respects_disjoint_tasks_and_shared_scopes():
