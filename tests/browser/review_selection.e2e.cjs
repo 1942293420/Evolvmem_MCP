@@ -11,6 +11,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const first=page.locator('[data-rg-list] button').first(),second=page.locator('[data-rg-list] button').nth(1);
   await first.click();await page.waitForFunction(()=>!document.querySelector('[data-rg-form]').hidden&&!document.querySelector('[data-rg-form]').inert);
   const firstId=await first.getAttribute('data-id'),secondId=await second.getAttribute('data-id'),title=await second.locator('strong').innerText();
+  await page.locator('[data-rg-ai] > summary').click();
   await page.getByText('补充说明（选填）',{exact:true}).click();
   await page.locator('[data-rg-form] [name=guidance]').fill('保留这份尚未保存的归类说明');
   let requested;const pending=new Promise(r=>requested=r);

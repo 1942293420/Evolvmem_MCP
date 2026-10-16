@@ -7,6 +7,7 @@ import json
 import time
 
 import pytest
+from tests.unit_model_fixture import save_suggestions_as_user
 
 from tests.test_history_qa_memory import service as base_service, archive
 from tests.test_knowledge_cleaning import ready
@@ -37,6 +38,8 @@ def test_uncleaned_mixed_source_splits_and_is_recalled_from_history(service, mon
     task_id = _task_for(service, source)
     provider = model_for(service)
     run_worker(service, monkeypatch, provider)
+    save_suggestions_as_user(service)
+    run_worker(service, monkeypatch, provider)
     units = org(service, '/units', {'task_id': task_id})['items']
     assert [unit['project'] for unit in units] == ['evo', 'dsh', '']
     assert provider.extract_calls, 'the provider must be asked to extract each assigned unit'
@@ -64,6 +67,8 @@ def test_provider_sees_only_its_unit_with_saved_guidance_and_related_peers(servi
     task_id = _task_for(service, source)
     provider = model_for(service)
     run_worker(service, monkeypatch, provider)
+    save_suggestions_as_user(service)
+    run_worker(service, monkeypatch, provider)
     assert provider.calls, 'segmentation must always run'
     segmentation = provider.calls[0]
     assert '保留否定与条件，去掉寒暄。' in segmentation, 'saved cleaning guidance must reach the model'
@@ -88,6 +93,8 @@ def test_real_extraction_writes_concise_question_answer(service, monkeypatch):
     from evolvmem import qa_memory
     source = many_topic_archive(service, session='qa-session')
     task_id = _task_for(service, source)
+    run_worker(service, monkeypatch, model_for(service))
+    save_suggestions_as_user(service)
     run_worker(service, monkeypatch, model_for(service))
     rows = qa_memory.list_items(service, {'project': 'evo'})['items']
     assert rows, 'the provider QA must be stored through the existing QA path'
@@ -155,11 +162,13 @@ def test_project_correction_during_delayed_extraction_invalidates_the_result(ser
     worker = OrganizationWorker(service.config, mode=ContextMode.SHADOW)
     try:
         worker.tick()  # segmentation
+        worker.tick()  # AI suggestions
+        save_suggestions_as_user(service)
         worker.tick()  # delayed extraction, before the next retry
     finally:
         worker.stop()
     units = org(service, '/units', {'task_id': task_id})['items']
-    corrected = next(unit for unit in units if unit['decision'] == 'manual')
+    corrected = next(unit for unit in units if 'DSH' in unit['text'])
     # The stale answer was discarded: the unit still needs a fresh extraction.
     assert corrected['extraction_stage'] in ('pending', 'running')
     stale = service.store._connection().execute(
@@ -171,6 +180,8 @@ def test_project_correction_during_delayed_extraction_invalidates_the_result(ser
 def test_correcting_a_completed_unit_removes_the_old_project_exposure(service, monkeypatch):
     source = many_topic_archive(service, session='move-session')
     task_id = _task_for(service, source)
+    run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh', 'shop'}))
+    save_suggestions_as_user(service)
     run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh', 'shop'}))
     conn = service.store._connection()
     unit = next(u for u in org(service, '/units', {'task_id': task_id})['items'] if u['project'] == 'dsh')
@@ -229,12 +240,14 @@ def test_ambiguous_and_unresolved_units_are_not_in_project_history(service, monk
         "SELECT count(*) FROM context_items WHERE status='candidate' AND project!=''").fetchone()[0]
     active = conn.execute(
         "SELECT count(*) FROM context_items WHERE status='active' AND project!=''").fetchone()[0]
-    assert active >= 1 and suggestion >= 0
+    assert active == 0 and suggestion == 0, 'unconfirmed AI suggestions must not reach project history'
 
 
 def test_set_aside_units_leave_the_pending_queue_but_stay_restorable(service, monkeypatch):
     source = many_topic_archive(service, session='aside-session')
     task_id = _task_for(service, source)
+    run_worker(service, monkeypatch, model_for(service))
+    save_suggestions_as_user(service)
     run_worker(service, monkeypatch, model_for(service))
     conn = service.store._connection()
     unit = conn.execute("SELECT * FROM organization_units WHERE task_id=? AND project='evo'",
@@ -297,6 +310,8 @@ def test_extraction_failure_is_visible_at_task_level(service, monkeypatch):
     source = many_topic_archive(service, session='provider-fails')
     task_id = _task_for(service, source)
     run_worker(service, monkeypatch, UnitProvider(fail_extraction='synthetic failure'))
+    save_suggestions_as_user(service)
+    run_worker(service, monkeypatch, UnitProvider(fail_extraction='synthetic failure'))
     task = org(service, '/detail', {'task_id': task_id})
     assert task['status'] == 'failed'
     assert task['error_code'] == 'extraction_failed'
@@ -344,6 +359,8 @@ def test_set_aside_withdraws_derived_qa_and_restore_reenables(service, monkeypat
     source = many_topic_archive(service,session='aside-derived')
     task_id = _task_for(service,source)
     run_worker(service,monkeypatch,model_for(service))
+    save_suggestions_as_user(service)
+    run_worker(service,monkeypatch,model_for(service))
     unit = next(u for u in org(service,'/units',{'task_id':task_id})['items'] if u['project']=='evo')
     item_id = service.store._connection().execute("SELECT item_id FROM unit_derivations WHERE unit_task_id=? AND unit_digest=? AND kind='knowledge'",(task_id,unit['digest'])).fetchone()['item_id']
     assert eligible(service.store,item_id)
@@ -359,6 +376,8 @@ def test_manual_ownership_survives_new_rule_version(service, monkeypatch):
     source=many_topic_archive(service,session='manual-new-rule')
     task_id=_task_for(service,source)
     run_worker(service,monkeypatch,model_for(service))
+    save_suggestions_as_user(service)
+    run_worker(service,monkeypatch,model_for(service))
     unit=next(u for u in org(service,'/units',{'task_id':task_id})['items'] if u['project']=='dsh')
     org(service,'/correct',{'task_id':task_id,'digest':unit['digest'],'expected_revision':unit['revision'],'project':'shop'})
     rules=service.knowledge().rules.read()
@@ -366,6 +385,8 @@ def test_manual_ownership_survives_new_rule_version(service, monkeypatch):
         'settings':{'cleaning_instructions':'保留每一条有效条件。'}})
     new_task=_task_for(service,source)
     assert new_task!=task_id
+    run_worker(service,monkeypatch,model_for(service))
+    save_suggestions_as_user(service)
     run_worker(service,monkeypatch,model_for(service))
     kept=next(u for u in org(service,'/units',{'task_id':new_task})['items'] if u['digest']==unit['digest'])
     assert kept['project']=='shop' and kept['decision']=='manual'
@@ -394,6 +415,8 @@ def test_reused_duplicate_knowledge_is_tracked_per_unit(service, monkeypatch):
     tasks = org(service, '/tasks', {'items': [
         {'key': f'archive:{first.id}'}, {'key': f'archive:{second.id}'}]})['items']
     task_ids = [t['id'] for t in tasks]
+    run_worker(service, monkeypatch, model_for(service, projects={'evo'}))
+    save_suggestions_as_user(service)
     run_worker(service, monkeypatch, model_for(service, projects={'evo'}))
     conn = service.store._connection()
     rows = conn.execute("SELECT id FROM context_items WHERE identity_key LIKE '%:learn:%'").fetchall()

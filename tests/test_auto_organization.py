@@ -9,6 +9,7 @@ import re
 import time
 
 import pytest
+from tests.unit_model_fixture import save_suggestions_as_user
 
 from tests.test_history_qa_memory import service as base_service, archive
 from tests.test_knowledge_cleaning import ready
@@ -41,7 +42,8 @@ def test_multi_project_source_keeps_middle_units_and_exact_spans(service, monkey
     task = next(t for t in tasks if t['id'] == task_id)
     assert task['status'] == 'review'
     units = org(service, '/units', {'task_id': task_id})['items']
-    assert [u['project'] for u in units] == ['evo', 'dsh', '']
+    assert [u['project'] for u in units] == ['', '', '']
+    assert [u['business_analysis'].get('projects', []) for u in units] == [['evo'], ['dsh'], []]
     detail = org(service, '/detail', {'task_id': task_id})
     stored = service.store._connection().execute(
         'SELECT text,source_start,source_end,project FROM organization_units WHERE task_id=? ORDER BY ordinal', (task_id,)).fetchall()
@@ -50,10 +52,10 @@ def test_multi_project_source_keeps_middle_units_and_exact_spans(service, monkey
     for row in stored:
         assert original[row['source_start']:row['source_end']] == row['text']
     # The middle unit is not decoration: its decision and body survive.
-    assert any(u['project'] == 'dsh' and '不能只看开头结尾' in u['text'] for u in units)
+    assert any(u['business_analysis'].get('projects') == ['dsh'] and '不能只看开头结尾' in u['text'] for u in units)
     assert any('中间这段' in u['text'] for u in units)
     # One incomplete unit is grouped for review with its own decision.
-    assert all(u['decision'] in ('auto', 'review') for u in units)
+    assert all(u['decision'] == 'review' for u in units)
     assert any(u['decision'] == 'review' for u in units)
     assert task['stage'] == 'done'
 
@@ -67,6 +69,8 @@ def test_item_source_extracts_the_real_body_with_unknown_author(service, monkeyp
     ready(service)
     model = model_for(service, projects={'evo', 'dsh'})
     task = org(service, '/tasks', {'items': [{'key': f'item:{item["id"]}'}]})['items'][0]
+    run_worker(service, monkeypatch, model)
+    save_suggestions_as_user(service)
     tasks = run_worker(service, monkeypatch, model)
     task = next(t for t in tasks if t['id'] == task['id'])
     assert task['status'] == 'completed'
@@ -260,6 +264,8 @@ def test_assigned_unit_is_visible_in_project_history_with_provenance(service, mo
     source = many_topic_archive(service, session='history-session')
     task_id = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]['id']
     run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
+    save_suggestions_as_user(service)
+    run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
     units = org(service, '/units', {'task_id': task_id})['items']
     evo_unit = next(u for u in units if u['project'] == 'evo')
     dsh_unit = next(u for u in units if u['project'] == 'dsh')
@@ -299,6 +305,8 @@ def test_generated_candidates_are_never_marked_verified(service, monkeypatch):
     source = many_topic_archive(service, session='evidence-session')
     task_id = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]['id']
     run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
+    save_suggestions_as_user(service)
+    run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
     conn = service.store._connection()
     ids = [r[0] for r in conn.execute(
         "SELECT id FROM context_items WHERE project!='' AND identity_key LIKE 'project:%'")]
@@ -329,6 +337,8 @@ def test_duplicate_knowledge_keeps_source_links_without_repeated_success(service
     first = many_topic_archive(service, session='dup-a')
     org(service, '/tasks', {'items': [{'key': f'archive:{first.id}'}]})
     run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
+    save_suggestions_as_user(service)
+    run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
     from evolvmem.session_archive import SessionArchiver
     second = SessionArchiver(service.config, service.store).archive_session('', 'kimi', 'dup-b', json.dumps({'messages': [
         {'role': 'user', 'content': '用户要求：Evo 演示项目先明确验收条件。\n'
@@ -336,6 +346,8 @@ def test_duplicate_knowledge_keeps_source_links_without_repeated_success(service
                                     '最后用户确认：批量删除必须逐条确认。'}]}, ensure_ascii=False))
     ready(service)
     second_task = org(service, '/tasks', {'items': [{'key': f'archive:{second.id}'}]})['items'][0]['id']
+    run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
+    save_suggestions_as_user(service)
     run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
     conn = service.store._connection()
     # Knowledge items exclude the per-source history summaries: exactly one
@@ -477,7 +489,7 @@ def test_human_decision_is_not_overwritten_by_a_stale_result(service, monkeypatc
     source = many_topic_archive(service, session='manual-wins-session')
     task_id = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]['id']
     run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
-    unit = next(u for u in org(service, '/units', {'task_id': task_id})['items'] if u['project'] == 'dsh')
+    unit = next(u for u in org(service, '/units', {'task_id': task_id})['items'] if u['business_analysis'].get('projects') == ['dsh'])
     corrected = org(service, '/correct', {'task_id': task_id, 'digest': unit['digest'],
         'expected_revision': unit['revision'], 'project': 'shop', 'reason': '人工核对后改为 shop'})
     assert corrected['unit']['project'] == 'shop' and corrected['unit']['decision'] == 'manual'
@@ -606,6 +618,8 @@ def test_empty_project_correction_never_becomes_global(service, monkeypatch):
     source = many_topic_archive(service, session='unresolve-session')
     task_id = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]['id']
     run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
+    save_suggestions_as_user(service)
+    run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
     unit = next(u for u in org(service, '/units', {'task_id': task_id})['items'] if u['project'] == 'evo')
     corrected = org(service, '/correct', {'task_id': task_id, 'digest': unit['digest'],
         'expected_revision': unit['revision'], 'project': '', 'reason': '归属未确认，先撤回'})
@@ -625,6 +639,8 @@ def test_rule_revision_reuses_identity_and_supersedes_old_task(service, monkeypa
     source = many_topic_archive(service, session='rule-revision-session')
     first = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]['id']
     run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
+    save_suggestions_as_user(service)
+    run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
     conn = service.store._connection()
     knowledge_before = {row[0] for row in conn.execute(
         "SELECT id FROM context_items WHERE identity_key LIKE 'project:%:learn:%'")}
@@ -634,6 +650,8 @@ def test_rule_revision_reuses_identity_and_supersedes_old_task(service, monkeypa
                                     'instructions': rules['instructions'] + '\n新增一条归属说明。'})
     second = org(service, '/tasks', {'items': [{'key': f'archive:{source.id}'}]})['items'][0]['id']
     assert second != first
+    run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
+    save_suggestions_as_user(service)
     run_worker(service, monkeypatch, model_for(service, projects={'evo', 'dsh'}))
     knowledge_after = {row[0] for row in conn.execute(
         "SELECT id FROM context_items WHERE identity_key LIKE 'project:%:learn:%'")}
@@ -882,8 +900,9 @@ def test_an_unreachable_http_model_keeps_the_worker_writing_and_alive(service, m
         else:
             raise AssertionError('worker did not settle: ' + str(worker.tasks()))
         assert worker._thread.is_alive(), 'an unreachable model must not stop the worker'
-        # The write persisted and the vector cache keeps its retry marker.
+        # Ownership is still a suggestion, so no project ingestion has run.
+        save_suggestions_as_user(worker_service)
         assert worker_service.vector_index.is_dirty() is True
-        assert _active_l0s(worker_service), 'writes still land without the model'
+        assert _active_l0s(worker_service), 'human saves still land without the embedding model'
     finally:
         assert worker.stop() is True

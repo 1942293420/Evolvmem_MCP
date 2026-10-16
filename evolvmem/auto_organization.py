@@ -1842,6 +1842,14 @@ class OrganizationWorker:
                 blocked=organization_exclusions.active(service,dict(row),knowledge_target or {'project':project})
                 if blocked:
                     project,decision,reason,context_basis,guidance_id,knowledge_target='', 'review',blocked['reason'],'',0,{'project':''}
+            if decision == 'auto':
+                # Model output and saved guidance are suggestions. Only a
+                # human save may assign ownership or start project ingestion.
+                target = knowledge_target or {'project': project}
+                ownership_analysis = dict(ownership_analysis or json.loads(row['ownership_analysis'] or '{}'))
+                ownership_analysis.update(projects=ks.projects(target), knowledge_scope=ks.scope(target), reason=reason)
+                project, decision, context_basis, guidance_id, knowledge_target = '', 'review', '', 0, {'project': ''}
+                reason = 'AI 已提供归档建议，等待你选择项目并保存。'
             conn.execute(
                 'UPDATE organization_units SET project=?,decision=?,reason=?,evidence_quote=?,'
                 'context_basis=?,applied_guidance_id=?,projects=?,knowledge_scope=?,revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
@@ -2038,6 +2046,9 @@ def correct_one(service, body, *, record_guidance=True):
             organization_context.clear_dependency(service, task_id, digest, conn=conn)
         conn.execute('UPDATE organization_units SET projects=?,knowledge_scope=? WHERE task_id=? AND digest=?',
                      (json.dumps(target['projects']), target['knowledge_scope'], task_id, digest))
+        if decision == 'manual' and ks.assigned(target):
+            conn.execute("UPDATE organization_units SET disposition='keep',disposition_reason='' WHERE task_id=? AND digest=?",
+                         (task_id, digest))
     refreshed = find_unit(service, task_id, digest)
     if ks.assigned(target):
         item_id = _ensure_unit_item(service, task, refreshed)
@@ -2355,6 +2366,9 @@ def dispatch(service, method, route, body):
         return resegment(service, body.get('task_id'))
     if method == 'POST' and route == '/correct':
         return correct(service, body)
+    if method == 'POST' and route == '/archive':
+        from evolvmem.organization_review_decisions import archive_one
+        return archive_one(service, body)
     if method == 'POST' and route == '/disposition':
         return set_disposition(service, body)
     if method == 'POST' and route == '/repair':

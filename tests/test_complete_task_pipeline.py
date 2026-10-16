@@ -37,7 +37,9 @@ def test_worker_organizes_before_classifying_and_keeps_full_sources(service,monk
     assert org.task_view(service,task['id'])['stage']=='assignment'
     worker._assign(service,org.task_view(service,task['id']))
     unit=org.unit_views(service,task['id'])[0]
-    assert unit['project']=='demo' and unit['decision']=='auto'
+    assert unit['project']=='' and unit['decision']=='review'
+    assert unit['business_analysis']['projects']==['demo']
+    assert unit['item_id'] is None
     from evolvmem.task_context import read
     context=read(service,{'task_id':task['id'],'digest':unit['digest']})
     assert len(context['records'])==2
@@ -118,6 +120,8 @@ def test_project_history_links_every_contributing_archive(service,monkeypatch):
     task,worker,_=prepare(service,monkeypatch)
     worker._assign(service,org.task_view(service,task['id']))
     unit=org.unit_views(service,task['id'])[0]
+    from evolvmem.organization_review_decisions import archive_one
+    unit=archive_one(service,{'task_id':task['id'],'digest':unit['digest'],'expected_revision':unit['revision'],'action':'include','project':'demo'})['unit']
     sources=service.store._connection().execute('SELECT archive_id FROM context_sources WHERE item_id=? AND archive_id IS NOT NULL',(unit['item_id'],)).fetchall()
     assert {r['archive_id'] for r in sources}=={int(k.split(':')[1]) for k in conversation_tasks.members(service,task['source_key'])}
 

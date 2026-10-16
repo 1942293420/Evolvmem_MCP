@@ -290,7 +290,7 @@ def proposal(service, body, *, _current_units=None):
                 if unit['rule_revision']!=policy:
                     reason,code='这份资料使用旧版整理规则，需按最新规则重新整理。','rule_changed'
                 elif unit['disposition']=='review':
-                    reason,code='请先确认这条资料是否值得保留。','value_review'
+                    reason,code='这条资料尚未由 AI 判断，你可直接选择归入项目或暂不归档。','value_review'
                 else:
                     reason,code='本条尚未进行归类判断，可继续判断下一批。','batch_limit'
                 result['excluded'].append(review._brief(unit)|{'reason':reason,'reason_code':code})
@@ -301,7 +301,7 @@ def proposal(service, body, *, _current_units=None):
                and _stamp(unit,service,source_checks=source_checks)==request['_snapshots'].get(key))
         entry={k:v for k,v in entry.items() if k not in ('reason','reason_code')}
         if not valid:
-            handled=service.store._connection().execute("SELECT 1 FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id WHERE u.task_id=? AND u.digest=? AND u.decision IN ('manual','auto') AND t.status!='superseded'",(entry['task_id'],entry['digest'])).fetchone()
+            handled=service.store._connection().execute("SELECT 1 FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id WHERE u.task_id=? AND u.digest=? AND (u.decision IN ('manual','auto') OR u.disposition='set_aside') AND t.status!='superseded'",(entry['task_id'],entry['digest'])).fetchone()
             if handled:
                 result['handled_count']+=1
                 continue
