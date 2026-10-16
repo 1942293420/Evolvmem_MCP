@@ -62,20 +62,30 @@ def compact(archiver, *, limit=20, max_bytes=32 * 1024 * 1024):
     for (aid,) in rows:
         written = None
         try:
+            row = store.get_session_archive(aid)
+            if not row or row['state'] != 'available':
+                continue
+            original_path = root / row['payload_path']
+            result['processed_bytes'] += original_path.stat().st_size
+            original = archiver.read_payload(aid)
+            if original is None:
+                raise ValueError('archive_unreadable')
+            # Compression and exact reconstruction can be expensive for old
+            # full snapshots. Keep them outside the SQLite writer lock.
+            storage = archiver._storage()
+            blob, manifest = storage.pack(original)
+            if storage.unpack(blob) != original:
+                raise ValueError('archive_reconstruction_mismatch')
             with store.transaction():
-                row = store.get_session_archive(aid)
-                if not row or row['state'] != 'available' or conn.execute(
-                        'SELECT 1 FROM session_archive_storage WHERE archive_id=?', (aid,)).fetchone():
+                current = store.get_session_archive(aid)
+                if (not current or current['state'] != 'available'
+                        or current['payload_path'] != row['payload_path']
+                        or conn.execute('SELECT 1 FROM session_archive_storage WHERE archive_id=?', (aid,)).fetchone()):
                     continue
-                original_path = root / row['payload_path']
-                result['processed_bytes'] += original_path.stat().st_size
-                original = archiver.read_payload(aid)
-                if original is None:
-                    raise ValueError('archive_unreadable')
-                storage = archiver._storage()
-                blob, manifest = storage.pack(original)
-                if storage.unpack(blob) != original:
-                    raise ValueError('archive_reconstruction_mismatch')
+                # GC may run while preparing. It cannot remove referenced
+                # blocks; check unreferenced reused blocks again under its lock.
+                if any(not storage._path(part).is_file() for part in manifest['parts'] if isinstance(part, str)):
+                    raise ValueError('archive_block_unavailable')
                 relative = 'session_archives/' + hashlib.sha256(blob).hexdigest() + '.bin'
                 target = root / relative
                 archiver._write_payload_file(target, blob)
@@ -166,7 +176,7 @@ def prune_history_cache(archiver, *, limit=100, max_bytes=32 * 1024 * 1024):
             'JOIN session_archives a ON a.id=u.archive_id '
             'JOIN session_archive_storage s ON s.archive_id=a.id '
             'JOIN conversation_history ch ON ch.archive_id=a.id '
-            "WHERE u.sha256!=h.sha256 AND a.state='available' ORDER BY a.id").fetchall()
+            "WHERE u.sha256!=h.sha256 AND a.state='available' AND s.logical_bytes<=? ORDER BY a.id", (max_bytes,)).fetchall()
         candidates = [(aid, path) for aid, path in rows if aid not in protected]
         used = 0
         examined = 0
@@ -221,20 +231,25 @@ class LanArchiveMaintenance:
         self.next_check = now + 3600
         from evolvmem.session_archive import SessionArchiver
         reports = {}
+        from evolvmem.context_store import ContextStore
         with self.adapter.lock:
-            for user, space in (('jiangli', 'personal'), ('kane', 'personal'), ('jiangli', 'public')):
-                server = self.adapter.runtime.server_for(user, space)
-                archiver = SessionArchiver(server.config, server.context_service.store)
-                try:
-                    report = maintain(archiver)
-                except Exception:
-                    report = {'errors': 1, 'reason': 'maintenance_deferred'}
-                reports[user + ':' + space] = report
-                try:
-                    save_report(server.config, report, checked_at=now)
-                except OSError:
-                    report['errors'] += 1
-                if not report['errors'] and (report['remaining'] or report['history_has_more']):
-                    self.next_check = min(self.next_check, now + 60)
+            namespaces = [(user + ':' + space, self.adapter.runtime.server_for(user, space).config)
+                for user, space in (('jiangli', 'personal'), ('kane', 'personal'), ('jiangli', 'public'))]
+        # An independent connection lets uploads proceed while old large
+        # snapshots are being compressed. Only final pointer writes serialize.
+        for name, config in namespaces:
+            try:
+                with ContextStore(config) as store:
+                    report = maintain(SessionArchiver(config, store))
+            except Exception:
+                report = {'errors': 1, 'reason': 'maintenance_deferred'}
+            reports[name] = report
+            try:
+                save_report(config, report, checked_at=now)
+            except OSError:
+                report['errors'] += 1
+        if not any(r['errors'] for r in reports.values()) and any(
+                r['remaining'] or r['history_has_more'] for r in reports.values()):
+            self.next_check = now + 60
         self.last_report = reports
         return True

@@ -269,3 +269,25 @@ def test_maintenance_runs_bounded_batches_and_backs_off_after_errors(env, monkey
     job.check()
     assert job.next_check >= clock[0] + 3600
     assert json.loads((config.data_dir / 'archive_maintenance.json').read_text())['report']['errors'] == 1
+
+
+def test_compaction_does_not_lock_writers_or_overwrite_concurrent_update(env, monkeypatch):
+    config, store, archiver = env
+    aid = legacy(env, payload(noise()))
+    storage = archiver._storage()
+    original_pack = storage.pack
+    def concurrent_change(text):
+        # This independent writer must succeed while compression is running.
+        with ContextStore(config) as other:
+            other._connection().execute('PRAGMA busy_timeout=10')
+            SessionArchiver(config, other).archive_session('proj', 'codex', 'legacy', 'newer version')
+        return original_pack(text)
+    monkeypatch.setattr(storage, 'pack', concurrent_change)
+    monkeypatch.setattr(archiver, '_storage', lambda: storage)
+    from evolvmem.archive_maintenance import compact, collect
+    result = compact(archiver)
+    assert result['errors'] == 0
+    assert result['compacted'] == 0
+    assert archiver.read_payload(aid) == 'newer version'
+    collect(archiver, grace_seconds=0)
+    assert archiver.read_payload(aid) == 'newer version'
