@@ -204,7 +204,7 @@
       }
     }
     const unitKey=u=>`${u.task_id}:${u.digest}`;
-    const selectable=u=>!u.reason_code||['ai_uncertain','ai_excluded','manual_excluded','value_review'].includes(u.reason_code);
+    const selectable=u=>!u.reason_code||['ai_uncertain','ai_excluded','manual_excluded','value_review','batch_limit'].includes(u.reason_code);
     function decisionState(){
       if(!proposal)return null;
       let state=decisionDrafts.get(proposal.revision);
@@ -256,21 +256,21 @@
     function drawPreview(){
       const p=proposal, target=EvolvProjects.scopeLabel(p,projects), semantic=p.matching_mode==='semantic';
       const pending=p.excluded.filter(u=>['ai_uncertain','review_changed'].includes(u.reason_code));
-      const valuePending=p.excluded.filter(u=>u.reason_code==='value_review');
+      const manualPending=p.excluded.filter(u=>['value_review','batch_limit'].includes(u.reason_code));
       const rejected=p.excluded.filter(u=>u.reason_code==='ai_excluded');
       const manuallyExcluded=p.excluded.filter(u=>u.reason_code==='manual_excluded');
-      const unjudged=p.excluded.filter(u=>!['ai_uncertain','review_changed','ai_excluded','manual_excluded','value_review'].includes(u.reason_code));
+      const unjudged=p.excluded.filter(u=>!['ai_uncertain','review_changed','ai_excluded','manual_excluded','value_review','batch_limit'].includes(u.reason_code));
       const judged=p.ai_judged_count??(p.eligible.length+rejected.length+p.excluded.filter(u=>u.reason_code==='ai_uncertain').length+(p.handled_count||0));
-      const rows=(items,manual=false)=>items.map(u=>`<li data-review-key="${esc(unitKey(u))}"><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}${Number.isFinite(u.relevance)?`<p>相关度 ${Math.round(u.relevance*100)}% · ${u.reason_code==='ai_excluded'?'AI 判断不符合':u.reason_code==='ai_uncertain'?'需要你判断':'AI 建议录入'}</p>`:''}${manual?`<button type="button" data-rg="review-one" data-task="${u.task_id}" data-digest="${esc(u.digest)}">核查记忆</button><div data-rg-manual-original hidden></div>`:`<button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div>`}</li>`).join('');
+      const rows=(items,manual=false)=>items.map(u=>`<li data-review-key="${esc(unitKey(u))}"><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}${Number.isFinite(u.relevance)?`<p>相关度 ${Math.round(u.relevance*100)}% · ${u.reason_code==='ai_excluded'?'AI 判断不符合':u.reason_code==='ai_uncertain'?'需要你判断':['value_review','batch_limit'].includes(u.reason_code)?'尚未判断':'AI 建议录入'}</p>`:''}${manual?`<button type="button" data-rg="review-one" data-task="${u.task_id}" data-digest="${esc(u.digest)}">核查记忆</button><div data-rg-manual-original hidden></div>`:`<button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div>`}</li>`).join('');
       const section=(name,items,open=false,manual=false)=>items.length?`<details ${open?'open':''}><summary>${name} · ${items.length} 条</summary><ul>${rows(items,manual)}</ul></details>`:'';
       const stale=[...new Set(p.excluded.filter(u=>u.reason_code==='rule_changed').map(u=>u.source_key))];
-      $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${valuePending.length?`本次待处理资料：${p.eligible.length+p.excluded.length} 条${judged?`；已由 AI 判断：${judged} 条`:""}。`:semantic&&!Number.isFinite(p.recalled_count)?`这是之前完成的判断结果。点击预览，按相似度重新查找候选。已判断 ${judged} 条。`:semantic?`本次查找范围：${p.selection==='all'?'全部待确认资料':'这份来源会话的待确认任务'}。待确认 ${p.pool_count} 条，召回 ${p.recalled_count} 条相似记忆，重排后保留 ${p.ranked_count} 条；本批已判断 ${judged} 条。`:`正在看的这一条：共 ${p.searched_count} 条。`}</p>
-        ${semantic?`<p>判断依据：${esc(p.condition)}</p><p>${valuePending.length&&!rejected.length?"":`AI 判断不符合：${rejected.length} 条；`}需要你判断：${pending.length+valuePending.length} 条${manuallyExcluded.length?`；你已确认不归入：${manuallyExcluded.length} 条`:''}${p.handled_count?`；已人工处理：${p.handled_count} 条`:''}</p>`:''}<div class="review-counts">${valuePending.length?`<strong>待你决定是否录入「${esc(target)}」：${valuePending.length} 条</strong>`:''}${p.eligible.length||!valuePending.length?`<strong>${semantic?'AI 建议录入':'可录入'}「${esc(target)}」：${p.eligible.length} 条</strong>`:''}${p.excluded.length>valuePending.length||!valuePending.length?`<strong>未推荐或此前不录入：${semantic?rejected.length+pending.length+manuallyExcluded.length:p.excluded.length-valuePending.length} 条</strong>`:''}</div>
+      $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${manualPending.length?`本次待处理资料：${p.eligible.length+p.excluded.length} 条${judged?`；已由 AI 判断：${judged} 条`:""}。`:semantic&&!Number.isFinite(p.recalled_count)?`这是之前完成的判断结果。点击预览，按相似度重新查找候选。已判断 ${judged} 条。`:semantic?`本次查找范围：${p.selection==='all'?'全部待确认资料':'这份来源会话的待确认任务'}。待确认 ${p.pool_count} 条，召回 ${p.recalled_count} 条相似记忆，重排后保留 ${p.ranked_count} 条；本批已判断 ${judged} 条。`:`正在看的这一条：共 ${p.searched_count} 条。`}</p>
+        ${semantic?`<p>判断依据：${esc(p.condition)}</p><p>${manualPending.length&&!rejected.length?"":`AI 判断不符合：${rejected.length} 条；`}需要你判断：${pending.length+manualPending.length} 条${manuallyExcluded.length?`；你已确认不归入：${manuallyExcluded.length} 条`:''}${p.handled_count?`；已人工处理：${p.handled_count} 条`:''}</p>`:''}<div class="review-counts">${manualPending.length?`<strong>待你决定是否录入「${esc(target)}」：${manualPending.length} 条</strong>`:''}${p.eligible.length||!manualPending.length?`<strong>${semantic?'AI 建议录入':'可录入'}「${esc(target)}」：${p.eligible.length} 条</strong>`:''}${p.excluded.length>manualPending.length||!manualPending.length?`<strong>未推荐或此前不录入：${semantic?rejected.length+pending.length+manuallyExcluded.length:p.excluded.length-manualPending.length} 条</strong>`:''}</div>
         ${p.scope==='future'?`<p>保存后，AI 将按“${esc(p.condition)}”及不适用情况判断新资料，符合时归入「${esc(target)}」。</p>`:''}
         ${stale.length?`<div class="review-recovery"><p>${stale.length} 份来源还需按最新规则整理。完成后会自动更新本次归类结果。</p><button type="button" class="write" data-rg="reprocess">按最新规则重新整理 ${Math.min(20,stale.length)} 份来源</button>${stale.length>20?'<p>其余来源留待下一批处理。</p>':''}</div>`:''}
-        ${section('待你决定是否录入',valuePending,true)}
+        ${section('待你决定是否录入',manualPending,true)}
         ${semantic?section('按相关度排序的判断结果',[...p.eligible,...pending,...rejected].sort((a,b)=>(b.relevance||0)-(a.relevance||0)),true,true):section('将归入的资料',p.eligible,true)}
-        ${semantic?section('以前已确认不归入',manuallyExcluded)+section('尚未判断的相似记忆',unjudged):section('本次未归入',p.excluded.filter(u=>u.reason_code!=='value_review'),true)}
+        ${semantic?section('以前已确认不归入',manuallyExcluded)+section('尚未判断的相似记忆',unjudged):section('本次未归入',p.excluded.filter(u=>!['value_review','batch_limit'].includes(u.reason_code)),true)}
         ${semantic&&p.remaining&&!p.needs_recheck?`<p>还有 ${p.remaining} 条相似记忆尚未判断；不相关时可到此结束。</p><button type="button" data-rg="next-batch">继续判断下一批（最多 20 条）</button>`:''}
         ${semantic&&form.elements.continue_job_id.value?'<button type="button" data-rg="previous-batch">查看上一批结果</button>':''}`;
       decorateDecisions();

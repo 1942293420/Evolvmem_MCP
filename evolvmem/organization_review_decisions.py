@@ -26,11 +26,12 @@ def save(service, body):
         entries = {(u['task_id'], u['digest']): u for u in current['eligible'] + current['excluded']}
         units = {(u['task_id'], u['digest']): u for g in review._groups(service) for u in g['members']}
         # Validate all choices before touching any row. A human can override a
-        # model judgment, but cannot admit a stale or unreadable source.
+        # model judgment or decide an unjudged item, but cannot admit a stale
+        # or unreadable source.
         for key in selected:
             entry, unit = entries.get(key), units.get(key)
             if (entry is None or unit is None or entry['revision'] != unit['revision']
-                    or entry.get('reason_code', '') not in ('', 'ai_uncertain', 'ai_excluded', 'manual_excluded', 'value_review')):
+                    or entry.get('reason_code', '') not in ('', 'ai_uncertain', 'ai_excluded', 'manual_excluded', 'value_review', 'batch_limit')):
                 raise ValueError('review_preview_changed')
             org._assert_current(service, org.task_view(service, unit['task_id']))
             if unit['rule_revision'] != service.knowledge().rules.read()['revision']:
@@ -57,7 +58,7 @@ def save(service, body):
         if current.get('job_id'):
             from evolvmem import organization_semantic_review as semantic
             remaining=semantic.proposal(service,{'job_id':current['job_id']})
-            if not remaining['eligible'] and not any(u.get('reason_code') in ('ai_uncertain','ai_excluded','ai_pending','review_changed','value_review')
+            if not remaining['eligible'] and not any(u.get('reason_code') in ('ai_uncertain','ai_excluded','ai_pending','review_changed','value_review','batch_limit')
                                                     for u in remaining['excluded']):
                 semantic.mark_applied(service,current['job_id'])
     return {'ok': True, 'included': included, 'excluded': len(selected) - included, 'guidance': stored}

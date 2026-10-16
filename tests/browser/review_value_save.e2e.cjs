@@ -49,15 +49,26 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.match(await page.locator('[data-rg-empty]').innerText(),/已保存/);
   await page.reload();await idle();
   assert.equal((await api('organization/groups/recent-analysis')).job,null,'completed filing must not return as pending');
-  // Single-item preview uses the same explicit choice without invoking AI.
+  // Single-item preview offers the same explicit choice without invoking AI.
   await open('保留价值演示二');await form.locator('[name=selection]').selectOption('item');
   await form.locator('[name=projects][value=evo]').check();await click('[data-rg=preview]');
   await preview.locator('[data-rg-choice]').waitFor();
   assert.equal(await form.locator('[data-rg=apply]').isEnabled(),false);
-  await preview.locator('[data-rg-choice]').selectOption('exclude');await click('[data-rg=apply]');
+  // The user may already have kept the material through another entry point.
+  const retainedId=Number(await form.locator('[name=task_id]').inputValue()),retainedDigest=await form.locator('[name=digest]').inputValue();
+  await form.locator('[name=selection]').selectOption('group');
+  await form.locator('[name=condition]').fill('演示项目的导出规则归入演示项目。');
+  await click('[data-rg=preview]');await preview.locator('h3').waitFor();await idle();
+  const before=(await api('organization/detail?task_id='+retainedId)).units.find(u=>u.digest===retainedDigest);
+  const keep=await page.request.post(base+'/api/knowledge/organization/disposition',{data:{task_id:retainedId,digest:retainedDigest,expected_revision:before.revision,disposition:'keep'}});assert.ok(keep.ok());
+  await page.reload();await preview.locator('[data-rg-choice]').waitFor();await idle();
+  assert.match(await preview.innerText(),/本次待处理资料：1 条/);
+  assert.equal(await preview.locator('[data-rg-choice] option[value=include]').innerText(),'录入');
+  await preview.locator('[data-rg-choice]').selectOption('include');await click('[data-rg=apply]');
   await page.waitForFunction(()=>document.querySelector('[data-rg-form]').hidden);
-  assert.match(await page.locator('[data-rg-empty]').innerText(),/不录入仅针对这次选择的范围/);
-  assert.equal(writes,2);assert.equal(analyses,1);assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({checks:['零条 AI 结果仍显示一条待处理资料','待保留资料可明确选择保留并录入','刷新恢复未保存的选择且不重复调用 AI','一次保存同时保留和归类并退出待审','单条预览支持范围内不录入','手机和桌面无横向溢出'],errors}));
+  const retained=(await api('organization/detail?task_id='+retainedId)).units.find(u=>u.digest===retainedDigest);
+  assert.equal(retained.decision,'manual');assert.equal(retained.project,'evo');
+  assert.equal(writes,2);assert.equal(analyses,2);assert.deepEqual(errors,[]);
+  console.log(JSON.stringify({checks:['零条 AI 结果仍显示一条待处理资料','待保留资料可明确选择保留并录入','刷新恢复未保存的选择且不重复调用 AI','一次保存同时保留和归类并退出待审','单条预览同样可选择处理','已通过其他入口保留的资料恢复旧预览后仍可直接归类','手机和桌面无横向溢出'],errors}));
  }catch(error){await page.screenshot({path:'/tmp/evo-review-value-save-failed.png',fullPage:true});throw error;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

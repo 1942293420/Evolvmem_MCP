@@ -42,19 +42,38 @@ def test_value_exclusion_preserves_material_and_can_be_reversed(service, monkeyp
     assert calls == []
 
 
-def test_unhandled_value_review_survives_saving_other_judgments(service, monkeypatch):
+@pytest.mark.parametrize('retained', [False, True])
+def test_unhandled_value_review_survives_saving_other_judgments(service, monkeypatch, retained):
     tid, calls, job, p = value_review(service, monkeypatch, count=2)
+    if retained:
+        unit = org(service, '/units', {'task_id': tid})['items'][-1]
+        org(service, '/disposition', {'task_id': tid, 'digest': unit['digest'],
+            'expected_revision': unit['revision'], 'disposition': 'keep'})
+        p = semantic.get(service, job['id'])['proposal']
     assert len(p['eligible']) == 1 and len(p['excluded']) == 1
     save(service, p, [choice(p['eligible'][0], 'include')])
     restored = semantic.recent(service)['job']
     assert restored and restored['id'] == job['id']
-    assert restored['proposal']['excluded'][0]['reason_code'] == 'value_review'
+    assert restored['proposal']['excluded'][0]['reason_code'] == ('batch_limit' if retained else 'value_review')
     # Older completed jobs may lack the applied flag; recovery uses the same rule.
     import json
     request = json.loads(semantic._row(service, job['id'])['request']);request.pop('_applied', None)
     with service.store.transaction():
         service.store._connection().execute('UPDATE organization_review_jobs SET request=? WHERE id=?', (json.dumps(request),job['id']))
     assert semantic.recent(service)['job']['id'] == job['id']
+
+
+def test_previously_retained_material_can_be_filed_from_restored_preview(service, monkeypatch):
+    tid, calls, job, p = value_review(service, monkeypatch)
+    unit = org(service, '/units', {'task_id': tid})['items'][0]
+    org(service, '/disposition', {'task_id': tid, 'digest': unit['digest'],
+        'expected_revision': unit['revision'], 'disposition': 'keep'})
+    p = semantic.get(service, job['id'])['proposal']
+    assert p['excluded'][0]['reason_code'] == 'batch_limit'
+    assert save(service, p, [choice(p['excluded'][0], 'include')])['included'] == 1
+    saved = org(service, '/units', {'task_id': tid})['items'][0]
+    assert (saved['disposition'], saved['decision'], saved['project']) == ('keep', 'manual', 'evo')
+    assert calls == []
 
 
 def test_failed_filing_rolls_back_value_confirmation(service, monkeypatch):
