@@ -7,6 +7,7 @@ import json
 import os
 import re
 import time
+import zlib
 
 from evolvmem.codex_transcript import SUBAGENT_SESSION_REASON, parse_transcript, workspace_details
 from evolvmem.lan_sharing import LanError
@@ -14,6 +15,7 @@ from evolvmem.session_archive import SessionArchiver, AESGCM
 
 
 CAPTURE_TOOLS = frozenset({'session_archive_upload', 'session_archive_status', 'session_archive_retry', 'session_archive_assign'})
+_STAGE_MAGIC = b'EVOM-UPLOAD\x02\r\n'
 # Attribution reasons that exclude a source from automatic organization. Only
 # native metadata decides; the archived body is never scanned for keywords.
 EXCLUDED_REASONS = frozenset({SUBAGENT_SESSION_REASON})
@@ -112,6 +114,10 @@ class LanCapture:
     def _read_stage(self, path):
         try:
             blob = path.read_bytes()
+            if blob.startswith(_STAGE_MAGIC):
+                blob = blob[len(_STAGE_MAGIC):]
+                return zlib.decompress(AESGCM(self.archiver._load_or_create_key()).decrypt(
+                    blob[:12], blob[12:], _STAGE_MAGIC))
             return AESGCM(self.archiver._load_or_create_key()).decrypt(blob[:12], blob[12:], None)
         except Exception:
             raise LanError('upload_staging_unavailable') from None
@@ -119,9 +125,15 @@ class LanCapture:
     def _write_stage(self, path, raw):
         if AESGCM is None:
             raise LanError('archive_encryption_unavailable')
+        from evolvmem.archive_storage import require_space, StorageSpaceLow
+        try:
+            require_space(self.server.config, len(raw))
+        except StorageSpaceLow:
+            raise LanError('archive_storage_space_low') from None
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         nonce = os.urandom(12)
-        blob = nonce + AESGCM(self.archiver._load_or_create_key()).encrypt(nonce, raw, None)
+        blob = _STAGE_MAGIC + nonce + AESGCM(self.archiver._load_or_create_key()).encrypt(
+            nonce, zlib.compress(raw, 3), _STAGE_MAGIC)
         temporary = path.with_suffix('.tmp')
         try:
             with open(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'wb') as handle:

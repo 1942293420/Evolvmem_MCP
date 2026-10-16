@@ -1419,7 +1419,7 @@ class ContextService:
             )
         return report
 
-    def sweep_archives(self) -> SessionPurgeReport:
+    def sweep_archives(self, *, preserve_originals: bool = False) -> SessionPurgeReport:
         """Run one TTL purge sweep over expired session archives.
 
         Purge is irreversible and never faked: rows transition only after
@@ -1431,7 +1431,10 @@ class ContextService:
         """
         self._require_serving()
         with self._cutover_lock.shared():
-            report = self._session_archiver().sweep_expired()
+            # SessionStart may retire covered summaries, but must not delete
+            # unique original evidence merely because thirty days elapsed.
+            report = (SessionPurgeReport() if preserve_originals
+                      else self._session_archiver().sweep_expired())
             try:
                 SummaryRetention(self.config, self.store).sweep(_now_iso())
             except Exception:

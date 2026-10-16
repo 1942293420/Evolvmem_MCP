@@ -188,6 +188,8 @@ class LanRuntime:
         if self._capture_worker is not None:
             return
         daily = LanDailyRollup(adapter)
+        from evolvmem.archive_maintenance import LanArchiveMaintenance
+        storage = LanArchiveMaintenance(adapter)
 
         def run():
             try:
@@ -197,6 +199,10 @@ class LanRuntime:
                         adapter.process_pending()
                     except Exception:
                         # Jobs remain queryable; never log transcript/provider details.
+                        pass
+                    try:
+                        storage.check()
+                    except Exception:
                         pass
                     try:
                         # Uploads and extractions win; daily summaries come after.

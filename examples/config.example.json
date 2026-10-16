@@ -36,6 +36,7 @@
   "context_frequency_cap": 20,
   "context_project_aliases": {},
   "context_archive_ttl_days": 30,
+  "context_archive_min_free_mb": 1024,
   "context_session_summary_ttl_days": 30,
   "context_session_summary_keep": 10,
   "context_promotion_min_successes": 2,

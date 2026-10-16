@@ -283,7 +283,7 @@ def _build_digest_lines(logs: list[dict], config: Config) -> list[str]:
 
 
 def _maybe_sweep_archives(service: "ContextService", mode) -> None:
-    """Shadow/primary SessionStart: one silent TTL purge before rendering.
+    """Shadow/primary SessionStart: retire covered summaries, keep originals.
 
     The sweep's lock and transaction discipline stays with the service; like
     every other maintenance step it is fail-open — any failure only prints a
@@ -295,7 +295,7 @@ def _maybe_sweep_archives(service: "ContextService", mode) -> None:
     if mode not in (ContextMode.SHADOW, ContextMode.PRIMARY):
         return
     try:
-        service.sweep_archives()
+        service.sweep_archives(preserve_originals=True)
     except Exception:
         print("[evolvmem] session archive sweep skipped",
               file=sys.stderr, flush=True)

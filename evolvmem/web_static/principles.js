@@ -8,10 +8,21 @@ window.EvolvPrinciples={render(mount){
  const facts=(owner,input,output,rule='',tool='',link='')=>({owner,input,output,rule,tool,link});
  const modules=[['home','总览','处理进度与系统问题','#home'],['organization','自动整理','归类、提炼与集中判断','#knowledge/organization'],['history','项目历史','历史对话与项目摘要','#knowledge/projects'],['qa','经验知识','明确问答与适用范围','#knowledge/qa'],['checkpoint','任务断点','当前进度与下一步','#progress'],['cleaning','数据清洗','核对来源、修改与删除','#knowledge/cleaning'],['intake','存量资料','旧资料归类与纠正','#knowledge/intake'],['rules','整理规则','处理规则与样例预览','#knowledge/skill']];
  const diagrams={
+ storage:{title:'保留原文，让重复内容只存一份',type:'存储维护流程图',goal:'各版会话仍能完整读取，知识来源不变；自动回收不再使用的副本。',height:1080,nodes:[
+ n('start','收到新的会话内容',350,20,'start',facts('会话接入','新增或修改的会话','待保存的完整内容')),
+ n('space','剩余空间足够？',350,150,'decision',facts('存储维护','当前磁盘余量与本次写入量','保存或稍后重试','默认保留至少 1 GB 空间，并预留本次写入所需空间。')),
+ n('wait','保留现有资料|稍后重试新写入',690,310,'exception',facts('会话接入','空间不足','旧资料仍可读，客户端保留待传内容','不靠删除有用原文腾出空间。')),
+ n('share','重复部分复用|只保存变化内容',350,310,'action',facts('会话归档','完整会话与已有内容','压缩加密的共享内容和版本目录','每个版本独立指向所需内容；中间版本删除不影响其他版本。')),
+ n('verify','核对原文能完整还原',350,470,'action',facts('旧资料迁移','旧副本与新存储','逐字一致的原文','核对成功并保存后，才移除旧完整副本；失败保留旧资料。')),
+ n('keep','保留历史版本与知识来源',350,630,'store',facts('资料管理','各版原文、知识引用与审核依据','原有资料编号和来源关系','自动维护不按年龄删除独有原文；当前会话和被引用的清洗结果保留。')),
+ n('collect','定时回收无用副本',350,790,'action',facts('存储维护','所有现用版本与引用关系','删除无引用的文件、可重建的旧缓存','通常每小时检查，有迁移积压时分批继续；发现资料损坏时停止回收。')),
+ n('end','资料可追溯，空间可复用',350,950,'end',facts('Evo','维护结果','完整原文、有效知识和来源'))],edges:[
+ e('s1','start','space'),e('s2','space','share','足够'),e('s3','space','wait','不足'),e('s4','share','verify'),e('s5','verify','keep'),e('s6','keep','collect'),e('s7','collect','end')],routes:[
+ r('save','正常保存与回收','start space share verify keep collect end','s1 s2 s4 s5 s6 s7'),r('wait','空间不足时保留资料','start space wait','s1 s3')]},
  modules:{title:'从业务目标找到负责的页面',type:'职责图',goal:'知道资料在哪里、疑问在哪里处理、任务从哪里继续。',height:600,nodes:modules.map((m,i)=>n(m[0],m[1]+'|'+m[2],40+(i%3)*310,60+Math.floor(i/3)*165,'action',facts('你与 Evo','当前业务资料和处理状态',m[2],'','',m[3]))),edges:[],routes:[]},
  flow:{title:'新会话怎样成为以后可用的资料',type:'业务流程图',goal:'从需求起点理解过程与结果，保留原话；有疑问时直接核查完整上下文。',height:1550,nodes:[
  n('start','新会话或旧待整理资料',350,20,'start',facts('客户端','用户与助手的可见对话','新增会话与已有待审原文')),
- n('archive','保存会话与来源',350,130,'action',facts('会话接入','会话批次、客户端与会话标识','会话档案、来源引用','系统工具输出不作为用户要求。')),
+ n('archive','复用重复内容，保存来源',350,130,'action',facts('会话接入','会话批次、客户端与会话标识','可还原的各版会话、来源引用','相同内容共享保存；系统工具输出不作为用户要求。')),
  n('source','业务会话？',350,260,'decision',facts('会话接入','原生会话身份与来源标记','业务对话；审批等系统子会话','旧的本机采集和远端上传都按原生身份补查，内部审批副本不作业务原文。')),
  n('excluded','只留原文|不进入业务召回',30,390,'exception',facts('来源核对','审批等系统子会话','保留原文、退出业务整理与历史召回','仅靠这些来源自动生成的资料停止采用；人工确认与其他有效来源保留。')),
  n('clean','按需求识别完整任务',350,390,'action',facts('任务整理','同一会话的已验证原始批次','从需求提出到当前结果的一段任务；插入别的任务后可续接','同一需求反复修复合为一项，保留原文范围；没有结果不补造。')),
@@ -81,7 +92,7 @@ window.EvolvPrinciples={render(mount){
  e('d1','dialogue','archive','会话与来源'),e('d2','dialogue','organize','新增对话'),e('d3','archive','organize','原文'),e('d4','rules','organize','指导'),e('d5','organize','history','对话与摘要'),e('d6','organize','qa','有效问答'),e('d7','organize','cases','方法与来源'),e('d8','history','prepare','摘要'),e('d9','qa','prepare','问答'),e('d10','cases','prepare','案例'),e('d11','prepare','recall','检索候选'),e('d12','question','recall','问题'),e('d13','recall','answer','相关内容与来源'),e('d14','archive','answer','按引用读取原文','M160 290H20V1140H480V1120',179,1125)],routes:[
  r('qa','新对话成为可用知识','dialogue organize qa prepare recall answer','d2 d6 d9 d11 d13'),r('history','新对话成为项目历史','dialogue organize history prepare recall answer','d2 d5 d8 d11 d13'),r('read','找到来源后读取原文','dialogue archive answer','d1 d14')]}
  };
- const tabs=[['modules','页面职责'],['flow','完整流程'],['activity','入库活动'],['organization','角色泳道'],['recall','知识召回'],['dataflow','资料数据流']];
+ const tabs=[['modules','页面职责'],['flow','完整流程'],['activity','入库活动'],['organization','角色泳道'],['recall','知识召回'],['dataflow','资料数据流'],['storage','存储与回收']];
  let saved={};try{saved=JSON.parse(sessionStorage.getItem('evolvmem-business-diagrams')||'{}');}catch(_){}
  let kind=diagrams[saved.kind]?saved.kind:'flow',routeId=saved.route||'',step=-1,timer=null,zoom=saved.zoom===1.3?1.3:1;
  const reduced=matchMedia('(prefers-reduced-motion: reduce)');

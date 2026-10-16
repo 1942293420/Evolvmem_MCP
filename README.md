@@ -163,7 +163,7 @@ bash install.sh
 MCP、hooks、补扫 worker 必须指向同一目录；桌面客户端未必继承终端变量，建议写入其 MCP `env`。
 `config.json` 的缺失字段使用默认值；`EVOLVMEM_CONTEXT_MODE`、`EVOLVMEM_ADAPTER` 优先于其中对应字段。
 修改配置后重启已有服务。Kimi 路径常量在进程导入时解析，运行中改变变量不会切换目录。
-完整的 65 个默认参数见 [config.example.json](examples/config.example.json)，其中不含数据路径或凭据。
+完整的 66 个默认参数见 [config.example.json](examples/config.example.json)，其中不含数据路径或凭据。
 初次配置可参考它；已有数据目录只改需要的字段，不要用样例覆盖自己的完整配置。
 
 | 文件 / 目录 | 用途 |
@@ -174,9 +174,25 @@ MCP、hooks、补扫 worker 必须指向同一目录；桌面客户端未必继�
 | `models/` | 可选本地 GGUF 模型 |
 | `llm_credentials.json` | 可选提取聊天模型凭据 |
 | `hooks.log` / `live/` | hook 诊断日志和会话心跳 |
-| `session_archives/` / `archive.key` | AES-GCM 加密会话证据；密钥权限为 `0600` |
+| `session_archives/` / `session_chunks/` / `archive.key` | 加密版本目录与共享内容块；密钥权限为 `0600` |
 | `workspace.key` | 工作区指纹密钥，用于项目绑定和续接 |
 | `backups/` | 正式切换备份；不会自动清理 |
+
+会话归档现在采用共享内容块：相同内容压缩加密后只保存一次，新版本只增加变化部分和版本目录，各版原文可逐字还原。知识编号、来源引用和审核依据不变。旧完整副本分批迁移，核对原文完全一致、提交成功后才移除旧文件。
+
+现有 LAN 后台通常每小时维护；有积压时每分钟处理一批（默认最多 20 份、约 32 MiB，单份较大文件允许完成）。只回收超过一小时且没有版本引用的文件，以及可由原文重建、没有业务引用的旧会话缓存。发现归档损坏时停止文件回收。自动维护和 SessionStart 不按年龄删除独有原文；显式 `context_sweep` 仍按 `context_archive_ttl_days` 检查，但保护知识来源、审核依据和当前会话。显式项目删除仍是不可逆的删除操作。
+
+`context_archive_min_free_mb` 默认 1024：归档与上传暂存写入前检查磁盘余量，并额外预留本次写入空间；不足时保留现有资料、拒绝本次写入以便重试。上传暂存同样压缩加密。独有资料仍会增长，此保护不限制其他程序写盘。
+
+本地检查与分批维护（不调用模型，输出只含计数与状态）：
+
+```bash
+python -m evolvmem.archive_storage_cli status --data-dir ~/.claude/evolvmem
+python -m evolvmem.archive_storage_cli maintain --data-dir ~/.claude/evolvmem
+python -m evolvmem.archive_storage_cli verify --data-dir ~/.claude/evolvmem
+```
+
+备份时将数据库、`archive.key`、`session_archives/` 和 `session_chunks/` 作为同一数据集保存；恢复前先停止写入。新格式需使用本版程序读取，不能只回退程序版本后继续写入。上述命令不会生成数据库或归档的完整备份。
 
 原始 Kimi 会话仍从 `~/.kimi-code/sessions` 读取，数据目录变量不会移动宿主的会话来源。
 现有 `project_cli` / `maintenance_cli` 的 `--data-dir` 选择操作库，但不会同步传给共享 LLM 凭据加载器；它们还会在执行期间清除目录环境覆盖。

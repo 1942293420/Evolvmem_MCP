@@ -313,6 +313,11 @@ def test_source_state_partial_and_full_purge(archiver, store, test_config):
     assert store.get_item(item_none.id).source_state == "none"
 
     report = archiver.sweep_expired(now=T0 + timedelta(days=30))
+    assert report.held_archive_ids == (arch_first.id,)
+    assert report.purged_archive_ids == ()
+    # Automatic expiry preserves knowledge sources. Explicit deletion still
+    # updates source availability without deleting the knowledge itself.
+    report = archiver._purge_rows([store.get_session_archive(arch_first.id)], purged_at='2026-02-01 00:00:00')
     assert report.purged_archive_ids == (arch_first.id,)
 
     assert store.get_item(item_all.id).source_state == "partial_purged"
@@ -321,6 +326,8 @@ def test_source_state_partial_and_full_purge(archiver, store, test_config):
     assert store.get_item(item_none.id).source_state == "none"
 
     report = archiver.sweep_expired(now=T0 + timedelta(days=40))
+    assert report.held_archive_ids == (arch_second.id,)
+    report = archiver.purge_project('proj')
     assert report.purged_archive_ids == (arch_second.id,)
 
     assert store.get_item(item_all.id).source_state == "purged"
