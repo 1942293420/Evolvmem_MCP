@@ -204,7 +204,7 @@
       }
     }
     const unitKey=u=>`${u.task_id}:${u.digest}`;
-    const selectable=u=>!u.reason_code||['ai_uncertain','ai_excluded','manual_excluded'].includes(u.reason_code);
+    const selectable=u=>!u.reason_code||['ai_uncertain','ai_excluded','manual_excluded','value_review'].includes(u.reason_code);
     function decisionState(){
       if(!proposal)return null;
       let state=decisionDrafts.get(proposal.revision);
@@ -230,7 +230,7 @@
       for(const action of ['batch-include','batch-exclude']){const b=$(`[data-rg=${action}]`);if(b)b.disabled=!state.picked.length;}
       const button=$('[data-rg=apply]');button.hidden=false;button.disabled=!decisions.length||decisions.length>100;button.textContent='保存审核结果';
       $('[data-rg-save-status]').textContent=decisions.length?`待保存：录入 ${included} 条；不录入 ${excluded} 条${decisions.length>100?'。每次最多保存 100 条。':''}`:
-        proposal.excluded.some(u=>['rule_changed','review_changed'].includes(u.reason_code))?'有资料需要重新核对，完成后可保存。':proposal.excluded.some(u=>u.reason_code==='manual_excluded')?'之前的不录入决定已保存。勾选资料后可以改为录入。':proposal.handled_count?'本批已处理的资料已保存。其余资料可继续选择。':'勾选资料并选择录入或不录入，再保存审核结果。';
+        proposal.excluded.some(u=>u.reason_code==='value_review')?'请选择“保留并录入”或“不录入”，再保存审核结果。':proposal.excluded.some(u=>['rule_changed','review_changed'].includes(u.reason_code))?'有资料需要重新核对，完成后可保存。':proposal.excluded.some(u=>u.reason_code==='manual_excluded')?'之前的不录入决定已保存。勾选资料后可以改为录入。':proposal.handled_count?'本批已处理的资料已保存。其余资料可继续选择。':'勾选资料并选择录入或不录入，再保存审核结果。';
       remember();onDirty(decisions.length>0);
     }
     function decorateDecisions(){
@@ -238,12 +238,13 @@
       if(!items.length){updateDecisions();return;}
       const toolbar=document.createElement('div');toolbar.className='review-batch-toolbar';
       toolbar.innerHTML='<div class="actions"><button type="button" data-rg="select-batch">全选本批</button><button type="button" data-rg="clear-batch">取消勾选</button><strong data-rg-selected-count></strong></div><div class="actions"><button type="button" data-rg="batch-include">选中项设为录入</button><button type="button" data-rg="batch-exclude">选中项设为不录入</button></div><p>本次录入范围：'+esc(EvolvProjects.scopeLabel(proposal,projects))+'</p>';
+      if(items.some(u=>u.reason_code==='value_review'))toolbar.querySelector('[data-rg=batch-include]').textContent='选中项设为保留并录入';
       if(items.length>100)toolbar.querySelector('[data-rg=select-batch]').textContent='勾选前 100 条';
       const first=$('[data-rg-preview] details');$('[data-rg-preview]').insertBefore(toolbar,first);
       mount.querySelectorAll('[data-review-key]').forEach(row=>{
         const u=items.find(x=>unitKey(x)===row.dataset.reviewKey);if(!u)return;
         const controls=document.createElement('div');controls.className='review-choice-row';
-        controls.innerHTML=`<label class="review-pick"><input type="checkbox" data-rg-pick="${esc(unitKey(u))}" aria-label="勾选：${esc(u.title)}"><strong>${esc(u.title)}</strong></label><label>本次选择<select data-rg-choice="${esc(unitKey(u))}" aria-label="${esc(u.title)}的录入选择"><option value="">${u.reason_code==='manual_excluded'?'已保存：不录入':'暂不处理'}</option><option value="include">录入</option><option value="exclude">不录入</option></select></label>`;
+        controls.innerHTML=`<label class="review-pick"><input type="checkbox" data-rg-pick="${esc(unitKey(u))}" aria-label="勾选：${esc(u.title)}"><strong>${esc(u.title)}</strong></label><label>本次选择<select data-rg-choice="${esc(unitKey(u))}" aria-label="${esc(u.title)}的录入选择"><option value="">${u.reason_code==='manual_excluded'?'已保存：不录入':'暂不处理'}</option><option value="include">${u.reason_code==='value_review'?'保留并录入':'录入'}</option><option value="exclude">不录入</option></select></label>`;
         row.querySelector(':scope > strong')?.remove();row.prepend(controls);
       });
       updateDecisions();
@@ -255,19 +256,21 @@
     function drawPreview(){
       const p=proposal, target=EvolvProjects.scopeLabel(p,projects), semantic=p.matching_mode==='semantic';
       const pending=p.excluded.filter(u=>['ai_uncertain','review_changed'].includes(u.reason_code));
+      const valuePending=p.excluded.filter(u=>u.reason_code==='value_review');
       const rejected=p.excluded.filter(u=>u.reason_code==='ai_excluded');
       const manuallyExcluded=p.excluded.filter(u=>u.reason_code==='manual_excluded');
-      const unjudged=p.excluded.filter(u=>!['ai_uncertain','review_changed','ai_excluded','manual_excluded'].includes(u.reason_code));
+      const unjudged=p.excluded.filter(u=>!['ai_uncertain','review_changed','ai_excluded','manual_excluded','value_review'].includes(u.reason_code));
       const judged=p.ai_judged_count??(p.eligible.length+rejected.length+p.excluded.filter(u=>u.reason_code==='ai_uncertain').length+(p.handled_count||0));
       const rows=(items,manual=false)=>items.map(u=>`<li data-review-key="${esc(unitKey(u))}"><strong>${esc(u.title)}</strong>${u.reason?`<p>${esc(u.reason)}</p>`:''}${Number.isFinite(u.relevance)?`<p>相关度 ${Math.round(u.relevance*100)}% · ${u.reason_code==='ai_excluded'?'AI 判断不符合':u.reason_code==='ai_uncertain'?'需要你判断':'AI 建议录入'}</p>`:''}${manual?`<button type="button" data-rg="review-one" data-task="${u.task_id}" data-digest="${esc(u.digest)}">核查记忆</button><div data-rg-manual-original hidden></div>`:`<button type="button" data-rg="original" data-task="${u.task_id}" data-digest="${esc(u.digest)}">展开原文</button><div data-rg-preview-original hidden></div>`}</li>`).join('');
       const section=(name,items,open=false,manual=false)=>items.length?`<details ${open?'open':''}><summary>${name} · ${items.length} 条</summary><ul>${rows(items,manual)}</ul></details>`:'';
       const stale=[...new Set(p.excluded.filter(u=>u.reason_code==='rule_changed').map(u=>u.source_key))];
-      $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${semantic&&!Number.isFinite(p.recalled_count)?`这是之前完成的判断结果。点击预览，按相似度重新查找候选。已判断 ${judged} 条。`:semantic?`本次查找范围：${p.selection==='all'?'全部待确认资料':'这份来源会话的待确认任务'}。待确认 ${p.pool_count} 条，召回 ${p.recalled_count} 条相似记忆，重排后保留 ${p.ranked_count} 条；本批已判断 ${judged} 条。`:`正在看的这一条：共 ${p.searched_count} 条。`}</p>
-        ${semantic?`<p>判断依据：${esc(p.condition)}</p><p>AI 判断不符合：${rejected.length} 条；需要你判断：${pending.length} 条${manuallyExcluded.length?`；你已确认不归入：${manuallyExcluded.length} 条`:''}${p.handled_count?`；已人工处理：${p.handled_count} 条`:''}</p>`:''}<div class="review-counts"><strong>${semantic?'AI 建议录入':'可录入'}「${esc(target)}」：${p.eligible.length} 条</strong><strong>未推荐或此前不录入：${semantic?rejected.length+pending.length+manuallyExcluded.length:p.excluded.length} 条</strong></div>
+      $('[data-rg-preview]').innerHTML=`<h3>4. 核对本次归类结果</h3><p>${valuePending.length?`本次待处理资料：${p.eligible.length+p.excluded.length} 条${judged?`；已由 AI 判断：${judged} 条`:""}。`:semantic&&!Number.isFinite(p.recalled_count)?`这是之前完成的判断结果。点击预览，按相似度重新查找候选。已判断 ${judged} 条。`:semantic?`本次查找范围：${p.selection==='all'?'全部待确认资料':'这份来源会话的待确认任务'}。待确认 ${p.pool_count} 条，召回 ${p.recalled_count} 条相似记忆，重排后保留 ${p.ranked_count} 条；本批已判断 ${judged} 条。`:`正在看的这一条：共 ${p.searched_count} 条。`}</p>
+        ${semantic?`<p>判断依据：${esc(p.condition)}</p><p>${valuePending.length&&!rejected.length?"":`AI 判断不符合：${rejected.length} 条；`}需要你判断：${pending.length+valuePending.length} 条${manuallyExcluded.length?`；你已确认不归入：${manuallyExcluded.length} 条`:''}${p.handled_count?`；已人工处理：${p.handled_count} 条`:''}</p>`:''}<div class="review-counts">${valuePending.length?`<strong>待你决定是否录入「${esc(target)}」：${valuePending.length} 条</strong>`:''}${p.eligible.length||!valuePending.length?`<strong>${semantic?'AI 建议录入':'可录入'}「${esc(target)}」：${p.eligible.length} 条</strong>`:''}${p.excluded.length>valuePending.length||!valuePending.length?`<strong>未推荐或此前不录入：${semantic?rejected.length+pending.length+manuallyExcluded.length:p.excluded.length-valuePending.length} 条</strong>`:''}</div>
         ${p.scope==='future'?`<p>保存后，AI 将按“${esc(p.condition)}”及不适用情况判断新资料，符合时归入「${esc(target)}」。</p>`:''}
         ${stale.length?`<div class="review-recovery"><p>${stale.length} 份来源还需按最新规则整理。完成后会自动更新本次归类结果。</p><button type="button" class="write" data-rg="reprocess">按最新规则重新整理 ${Math.min(20,stale.length)} 份来源</button>${stale.length>20?'<p>其余来源留待下一批处理。</p>':''}</div>`:''}
+        ${section('待你决定是否录入',valuePending,true)}
         ${semantic?section('按相关度排序的判断结果',[...p.eligible,...pending,...rejected].sort((a,b)=>(b.relevance||0)-(a.relevance||0)),true,true):section('将归入的资料',p.eligible,true)}
-        ${semantic?section('以前已确认不归入',manuallyExcluded)+section('尚未判断的相似记忆',unjudged):section('本次未归入',p.excluded,true)}
+        ${semantic?section('以前已确认不归入',manuallyExcluded)+section('尚未判断的相似记忆',unjudged):section('本次未归入',p.excluded.filter(u=>u.reason_code!=='value_review'),true)}
         ${semantic&&p.remaining&&!p.needs_recheck?`<p>还有 ${p.remaining} 条相似记忆尚未判断；不相关时可到此结束。</p><button type="button" data-rg="next-batch">继续判断下一批（最多 20 条）</button>`:''}
         ${semantic&&form.elements.continue_job_id.value?'<button type="button" data-rg="previous-batch">查看上一批结果</button>':''}`;
       decorateDecisions();
@@ -305,7 +308,7 @@
       const unchanged=()=>selectedGroup===requestGroup&&JSON.stringify(values())===JSON.stringify(request);
       previewState('preparing');
       if(request.selection==='item'){
-        const result=await api('organization/groups/preview',request);if(!unchanged())return;proposal=result;previewState();drawPreview();remember();notice(proposal.eligible.length?'预览已更新，请核对归类清单。':'预览已更新，暂时没有可保存的资料。');
+        const result=await api('organization/groups/preview',request);if(!unchanged())return;proposal=result;previewState();drawPreview();remember();notice([...proposal.eligible,...proposal.excluded].some(selectable)?'预览已更新，请选择本次录入的资料。':'预览已更新，暂时没有可保存的资料。');
       }else{
         const job=await api('organization/groups/analyze',request);if(!unchanged())return;proposal=null;analyses.set(selectedGroup,{id:job.id});$('[data-rg-preview]').replaceChildren();previewState(job.status,job);remember();await checkAnalysis();
       }

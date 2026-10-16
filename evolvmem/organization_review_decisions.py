@@ -30,15 +30,19 @@ def save(service, body):
         for key in selected:
             entry, unit = entries.get(key), units.get(key)
             if (entry is None or unit is None or entry['revision'] != unit['revision']
-                    or entry.get('reason_code', '') not in ('', 'ai_uncertain', 'ai_excluded', 'manual_excluded')):
+                    or entry.get('reason_code', '') not in ('', 'ai_uncertain', 'ai_excluded', 'manual_excluded', 'value_review')):
                 raise ValueError('review_preview_changed')
             org._assert_current(service, org.task_view(service, unit['task_id']))
-            if unit['rule_revision'] != service.knowledge().rules.read()['revision'] or unit['disposition'] == 'review':
+            if unit['rule_revision'] != service.knowledge().rules.read()['revision']:
                 raise ValueError('review_preview_changed')
         for key, action in selected.items():
             unit = units[key]
             exclusions.write_decision(service, unit, current, 'undo' if action == 'include' else 'exclude')
             if action == 'include':
+                if unit['disposition'] == 'review':
+                    unit = org.set_disposition(service, {'task_id': key[0], 'digest': key[1],
+                        'expected_revision': unit['revision'], 'disposition': 'keep',
+                        'reason': '用户选择保留并录入'})['unit']
                 org.correct_one(service, {**current, 'task_id': key[0], 'digest': key[1],
                                           'expected_revision': unit['revision']}, record_guidance=False)
         included = sum(action == 'include' for action in selected.values())
@@ -53,7 +57,7 @@ def save(service, body):
         if current.get('job_id'):
             from evolvmem import organization_semantic_review as semantic
             remaining=semantic.proposal(service,{'job_id':current['job_id']})
-            if not remaining['eligible'] and not any(u.get('reason_code') in ('ai_uncertain','ai_excluded','ai_pending','review_changed')
+            if not remaining['eligible'] and not any(u.get('reason_code') in ('ai_uncertain','ai_excluded','ai_pending','review_changed','value_review')
                                                     for u in remaining['excluded']):
                 semantic.mark_applied(service,current['job_id'])
     return {'ok': True, 'included': included, 'excluded': len(selected) - included, 'guidance': stored}

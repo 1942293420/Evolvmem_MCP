@@ -234,7 +234,7 @@ def recent(service):
             job = get(service,row['id'],_current_units=units)
             p=job.get('proposal')
             if p and p.get('ai_judged_count') and not p['eligible'] and not any(
-                    u.get('reason_code') in ('ai_uncertain','ai_excluded','ai_pending','review_changed') for u in p['excluded']):
+                    u.get('reason_code') in ('ai_uncertain','ai_excluded','ai_pending','review_changed','value_review') for u in p['excluded']):
                 # Older releases did not persist _applied for mixed decisions.
                 # Reading history must not invite the user to repeat them.
                 continue

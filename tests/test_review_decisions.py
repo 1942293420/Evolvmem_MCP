@@ -5,6 +5,82 @@ from tests.test_review_groups import org
 from evolvmem import organization_semantic_review as semantic
 
 
+def value_review(service, monkeypatch, *, count=1):
+    from tests.test_review_result_cache import setup_job
+    tid, request, calls = setup_job(service, monkeypatch, count=count)
+    units = org(service, '/units', {'task_id': tid})['items']
+    unit = units[-1]
+    org(service, '/disposition', {'task_id': tid, 'digest': unit['digest'],
+        'expected_revision': unit['revision'], 'disposition': 'review', 'reason': '需要确认保留价值'})
+    job = semantic.start(service, request)
+    semantic.tick(service)
+    return tid, calls, job, semantic.get(service, job['id'])['proposal']
+
+
+def test_value_review_can_be_explicitly_retained_and_filed_without_ai(service, monkeypatch):
+    tid, calls, job, p = value_review(service, monkeypatch)
+    assert not p['eligible'] and p['excluded'][0]['reason_code'] == 'value_review'
+    assert calls == [], 'AI must not silently retain material awaiting a human'
+    result = save(service, p, [choice(p['excluded'][0], 'include')])
+    assert result['included'] == 1
+    unit = org(service, '/units', {'task_id': tid})['items'][0]
+    assert (unit['disposition'], unit['decision'], unit['project']) == ('keep', 'manual', 'evo')
+    assert unit['item_id'], 'manual filing must actually retain readable history'
+    assert calls == []
+    assert semantic.recent(service)['job'] is None
+
+
+def test_value_exclusion_preserves_material_and_can_be_reversed(service, monkeypatch):
+    tid, calls, job, p = value_review(service, monkeypatch)
+    before = org(service, '/units', {'task_id': tid})['items'][0]
+    assert save(service, p, [choice(p['excluded'][0], 'exclude')])['excluded'] == 1
+    assert org(service, '/units', {'task_id': tid})['items'][0] == before
+    p = semantic.get(service, job['id'])['proposal']
+    assert p['excluded'][0]['reason_code'] == 'manual_excluded'
+    assert save(service, p, [choice(p['excluded'][0], 'include')])['included'] == 1
+    assert org(service, '/units', {'task_id': tid})['items'][0]['disposition'] == 'keep'
+    assert calls == []
+
+
+def test_unhandled_value_review_survives_saving_other_judgments(service, monkeypatch):
+    tid, calls, job, p = value_review(service, monkeypatch, count=2)
+    assert len(p['eligible']) == 1 and len(p['excluded']) == 1
+    save(service, p, [choice(p['eligible'][0], 'include')])
+    restored = semantic.recent(service)['job']
+    assert restored and restored['id'] == job['id']
+    assert restored['proposal']['excluded'][0]['reason_code'] == 'value_review'
+    # Older completed jobs may lack the applied flag; recovery uses the same rule.
+    import json
+    request = json.loads(semantic._row(service, job['id'])['request']);request.pop('_applied', None)
+    with service.store.transaction():
+        service.store._connection().execute('UPDATE organization_review_jobs SET request=? WHERE id=?', (json.dumps(request),job['id']))
+    assert semantic.recent(service)['job']['id'] == job['id']
+
+
+def test_failed_filing_rolls_back_value_confirmation(service, monkeypatch):
+    from evolvmem import auto_organization as org_module
+    tid, calls, job, p = value_review(service, monkeypatch)
+    before = org(service, '/units', {'task_id': tid})['items'][0]
+    def fail(*args, **kwargs):
+        current = org(service, '/units', {'task_id': tid})['items'][0]
+        assert current['disposition'] == 'keep'
+        raise ValueError('write_failed')
+    monkeypatch.setattr(org_module, 'correct_one', fail)
+    with pytest.raises(ValueError, match='write_failed'):
+        save(service, p, [choice(p['excluded'][0], 'include')])
+    assert org(service, '/units', {'task_id': tid})['items'][0] == before
+    assert service.store._connection().execute('SELECT COUNT(*) FROM organization_scope_exclusions').fetchone()[0] == 0
+
+
+def test_stale_value_review_cannot_be_saved(service, monkeypatch):
+    tid, calls, job, p = value_review(service, monkeypatch)
+    with service.store.transaction():
+        service.store._connection().execute('UPDATE organization_units SET revision=revision+1 WHERE task_id=?', (tid,))
+    with pytest.raises(ValueError, match='review_preview_changed'):
+        save(service, p, [choice(p['excluded'][0], 'include')])
+    assert org(service, '/units', {'task_id': tid})['items'][0]['disposition'] == 'review'
+
+
 def choice(unit, action):
     return {k: unit[k] for k in ('task_id', 'digest')} | {'action': action}
 
