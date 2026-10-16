@@ -1,4 +1,4 @@
-// Real HTTP and disposable data: an unjudged value-review item can be filed once.
+// Real HTTP and disposable data: an unjudged material can be archived through optional batch suggestions.
 const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 (async()=>{
@@ -14,6 +14,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const item=page.locator('[data-rg-list] button').filter({has:page.locator('strong',{hasText:new RegExp('^'+title+'$')})});
   while(!await item.count()&&await page.locator('[data-rg=next]').isEnabled())await click('[data-rg=next]');
   await item.click();await page.waitForFunction(t=>!document.querySelector('[data-rg-form]').inert&&document.querySelector('[data-rg-title]').textContent===t,title);
+  if(!await form.locator('[data-rg-ai]').evaluate(el=>el.open))await form.locator('[data-rg-ai] > summary').click();
  };
  let analyses=0,writes=0;
  page.on('request',r=>{if(r.url().endsWith('/groups/analyze'))analyses++;if(r.url().endsWith('/groups/decisions'))writes++;});
@@ -29,11 +30,11 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.match(await preview.innerText(),/待你决定是否录入 · 1 条/);
   assert.match(await preview.innerText(),/需要你判断：1 条/);
   const choice=preview.locator('[data-rg-choice]');
-  assert.equal(await choice.locator('option[value=include]').innerText(),'保留并录入');
+  assert.equal(await choice.locator('option[value=include]').innerText(),'归入项目');
   assert.equal(await form.locator('[data-rg=apply]').isEnabled(),false);
   assert.equal((await unit()).disposition,'review','preview must not silently retain material');
   await choice.selectOption('include');assert.equal(await form.locator('[data-rg=apply]').isEnabled(),true);
-  assert.match(await form.locator('[data-rg-save-status]').innerText(),/待保存：录入 1 条/);
+  assert.match(await form.locator('[data-rg-save-status]').innerText(),/待保存：归入项目 1 条/);
   assert.equal(writes,0);
   await page.reload();await choice.waitFor();await idle();
   assert.equal(await choice.inputValue(),'include','refresh must retain the unsaved choice');
@@ -63,12 +64,12 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const keep=await page.request.post(base+'/api/knowledge/organization/disposition',{data:{task_id:retainedId,digest:retainedDigest,expected_revision:before.revision,disposition:'keep'}});assert.ok(keep.ok());
   await page.reload();await preview.locator('[data-rg-choice]').waitFor();await idle();
   assert.match(await preview.innerText(),/本次待处理资料：1 条/);
-  assert.equal(await preview.locator('[data-rg-choice] option[value=include]').innerText(),'录入');
+  assert.equal(await preview.locator('[data-rg-choice] option[value=include]').innerText(),'归入项目');
   await preview.locator('[data-rg-choice]').selectOption('include');await click('[data-rg=apply]');
   await page.waitForFunction(()=>document.querySelector('[data-rg-form]').hidden);
   const retained=(await api('organization/detail?task_id='+retainedId)).units.find(u=>u.digest===retainedDigest);
   assert.equal(retained.decision,'manual');assert.equal(retained.project,'evo');
   assert.equal(writes,2);assert.equal(analyses,2);assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({checks:['零条 AI 结果仍显示一条待处理资料','待保留资料可明确选择保留并录入','刷新恢复未保存的选择且不重复调用 AI','一次保存同时保留和归类并退出待审','单条预览同样可选择处理','已通过其他入口保留的资料恢复旧预览后仍可直接归类','手机和桌面无横向溢出'],errors}));
+  console.log(JSON.stringify({checks:['零条 AI 结果仍显示一条待处理资料','尚未判断的资料可由用户选择归入项目','刷新恢复未保存的选择且不重复调用 AI','一次保存同时保留和归类并退出待审','单条预览同样可选择处理','已通过其他入口保留的资料恢复旧预览后仍可直接归类','手机和桌面无横向溢出'],errors}));
  }catch(error){await page.screenshot({path:'/tmp/evo-review-value-save-failed.png',fullPage:true});throw error;}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

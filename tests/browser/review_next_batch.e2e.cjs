@@ -9,7 +9,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  try{
   await page.goto(process.env.EVOLVMEM_TEST_URL+'/#knowledge/organization');
   await page.locator('[data-rg-list] > *').filter({hasText:'审核条目'}).first().locator('button').click();
-  const form=page.locator('[data-rg-form]');await form.locator('[name=projects][value=evo]').check();await form.locator('[name=selection]').selectOption('group');
+  const form=page.locator('[data-rg-form]');await form.locator('[name=projects][value=evo]').check();await form.locator('[data-rg-ai] > summary').click();await form.locator('[name=selection]').selectOption('group');
   await form.locator('[name=condition]').fill('编号处理保留原始值。');await form.locator('[name=exceptions]').fill('跨平台条件另行判断。');
   await form.locator('[data-rg=preview]').click();await ready(20);
   assert.match(await form.locator('[data-rg-preview]').innerText(),/判断[： ]+20 条/);

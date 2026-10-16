@@ -104,12 +104,15 @@ def groups(service, options=None):
 
 def detail(service, body):
     from evolvmem.task_narrative import read as narrative, overview
+    from evolvmem.ownership_reasoning import validated
     group = next(iter(_groups(service, selection=body)), None)
     if not group:
         raise ValueError('review_preview_changed')
+    policy_revision = service.knowledge().rules.read()['revision']
     return {k: v for k, v in group.items() if k != 'members'} | {
         'items': [_brief(u) | {k: u[k] for k in ('text', 'reason', 'disposition', 'disposition_reason')} |
-                  {'task_record':narrative(u.get('task_record')), 'overview':overview(u.get('task_record'))}
+                  {'task_record':narrative(u.get('task_record')), 'overview':overview(u.get('task_record')),
+                   'suggestion':validated(u, policy_revision)}
                   for u in group['members']]}
 
 
@@ -172,7 +175,7 @@ def preview(service, body, *, _judgments=None, _groups_snapshot=None):
         elif unit['rule_revision'] != policy['revision']:
             reason, code = '这份资料按旧规则整理，需按最新规则重新整理后再确认归属', 'rule_changed'
         elif unit['disposition'] == 'review':
-            reason, code = '请先确认这条资料是否值得保留', 'value_review'
+            reason, code = '这条资料尚未由 AI 判断，你可直接选择归入项目或暂不归档。', 'value_review'
         elif selection != 'item' and not semantic:
             reason = org.OrganizationWorker._guidance_conflict(None, service, unit, target, policy)
             code = 'conflict' if reason else ''

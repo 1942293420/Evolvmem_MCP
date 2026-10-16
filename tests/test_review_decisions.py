@@ -42,6 +42,18 @@ def test_value_exclusion_preserves_material_and_can_be_reversed(service, monkeyp
     assert calls == []
 
 
+def test_defer_saves_without_project_exclusion_and_is_not_restored_as_pending(service, monkeypatch):
+    tid, calls, job, p = value_review(service, monkeypatch)
+    before = org(service, '/units', {'task_id': tid})['items'][0]
+    assert save(service, p, [choice(p['excluded'][0], 'defer')])['deferred'] == 1
+    after = org(service, '/units', {'task_id': tid})['items'][0]
+    assert after['disposition'] == 'set_aside' and after['text'] == before['text']
+    assert not after['project']
+    assert service.store._connection().execute('SELECT COUNT(*) FROM organization_scope_exclusions').fetchone()[0] == 0
+    assert semantic.recent(service)['job'] is None
+    assert calls == []
+
+
 @pytest.mark.parametrize('retained', [False, True])
 def test_unhandled_value_review_survives_saving_other_judgments(service, monkeypatch, retained):
     tid, calls, job, p = value_review(service, monkeypatch, count=2)
@@ -84,7 +96,7 @@ def test_failed_filing_rolls_back_value_confirmation(service, monkeypatch):
         current = org(service, '/units', {'task_id': tid})['items'][0]
         assert current['disposition'] == 'keep'
         raise ValueError('write_failed')
-    monkeypatch.setattr(org_module, 'correct_one', fail)
+    monkeypatch.setattr(org_module, '_ensure_unit_item', fail)
     with pytest.raises(ValueError, match='write_failed'):
         save(service, p, [choice(p['excluded'][0], 'include')])
     assert org(service, '/units', {'task_id': tid})['items'][0] == before

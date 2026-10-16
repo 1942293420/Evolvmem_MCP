@@ -101,7 +101,10 @@ def test_semantic_ownership_reaches_history_without_related_project_leak(service
     tid=org(service,'/tasks',{'items':[{'key':f'archive:{source.id}'}]})['items'][0]['id']
     run_worker(service,monkeypatch,Provider(topics=[(text,'dsh','task_requirement')]))
     unit=org(service,'/units',{'task_id':tid})['items'][0]
-    assert unit['decision']=='auto' and unit['project']=='evo'
+    assert unit['decision']=='review' and unit['project']==''
+    assert unit['business_analysis']['projects']==['evo']
+    assert not history_memory.sessions(service,'evo')
+    org(service,'/archive',{'task_id':tid,'digest':unit['digest'],'expected_revision':unit['revision'],'action':'include','project':'evo'})
     assert unit['business_analysis']['related_projects']==['dsh']
     assert history_memory.sessions(service,'evo')
     assert not history_memory.sessions(service,'dsh')

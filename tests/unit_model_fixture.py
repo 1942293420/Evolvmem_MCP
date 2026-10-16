@@ -224,6 +224,20 @@ def use_model(monkeypatch, model):
     monkeypatch.setattr(kimi_hooks, '_call_llm_with_retry', model)
 
 
+def save_suggestions_as_user(service, task_ids=None):
+    """Explicit human saves for tests that start at the extraction boundary."""
+    from evolvmem import auto_organization as org
+    from evolvmem.organization_review_decisions import archive_one
+    tasks = task_ids if task_ids is not None else org.list_tasks(service, {})['current_task_ids']
+    for task_id in tasks:
+        for unit in org.unit_views(service, task_id):
+            target = unit['business_analysis']
+            if unit['decision'] == 'review' and unit['disposition'] == 'keep' and target.get('decision') == 'include':
+                archive_one(service, {'task_id': task_id, 'digest': unit['digest'],
+                    'expected_revision': unit['revision'], 'action': 'include',
+                    'projects': target.get('projects', []), 'knowledge_scope': target.get('knowledge_scope', 'project')})
+
+
 def run_worker(service, monkeypatch, model, *, timeout=15):
     from evolvmem.auto_organization import OrganizationWorker
     from evolvmem.context_models import ContextMode
