@@ -602,7 +602,7 @@ class TestProjectDigestLayer:
 
 
 class TestSessionStartArchiveSweep:
-    """P4b：shadow/primary 的 SessionStart 先静默跑 archive purge（fail-open）。"""
+    """SessionStart keeps originals and silently maintains covered summaries."""
 
     def test_shadow_sweeps_before_maintenance_and_render(
             self, test_config, monkeypatch):
@@ -613,7 +613,7 @@ class TestSessionStartArchiveSweep:
         monkeypatch.setattr(
             ContextService,
             "sweep_archives",
-            lambda service: calls.append("sweep"),
+            lambda service, **kwargs: calls.append(('sweep', kwargs['preserve_originals'])),
         )
         monkeypatch.setattr(
             "evolvmem.hooks._maybe_run_forgetting",
@@ -622,7 +622,7 @@ class TestSessionStartArchiveSweep:
 
         result = get_session_start_block(config=test_config)
 
-        assert calls == ["sweep", "forget"]  # purge 先于维护与渲染
+        assert calls == [('sweep', True), "forget"]
         assert "现行事实" in result
 
     def test_shadow_sweep_failure_is_swallowed_to_stderr(
@@ -631,7 +631,7 @@ class TestSessionStartArchiveSweep:
         with MemoryStore(test_config) as store:
             store.add(key="p:t:fact:0", value="现行事实")
 
-        def boom(service):
+        def boom(service, **kwargs):
             raise RuntimeError("synthetic sweep outage at /secret/path")
 
         monkeypatch.setattr(ContextService, "sweep_archives", boom)
@@ -660,8 +660,8 @@ class TestSessionStartArchiveSweep:
         assert "现行事实" in result
         assert calls == []
 
-    def test_shadow_session_start_purges_expired_archive(self, test_config):
-        """真服务真 sweep：SessionStart 真实删除到期 payload 并置 purged。"""
+    def test_shadow_session_start_preserves_expired_original(self, test_config):
+        """An old unique original remains readable after automatic upkeep."""
         from evolvmem.context_store import ContextStore
         from evolvmem.session_archive import SessionArchiver
 
@@ -683,7 +683,7 @@ class TestSessionStartArchiveSweep:
         result = get_session_start_block(config=test_config)
 
         assert "现行事实" in result
-        assert not payload_file.exists()
+        assert payload_file.exists()
         conn = sqlite3.connect(test_config.db_path)
         try:
             row = conn.execute(
@@ -692,5 +692,5 @@ class TestSessionStartArchiveSweep:
             ).fetchone()
         finally:
             conn.close()
-        assert row[0] == "purged"
-        assert row[1] is not None
+        assert row[0] == "available"
+        assert row[1] is None

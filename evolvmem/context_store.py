@@ -263,6 +263,14 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS session_archive_storage (
+        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id) ON DELETE CASCADE,
+        manifest_sha256 TEXT NOT NULL,
+        content_sha256 TEXT NOT NULL,
+        logical_bytes INTEGER NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS context_sources (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,

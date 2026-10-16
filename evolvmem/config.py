@@ -123,6 +123,7 @@ class Config:
     context_frequency_cap: int = 20         # 访问次数归一化上限
     context_project_aliases: dict = field(default_factory=dict)  # 工作区名 → 项目名
     context_archive_ttl_days: int = 30      # 原始会话加密归档的保留天数
+    context_archive_min_free_mb: int = 1024  # 留给数据库和系统的最低可写余量
     context_session_summary_ttl_days: int = 30  # 会话摘要条目的 TTL（到期且被滚动摘要覆盖后才归档）
     context_session_summary_keep: int = 10  # 每项目保留的最近会话摘要条数（超出且被覆盖才归档）
 
@@ -282,6 +283,7 @@ class Config:
             "context_inject_related_max_chars",
             "context_frequency_cap",
             "context_archive_ttl_days",
+            "context_archive_min_free_mb",
             "context_session_summary_ttl_days",
             "context_session_summary_keep",
             "context_promotion_min_successes",
@@ -421,6 +423,7 @@ class Config:
             "context_frequency_cap": self.context_frequency_cap,
             "context_project_aliases": self.context_project_aliases,
             "context_archive_ttl_days": self.context_archive_ttl_days,
+            "context_archive_min_free_mb": self.context_archive_min_free_mb,
             "context_session_summary_ttl_days": self.context_session_summary_ttl_days,
             "context_session_summary_keep": self.context_session_summary_keep,
             "context_promotion_min_successes": self.context_promotion_min_successes,

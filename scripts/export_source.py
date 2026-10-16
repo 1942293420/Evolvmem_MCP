@@ -30,7 +30,7 @@ PUBLIC_DOCS = (
 EXCLUDED_DIRECTORIES = {
     ".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache",
     ".mypy_cache", ".ruff_cache", ".cache", ".superpowers", ".worktrees",
-    "build", "dist", "data", "models", "sessions", "session_archives",
+    "build", "dist", "data", "models", "sessions", "session_archives", "session_chunks", "session_uploads",
     "logs", "backups", "credentials", "secrets", "live", "runtime",
 }
 EXCLUDED_FILES = {

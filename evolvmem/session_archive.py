@@ -1,4 +1,4 @@
-"""AES-GCM encrypted raw-session archives with TTL-based purge.
+"""Encrypted shared-block archives with lossless legacy reads and safe purge.
 
 Encrypted payloads live as files under ``${data_dir}/session_archives/``
 (never as SQLite BLOBs); the symmetric key lives in ``${data_dir}/archive.key``
@@ -104,6 +104,24 @@ class SessionArchiver:
     def _key_path(self) -> Path:
         return self.config.data_dir / _KEY_FILE_NAME
 
+    def _storage(self):
+        from evolvmem.archive_storage import ArchiveStorage
+        return ArchiveStorage(self.config, self._load_or_create_key())
+
+    def _register_storage(self, archive_id, blob, manifest):
+        self.store._connection().execute(
+            'INSERT INTO session_archive_storage VALUES(?,?,?,?) '
+            'ON CONFLICT(archive_id) DO UPDATE SET manifest_sha256=excluded.manifest_sha256,'
+            'content_sha256=excluded.content_sha256,logical_bytes=excluded.logical_bytes',
+            (archive_id, hashlib.sha256(blob).hexdigest(), manifest['sha256'], manifest['size']))
+
+    def _remove_superseded(self, previous, target):
+        if previous is not None and previous['payload_path'] != target:
+            try:
+                (self.config.data_dir / previous['payload_path']).unlink(missing_ok=True)
+            except OSError:
+                logger.warning('session archive %d superseded payload cleanup failed', previous['id'])
+
     # ---- archiving ----
 
     def archive_session(
@@ -117,8 +135,9 @@ class SessionArchiver:
     ) -> SessionArchiveRecord | None:
         """Encrypt and archive one raw session payload; None when unavailable.
 
-        The ciphertext file is written before the DB row commits; a DB failure
-        removes the just-written file so a partial archive is never faked.
+        Shared blocks and the encrypted manifest are written under the same
+        SQLite writer transaction as their pointer, serializing collection.
+        A DB failure removes the manifest; unreferenced blocks are collected.
         Re-archiving the same (adapter, external_session_id) replaces the
         payload and expiry instead of creating a second row.
         """
@@ -129,34 +148,33 @@ class SessionArchiver:
             return None
         moment = _coerce_now(now)
         try:
-            key = self._load_or_create_key()
+            storage = self._storage()
             self._archive_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(self._archive_dir, 0o700)
-            nonce = os.urandom(_NONCE_BYTES)
-            blob = nonce + AESGCM(key).encrypt(
-                nonce, payload.encode("utf-8"), None
-            )
         except Exception:
             logger.warning("session archive skipped: encryption failed")
             return None
-
-        digest = hashlib.sha256(blob).hexdigest()
-        relative_path = f"{_ARCHIVE_DIR_NAME}/{digest}.bin"
-        target = self.config.data_dir / relative_path
-        try:
-            self._write_payload_file(target, blob)
-        except OSError:
-            logger.warning("session archive skipped: payload write failed")
-            return None
-
-        previous = self.store.get_session_archive_by_external(
-            adapter, external_session_id
-        )
         expires_at = _format_ts(
             moment + timedelta(days=self.config.context_archive_ttl_days)
         )
+        written = None
         try:
             with self.store.transaction():
+                from evolvmem.archive_storage import StorageSpaceLow
+                try:
+                    blob, manifest = storage.pack(payload)
+                    digest = hashlib.sha256(blob).hexdigest()
+                    relative_path = f"{_ARCHIVE_DIR_NAME}/{digest}.bin"
+                    target = self.config.data_dir / relative_path
+                    self._write_payload_file(target, blob)
+                    written = target
+                except StorageSpaceLow:
+                    logger.warning('session archive deferred: archive_storage_space_low')
+                    return None
+                except Exception:
+                    logger.warning('session archive skipped: encrypted payload write failed')
+                    return None
+                previous = self.store.get_session_archive_by_external(adapter, external_session_id)
                 archive_id = self.store.upsert_session_archive(
                     project,
                     adapter,
@@ -166,22 +184,15 @@ class SessionArchiver:
                     expires_at=expires_at,
                     recorded_at=_format_ts(moment),
                 )
+                self._register_storage(archive_id, blob, manifest)
                 from evolvmem.history_memory import save_clean
                 from evolvmem.knowledge_rules import KnowledgeRules
                 save_clean(self.store, archive_id, payload, policy=KnowledgeRules(self.config.data_dir).read())
+                self.store.defer_until_commit(lambda: self._remove_superseded(previous, relative_path))
         except Exception:
-            target.unlink(missing_ok=True)
+            if written is not None:
+                written.unlink(missing_ok=True)
             raise
-
-        if previous is not None and previous["payload_path"] != relative_path:
-            stale = self.config.data_dir / previous["payload_path"]
-            try:
-                stale.unlink()
-            except OSError:
-                logger.warning(
-                    "session archive %d superseded payload cleanup failed",
-                    archive_id,
-                )
 
         row = self.store.get_session_archive(archive_id)
         if row is None:  # pragma: no cover - the upsert just wrote this row
@@ -200,9 +211,7 @@ class SessionArchiver:
             return None
         try:
             blob = (self.config.data_dir / row["payload_path"]).read_bytes()
-            nonce, ciphertext = blob[:_NONCE_BYTES], blob[_NONCE_BYTES:]
-            key = self._load_or_create_key()
-            return AESGCM(key).decrypt(nonce, ciphertext, None).decode("utf-8")
+            return self._storage().unpack(blob)
         except Exception:
             logger.warning(
                 "session archive %d payload could not be decrypted", archive_id
@@ -214,13 +223,18 @@ class SessionArchiver:
     def sweep_expired(self, *, now: datetime | None = None) -> SessionPurgeReport:
         """Purge every available archive whose TTL has been reached.
 
-        Archives listed in ``session_archive_holds`` are coverage-gated:
-        they stay available (reported as held) until the rollup covers
-        their summary and the hold is released.
+        Knowledge, review, holds, current uploads and pending work are
+        protected. This explicit sweep is not used by automatic upkeep.
         """
         moment = _format_ts(_coerce_now(now))
         rows = self.store.list_expired_session_archives(moment)
-        return self._purge_rows(rows, purged_at=moment)
+        from evolvmem.archive_maintenance import protected_archive_ids
+        with self.store.transaction():
+            protected = protected_archive_ids(self.store)
+            held = tuple(row['id'] for row in rows if row['id'] in protected)
+            report = self._purge_rows([row for row in rows if row['id'] not in protected], purged_at=moment)
+        return SessionPurgeReport(report.purged_archive_ids, report.failed_archive_ids,
+                                  held + report.held_archive_ids)
 
     def purge_project(self, project: str) -> SessionPurgeReport:
         """Immediately purge all available archives of one project.
@@ -248,20 +262,17 @@ class SessionArchiver:
                 # 覆盖门控：摘要尚未进入滚动摘要闭包的归档不得 purge
                 held.append(archive_id)
                 continue
-            payload_file = self.config.data_dir / row["payload_path"]
-            try:
-                payload_file.unlink()
-            except FileNotFoundError:
-                pass  # already gone from disk: purging is the truthful state
-            except OSError:
-                logger.warning(
-                    "session archive %d purge deferred: payload removal failed",
-                    archive_id,
-                )
-                failed.append(archive_id)
-                continue
             try:
                 with self.store.transaction():
+                    current = self.store.get_session_archive(archive_id)
+                    if (not current or current['state'] != 'available'
+                            or current['payload_path'] != row['payload_path']):
+                        continue
+                    if self.store._connection().execute(
+                            'SELECT 1 FROM session_archive_holds WHERE archive_id=?', (archive_id,)).fetchone():
+                        held.append(archive_id)
+                        continue
+                    (self.config.data_dir / current['payload_path']).unlink(missing_ok=True)
                     self.store.mark_session_archive_purged(
                         archive_id, purged_at=purged_at
                     )
@@ -272,7 +283,7 @@ class SessionArchiver:
                     self.store.recompute_source_states(item_ids)
             except Exception:
                 logger.warning(
-                    "session archive %d purge deferred: state update failed",
+                    "session archive %d purge deferred: removal or state update failed",
                     archive_id,
                 )
                 failed.append(archive_id)
@@ -296,6 +307,10 @@ class SessionArchiver:
         else:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(os.urandom(_KEY_BYTES))
+                handle.flush()
+                os.fsync(handle.fileno())
+            from evolvmem.archive_storage import sync_directory
+            sync_directory(path.parent)
             key = path.read_bytes()
         if len(key) != _KEY_BYTES:
             raise RuntimeError("session archive key file is corrupt")
@@ -307,6 +322,10 @@ class SessionArchiver:
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(blob)
+                handle.flush()
+                os.fsync(handle.fileno())
+            from evolvmem.archive_storage import sync_directory
+            sync_directory(target.parent)
         except Exception:
             target.unlink(missing_ok=True)
             raise
