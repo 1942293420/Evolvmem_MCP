@@ -484,3 +484,20 @@ body[data-design=signal] .principle-board .product-diagram svg{min-width:980px;m
 [data-rg-equivalence] {margin:20px 0;}
 [data-rg-background] details {margin:20px 0;}
 @media(max-width:760px){.ke-compare{grid-template-columns:1fr;}.ke-candidate{flex-direction:column;}}
+
+/* Project intake keeps the decision at group level, with optional details. */
+.project-review{display:grid;gap:24px;min-width:0}
+.project-review h2,.project-review h3{margin:0}
+.project-review .pr-summary,.project-review .pr-save{display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+.project-review .pr-save{position:sticky;bottom:12px;background:var(--surface,#fff);z-index:2;box-shadow:0 6px 24px #172b4d18}
+.project-review .pr-save label{display:flex;align-items:center;gap:12px;flex:1;min-width:240px}
+.project-review .pr-save select{flex:1;min-width:120px}
+.project-review .pr-status{padding:20px;background:#eef3ff;border-radius:12px;font-size:16px}
+.project-review details{margin-top:16px}
+.project-review summary{cursor:pointer;font-size:16px}
+.project-review .pr-item{display:flex;gap:16px;padding:18px 0;border-bottom:1px solid #e2e7ef;min-width:0}
+.project-review .pr-item>div{min-width:0;flex:1}
+.project-review .pr-item button{text-align:left;white-space:normal;overflow-wrap:anywhere;font-weight:600}
+.project-review .pr-item p{font-size:16px;line-height:1.6;overflow-wrap:anywhere;margin:8px 0}
+.project-review input[type=checkbox]{width:20px;height:20px;flex-shrink:0}
+@media(max-width:600px){.project-review .pr-save{position:static}.project-review .section-head{align-items:flex-start;flex-wrap:wrap}.project-review .pr-save label{min-width:0;width:100%}.project-review .pr-save .actions{width:100%;flex-wrap:wrap}}

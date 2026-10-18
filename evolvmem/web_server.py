@@ -1206,6 +1206,8 @@ def make_handler(service: ContextService):
     def serialized(method):
         @wraps(method)
         def call(self, *args, **kwargs):
+            self._parsed_body = None
+            self.prepared_extraction = None
             parsed = urlparse(self.path)
             if self.command == 'GET':
                 # Login and static files do not use the shared database. They
@@ -1215,24 +1217,58 @@ def make_handler(service: ContextService):
                         return
                 if not parsed.path.startswith('/api/'):
                     return method(self, *args, **kwargs)
-                from evolvmem.web_reads import ROUTES, snapshot
-                if parsed.path in ROUTES:
-                    started = time.monotonic()
-                    try:
-                        with snapshot(service.config) as reader:
-                            self._knowledge('GET', parsed.path,
-                                {k: v[0] for k, v in parse_qs(parsed.query).items()}, reader=reader)
-                    finally:
-                        elapsed = time.monotonic() - started
-                        if elapsed >= 2:
-                            _LOG.warning('Slow web read %s %.3fs', parsed.path, elapsed)
-                    return
+                from evolvmem.web_reads import snapshot
+                started = time.monotonic()
+                try:
+                    with snapshot(service.config, source=service) as reader:
+                        self.read_service = reader
+                        return method(self, *args, **kwargs)
+                finally:
+                    self.read_service = None
+                    elapsed = time.monotonic() - started
+                    if elapsed >= 2:
+                        _LOG.warning('Slow web read %s %.3fs', parsed.path, elapsed)
             else:
                 with auth_lock:
                     if self.command == 'POST' and parsed.path == '/auth/logout':
                         auth.logout(self)
                         return
                     if not auth.require_write(self):
+                        return
+            if self.command == 'POST':
+                body, failed = self._read_body()
+                if failed:
+                    return
+                self._parsed_body = (body, False)
+                from evolvmem.web_reads import is_preview, snapshot
+                if is_preview(parsed.path, body):
+                    started = time.monotonic()
+                    try:
+                        with snapshot(service.config, source=service) as reader:
+                            self.read_service = reader
+                            return method(self, *args, **kwargs)
+                    finally:
+                        self.read_service = None
+                        elapsed = time.monotonic() - started
+                        if elapsed >= 2:
+                            _LOG.warning('Slow web preview %s %.3fs', parsed.path, elapsed)
+                if parsed.path == '/api/knowledge/skills/extraction/verify':
+                    # Old combined endpoint: expensive inference first on an
+                    # isolated snapshot, then only persist under the write lock.
+                    from evolvmem.extraction_preview import preview
+                    try:
+                        if not isinstance(body, dict):
+                            raise ValueError('invalid_request')
+                        with snapshot(service.config, source=service) as reader:
+                            self.prepared_extraction = preview(reader, {
+                                'messages': body.get('messages'),
+                                'project': str(body.get('project') or ''),
+                            })
+                    except ValueError as error:
+                        self._send_json({'ok': False, 'error': str(error)}, 400)
+                        return
+                    except Exception as error:
+                        self._send_json({'ok': False, 'error': _bounded_error(error)}, 500)
                         return
             if not business_lock.acquire(timeout=_BUSINESS_WAIT_SECONDS):
                 self._send_json({'ok': False, 'error': 'service_busy'}, 503,
@@ -1285,6 +1321,8 @@ def make_handler(service: ContextService):
             A failure response is already sent when the second element is
             True, so callers just ``return``.
             """
+            if getattr(self, '_parsed_body', None) is not None:
+                return self._parsed_body
             length = int(self.headers.get("Content-Length") or 0)
             if length > _BODY_LIMIT:
                 self._send_json({"ok": False, "error": "body too large"}, 413)
@@ -1302,6 +1340,10 @@ def make_handler(service: ContextService):
 
         @serialized
         def do_GET(self):
+            read_service = getattr(self, 'read_service', None) or service
+            store = read_service.store
+            facade = read_service.legacy_facade()
+            views = TrustViews(read_service)
             parsed = urlparse(self.path)
             path = parsed.path
             if path.startswith('/api/knowledge/'):
@@ -1312,11 +1354,11 @@ def make_handler(service: ContextService):
                 # codes only. Never a payload, a path or any body text.
                 from evolvmem.local_codex_capture import status as capture_status
                 try:
-                    self._send_json(capture_status(service.config, store))
+                    self._send_json(capture_status(read_service.config, store))
                 except Exception as exc:  # bounded surface, no internal detail
                     self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
                 return
-            if path in ('/ui-feedback.js', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js'):
+            if path in ('/ui-feedback.js', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/project-review.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js'):
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 data = asset.read_bytes()
                 self.send_response(200)
@@ -1360,7 +1402,7 @@ def make_handler(service: ContextService):
             detail = re.fullmatch(r'/api/(experiences|project-summaries|workstreams)/([\w-]+)', path)
             if path in insight_routes or detail:
                 try:
-                    model = service.insights()
+                    model = read_service.insights()
                     params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
                     if detail:
                         kind, identifier = detail.groups()
@@ -1439,12 +1481,12 @@ def make_handler(service: ContextService):
                 self._send_json(result, 200 if result.get("ok") else 400)
                 return
             if path == "/api/stats":
-                self._send_json(api_stats(facade, store, service.config))
+                self._send_json(api_stats(facade, store, read_service.config))
                 return
             if path == "/api/memories":
                 qs = parse_qs(parsed.query)
                 params = {k: v[0] for k, v in qs.items()}
-                self._send_json(api_memories(facade, params, store, service.config))
+                self._send_json(api_memories(facade, params, store, read_service.config))
                 return
             if path == "/api/projects":
                 self._send_json(api_projects(facade, store))
@@ -1474,7 +1516,7 @@ def make_handler(service: ContextService):
                         {"ok": False, "error": "invalid_id"}, 400
                     )
                     return
-                self._send_json(api_decision_window_get(service, item_id))
+                self._send_json(api_decision_window_get(read_service, item_id))
                 return
             m = _MEM_CONTEXT_RE.match(path)
             if m:
@@ -1485,6 +1527,7 @@ def make_handler(service: ContextService):
 
         @serialized
         def do_POST(self):
+            read_service = getattr(self, 'read_service', None) or service
             path = urlparse(self.path).path
             if path.startswith('/api/knowledge/'):
                 body, failed = self._read_body()
@@ -1521,10 +1564,10 @@ def make_handler(service: ContextService):
                     elif path == "/api/projects/display_names":
                         result = api_projects_set_display_names(service, body)
                     elif path == "/api/projects/suggest_display_names":
-                        result = api_projects_suggest_display_names(service)
+                        result = api_projects_suggest_display_names(read_service)
                     else:
                         result = api_memories_organize_suggest(
-                            service, facade, body)
+                            read_service, read_service.legacy_facade(), body)
                 except Exception as exc:  # bounded surface; writes roll back
                     self._send_json({"ok": False, "error": _bounded_error(exc)},
                                     500)
@@ -1569,7 +1612,12 @@ def make_handler(service: ContextService):
             from evolvmem.knowledge_api import dispatch
             from evolvmem.project_store import ProjectStoreError
             try:
-                self._send_json(dispatch(reader or service, method, path, body))
+                if self.prepared_extraction is not None and path == '/api/knowledge/skills/extraction/verify':
+                    from evolvmem.pipeline_skills import verify
+                    result = verify(service, 'extraction', body, prepared=self.prepared_extraction)
+                else:
+                    result = dispatch(reader or getattr(self, 'read_service', None) or service, method, path, body)
+                self._send_json(result)
             except LookupError:
                 self._send_json({'ok': False, 'error': 'not_found'}, 404)
             except (ValueError, ProjectStoreError) as error:

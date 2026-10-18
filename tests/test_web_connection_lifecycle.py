@@ -56,7 +56,7 @@ def test_idle_or_incomplete_browser_connection_does_not_block_login(test_config,
         thread.join(5)
 
 
-def test_parallel_requests_keep_shared_business_service_serialized(test_config, monkeypatch):
+def test_parallel_requests_use_independent_read_connections(test_config, monkeypatch):
     from evolvmem import web_server
     service = _make_service(test_config)
     original = web_server.api_stats
@@ -92,7 +92,7 @@ def test_parallel_requests_keep_shared_business_service_serialized(test_config, 
         with ThreadPoolExecutor(max_workers=4) as clients:
             results = list(clients.map(get_stats, range(4)))
         assert len(results) == 4 and all(result == results[0] for result in results)
-        assert counts['peak'] == 1
+        assert counts['peak'] > 1
     finally:
         server.shutdown()
         server.server_close()

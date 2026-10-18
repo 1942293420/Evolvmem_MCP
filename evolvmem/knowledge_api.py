@@ -8,6 +8,12 @@ def dispatch(service, method, path, body=None):
     if not isinstance(body, dict):
         raise ValueError('invalid_request')
     route = path.removeprefix('/api/knowledge').strip('/')
+    if route == 'project-review' and method == 'GET':
+        from evolvmem.project_review import overview
+        return overview(service, body)
+    if route == 'project-review/apply' and method == 'POST':
+        from evolvmem.project_review import apply
+        return apply(service, body)
     if method == 'GET' and route == 'directory':
         from evolvmem.project_knowledge import directory
         from evolvmem.memory_recall import project_name

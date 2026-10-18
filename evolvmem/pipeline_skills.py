@@ -118,7 +118,7 @@ def preview(service, stage, body):
             'rule_revision':policy['revision'], 'persisted':0, 'model_calls':0}
 
 
-def verify(service, stage, body, *, llm=None):
+def verify(service, stage, body, *, llm=None, prepared=None):
     """Run one stage with the saved rules and park outputs in the review queues."""
     if stage not in STAGES:
         raise LookupError('skill_not_found')
@@ -156,7 +156,9 @@ def verify(service, stage, body, *, llm=None):
         from evolvmem import qa_memory
         from evolvmem.extraction_preview import preview as extract_preview
         project = str(body.get('project') or '')
-        result = extract_preview(service, {'messages': body.get('messages'), 'project': project}, llm=llm)
+        result = prepared if prepared is not None else extract_preview(service, {'messages': body.get('messages'), 'project': project}, llm=llm)
+        if result['draft']['rule_revision'] != kb.rules.read()['revision']:
+            raise ValueError('revision_conflict')
         created = []
         for candidate in result['draft']['candidates']:
             if candidate.get('action') == 'skip':
@@ -181,8 +183,10 @@ def verify(service, stage, body, *, llm=None):
 
 def dispatch(service, method, route, body):
     if method == 'GET' and route == 'skills':
-        _ensure_exported(service)
         return {'skills':[read(service, stage) for stage in ('ownership', 'cleaning', 'extraction')]}
+    if method == 'POST' and route == 'skills/export':
+        export_skills(service)
+        return {'ok': True}
     parts = route.split('/')
     if len(parts)==2:
         return read(service, parts[1]) if method=='GET' else save(service, parts[1], body)
