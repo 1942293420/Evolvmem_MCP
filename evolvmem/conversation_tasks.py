@@ -85,7 +85,8 @@ def register(service,source_keys,*,expand=False):
 
 def revision(service,key,*,visible=None,excluded=None):
     """Check current membership/revisions without assembling every message."""
-    from evolvmem.history_organization import _unassigned_archives, source_excluded
+    from evolvmem.history_organization import _unassigned_archives, source_excluded, _excluded_archive_ids
+    if excluded is None:excluded=_excluded_archive_ids(service)
     if source_excluded(service,key,excluded=excluded):raise ValueError('classification_source_changed')
     from evolvmem.knowledge_cleaning import record,review
     if visible is None:visible={r['id'] for r in _unassigned_archives(service,excluded=excluded)}
@@ -102,14 +103,17 @@ def revision(service,key,*,visible=None,excluded=None):
     return hashlib.sha256((raw+':'+str(saved['revision'] if saved else 0)).encode()).hexdigest()
 
 
-def snapshot(service,key,*,visible=None):
-    from evolvmem.history_organization import _unassigned_archives
+def snapshot(service,key,*,visible=None,excluded=None):
+    from evolvmem.history_organization import _unassigned_archives, _excluded_archive_ids
     from evolvmem.knowledge_cleaning import record,cleaned_messages
-    if visible is None:visible={r['id'] for r in _unassigned_archives(service)}
+    # One local policy view for all members; rebuild it on the next read so
+    # later exclusions still invalidate the conversation immediately.
+    if excluded is None:excluded=_excluded_archive_ids(service)
+    if visible is None:visible={r['id'] for r in _unassigned_archives(service,excluded=excluded)}
     policy=service.knowledge().rules.read()
     messages=[];records=[];revisions=[];cursor=0
     for member in members(service,key):
-        row=record(service,member,visible=visible)
+        row=record(service,member,visible=visible,excluded=excluded)
         revisions.append([member,row['expected_revision']])
         archive=None
         if member.startswith('archive:'):

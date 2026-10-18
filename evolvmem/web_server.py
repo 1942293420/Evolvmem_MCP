@@ -22,8 +22,10 @@ Run:
 
 import argparse
 import json
+import logging
 import re
 import threading
+import time
 from functools import wraps
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -42,6 +44,9 @@ from evolvmem.legacy_compat import LegacyCompatibilityFacade
 from evolvmem.project_store import ProjectStore, ProjectStoreError
 from evolvmem.trust_views import TrustViews
 from evolvmem.web_auth import AuthSettings, WebAuth
+
+_BUSINESS_WAIT_SECONDS = 5
+_LOG = logging.getLogger(__name__)
 
 _STATIC_INDEX = Path(__file__).parent / "web_static" / "index.html"
 _STATIC_SIGNAL = _STATIC_INDEX.parent / "designs" / "signal.html"
@@ -1196,12 +1201,52 @@ def make_handler(service: ContextService):
     # Parse those sockets independently, but retain serialized use of this
     # service's shared SQLite connections and transaction state.
     business_lock = threading.RLock()
+    auth_lock = threading.RLock()
 
     def serialized(method):
         @wraps(method)
         def call(self, *args, **kwargs):
-            with business_lock:
+            parsed = urlparse(self.path)
+            if self.command == 'GET':
+                # Login and static files do not use the shared database. They
+                # must remain reachable while a business request is working.
+                with auth_lock:
+                    if auth.handle_get(self, parsed):
+                        return
+                if not parsed.path.startswith('/api/'):
+                    return method(self, *args, **kwargs)
+                from evolvmem.web_reads import ROUTES, snapshot
+                if parsed.path in ROUTES:
+                    started = time.monotonic()
+                    try:
+                        with snapshot(service.config) as reader:
+                            self._knowledge('GET', parsed.path,
+                                {k: v[0] for k, v in parse_qs(parsed.query).items()}, reader=reader)
+                    finally:
+                        elapsed = time.monotonic() - started
+                        if elapsed >= 2:
+                            _LOG.warning('Slow web read %s %.3fs', parsed.path, elapsed)
+                    return
+            else:
+                with auth_lock:
+                    if self.command == 'POST' and parsed.path == '/auth/logout':
+                        auth.logout(self)
+                        return
+                    if not auth.require_write(self):
+                        return
+            if not business_lock.acquire(timeout=_BUSINESS_WAIT_SECONDS):
+                self._send_json({'ok': False, 'error': 'service_busy'}, 503,
+                                headers=(('Retry-After', '5'),))
+                return
+            started = time.monotonic()
+            try:
                 return method(self, *args, **kwargs)
+            finally:
+                business_lock.release()
+                elapsed = time.monotonic() - started
+                if elapsed >= 2:
+                    # Paths and timing only: no query, body or credentials.
+                    _LOG.warning('Slow web request %s %s %.3fs', self.command, parsed.path, elapsed)
         return call
 
     class MemoryWebHandler(BaseHTTPRequestHandler):
@@ -1259,8 +1304,6 @@ def make_handler(service: ContextService):
         def do_GET(self):
             parsed = urlparse(self.path)
             path = parsed.path
-            if auth.handle_get(self, parsed):
-                return
             if path.startswith('/api/knowledge/'):
                 self._knowledge('GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()})
                 return
@@ -1443,11 +1486,6 @@ def make_handler(service: ContextService):
         @serialized
         def do_POST(self):
             path = urlparse(self.path).path
-            if path == "/auth/logout":
-                auth.logout(self)
-                return
-            if not auth.require_write(self):
-                return
             if path.startswith('/api/knowledge/'):
                 body, failed = self._read_body()
                 if not failed:
@@ -1498,8 +1536,7 @@ def make_handler(service: ContextService):
 
         @serialized
         def _unsupported_write(self):
-            if auth.require_write(self):
-                self._send_json({"ok": False, "error": "method_not_allowed"}, 405)
+            self._send_json({"ok": False, "error": "method_not_allowed"}, 405)
 
         do_PUT = do_PATCH = do_DELETE = _unsupported_write
 
@@ -1528,11 +1565,11 @@ def make_handler(service: ContextService):
             self._send_json(result,
                             200 if result.get("ok") else 400)
 
-        def _knowledge(self, method, path, body):
+        def _knowledge(self, method, path, body, *, reader=None):
             from evolvmem.knowledge_api import dispatch
             from evolvmem.project_store import ProjectStoreError
             try:
-                self._send_json(dispatch(service, method, path, body))
+                self._send_json(dispatch(reader or service, method, path, body))
             except LookupError:
                 self._send_json({'ok': False, 'error': 'not_found'}, 404)
             except (ValueError, ProjectStoreError) as error:
