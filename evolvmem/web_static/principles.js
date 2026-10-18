@@ -26,7 +26,7 @@ window.EvolvPrinciples={render(mount){
  n('source','业务会话？',350,260,'decision',facts('会话接入','原生会话身份与来源标记','业务对话；审批等系统子会话','旧的本机采集和远端上传都按原生身份补查，内部审批副本不作业务原文。')),
  n('excluded','只留原文|不进入业务召回',30,390,'exception',facts('来源核对','审批等系统子会话','保留原文、退出业务整理与历史召回','仅靠这些来源自动生成的资料停止采用；人工确认与其他有效来源保留。')),
  n('clean','按需求识别完整任务',350,390,'action',facts('任务整理','同一会话的已验证原始批次','从需求提出到当前结果的一段任务；插入别的任务后可续接','同一需求反复修复合为一项，保留原文范围；没有结果不补造。')),
- n('narrative','整理需求、原因、过程与结果',350,520,'action',facts('资料整理模型','完整任务的全部原文','需求、原因、处理重点、结果的一张摘要卡','合并重复进度，只列关键修复与最终限制；一条记忆只有一个完整上下文入口。证据完整保留在来源中。')),
+ n('narrative','整理任务与带条件的事实',350,520,'action',facts('资料整理模型','完整任务的全部原文','任务摘要、事实版本、适用条件与来源','同一整理调用提取事实与关系，原话必须能定位；生效日期与收录日期分开。不同环境并存，互斥说法聚成分歧；已确认新版本不被晚到旧资料覆盖。关系只作建议，不改变人工归属。')),
  n('classify','按实际影响建议项目',350,650,'action',facts('项目归类模型','完整任务资料、证据与项目说明','建议录入的项目、关联场景与理由','AI 永远只提供建议，不写入正式项目归属。用户已保存且适用范围未改变的人工决定可以沿用；新增要求或归属冲突回到待归档。')),
  n('clear','这段内容已有归属？',350,780,'decision',facts('自动整理','原文范围、知识身份与人工决定','沿用原归属；新增内容等待你保存','改摘要、重新拆合不改变知识身份。相同项目下原文完全一致且已确认的事实只补充来源；新增要求或含义不明的相似内容不沿用旧归属。')),
  n('review','选择项目并保存归档',690,910,'exception',facts('你','原文、建议录入的项目','用户保存的项目归属；也可暂不归档','','','#knowledge/organization')),
@@ -50,7 +50,9 @@ window.EvolvPrinciples={render(mount){
  r('valid','有依据且当前可用','start evidence supported scope eligible save index end','a1 a2 a3 a6 a7 a9 a10'),r('pending','依据不足时待判断','start evidence supported pending','a1 a2 a4'),r('expired','失效内容保留历史','start evidence supported scope eligible blocked','a1 a2 a3 a6 a8')]},
  organization:{title:'AI 提供建议，你决定归档',type:'泳道图',goal:'选好项目直接保存；AI 建议可选，不能替你归档。',height:1290,lanes:[['client','客户端 / 助手',20,305],['system','Evo 自动处理',325,330],['user','你：归档决定',655,325]],nodes:[
  n('submit','采集会话或恢复旧资料',43,110,'action',facts('客户端','可见对话与会话标识','可复核会话批次')),
- n('process','整理任务 → 提供项目建议',360,250,'action',facts('Evo','新旧会话、规则、已确认指导','完整任务资料与待确认事项')),
+ n('process','整理任务、事实与项目建议',360,250,'action',facts('Evo','新旧会话、规则、已确认指导','完整任务、事实版本与待确认事项','已有归属继续有效；同一事实补充来源，独立验证按原始事件计数。')),
+ n('factview','查看版本与知识关系',690,110,'action',facts('你','带条件的事实、各份原文与关系建议','按条件或生效日期查看结论','修改对象、使用工具和验证场景分开；属于项目只来自人工保存。','','#knowledge/organization')),
+ n('conflict','处理分歧或拆开资料',690,250,'exception',facts('你','同条件互斥说法、新生效版本或错误聚合','采用结论、补充适用情况、暂缓或拆开','重复分歧只保留一项，重复来源补到原项；处理结果保留，不因重跑再次催审。拆开不改变原项目，归档不提升验证等级。')),
  n('clear','这段内容已有决定？',360,390,'decision',facts('Evo','原文范围、知识身份与人工决定','沿用归属或暂不归档；新增内容等待保存','改标题、摘要和拆分方式不要求重复决定。只修改一部分的归属时，其余内容保留原决定；含不同归属的整段资料仍需确认。')),n('review','选择归入项目或暂不归档',690,530,'exception',facts('你','从需求起点读取的任务原文、来源与疑问原因','直接保存归档；可选 AI 批量建议','已打开的资料和判断结果保存在当前页面缓存，来回切换直接显示；首次读取立即显示当前选择和加载状态，切换时停止旧请求。超时或失败可重新打开，未保存的选择仍保留；主动刷新或保存后更新资料，保存时再核对最新状态。打开资料只核对所选任务的来源，原文变化仍需重新核对。点击核查记忆直接展开原文。完整内容分页阅读，可回到需求开头或定位当前记忆。沿有效任务关联展示过程与后续结果；同会话中尚未确认任务关系的内容单独标明。来源缺失会提示；缺少的阶段不补造。')),
  n('judge','相似召回 → 重排 → 分批判断',360,600,'action',facts('Evo','业务依据、适用范围、待确认记忆的持久化向量','召回数量、相关度顺序、每批最多20条判断','列表就绪即可审核，首页数据在进入首页时读取。预览点击即显示动画；等待、判断、失败与完成分别显示，条数和用时来自实际处理状态，主模型无响应或服务失败时自动切换备用模型，页面显示正在使用的备用；已完成判断保留，失败可重试。旧结果在后台恢复，不覆盖你当前选择的资料；同一来源在本次恢复中只核对一次，依据已过期的判断直接标为需重查。先过滤已决定范围，向量相似度达标才召回，最多100条，再重排筛选；只判断前20条。展示待确认、召回和本批数量；可随时停止，下一批沿用顺序并跳过已判断条目。检索不可用时不进行全量AI判断。缓存向量随内容变化更新。')),
  n('guidance','保存归档选择',690,670,'exception',facts('你','你选择的项目，或可选的 AI 批量建议','归入项目或暂不归档','选择项目即可直接保存，无须先保留或预览。AI 始终只是建议，持续指导也不能自动归属。批量选择由用户保存后生效；失败整体回退并保留草稿，保存成功后退出旧详情。暂不归档保留原文，可返回待归档。','','#knowledge/organization')),
@@ -59,8 +61,8 @@ window.EvolvPrinciples={render(mount){
  n('request','当前任务需要历史',43,980,'action',facts('助手','当前项目与问题','召回请求')),
  n('recall','查找相关且可用的内容',360,980,'action',facts('Evo','问题、项目与资料类型','相关摘要、适用条件和来源引用','','knowledge_recall / experience_recall')),
  n('use','结合当前要求继续任务',43,1150,'action',facts('助手','召回结果或没有匹配内容','当前任务的下一步','历史只能作为参考，当前用户要求优先。'))],edges:[
- e('o1','submit','process','会话与来源'),e('o2','process','clear'),e('o3','clear','save','已归入项目','M360 430H335V870H360',338,510),e('o4','clear','review','未保存'),e('o13','clear','excluded','已暂不归档','M620 430H970V870H950',900,430),e('o12','review','guidance','直接保存'),e('o5','review','judge','可选 AI 建议'),e('o10','judge','guidance','理由、原文与数量'),e('o6','guidance','save','归入项目'),e('o11','guidance','excluded','暂不归档'),e('o7','request','recall','问题与项目'),e('o8','save','recall','有效资料'),e('o9','recall','use','摘要、条件与来源')],routes:[
- r('auto','沿用已保存的人工归属','submit process clear save recall use','o1 o2 o3 o8 o9'),r('deferred','沿用暂不归档的决定','submit process clear excluded','o1 o2 o13'),r('direct','选项目直接归档','submit process clear review guidance save recall use','o1 o2 o4 o12 o6 o8 o9'),r('review','AI 建议后由你保存','submit process clear review judge guidance save recall use','o1 o2 o4 o5 o10 o6 o8 o9'),r('excluded','暂不归档，原文仍在','submit process clear review guidance excluded','o1 o2 o4 o12 o11')]},
+ e('o1','submit','process','会话与来源'),e('of1','process','factview','版本与关系','M620 290H650V150H690',655,215),e('of2','factview','conflict','需要处理时'),e('o2','process','clear'),e('o3','clear','save','已归入项目','M360 430H335V870H360',338,510),e('o4','clear','review','未保存'),e('o13','clear','excluded','已暂不归档','M620 430H970V870H950',900,430),e('o12','review','guidance','直接保存'),e('o5','review','judge','可选 AI 建议'),e('o10','judge','guidance','理由、原文与数量'),e('o6','guidance','save','归入项目'),e('o11','guidance','excluded','暂不归档'),e('o7','request','recall','问题与项目'),e('o8','save','recall','有效资料'),e('o9','recall','use','摘要、条件与来源')],routes:[
+ r('facts','查看事实并处理分歧','submit process factview conflict','o1 of1 of2'),r('auto','沿用已保存的人工归属','submit process clear save recall use','o1 o2 o3 o8 o9'),r('deferred','沿用暂不归档的决定','submit process clear excluded','o1 o2 o13'),r('direct','选项目直接归档','submit process clear review guidance save recall use','o1 o2 o4 o12 o6 o8 o9'),r('review','AI 建议后由你保存','submit process clear review judge guidance save recall use','o1 o2 o4 o5 o10 o6 o8 o9'),r('excluded','暂不归档，原文仍在','submit process clear review guidance excluded','o1 o2 o4 o12 o11')]},
  recall:{title:'当前任务怎样找回历史、知识与经验',type:'召回流程图',goal:'先选业务入口，再核对资格、查找和重新排序，最后返回可读结果。',height:1560,nodes:[
  n('task','当前任务与项目',350,20,'start',facts('助手','当前问题、项目与已知条件','需要的历史信息类型')),
  n('intent','要找回什么？',350,140,'decision',facts('助手','当前任务需要的背景','历史或问答、已验证案例、精确任务断点')),

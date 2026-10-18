@@ -650,7 +650,8 @@ class ContextStore:
         from evolvmem.organization_semantic_review import SCHEMA as review_schema
         conn.execute(review_schema)
         from evolvmem.knowledge_identity import SCHEMA as identity_schema
-        for statement in (*_SCHEMA_TABLE_STATEMENTS, *learning_schema, *identity_schema):
+        from evolvmem.knowledge_facts import SCHEMA as fact_schema
+        for statement in (*_SCHEMA_TABLE_STATEMENTS, *learning_schema, *identity_schema, *fact_schema):
             conn.execute(statement)
 
         # 既有库增量列：项目中文显示名（2026-09-02）。新库已由上面的

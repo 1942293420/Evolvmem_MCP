@@ -444,3 +444,19 @@ body[data-design=signal] .principle-board .product-diagram svg{min-width:980px;m
 .answer-support blockquote{margin:4px 0}
 
 .organization-metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:12px;margin:16px 0}.organization-metric{display:flex;flex-direction:column;gap:8px;padding:16px;border:1px solid #dce2e5;border-radius:8px;overflow-wrap:anywhere}.organization-metric strong{font-size:22px}.organization-metric p{margin:0;font-size:16px;line-height:1.5}.organization-settings{flex-wrap:wrap}#org-review-groups input,#org-review-groups select{max-width:100%}#org-review-groups blockquote{overflow-wrap:anywhere;margin:12px 0}#org-review-groups blockquote small{display:block}
+
+/* Facts share the workspace width and use normal readable business text. */
+.fact-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.fact-heading h2,.fact-heading h3,.fact-heading h4{margin:0}
+.fact-filters{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:20px 0}
+.fact-filters label{display:grid;gap:6px;flex:1 1 170px;min-width:0}
+.fact-card{border:1px solid var(--line,#d7dfeb);border-radius:12px;padding:22px;margin:16px 0;overflow-wrap:anywhere}
+.fact-versions{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px;margin:18px 0}
+.fact-version{background:var(--surface,#fff);border:1px solid var(--line,#d7dfeb);border-radius:10px;padding:18px;min-width:0}
+.fact-version h4{font-size:20px}.fact-version p,.fact-card li,.fact-issue label{font-size:16px;line-height:1.6}
+.fact-version blockquote{margin:14px 0;padding:0 12px;border-left:3px solid #7189d8}
+.fact-issue{background:#fff7e8;padding:18px;border-radius:10px;margin:16px 0;color:#1f2937}
+.fact-issue form:not([hidden]){display:grid;gap:12px;margin-top:16px}.fact-issue label{display:grid;gap:6px}
+.fact-separate{border-top:1px solid var(--line,#d7dfeb);padding:12px 0}.fact-card details{margin:14px 0}
+.fact-current{font-size:18px;font-weight:600}.fact-relations{padding-left:22px;display:grid;gap:12px}
+@media(max-width:600px){.fact-card{padding:14px}.fact-filters label{flex-basis:100%}.fact-heading{align-items:flex-start}}

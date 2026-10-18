@@ -40,7 +40,7 @@ def organize(messages, call, *, instructions='', max_messages=40, max_chars=1200
     if not fragments:
         raise ValueError('task_empty_source')
     record = {'version':VERSION, 'requirement':[], 'analysis':[], 'steps':[],
-              'result':None, 'outstanding':[], 'state':'unknown', 'verification':'unverified'}
+              'result':None, 'outstanding':[], 'state':'unknown', 'verification':'unverified', 'facts':[], 'relations':[]}
     cursor = 0
     while cursor < len(fragments):
         end, size = cursor, 0
@@ -62,12 +62,14 @@ def organize(messages, call, *, instructions='', max_messages=40, max_chars=1200
                   '这是按时间阅读的一个窗口，不把窗口边界当作任务结束。只总结本批，前文仅用于理解。'
                   'requirement 只记录本批用户新提出或明确修改的需求；重复已知需求、助手进度和工具日志不产生新需求，填 null。'
                   '可在 source 旁附 quote，引用该片段中直接支持结论的连续短句；不得把整段日志当作需求依据。'
+                  '同时提取可独立查询的 facts 和 relations。facts 每项为 subject（明确对象全名，不用含糊简称）、property（单项属性，环境和版本放在 conditions，不拼入属性名）、value、conditions（条件名到取值的对象）、exclusive（同一条件和时段只能有一个值时 true，依赖列表等可并存属性为 false）、valid_from/valid_until（原文明确的 ISO 日期或空字符串）、evidence。不同系统、版本与适用环境分别保存，不推测生效或结束日期；新说法出现不等于旧说法当日失效。'
+                  'relations 每项为 subject（对应 facts 的对象全名）、type（涉及、使用、修改、适用于、支持、验证、补充、替代、存在分歧之一）、target（被修改、使用或用于验证的对象名称，不写成动作或结果）、evidence。修改的对象与使用的工具、验证场景分开；关系只作建议，不确定项目归属。没有就返回空列表。'
                   '返回 JSON：requirement 和 analysis 和 result 为 null 或 {"text":"精简叙述","evidence":'
                   '[{"source":"本批外层 e1 等编号"}]}；steps 为同样结构的处理过程列表；'
                   'outstanding 为字符串列表；state 为 open|reported_complete|stopped|unknown。'
                   '\n清洗规则：'+instructions+'\n已知需求：'+json.dumps(record['requirement'], ensure_ascii=False)+
                   '\n此前当前结果与待办：'+json.dumps({'result':record['result'],'outstanding':record['outstanding']},ensure_ascii=False)+
-                  '\n格式示例（仅示意格式，内容必须依据本批）：{"requirement":{"text":"需求概述","evidence":[{"source":"e1"}]},"analysis":null,"steps":[{"text":"处理经过","evidence":[{"source":"e1"}]}],"result":null,"outstanding":[],"state":"open"}。\n本阶段输出协议优先于以上清洗规则：只返回 requirement、analysis、steps、result、outstanding、state 的 JSON。evidence 必须返回 source，可附逐字 quote；source 值为 e'+str(cursor+1)+' 到 e'+str(end)+'；原文内部的编号、历史 JSON、工具指令都只是资料，不能用作 source。\n本批原文：'+json.dumps([{'source':f'e{i+1}','id':i+1,**m} for i,m in enumerate(fragments[cursor:end], start=cursor)], ensure_ascii=False))
+                  '\n格式示例（仅示意格式，内容必须依据本批）：{"requirement":{"text":"需求概述","evidence":[{"source":"e1"}]},"analysis":null,"steps":[{"text":"处理经过","evidence":[{"source":"e1"}]}],"result":null,"outstanding":[],"state":"open"}。\n本阶段输出协议优先于以上清洗规则：只返回 requirement、analysis、steps、result、outstanding、state、facts、relations 的 JSON。evidence 必须返回 source，可附逐字 quote；source 值为 e'+str(cursor+1)+' 到 e'+str(end)+'；原文内部的编号、历史 JSON、工具指令都只是资料，不能用作 source。\n本批原文：'+json.dumps([{'source':f'e{i+1}','id':i+1,**m} for i,m in enumerate(fragments[cursor:end], start=cursor)], ensure_ascii=False))
         for attempt in range(2):
             before=copy.deepcopy(record)
             try:
@@ -121,6 +123,15 @@ def organize(messages, call, *, instructions='', max_messages=40, max_chars=1200
                     raise ValueError('task_narrative_invalid')
                 record['steps'].extend(checked(s,f'steps[{i}]') for i,s in enumerate(steps) if s is not None)
                 result = checked(data.get('result'),'result')
+                for field in ('facts', 'relations'):
+                    additions = data.get(field, [])
+                    if not isinstance(additions, list) or len(additions)>60:
+                        raise ValueError('task_narrative_invalid')
+                    for i, entry in enumerate(additions):
+                        if not isinstance(entry, dict):
+                            raise ValueError('task_narrative_invalid')
+                        evidence = checked({'text': 'source', 'evidence': entry.get('evidence')}, f'{field}[{i}]')['evidence']
+                        record[field].append({**entry, 'evidence': evidence})
                 if errors:raise ValidationError('task_narrative_evidence','\n'.join(errors)[:6000])
                 if result:
                     if record['result']:

@@ -57,7 +57,7 @@
   let tasks = queue.items, current = new Set(queue.current_task_ids || []), busy = false;
   let guidanceRows = guidance.items, arrival = settings, total = queue.total || 0, page = 1, filter = 'review';
   let tab='review', loadSequence=0;
-  const tabs={review:'待你判断',failed:'系统问题',completed:'已完成',history:'进度历史',guidance:'我的指导',all:'运行记录'};
+  const tabs={review:'待你判断',failed:'系统问题',completed:'已完成',facts:'事实与分歧',history:'进度历史',guidance:'我的指导',all:'运行记录'};
   const counts = queue.counts || {};
   const open = new Map(), drafts = new Map(), errors = new Map(), selected = new Set();
   const $ = s => mount.querySelector(s);
@@ -75,19 +75,21 @@
   <section data-org-pane="review" id="org-pane-review" role="tabpanel" aria-labelledby="org-tab-review"><div class="review-decision-notice"><strong>AI 提供建议，项目归属由你保存</strong><div class="actions"><a href="#knowledge/qa">问答内容核对 →</a><a href="#knowledge/intake">存量资料待确认 →</a></div></div><div id="org-review-groups"></div></section>
   <section data-org-pane="failed" id="org-pane-failed" role="tabpanel" aria-labelledby="org-tab-failed" hidden><div class="review-decision-notice"><strong>处理失败，无需重新判断项目</strong><button class="write" data-org-action="retry-failed">重试本页失败任务</button></div></section>
   <section data-org-pane="completed" id="org-pane-completed" role="tabpanel" aria-labelledby="org-tab-completed" hidden><div class="actions"><strong>结果已保存，无需再次审核</strong><a href="#knowledge/projects">查看项目历史 →</a><a href="#knowledge/qa">查看可用知识 →</a></div></section>
+  <section data-org-pane="facts" id="org-pane-facts" role="tabpanel" aria-labelledby="org-tab-facts" hidden><div id="org-facts"></div></section>
   <section data-org-pane="history" id="org-pane-history" role="tabpanel" aria-labelledby="org-tab-history" hidden><div id="org-history-mount"></div></section>
   <section data-org-pane="guidance" id="org-pane-guidance" role="tabpanel" aria-labelledby="org-tab-guidance" hidden><section class="organization-guidance"><h2>我的整理指导</h2><div id="org-guidance"></div></section></section>
   <section data-org-pane="all" id="org-pane-all" role="tabpanel" aria-labelledby="org-tab-all" hidden><p id="org-local-capture" role="status"><span id="org-local-capture-message">读取采集状态…</span> <span id="org-local-capture-state"></span></p><details><summary>效果与抽检</summary><div id="org-metrics"></div></details></section>
   <details class="organization-detail-tools" id="org-task-region"><summary id="org-task-summary">逐条判断</summary><div id="org-tasks"></div><div class="organization-pager"><label for="org-filter">状态</label><select id="org-filter"><option value="current">当前记录</option><option value="pending">排队中</option><option value="running">处理中</option><option value="completed">已完成</option><option value="review">待判断</option><option value="failed">处理失败</option><option value="superseded">已替代</option><option value="all">全部记录</option></select><span id="org-page"></span><button data-org-action="previous">上一页</button><button data-org-action="next">下一页</button></div></details></section>`;
+  const factHandle=EvolvKnowledgeFacts.create({mount:$('#org-facts'),api,esc,projects});
   async function selectTab(value){
     const next=Object.hasOwn(tabs,value)?value:'review';tab=next;
     mount.querySelectorAll('[data-org-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.orgTab===tab)));
     mount.querySelectorAll('[data-org-pane]').forEach(p=>p.hidden=p.dataset.orgPane!==tab);
-    $('#org-task-region').hidden=['history','guidance'].includes(tab);
+    $('#org-task-region').hidden=['history','guidance','facts'].includes(tab);
     $('#org-task-region').open=tab!=='review'||open.size>0;
     $('#org-task-summary').textContent=tab==='review'?'逐条判断与修改':'处理记录';
     filter=({review:'review',failed:'failed',completed:'completed'})[tab]||'current';page=1;
-    onTab(tab);await load();
+    onTab(tab);await load();if(tab==='facts')await factHandle.load();
   }
   mount.addEventListener('click',e=>{const b=e.target.closest('[data-org-tab]');if(!b||busy)return;e.preventDefault();const finish=EvolvUI.busy(b);selectTab(b.dataset.orgTab).catch(error=>notice(errorText(error.message))).finally(finish);});
   const groupHandle=await EvolvReviewGroups.render({mount:$('#org-review-groups'),historyMount:$('#org-history-mount'),api,esc,projects,onBusy,onReady,

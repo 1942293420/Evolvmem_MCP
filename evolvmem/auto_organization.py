@@ -1652,6 +1652,8 @@ class OrganizationWorker:
             conn.execute('UPDATE organization_tasks SET unit_count=?,updated_at=? WHERE id=?',
                          (len(units), _now_iso(), task['id']))
             knowledge_identity.bind_task(service, task)
+            from evolvmem.knowledge_facts import ingest_task
+            ingest_task(service, task)
 
     # -- stage 2: project assignment --
 
@@ -1865,6 +1867,8 @@ class OrganizationWorker:
             if ownership_analysis is not None:
                 conn.execute('UPDATE organization_units SET ownership_analysis=? WHERE task_id=? AND digest=?',
                              (json.dumps(ownership_analysis,ensure_ascii=False),task_id,digest))
+                from evolvmem.knowledge_facts import sync_ownership_relations
+                sync_ownership_relations(service,_task_row(service,task_id),find_unit(service,task_id,digest))
             if context_basis == '':
                 # The unit no longer rests on a predecessor: drop the dependency
                 # so the reconciliation pass cannot report it as live.
