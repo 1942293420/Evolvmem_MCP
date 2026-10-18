@@ -854,6 +854,7 @@ class MemoryMCPServer:
                     "occurred_at": r.occurred_at,
                     "mentioned_at": r.mentioned_at,
                     "temporal_state": r.temporal_state,
+                    "knowledge": list(r.knowledge),
                 }
                 for r in results
             ],

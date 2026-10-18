@@ -378,8 +378,8 @@
         }else if(action==='file'||action==='defer'){
           const u=detail.items.find(x=>x.digest===form.elements.digest.value&&x.task_id===Number(form.elements.task_id.value));
           const target=scopePicker.read();
-          await api('organization/archive',{task_id:u.task_id,digest:u.digest,expected_revision:u.revision,action:action==='file'?'include':'defer',...target});
-          const message=action==='file'?`已归入「${EvolvProjects.scopeLabel(target,projects)}」。`:'暂不归档，原文仍在，可在运行记录中返回待归档。';
+          const result=await api('organization/archive',{task_id:u.task_id,digest:u.digest,expected_revision:u.revision,action:action==='file'?'include':'defer',...target});
+          const message=action==='file'?`已归入「${EvolvProjects.scopeLabel(target,projects)}」${result.unit?.item_id?1:0} 条知识。`:'暂不归档，原文仍在，可在运行记录中返回待归档。';
           receipt(action==='file'?'归档已保存':'暂不归档',message);
           await refreshSaved(message);
         }else if(action==='resume-batch'){

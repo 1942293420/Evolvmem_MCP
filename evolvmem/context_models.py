@@ -366,6 +366,7 @@ class ContextSearchResult:
     rerank_score: float | None = None
     duplicate_ids: tuple[int, ...] = ()
     projects: tuple[str, ...] = ()
+    knowledge: tuple[dict, ...] = ()
 
     @property
     def temporal_state(self) -> str:
