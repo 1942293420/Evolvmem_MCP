@@ -31,7 +31,7 @@ def metrics(service):
         "SELECT id,status FROM organization_tasks WHERE status!='superseded' AND error_code!=?",
         (org.NO_DIALOGUE_CODE,))]
     ids = {t['id'] for t in tasks}
-    columns = ('task_id,digest,revision,project,projects,knowledge_scope,decision,reason,disposition,evidence_quote,cleaned_text,'
+    columns = ('task_id,digest,revision,knowledge_id,project,projects,knowledge_scope,decision,reason,disposition,evidence_quote,cleaned_text,'
                'continues_context,context_basis,applied_guidance_id,source_ranges,task_record')
     units = [dict(u) for u in conn.execute('SELECT '+columns+' FROM organization_units') if u['task_id'] in ids]
     manual = {u['task_id'] for u in units if u['decision'] == 'manual'}

@@ -177,6 +177,7 @@ def protect_prior_decisions(service,task):
         'JOIN organization_tasks t ON t.id=u.task_id '
         f'WHERE t.id<? AND t.source_key IN ({marks}) AND (u.decision=\'manual\' OR EXISTS('
         'SELECT 1 FROM organization_scope_exclusions e WHERE e.source_key=t.source_key AND e.digest=u.digest)) '
+        'AND NOT EXISTS (SELECT 1 FROM knowledge_objects k WHERE k.knowledge_id=u.knowledge_id AND k.retired=1) '
         'ORDER BY t.id DESC', [task['id'],*keys])]
     if not previous:return
     with service.store.transaction():
@@ -218,6 +219,8 @@ def protect_prior_decisions(service,task):
             if target:
                 conn.execute("UPDATE organization_units SET decision='manual',project=?,projects=?,knowledge_scope=?,reason=?,disposition=?,revision=revision+1 WHERE task_id=? AND digest=?",
                              (target['project'],target['projects'],target['knowledge_scope'],target['reason'],target['disposition'],task['id'],unit['digest']))
+                from evolvmem import knowledge_identity
+                knowledge_identity.inherit(service, task, unit, target)
             if decisions:
                 record=task_narrative.read(unit['task_record']);record['prior_decisions']=decisions
                 conn.execute('UPDATE organization_units SET task_record=? WHERE task_id=? AND digest=?',

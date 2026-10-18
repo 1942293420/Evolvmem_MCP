@@ -649,7 +649,8 @@ class ContextStore:
         from evolvmem.learning_schema import SCHEMA as learning_schema
         from evolvmem.organization_semantic_review import SCHEMA as review_schema
         conn.execute(review_schema)
-        for statement in (*_SCHEMA_TABLE_STATEMENTS, *learning_schema):
+        from evolvmem.knowledge_identity import SCHEMA as identity_schema
+        for statement in (*_SCHEMA_TABLE_STATEMENTS, *learning_schema, *identity_schema):
             conn.execute(statement)
 
         # 既有库增量列：项目中文显示名（2026-09-02）。新库已由上面的
@@ -693,6 +694,7 @@ class ContextStore:
             "context_basis": "TEXT NOT NULL DEFAULT ''",
         }
         additions["organization_units"] = {
+            "knowledge_id": "TEXT NOT NULL DEFAULT ''",
             "source_ranges": "TEXT NOT NULL DEFAULT '[]'",
             "task_record": "TEXT NOT NULL DEFAULT '{}'",
             "ownership_analysis": "TEXT NOT NULL DEFAULT '{}'",
@@ -710,6 +712,8 @@ class ContextStore:
             "continues_context": "INTEGER NOT NULL DEFAULT 0",
             "context_basis": "TEXT NOT NULL DEFAULT ''",
         }
+        additions["knowledge_source_bindings"] = {"approved": "INTEGER NOT NULL DEFAULT 0"}
+        additions["knowledge_objects"] = {"parent_id": "TEXT NOT NULL DEFAULT ''"}
         additions["organization_guidance"] = {
             "matching_mode": "TEXT NOT NULL DEFAULT 'phrase'",
             "projects": "TEXT NOT NULL DEFAULT '[]'",

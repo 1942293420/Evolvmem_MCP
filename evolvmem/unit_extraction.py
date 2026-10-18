@@ -56,9 +56,16 @@ def _summary_item(unit, project, digest) -> LegacyExtractionItem:
 def write_history(service, task, unit, messages) -> int | None:
     """Store the unit's project-history record without any model call."""
     from evolvmem.unit_derivations import record_derivation
+    from evolvmem import knowledge_identity
     archive_id = _archive_id(task)
+    existing = knowledge_identity.history_item(service, unit)
+    if existing:
+        _link_provenance(service, existing, archive_id, task, unit)
+        record_derivation(service, task['id'], unit['digest'], existing, kind='history',
+                          project=unit['project'])
+        return existing
     request = LegacyExtractionRequest(
-        summary=_summary_item(unit, unit['project'], unit['digest']), candidates=(),
+        summary=knowledge_identity.history_summary(service, unit, _summary_item(unit, unit['project'], unit['digest'])), candidates=(),
         max_writes=1, source_session=task['source_key'], project_hint=unit['project'])
     result = service.persist_legacy_extraction(
         request, source_archive_id=archive_id, source_messages=messages)
@@ -70,6 +77,7 @@ def write_history(service, task, unit, messages) -> int | None:
         item_id = existing['id'] if existing else None
     if item_id is None:
         return None
+    knowledge_identity.attach_history(service, unit, item_id)
     apply_scope(service, item_id, unit)
     _link_provenance(service, item_id, archive_id, task, unit)
     record_derivation(service, task['id'], unit['digest'], item_id, kind='history',
@@ -92,11 +100,21 @@ def _link_provenance(service, item_id, archive_id, task, unit):
     source_ref = f'{task["source_key"]}#{unit["digest"]}@{unit["source_start"]}-{unit["source_end"]}'
     with service.store.transaction():
         conn = service.store._connection()
-        conn.execute(
-            "INSERT OR IGNORE INTO context_sources(item_id,archive_id,source_kind,source_ref,"
-            "extraction_version,created_at) VALUES(?,?,'organization',?,'auto-organization.v1',?)",
-            (item_id, archive_id, source_ref, _now_iso()))
+        sources = conn.execute(
+            "SELECT archive_id,source_ref FROM context_sources WHERE item_id=? AND source_kind='organization'",
+            (item_id,)).fetchall() if unit.get('knowledge_id') else []
+        known = {r['archive_id'] for r in sources if r['archive_id'] is not None}
+        known_keys = {r['source_ref'].split('#')[0] for r in sources if r['archive_id'] is None}
+        already_linked = archive_id in known if archive_id is not None else task['source_key'] in known_keys
+        from evolvmem import conversation_tasks
+        if not already_linked and not (unit.get('knowledge_id') and conversation_tasks.is_conversation(task['source_key'])):
+            conn.execute(
+                "INSERT OR IGNORE INTO context_sources(item_id,archive_id,source_kind,source_ref,"
+                "extraction_version,created_at) VALUES(?,?,'organization',?,'auto-organization.v1',?)",
+                (item_id, archive_id, source_ref, _now_iso()))
         for identity, _ in _originals(service,task,unit):
+            if identity in known:
+                continue
             conn.execute(
                 "INSERT OR IGNORE INTO context_sources(item_id,archive_id,source_kind,source_ref,extraction_version,created_at) "
                 "VALUES(?,?,'organization',?,'complete-task.v1',?)",
@@ -190,7 +208,7 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
                 clear_dependency(service, task['id'], unit['digest'], conn=conn)
                 return {'stage': 'stale', 'item_ids': [], 'candidates': 0,
                         'error': 'context_basis_changed'}
-            request = _with_history_summary(request, task, unit)
+            request = _with_history_summary(service, request, task, unit)
             result = service.persist_legacy_extraction(
                 request, source_archive_id=_archive_id(task), source_messages=messages)
             item_ids, experience_ids = [], []
@@ -250,10 +268,11 @@ def _context_current(service, basis):
         return False
 
 
-def _with_history_summary(request, task, unit):
+def _with_history_summary(service, request, task, unit):
     """Replace the model's batch anchor with the deterministic history record."""
     from dataclasses import replace
-    summary = _summary_item(unit, unit['project'], unit['digest'])
+    from evolvmem import knowledge_identity
+    summary = knowledge_identity.history_summary(service, unit, _summary_item(unit, unit['project'], unit['digest']))
     return replace(request, summary=summary)
 
 

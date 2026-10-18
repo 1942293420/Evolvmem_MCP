@@ -69,7 +69,7 @@ def _unit_revision(row) -> str:
     if isinstance(row, sqlite3.Row):
         row = dict(row)
     values = {k: row.get(k) for k in
-        ('revision', 'project', 'projects', 'knowledge_scope', 'decision', 'reason', 'disposition', 'evidence_quote', 'cleaned_text',
+        ('revision', 'knowledge_id', 'project', 'projects', 'knowledge_scope', 'decision', 'reason', 'disposition', 'evidence_quote', 'cleaned_text',
          'continues_context', 'context_basis', 'applied_guidance_id')}
     for key in ('source_ranges','task_record'):
         value = row.get(key)
@@ -1585,6 +1585,7 @@ class OrganizationWorker:
         self._touch(service,task['id'],'assignment')
 
     def _store_units(self, service, task, units):
+        from evolvmem import knowledge_identity
         conn = service.store._connection()
         # Structural spans from the original messages; the snapshot text is only
         # a fallback for a source whose messages cannot be re-read.
@@ -1593,9 +1594,11 @@ class OrganizationWorker:
             topic_segmentation.message_spans([{'role': 'unknown', 'content': task['source_snapshot']}])
         with service.store.transaction():
             _assert_current(service, task, conn=conn)
+            knowledge_identity.capture_existing(service, task)
             prior = {r['digest']: dict(r) for r in conn.execute(
                 "SELECT u.* FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id "
-                "WHERE t.source_key=? AND u.decision='manual' ORDER BY t.id", (task['source_key'],))}
+                "WHERE t.source_key=? AND u.decision='manual' AND NOT EXISTS (SELECT 1 FROM knowledge_objects k "
+                "WHERE k.knowledge_id=u.knowledge_id AND k.retired=1) ORDER BY t.id", (task['source_key'],))}
             cached = {r['digest']:dict(r) for r in conn.execute(
                 'SELECT u.* FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id '
                 'WHERE t.source_key=? AND t.id<? AND t.rule_revision=? ORDER BY t.id',
@@ -1648,6 +1651,7 @@ class OrganizationWorker:
                                  (old['projects'], old['knowledge_scope'], task['id'], digest))
             conn.execute('UPDATE organization_tasks SET unit_count=?,updated_at=? WHERE id=?',
                          (len(units), _now_iso(), task['id']))
+            knowledge_identity.bind_task(service, task)
 
     # -- stage 2: project assignment --
 
@@ -1938,6 +1942,9 @@ def _ingest_units(service, task, spans, *, extract=True):
         else:
             unit_extraction._link_provenance(
                 service, unit['item_id'], unit_extraction._archive_id(task), task, unit)
+            from evolvmem.unit_derivations import record_derivation
+            record_derivation(service, task['id'], unit['digest'], unit['item_id'],
+                              kind='history', project=unit['project'])
     if not extract:
         return
     for unit in unit_extraction.pending_units(service, task['id']):
@@ -2049,6 +2056,9 @@ def correct_one(service, body, *, record_guidance=True):
         if decision == 'manual' and ks.assigned(target):
             conn.execute("UPDATE organization_units SET disposition='keep',disposition_reason='' WHERE task_id=? AND digest=?",
                          (task_id, digest))
+        from evolvmem import knowledge_identity
+        if decision == 'manual':
+            knowledge_identity.record_decision(service, task, find_unit(service, task_id, digest))
     refreshed = find_unit(service, task_id, digest)
     if ks.assigned(target):
         item_id = _ensure_unit_item(service, task, refreshed)
@@ -2261,6 +2271,9 @@ def set_disposition(service, body):
             'UPDATE organization_units SET disposition=?,disposition_reason=?,extraction_stage=?,'
             'revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
             (disposition, reason, stage, _now_iso(), task_id, digest))
+        from evolvmem import knowledge_identity
+        if disposition in ('keep', 'set_aside'):
+            knowledge_identity.record_decision(service, _task_row(service, task_id), find_unit(service, task_id, digest))
     _refresh_task_state(service, task_id)
     # Setting a unit aside withdraws it as a predecessor: anything that inherited
     # from it returns to review in the same bounded, model-free pass.
