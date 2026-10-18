@@ -343,6 +343,17 @@ if os.environ.get('EVOLVMEM_COMPLETE_TASK_FIXTURE')=='1':
                     'projects':['evo'],'knowledge_scope':'project','excluded_scopes':[]}]
             s.store._connection().execute("UPDATE organization_units SET task_record=?,ownership_analysis='{}' WHERE task_id=? AND digest=?",
                 (json.dumps(value,ensure_ascii=False),row['task_id'],row['digest']))
+if os.environ.get('EVOLVMEM_FACTS_FIXTURE')=='1':
+    from tests.test_knowledge_facts import add, api, save, SESSION, OTHER_SESSION
+    s.knowledge().save_project({'project':'demo','display_name':'Demo'})
+    s.knowledge().save_project({'project':'other','display_name':'验证项目'})
+    a,_=add(s,'Windows',relations=[{'type':'修改','target':'Demo 执行器','quote':'Demo 执行器在生产使用 Windows。'},{'type':'验证','target':'other','quote':'Demo 执行器在生产使用 Windows。'}])
+    save(s,a['id'])
+    b,_=add(s,'Linux',session=OTHER_SESSION)
+    save(s,b['id'],project='other')
+    for i,subject in enumerate(['Demo 部署方式','Demo 目录位置']):
+        for j,value in enumerate(['Windows','Linux']):
+            add(s,value,subject=subject,session=f'{10+i*2+j:08d}-0000-4000-8000-000000000001')
 print('Temporary browser fixture ready',flush=True)
 try:server.serve_forever()
 finally:
