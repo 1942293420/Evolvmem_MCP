@@ -137,6 +137,8 @@ def exported(service, stage):
 
 def test_stages_export_as_three_standalone_skill_files(service):
     dispatch(service, 'GET', 'skills')
+    assert not (service.config.data_dir / 'skills').exists()
+    dispatch(service, 'POST', 'skills/export')
     for stage in ('ownership', 'cleaning', 'extraction'):
         assert f'name: evolvmem-{stage}' in exported(service, stage), stage
     save_stage(service, 'ownership', instructions='先核对已经登记的项目归属。')

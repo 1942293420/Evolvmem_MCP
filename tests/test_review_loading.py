@@ -47,18 +47,20 @@ def test_slow_business_request_keeps_assets_login_and_bounded_retry_available(co
     server=web_server.make_http_server(s,port=0)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     base=f'http://127.0.0.1:{server.server_address[1]}'
-    def get(path):
-        with urllib.request.urlopen(base+path,timeout=1) as response:return response.read()
+    def get(path, post=False):
+        req=urllib.request.Request(base+path,data=b'{}' if post else None,headers={'Content-Type':'application/json'})
+        with urllib.request.urlopen(req,timeout=1) as response:return response.read()
     try:
         with concurrent.futures.ThreadPoolExecutor(1) as pool:
-            future=pool.submit(get,'/api/knowledge/slow-test')
+            future=pool.submit(get,'/api/knowledge/slow-test',True)
             assert entered.wait(1)
             try:
                 assert b'knowledge' in get('/knowledge.css')
                 assert json.loads(get('/api/auth/me'))['enabled'] is False
                 assert json.loads(get('/api/knowledge/projects'))['projects']==[]
+                assert json.loads(get('/api/stats'))['total_active']==0
                 with pytest.raises(urllib.error.HTTPError) as error:
-                    get('/api/stats')
+                    get('/api/knowledge/projects',True)
                 assert error.value.code==503
                 assert json.loads(error.value.read())['error']=='service_busy'
             finally:release.set()

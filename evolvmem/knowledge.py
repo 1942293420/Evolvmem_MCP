@@ -268,7 +268,7 @@ class KnowledgeBase:
         self._sync([item_id])
         return self.detail(item_id)
 
-    def assign(self, item_id, body):
+    def assign(self, item_id, body, *, sync=True):
         target = ks.normalize(self.service, body, required='projects' in body or 'knowledge_scope' in body)
         project = target['project']
         self._project(project)
@@ -303,7 +303,7 @@ class KnowledgeBase:
                 self.conn.execute("UPDATE context_items SET scope='project' WHERE id=?", (item_id,))
             self.conn.execute('UPDATE context_items SET projects=?,personal_general=? WHERE id=?', (json.dumps(target['projects']), int(target['knowledge_scope']=='global'), item_id))
             self._stamp(item_id, reason='用户确认归属')
-        self._sync(touched)
+        if sync:self._sync(touched)
         return self.detail(item_id)
 
     def _move_workstream(self, row, project):
@@ -344,7 +344,7 @@ class KnowledgeBase:
             self._stamp(cid, reason='用户整组迁移任务归属')
         return ids
 
-    def transition(self, item_id, body, *, refresh_qa=True):
+    def transition(self, item_id, body, *, refresh_qa=True, sync=True):
         actions = {'publish': 'active', 'archive': 'archived', 'restore': 'active', 'reject': 'archived', 'delete': 'deleted', 'review': 'candidate'}
         if body.get('action') not in actions:
             raise ValueError('invalid_action')
@@ -368,7 +368,7 @@ class KnowledgeBase:
             self._stamp(item_id, reason={'publish': '用户确认入库', 'reject': '用户暂不入库'}.get(body['action'], '用户调整资料状态'))
             if qa and qa['question']:
                 qa_memory.record(self.service, item_id, {'question':qa['question'],'answer':qa['answer']}, origin='manual', approved=True)
-        self._sync([item_id])
+        if sync:self._sync([item_id])
         return self.detail(item_id)
 
     def preview(self, body):

@@ -3,16 +3,16 @@
   window.EvolvKnowledge = {create(mount, hooks = {}) {
   mount.classList.add('knowledge-workspace');
   mount.innerHTML=`<header class="knowledge-heading"><div><span class="knowledge-eyebrow">知识工作台</span><h1 id="knowledge-title">项目历史</h1><p id="knowledge-description">每个项目一份总记忆，关联历次会话的摘要与清洗正文。</p></div><div class="actions"><span id="readonly" class="hint" hidden>当前为只读访问</span><button id="new-item" class="primary write">＋ 新增资料</button></div></header>
-  <nav class="knowledge-tabs" aria-label="整理与规则"><div><a href="#knowledge/intake" data-view="intake">待确认 <b id="pending-count"></b></a><a href="#knowledge/library" data-view="library">来源资料</a><a href="#knowledge/rules" data-view="rules">入库条件</a><a href="#knowledge/skill" data-view="skill">提取规则</a></div></nav>
+  <nav class="knowledge-tabs" aria-label="整理与规则"><div><a href="#knowledge/intake" data-view="intake">按项目归档 <b id="pending-count"></b></a><a href="#knowledge/library" data-view="library">来源资料</a><a href="#knowledge/rules" data-view="rules">入库条件</a><a href="#knowledge/skill" data-view="skill">提取规则</a></div></nav>
   <div class="knowledge-flow" aria-label="记忆处理流程"><ol><li><b>1 · 清洗确认</b></li><li><b>2 · 项目归属</b></li><li><b>3 · 历史与经验</b></li><li><b>4 · 历史与经验检索</b></li></ol></div><div id="knowledge-loading" class="ui-loading" role="status" hidden>正在加载资料…</div><div id="knowledge-receipt" role="status" hidden></div><div id="content" aria-live="polite"></div><div id="toast" role="status" hidden></div><dialog id="dialog" aria-labelledby="knowledge-dialog-title"><div id="dialog-content"></div></dialog>`;
   const $ = s => mount.querySelector(s);
   const esc = v => String(v ?? '').replace(/[&<>"']/g, x => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
   const types = {reference:'参考资料',fact:'事实 / 业务规则',decision:'决策',experience:'经验',playbook:'操作方法',session_summary:'会话摘要',project_summary:'项目摘要',workstream_checkpoint:'任务断点',workflow_policy:'流程规范',constraint:'约束',preference:'偏好',user_profile:'用户资料'};
   const statuses = {active:'已入库',candidate:'待确认',archived:'已归档',deleted:'已删除',superseded:'历史版本'};
   const errors = {revision_conflict:'资料已被其他操作更新，请重新打开后再保存。',project_required:'请选择所属项目，或明确选择全局知识。',project_not_found:'项目未登记，请先在项目知识库添加。',confirm_project_first:'请先确认资料归属，再确认入库。',qa_source_changed:'来源已变化，请到经验问答重新核对和保存答案。',invalid_qa_question:'请填写 4–160 字的明确问题。',invalid_qa_answer:'请填写 5–400 字的简洁答案。',qa_conflict_requires_confirmation:'同一问题和条件已有不同答案。请核对来源后，勾选替换旧答案或保存待确认。',invalid_content:'请填写标题和正文；正文最多 100,000 字。',workstream_move_confirmation_required:'任务断点需要整组迁移，请打开详情操作。',workstream_has_related_tasks:'此任务有关联父任务或子任务，暂不能单独迁移。请先在任务管理中核对关联关系。',workstream_lifecycle_managed_by_task:'任务断点的状态由任务管理维护，请到顶部的项目进展查看任务。',managed_content_create_correction:'此内容由任务或经验生成，请新增补充资料。',invalid_rule_settings:'入库条件格式不正确，请检查 JSON 设置。',invalid_skill_format:'Skill 格式不完整，请保留文件头和 JSON 入库条件。',invalid_skill_frontmatter:'请保留 Skill 的 name 和 description。',identity_conflict:'目标项目已存在同一资料，请先核对重复内容。',alias_conflict:'别名已属于其他项目，请换一个别名。',invalid_items:'请先选择要整理的资料。',invalid_instructions:'请填写 AI 执行说明。',invalid_confidence:'置信度需在 0 到 1 之间。',invalid_content_limits:'最少字数不能大于最多字数。',invalid_collaboration_skill:'协作 Skill 需保留 name/description 文件头。',invalid_project_id:'项目标识需以小写字母或数字开头，只能包含小写字母、数字、点、下划线或连字符，最长 64 个字符。',invalid_preview_messages:'样例格式不正确：请以“用户：”“助手：”或“工具：”标明每轮角色，总长度不超过 20,000 字。',extraction_provider_unavailable:'尚未配置提炼模型，请先完成模型配置再验证。',extraction_summary_missing:'模型这次没有返回会话摘要，请调整样例后重试。'};
-  const state = {view:'projects',project:'__all__',q:'',status:'',type:'',category:'',page:1,queue:'all',rows:[],selected:new Set(),projects:[],rules:null,total:0,document:null,memoryLane:'overview',projectSort:'recent',qaSort:'recent',fragmentsOpen:false};
+  const state = {view:'projects',intakeMode:'groups',project:'__all__',q:'',status:'',type:'',category:'',page:1,queue:'all',rows:[],selected:new Set(),projects:[],rules:null,total:0,document:null,memoryLane:'overview',projectSort:'recent',qaSort:'recent',fragmentsOpen:false};
   let toastTimer, renderSequence=0, rulesDirty=false, actionBusy=false;
-  let organizationTab='review';const memoryFilters=new Map(), projectReaders=new Map(), projectDocuments=new Map();
+  let organizationTab='review';const memoryFilters=new Map(), projectReaders=new Map(), projectDocuments=new Map(), projectReviews=new Map();
   let cleaningNode=null;let organizationNode=null,organizationHandle=null;const cleaningState={dirty:false,busy:false,background:false};
   function syncCleaning(){if(state.view==='cleaning'){rulesDirty=cleaningState.dirty;actionBusy=cleaningState.busy&&!cleaningState.background;mount.setAttribute('aria-busy',String(cleaningState.busy));}}
   function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,6500); }
@@ -33,7 +33,7 @@
     } finally {clearTimeout(timer);}
     if(!response.ok || result.ok===false) throw new Error(result.error==='service_busy'?'正在处理其他资料，请稍后重试。':errors[result.error] || result.error || '操作失败，请重试。');
     if(body!==undefined&&!['rules','preview','extraction/preview'].includes(route)&&!/^organization(\/|$)/.test(route)&&(route!=='organize'||body.apply))hooks.changed?.();
-    if(body!==undefined&&(route!=='organization/prepare-review'||result.changed)){projectDocuments.clear();projectReaders.forEach(r=>r.invalidate());}
+    if(body!==undefined&&(route!=='organization/prepare-review'||result.changed)){projectDocuments.clear();projectReaders.forEach(r=>r.invalidate());projectReviews.forEach(r=>r.invalidate());}
     else if(route.startsWith('project-memory?'))projectDocuments.set(route,result);
     return result;
   }
@@ -72,6 +72,12 @@
     $('#content').onclick=null;$('#content').oninput=null;$('#content').onchange=null;
     if(state.view==='learning'){$('#content').innerHTML='<section class="panel"><h2>协作学习已停用</h2><p>各环节由 Skill 明确维护。旧学习资料保留，但不再自动生成或注入规则。</p><a href="#knowledge/skill" data-view="skill">打开经验提取与验证 Skill</a></section>';return;}
     if(state.view==='projects'){renderProjects(info);return;}
+    if(state.view==='intake'&&state.project==='__all__'&&state.intakeMode!=='records'){
+      $('#knowledge-title').textContent='集中归档';$('#new-item').hidden=true;
+      renderProjects({...info,projects:info.projects.filter(p=>p.pending>0)});
+      $('#content').querySelector('.history-tabs')?.remove();
+      $('#content').insertAdjacentHTML('beforeend','<div class="actions"><a href="#knowledge/intake?project=__none__">处理未归属资料</a><a href="#knowledge/intake?mode=records">逐条查看全部资料</a></div>');return;
+    }
     if(state.view==='cleaning'){
       if(cleaningNode){$('#content').replaceChildren(cleaningNode);syncCleaning();return;}
       cleaningNode=document.createElement('div');$('#content').replaceChildren(cleaningNode);
@@ -89,6 +95,11 @@
     if(state.view==='qa'){const hashSort=new URLSearchParams(location.hash.split('?')[1]||'').get('sort');if(Object.hasOwn(qaSorts,hashSort))state.qaSort=hashSort;$('#content').innerHTML=`<div class="qa-sort-bar"><label for="qa-sort">排序</label><select id="qa-sort" aria-label="问答排序方式">${Object.entries(qaSorts).map(([key,label])=>`<option value="${key}" ${state.qaSort===key?'selected':''}>${label}</option>`).join('')}</select></div><div class="memory-manager"></div>`;await EvolvMemory.render({mount:$('.memory-manager'),doc:{project:state.project,name:'所有项目',source_ids:[],sessions:[],qa_count:0},filters:memoryFilters.get('qa'),onFilters:v=>memoryFilters.set('qa',v),projects:state.projects,api:qaApi,esc,toast,lane:'qa',standalone:true,onLane:()=>{},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));},onChanged:render,onSource:detail,onDirty:v=>rulesDirty=v});return;}
     if(state.view==='skill'){$('#content').innerHTML='<div data-pipeline-mount></div>';await EvolvPipeline.render({mount:$('[data-pipeline-mount]'),api,esc,toast,onDirty:v=>{rulesDirty=v;const s=$('#stage-state');if(s)s.classList.toggle('unsaved',v);},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
     if(['rules'].includes(state.view)){state.rules=await api('rules');if(seq!==renderSequence)return;renderRules();return;}
+    if(state.view==='intake'&&!state.project.startsWith('__')&&state.intakeMode!=='records'){
+      $('#new-item').hidden=true;
+      if(!projectReviews.has(state.project))projectReviews.set(state.project,EvolvProjectReview.create({project:state.project,projects:state.projects,api,esc,onDetail:detail,onChanged:()=>refreshProjects().catch(()=>{})}));
+      const review=projectReviews.get(state.project);$('#content').replaceChildren(review.node);await review.load();return;
+    }
     const params=new URLSearchParams({project:state.project,q:state.q,status:state.status,content_type:state.type,category:state.category,page:state.page});
     if(state.view==='intake')params.set('queue',state.queue);
     let result=await api('items?'+params);if(seq!==renderSequence)return;
@@ -117,7 +128,7 @@
     }
   }
   let projectInfo=null;
-  const projectSorts={recent:'最近更新',name:'项目名称 A–Z',materials:'资料最多',pending:'待确认最多'};
+  const projectSorts={recent:'最近更新',name:'项目名称 A–Z',materials:'资料最多',pending:'待整理最多'};
   const projectCollator=new Intl.Collator('zh-CN',{numeric:true,sensitivity:'base'});
   const qaSorts={recent:'最近更新',question:'问题 A–Z',project:'按项目'};
   async function qaApi(route,body){const result=await api(route,body);
@@ -134,7 +145,7 @@
     const active=info.projects.filter(p=>p.status==='active');
     const other=info.projects.filter(p=>p.status!=='active');
     $('#content').innerHTML=historyTabs()+`<section class="project-collection" aria-label="项目历史目录">
-      <div class="project-collection-top"><div class="project-collection-summary"><span><strong>${active.length}</strong> 个项目</span><i></i><span><strong>${active.reduce((n,p)=>n+p.total,0).toLocaleString('zh-CN')}</strong> 份项目资料</span><i></i><span><strong>${active.reduce((n,p)=>n+p.pending,0).toLocaleString('zh-CN')}</strong> 份待确认</span></div><button class="primary write" data-action="project-new">＋ 添加项目</button></div>
+      <div class="project-collection-top"><div class="project-collection-summary"><span><strong>${active.length}</strong> 个项目</span><i></i><span><strong>${active.reduce((n,p)=>n+p.total,0).toLocaleString('zh-CN')}</strong> 份项目资料</span><i></i><span><strong>${active.reduce((n,p)=>n+p.pending,0).toLocaleString('zh-CN')}</strong> 份待整理</span></div><button class="primary write" data-action="project-new">＋ 添加项目</button></div>
       <div class="project-searchbar"><div class="project-search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="project-search" type="search" maxlength="200" placeholder="搜索项目名称、标识或别名…" aria-label="搜索项目" value="${esc(state.q)}"><button class="quiet" data-action="project-search-clear" aria-label="清除项目搜索" ${state.q?'':'hidden'}>清除</button></div><label class="project-sort-label" for="project-sort">排序<select id="project-sort">${Object.entries(projectSorts).map(([key,label])=>`<option value="${key}" ${state.projectSort===key?'selected':''}>${label}</option>`).join('')}</select></label></div>
       <div class="project-results-heading"><h2 id="project-results-title">全部项目</h2><span id="project-result-count" role="status" aria-live="polite"></span></div><div id="project-results"></div>
       <div class="project-utilities"><a href="#knowledge/library?project=__global__" data-action="open-project" data-project="__global__"><span class="project-utility-icon">◎</span><span><strong>全局知识</strong></span><span aria-hidden="true">↗</span></a><a href="#knowledge/unassigned" data-view="unassigned"><span class="project-utility-icon">?</span><span><strong>待入库项目</strong></span><span aria-hidden="true">↗</span></a></div>
@@ -156,7 +167,7 @@
     $('#project-results-title').textContent=terms.length?'搜索结果':'全部项目';
     $('#project-result-count').textContent=terms.length?`${rows.length} / ${active.length} 个项目`:`${active.length} 个项目 · ${projectSorts[state.projectSort]}`;
     $('[data-action="project-search-clear"]').hidden=!state.q;
-    $('#project-results').innerHTML=rows.length?`<div class="table-wrap project-list-wrap"><table class="project-list"><thead><tr><th>项目</th><th>资料</th><th>待确认</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${rows.map(p=>{
+    $('#project-results').innerHTML=rows.length?`<div class="table-wrap project-list-wrap"><table class="project-list"><thead><tr><th>项目</th><th>资料</th><th>待整理</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${rows.map(p=>{
       const name=p.display_name||p.project;
       const date=p.updated_at?new Date(p.updated_at.replace(' ','T')+'Z'):null;
       const updated=date&&!Number.isNaN(date.valueOf())?new Intl.DateTimeFormat('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'}).format(date).replaceAll('/','.'):'暂无更新';
@@ -164,7 +175,7 @@
       return `<tr data-project-card="${esc(p.project)}" data-action="open-project" data-project="${esc(p.project)}">
         <td class="project-list-name"><a class="project-open-main" href="#knowledge/library?project=${encodeURIComponent(p.project)}" data-action="open-project" data-project="${esc(p.project)}" title="${esc(name)}">${esc(name)}</a><code class="project-list-id" title="项目标识：${esc(p.project)}">${esc(p.project)}</code>${p.aliases.length?`<span class="project-aliases" title="${esc(p.aliases.join(' · '))}">${p.aliases.slice(0,2).map(alias=>`<span>${esc(alias)}</span>`).join('')+(p.aliases.length>2?`<span>+${p.aliases.length-2}</span>`:'')}</span>`:''}${sameName?'<span class="project-name-notice">同名项目，按标识区分</span>':''}</td>
         <td class="project-list-num"><strong>${p.total.toLocaleString('zh-CN')}</strong> 份</td>
-        <td class="project-list-num ${p.pending?'metric-pending':''}">${p.pending?`<strong>${p.pending.toLocaleString('zh-CN')}</strong> 份 <a href="#knowledge/intake?project=${encodeURIComponent(p.project)}" data-action="project-queue" data-project="${esc(p.project)}" aria-label="核对 ${esc(name)} 的待确认资料">去核对 ↗</a>`:'0'}</td>
+        <td class="project-list-num ${p.pending?'metric-pending':''}">${p.pending?`<strong>${p.pending.toLocaleString('zh-CN')}</strong> 份 <a href="#knowledge/intake?project=${encodeURIComponent(p.project)}" data-action="project-queue" data-project="${esc(p.project)}" aria-label="核对 ${esc(name)} 的待整理资料">集中归档 ↗</a>`:'0'}</td>
         <td class="project-list-time"><time title="${esc(p.updated_at||'尚无更新时间')}" ${date&&!Number.isNaN(date.valueOf())?`datetime="${date.toISOString()}"`:''}>${updated}</time></td>
         <td class="project-list-actions"><a class="project-open-link" href="#knowledge/library?project=${encodeURIComponent(p.project)}" data-action="open-project" data-project="${esc(p.project)}" aria-label="查看 ${esc(name)} 的项目历史">查看历史 →</a><button class="project-settings quiet write" data-action="project-edit" data-project="${esc(p.project)}" aria-label="编辑 ${esc(name)}" title="项目设置">···</button></td>
       </tr>`;
@@ -294,8 +305,8 @@
   mount.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='search')actions.search().catch(x=>toast(x.message));});
   $('#new-item').onclick=()=>newItem();
   mount.classList.toggle('readonly',!EvolvAuth.canWrite);$('#readonly').hidden=EvolvAuth.canWrite;
-  window.addEventListener('beforeunload',e=>{if(rulesDirty||cleaningState.dirty||cleaningState.busy){e.preventDefault();e.returnValue='';}});
-  function hash(){const p=new URLSearchParams();if(state.view==='organization'&&organizationTab!=='review')p.set('tab',organizationTab);if(state.project!=='__all__')p.set('project',state.project);if(state.q)p.set('q',state.q);if(state.view==='projects'&&state.projectSort!=='recent')p.set('sort',state.projectSort);if(state.view==='qa'&&state.qaSort!=='recent')p.set('sort',state.qaSort);if(state.memoryLane!=='overview'&&state.view==='library')p.set('lane',state.memoryLane);return `#knowledge/${state.view}${p.size?'?'+p:''}`;}
+  window.addEventListener('beforeunload',e=>{if(rulesDirty||cleaningState.dirty||cleaningState.busy||[...projectReviews.values()].some(r=>r.busy)){e.preventDefault();e.returnValue='';}});
+  function hash(){const p=new URLSearchParams();if(state.view==='intake'&&state.intakeMode==='records')p.set('mode','records');if(state.view==='organization'&&organizationTab!=='review')p.set('tab',organizationTab);if(state.project!=='__all__')p.set('project',state.project);if(state.q)p.set('q',state.q);if(state.view==='projects'&&state.projectSort!=='recent')p.set('sort',state.projectSort);if(state.view==='qa'&&state.qaSort!=='recent')p.set('sort',state.qaSort);if(state.memoryLane!=='overview'&&state.view==='library')p.set('lane',state.memoryLane);return `#knowledge/${state.view}${p.size?'?'+p:''}`;}
   return {
     kind:'memories', integrated:true,
     get project(){return state.project;}, set project(value){state.project=value||'__all__';state.q='';state.type='';state.category='';state.status='';state.queue='all';state.view='library';state.memoryLane='overview';state.fragmentsOpen=false;},
@@ -310,7 +321,7 @@
     // so switching views never has to discard them.
     canLeave(){if(actionBusy){toast('正在处理，请稍候再切换。');return false;}if(!['cleaning','organization'].includes(state.view)&&rulesDirty&&!confirm('当前内容有未保存的修改。放弃修改并离开？'))return false;rulesDirty=false;return true;},
     draw(){},
-    load(){state.page=1;state.selected.clear();return loadView();},
+    load(){state.intakeMode=new URLSearchParams(location.hash.split('?')[1]||'').get('mode')||'groups';state.page=1;state.selected.clear();return loadView();},
   };
   }};
 })();
