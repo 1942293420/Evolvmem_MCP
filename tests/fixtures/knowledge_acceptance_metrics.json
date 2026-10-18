@@ -1,0 +1,110 @@
+{
+  "baseline_commit": "83b0dad",
+  "current_runtime_commit": "304e9bf",
+  "scenario": "Three distinct Agent sources quote the same explicit-project fact; then the first source is reorganized three times.",
+  "measurement": "Actual Playwright select-row / select-project / save clicks. Six identical refreshes are counted separately. Time is automation wall time, not human reading time.",
+  "before": {
+    "steps": [
+      {
+        "step": 0,
+        "pending": true,
+        "item_id": null
+      },
+      {
+        "step": 1,
+        "pending": true,
+        "item_id": null
+      },
+      {
+        "step": 2,
+        "pending": true,
+        "item_id": null
+      },
+      {
+        "step": 3,
+        "pending": false,
+        "item_id": 1
+      },
+      {
+        "step": 4,
+        "pending": false,
+        "item_id": 1
+      },
+      {
+        "step": 5,
+        "pending": false,
+        "item_id": 1
+      }
+    ],
+    "human_saves": 3,
+    "repeat_confirmations": 2,
+    "active_item_ids": [
+      1,
+      2,
+      3
+    ],
+    "source_count": 3,
+    "missing_sources": 0,
+    "wrong_projects": 0,
+    "decision_clicks": 9,
+    "refresh_clicks": 6,
+    "total_clicks": 15,
+    "automation_elapsed_ms": 1264,
+    "ai_requests": 0,
+    "errors": []
+  },
+  "after": {
+    "steps": [
+      {
+        "step": 0,
+        "pending": true,
+        "item_id": null
+      },
+      {
+        "step": 1,
+        "pending": false,
+        "item_id": 1
+      },
+      {
+        "step": 2,
+        "pending": false,
+        "item_id": 1
+      },
+      {
+        "step": 3,
+        "pending": false,
+        "item_id": 1
+      },
+      {
+        "step": 4,
+        "pending": false,
+        "item_id": 1
+      },
+      {
+        "step": 5,
+        "pending": false,
+        "item_id": 1
+      }
+    ],
+    "human_saves": 1,
+    "repeat_confirmations": 0,
+    "active_item_ids": [
+      1
+    ],
+    "source_count": 3,
+    "missing_sources": 0,
+    "wrong_projects": 0,
+    "decision_clicks": 3,
+    "refresh_clicks": 6,
+    "total_clicks": 9,
+    "automation_elapsed_ms": 788,
+    "ai_requests": 0,
+    "errors": []
+  },
+  "overall_acceptance": "not_passed",
+  "open_requirements": [
+    "A1: confirmed expression-equivalence mapping and user operation are not implemented.",
+    "A4: a mixed old/new task preserves ownership but still shows the whole card for review."
+  ],
+  "historical_reprocessing": false
+}
