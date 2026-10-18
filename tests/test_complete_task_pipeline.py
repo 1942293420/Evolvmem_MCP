@@ -95,10 +95,18 @@ def test_extending_a_manually_classified_fragment_requires_review(service,monkey
     with service.store.transaction():
         service.store._connection().execute("UPDATE organization_units SET decision='manual',project='other',projects='[\"other\"]' WHERE task_id=?",(old['id'],))
     task,worker,calls=prepare(service,monkeypatch)
+    observed=[]
+    def suggest(service, units):
+        observed.extend(units)
+        return {}
+    monkeypatch.setattr(ownership_reasoning,'analyze',suggest)
     worker._assign(service,org.task_view(service,task['id']))
-    current=org.unit_views(service,task['id'])[0]
-    assert current['decision']=='review' and current['project']==''
-    assert current['task_record']['prior_decisions'][0]['project']=='other'
+    units=org.unit_views(service,task['id'])
+    current=next(u for u in units if u['decision']=='review')
+    assert current['project']==''
+    assert current['task_record']['confirmed_background'][0]['projects']==['other']
+    assert all('在 Demo 增加写入开关。' not in u['text'] for u in observed)
+    assert units[0]['decision']=='manual' and units[0]['project']=='other'
     assert org.find_unit(service,old['id'],unit['digest'])['decision']=='manual'
     assert len(calls)==2, 'must not automatically broaden a human decision'
 

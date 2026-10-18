@@ -358,6 +358,27 @@ if os.environ.get('EVOLVMEM_DIRECTORY_FIXTURE')=='1':
     from tests.test_knowledge_identity import material, save
     task,_=material(s, session='10000000-0000-4000-8000-000000000099', text='Demo 归档必须由用户选择项目后保存。',category='project_convention')
     save(s,task['id'])
+if os.environ.get('EVOLVMEM_CONFIRMATION_FIXTURE')=='1':
+    from tests.test_knowledge_identity import material, save, rebuild
+    from tests.test_cross_batch_context import craft
+    from evolvmem import conversation_tasks, auto_organization as org, knowledge_delta
+    from unittest.mock import patch
+    s.knowledge().save_project({'project':'demo','display_name':'Demo'})
+    s.knowledge().save_project({'project':'other','display_name':'Other'})
+    original,_=material(s,text='Demo 的运行系统是 Linux。')
+    rebuild(s,original['id'],title='已归档 Linux 环境');save(s,original['id'])
+    alias,_=material(s,text='Demo 运行于 Linux 系统。',session='20000000-0000-4000-8000-000000000001')
+    rebuild(s,alias['id'],title='运行环境的另一种说法')
+    first,_=material(s,text='Demo 已确认开关要求。',session='30000000-0000-4000-8000-000000000001')
+    save(s,first['id'])
+    extra=craft(s,session='30000000-0000-4000-8000-000000000001',start=5,end=8,text='新增要求：Other 支持独立开关。')
+    mixed=conversation_tasks.enqueue(s,[first['source_key'],f'archive:{extra.id}'])['items'][0]
+    with patch.object(knowledge_delta,'split',side_effect=lambda service,task,units,messages:units):
+        rebuild(s,mixed['id'],title='混合任务旧卡片')
+    conversation_tasks.protect_prior_decisions(s,org._task_row(s,mixed['id']))
+    with s.store.transaction():
+        for t in (alias,mixed):
+            s.store._connection().execute("UPDATE organization_tasks SET status='review',stage='done' WHERE id=?",(t['id'],))
 print('Temporary browser fixture ready',flush=True)
 try:server.serve_forever()
 finally:

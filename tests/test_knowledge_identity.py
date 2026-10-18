@@ -147,8 +147,10 @@ def test_changing_one_split_piece_does_not_move_the_other_piece(service):
     assert service.knowledge().detail(moved['item_id'])['project'] == 'other'
     from evolvmem.unit_derivations import currently_backed
     assert not currently_backed(service.store, original['item_id'])
-    merged = rebuild(service, task['id'])[0]
-    assert merged['decision'] == 'review' and merged['item_id'] is None
+    merged = rebuild(service, task['id'])
+    assert [u['project'] for u in merged] == ['other', 'demo']
+    assert all(u['decision'] == 'manual' for u in merged)
+    assert len({u['knowledge_id'] for u in merged}) == 2
 
 
 def test_retired_legacy_aggregate_cannot_reappear_after_partial_correction(service):
@@ -204,9 +206,11 @@ def test_new_requirement_is_not_covered_by_old_knowledge_identity(service):
     task = conversation_tasks.enqueue(service, [first['source_key'], f'archive:{additional.id}'])['items'][0]
     rebuild(service, task['id'])
     conversation_tasks.protect_prior_decisions(service, org._task_row(service, task['id']))
-    unit = view(service, task['id'])[0]
+    units = view(service, task['id'])
+    unit = next(u for u in units if '新增要求' in u['text'])
     assert unit['decision'] == 'review' and unit['project'] == ''
-    assert unit['item_id'] is None
+    assert unit['item_id'] is None and FACT not in unit['text']
+    assert units[0]['knowledge_id'] == saved['knowledge_id']
     assert service.knowledge().detail(saved['item_id'])['project'] == 'demo'
 
 

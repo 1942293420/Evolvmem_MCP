@@ -7,7 +7,6 @@ from tests.test_cross_batch_context import OTHER_SESSION
 from scripts.preview_project_knowledge import preview, readonly_store, render_html
 
 
-@pytest.mark.xfail(strict=True, reason='A4: the old decision is protected, but a mixed task still asks to review the whole card')
 def test_a4_only_the_new_requirement_is_presented_for_review(service):
     from tests.test_cross_batch_context import craft, SESSION
     from evolvmem import conversation_tasks, auto_organization as org
@@ -105,3 +104,31 @@ def test_preview_html_escapes_source_content(service):
     page = render_html(preview(service.config.db_path, 'demo'))
     assert '<script>' not in page
     assert '&lt;script&gt;' in page
+
+
+def test_existing_mixed_review_is_upgraded_once_without_a_model(service, monkeypatch):
+    from tests.test_cross_batch_context import craft, SESSION
+    from evolvmem import conversation_tasks, auto_organization as org, knowledge_delta
+    from evolvmem.knowledge_api import dispatch
+    first,_=material(service,text='Demo 的运行系统是 Linux。')
+    saved=save(service,first['id'])
+    extra=craft(service,session=SESSION,start=5,end=8,text='新增要求：Other 使用 Windows。')
+    task=conversation_tasks.enqueue(service,[first['source_key'],f'archive:{extra.id}'])['items'][0]
+    splitter=knowledge_delta.split
+    monkeypatch.setattr(knowledge_delta,'split',lambda service,task,units,messages:units)
+    rebuild(service,task['id'])
+    conversation_tasks.protect_prior_decisions(service,org._task_row(service,task['id']))
+    with service.store.transaction():
+        service.store._connection().execute("UPDATE organization_tasks SET status='review',stage='done' WHERE id=?",(task['id'],))
+    monkeypatch.setattr(knowledge_delta,'split',splitter)
+    monkeypatch.setattr(org,'_load_llm',lambda:pytest.fail('must not call a model'))
+    before=service.knowledge().detail(saved['item_id'])
+    assert dispatch(service,'POST','organization/prepare-review',{'task_ids':[task['id']]})['changed']==1
+    units=view(service,task['id'])
+    pending=[u for u in units if u['decision']=='review']
+    assert len(pending)==1 and 'Demo 的运行系统' not in pending[0]['text']
+    assert pending[0]['task_record']['confirmed_background'][0]['projects']==['demo']
+    assert service.knowledge().detail(saved['item_id'])==before
+    assert any(saved['item_id'] in i['item_ids'] for i in dispatch(service,'GET','directory',{'project':'demo'})['items'])
+    assert dispatch(service,'POST','organization/prepare-review',{'task_ids':[task['id']]})['changed']==0
+    assert view(service,task['id'])==units
