@@ -141,3 +141,10 @@ AI 质量只按这份样本报告，不推断任意历史资料都已正确；�
 用户在本会话确认：跨 Agent 交接已达标、人工整理过重、AI 仅建议项目归属、选项目直接保存。
 当前代码基线：83b0dad；重点参考 conversation_tasks.py 的原决定保护、organization_context.py 的增量上下文、context_store.py 的来源/证据/版本模型。现有机制是复用基础，不能据此宣称本说明已实现。
 Graphiti 官方参考：[数据模型](https://github.com/getzep/graphiti/blob/main/graphiti_core/edges.py)、[实体与关系类型](https://help.getzep.com/graphiti/core-concepts/custom-entity-and-edge-types/)、[主题社区](https://help.getzep.com/graphiti/core-concepts/communities)。
+
+## 11. 实施顺序
+
+- [ ] **第一批：稳定知识身份与人工决定。** 新增 knowledge_identity.py 及对应测试，在 context_store.py 保存知识 ID、来源映射和决定覆盖范围；接入 auto_organization.py 的重组、conversation_tasks.py 的继承及 organization_review_decisions.py 的保存事务。先用模拟资料复现重复导入、重写摘要、拆合和暂不归档，再验证原决定不变、新要求单列。复用 test_complete_task_pipeline.py、test_review_decisions.py，验收 A1/A2/A4/A8 及 A9 的暂不归档场景；仅确定性映射和已确认同义表达可继承，旧接口与原始记录保留。
+- [ ] **第二批：事实版本与关系。** 在组织流程加入带条件的事实、多来源证据及类型化关系；沿用 ownership_reasoning.py 区分修改对象与验证场景。实现分歧聚合、人工解决与错误聚合拆开；同一证据事件只计一次验证。交付可查询的关系和版本结果，验收 A3/A5/A6/A7/A12 及 A9 的拆开场景，AI 建议不能改写人工决定。
+- [ ] **第三批：项目阅读与召回。** 在 knowledge.js、review-groups.js 展示目录、来源、关联和变化，context_retriever.py 按相同归档状态返回内容；缓存当前选择与草稿，保存结果按实际知识数显示。验收 A10/A11，并回归 A8；用 review_direct_archive.e2e.cjs、review_selection.e2e.cjs 核对直接保存和切换行为，不把生成目录等同于知识已确认。
+- [ ] **第四批：整体验收与接入。** 在独立测试库运行 A1–A12，按第 8 节比较操作次数与错误数；已有通过项只在变更影响时重测。获准范围的历史资料先生成只读预览，验证旧 ID、来源、人工决定和原展示可恢复；同步 principles.js 并检查 product_modules.e2e.cjs。实际功能交付按项目规则提交、导出发布及回读总控台登记；本次文档补充不执行部署或历史重跑。
