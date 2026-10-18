@@ -82,7 +82,7 @@ def _source_record(service, key, *, visible=None, excluded=None):
     from evolvmem import conversation_tasks
     if source_excluded(service,key,excluded=excluded):raise ValueError('classification_source_changed')
     if conversation_tasks.is_conversation(key):
-        return conversation_tasks.snapshot(service,key,visible=visible)
+        return conversation_tasks.snapshot(service,key,visible=visible,excluded=excluded)
     match = re.fullmatch(r'(archive|item):([1-9][0-9]*)', str(key))
     if not match:
         raise ValueError('invalid_items')

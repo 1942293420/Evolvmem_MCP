@@ -18,9 +18,20 @@
   function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,6500); }
   async function api(route, body, options={}) {
     if(body===undefined&&route.startsWith('project-memory?')&&projectDocuments.has(route))return projectDocuments.get(route);
-    const response=await EvolvAuth.fetch('/api/knowledge/'+route,{...options,...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})});
-    const result=await response.json();
-    if(!response.ok || result.ok===false) throw new Error(errors[result.error] || result.error || '操作失败，请重试。');
+    // Bound reads only. Aborting a write cannot establish whether it committed,
+    // so saving keeps its existing receipt and is never automatically retried.
+    const deadline=body===undefined?new AbortController():null;
+    const timer=deadline?setTimeout(()=>deadline.abort(),15000):null;
+    let response,result;
+    try {
+      const signal=deadline?(options.signal?AbortSignal.any([options.signal,deadline.signal]):deadline.signal):options.signal;
+      response=await EvolvAuth.fetch('/api/knowledge/'+route,{...options,signal,...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})});
+      result=await response.json();
+    } catch(error) {
+      if(deadline?.signal.aborted)throw new Error('读取资料超时，请重试。已填写的内容仍保留。');
+      throw error;
+    } finally {clearTimeout(timer);}
+    if(!response.ok || result.ok===false) throw new Error(result.error==='service_busy'?'正在处理其他资料，请稍后重试。':errors[result.error] || result.error || '操作失败，请重试。');
     if(body!==undefined&&!['rules','preview','extraction/preview'].includes(route)&&!/^organization(\/|$)/.test(route)&&(route!=='organize'||body.apply))hooks.changed?.();
     if(body!==undefined&&(route!=='organization/prepare-review'||result.changed)){projectDocuments.clear();projectReaders.forEach(r=>r.invalidate());}
     else if(route.startsWith('project-memory?'))projectDocuments.set(route,result);
@@ -45,6 +56,7 @@
   async function refreshProjects(){const result=await api('projects');state.projects=result.projects;$('#pending-count').textContent=result.pending||'';return result;}
   async function render(){
     const seq=++renderSequence; $('#content').inert=true;$('#knowledge-loading').hidden=false;
+    if($('#knowledge-receipt').querySelector('[data-action="retry"]'))$('#knowledge-receipt').hidden=true;
     if(state.view==='cleaning')syncCleaning();else{if($('#content').contains(cleaningNode)||$('#content').contains(organizationNode))rulesDirty=false;actionBusy=false;mount.setAttribute('aria-busy','false');}
     $('#new-item').hidden=!['intake','library'].includes(state.view)||(state.view==='library'&&!state.project.startsWith('__'));
     const management=['intake','rules','skill','learning'].includes(state.view)||(state.view==='library'&&state.project==='__all__');
@@ -93,6 +105,16 @@
     if(state.view==='library'&&state.project==='__global__')state.document={project:'',name:'全局知识',summary:'跨项目通用的经验与习惯，在经验问答中维护。',body:'',source_ids:[],sessions:[],qa_count:(await api('qa?project=__global__&state=active')).total};
     state.rows=result.items;state.total=result.total;state.selected.clear();await renderLibrary(result);
     } finally {if(seq===renderSequence){$('#content').inert=false;$('#knowledge-loading').hidden=true;}}
+  }
+  async function loadView(){
+    const pending=render(),seq=renderSequence;
+    try {await pending;} catch(error) {
+      if(seq!==renderSequence)return;
+      // Keep mounted editors and their drafts after a failed navigation. Save
+      // refreshes still receive render's error and show their saved receipt.
+      $('#knowledge-receipt').hidden=false;
+      $('#knowledge-receipt').innerHTML=`${esc(error.message)} <button data-action="retry">重新加载</button>`;
+    }
   }
   let projectInfo=null;
   const projectSorts={recent:'最近更新',name:'项目名称 A–Z',materials:'资料最多',pending:'待确认最多'};
@@ -240,7 +262,7 @@
   async function batch(action,extra={}){const result=await api('batch',{action,items:selectedItems(),...extra});await afterSave(`已处理 ${result.succeeded} 份${result.failed?'；'+result.failed+' 份未处理：'+result.items.filter(r=>!r.ok).map(r=>errors[r.error]||r.error).join('；'):''}`);}
   async function organize(ids,apply=false){proposalIds=ids;const result=await api('organize',{ids,apply});modal(apply?'整理完成':'整理结果预览',`<div class="rule-note">${apply?`已自动入库 ${result.applied} 份，忽略归档 ${result.ignored} 份，${result.pending} 份仍需确认。`:'仅处理项目明确且符合当前规则的资料。人工决定和系统生成资料会保留，疑难资料继续待确认。'}</div><div class="proposals">${result.items.map(p=>`<div class="proposal"><strong>${esc(p.title)}</strong><p><span class="badge ${p.action==='auto'?'green':'amber'}">${p.applied?(p.action==='ignore'?'已归档':'已入库'):p.action==='auto'?'可自动入库':p.action==='ignore'?'不入库':'待确认'}</span> ${esc(p.project?projectName(p.project):'未确定项目')}</p><p>${esc(p.reason)}</p></div>`).join('')}</div>`,apply?'<button class="primary" data-action="close">完成</button>':`<button data-action="close">取消</button><button class="primary write" data-action="organize-apply" ${!result.items.some(p=>['auto','ignore'].includes(p.action))?'disabled':''}>按当前规则整理明确资料</button>`);if(apply)await render();}
   const actions={
-    retry:()=>render(),
+    retry:()=>loadView(),
     'refresh-saved':async()=>{await render();$('#knowledge-receipt').hidden=true;},
     'project-search-clear':()=>{state.q='';$('#project-search').value='';filterProjects();$('#project-search').focus();},
     conversation:async b=>{const r=await api('conversations/'+b.dataset.id+'?'+new URLSearchParams({project:b.dataset.project}));modal('整理后的对话',`<p class="hint">已去除工具记录、系统注入和内部推理；保留需求、回复、纠正与决定，敏感值已脱敏。</p><pre class="project-memory-text">${esc(r.text||'没有可展示的对话内容。')}</pre>`,'<button data-action="close">关闭</button>');},
@@ -288,7 +310,7 @@
     // so switching views never has to discard them.
     canLeave(){if(actionBusy){toast('正在处理，请稍候再切换。');return false;}if(!['cleaning','organization'].includes(state.view)&&rulesDirty&&!confirm('当前内容有未保存的修改。放弃修改并离开？'))return false;rulesDirty=false;return true;},
     draw(){},
-    load(){state.page=1;state.selected.clear();return render().catch(e=>{$('#content').innerHTML=`<div class="empty error">${esc(e.message)}<br><button data-action="retry">重新加载</button></div>`;});},
+    load(){state.page=1;state.selected.clear();return loadView();},
   };
   }};
 })();
