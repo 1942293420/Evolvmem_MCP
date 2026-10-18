@@ -19,7 +19,7 @@
       <a href="#home" data-page-link="home"><span class="nav-icon">◫</span>总览</a>
       <a href="#knowledge/organization" data-page-link="memories" data-knowledge-view="organization"><span class="nav-icon">◎</span>自动整理</a>
       <span class="nav-section">整理成果</span>
-      <a href="#knowledge/projects" data-page-link="memories" data-knowledge-view="projects"><span class="nav-icon">▤</span>项目历史</a>
+      <a href="#knowledge/projects" data-page-link="memories" data-knowledge-view="projects"><span class="nav-icon">▤</span>项目知识</a>
       <a href="#knowledge/qa" data-page-link="memories" data-knowledge-view="qa"><span class="nav-icon">◇</span>经验知识</a>
       <a href="#progress" data-page-link="progress"><span class="nav-icon">↳</span>任务断点</a>
       <span class="nav-section">管理与调整</span>
@@ -37,7 +37,7 @@
       <div data-workflow-overview aria-live="polite"><div class="ui-empty ui-loading" role="status">正在读取自动整理状态…</div></div>
       <details class="home-effect-details"><summary>效果与抽检</summary><section class="home-section" data-slot="organization-metrics"></section></details>
       <div class="home-results-grid">
-        <section class="home-section"><div class="home-section-heading"><div><h2>项目历史</h2></div><a href="#knowledge/projects" data-page-link="memories" data-knowledge-view="projects">全部项目 →</a></div><div data-slot="project-list" class="home-projects"></div></section>
+        <section class="home-section"><div class="home-section-heading"><div><h2>项目知识</h2></div><a href="#knowledge/projects" data-page-link="memories" data-knowledge-view="projects">全部项目 →</a></div><div data-slot="project-list" class="home-projects"></div></section>
         <section class="home-section"><div class="home-section-heading"><div><h2>继续上次的任务</h2></div><a href="#progress" data-page-link="progress">全部断点 →</a></div><div data-slot="task-list" class="home-tasks"></div></section>
       </div>
       <div class="home-resources"><a href="#knowledge/qa">查找可用问答</a><a href="#experiences">查看已验证方法及候选</a><a href="#knowledge/skill">调整整理规则</a><a href="/trust">来源与归属明细</a></div>
@@ -45,7 +45,7 @@
 
     <section data-page-panel="memories" class="data-page" hidden><div data-slot="memory-browser" class="signal-browser"></div></section>
     <section data-page-panel="experiences" class="data-page" hidden><header class="data-page-header"><h1>经验案例</h1><p>查看结构化方法的验证证据。简洁知识统一在经验问答中维护。</p></header><div data-slot="experience-browser" class="signal-browser"></div></section>
-    <section data-page-panel="progress" class="data-page" hidden><header class="data-page-header"><h1>任务断点</h1><p>这里只管理任务目标、当前步骤、下一步与阻塞。项目摘要在「项目历史」查看。</p></header><div data-slot="progress-browser" class="signal-browser"></div></section>
+    <section data-page-panel="progress" class="data-page" hidden><header class="data-page-header"><h1>任务断点</h1><p>这里只管理任务目标、当前步骤、下一步与阻塞。项目摘要在「项目知识」查看。</p></header><div data-slot="progress-browser" class="signal-browser"></div></section>
     <section data-page-panel="principles" class="data-page" hidden><div data-slot="principles"></div></section>
     <footer class="signal-footer"><span class="signal-footer-brand">EvolvMem</span><span data-data-status role="status" aria-live="polite">正在连接实时数据…</span><a href="#principles" data-page-link="principles">模块与工作原理</a></footer>
   </main>
@@ -63,7 +63,8 @@
   <script src="/organization-metrics.js"></script>
   <script src="/workflow-overview.js"></script>
   <script src="/review-groups.js"></script>
-  <script src="/knowledge-facts.js"></script>
+  <script src="/project-knowledge.js"></script>
+<script src="/knowledge-facts.js"></script>
   <script src="/organization.js"></script>
   <script src="/principles.js"></script>
   <script src="/designs/app.js"></script>

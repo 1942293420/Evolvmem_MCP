@@ -460,3 +460,20 @@ body[data-design=signal] .principle-board .product-diagram svg{min-width:980px;m
 .fact-separate{border-top:1px solid var(--line,#d7dfeb);padding:12px 0}.fact-card details{margin:14px 0}
 .fact-current{font-size:18px;font-weight:600}.fact-relations{padding-left:22px;display:grid;gap:12px}
 @media(max-width:600px){.fact-card{padding:14px}.fact-filters label{flex-basis:100%}.fact-heading{align-items:flex-start}}
+
+/* Project knowledge: readable evidence, full width, independent selection. */
+.pk-filters{display:flex;flex-wrap:wrap;gap:14px;align-items:end;margin:20px 0}
+.pk-filters label{display:flex;flex-direction:column;gap:8px;flex:1 1 170px;font-size:16px}
+.pk-filters input{width:100%;min-width:0}
+.pk-layout{display:grid;grid-template-columns:minmax(240px,30%) minmax(0,1fr);gap:24px}
+.pk-layout nav,.pk-layout article{min-width:0}
+.pk-layout nav button{display:block;width:100%;text-align:left;white-space:normal;margin:10px 0;padding:18px;font-size:16px}
+.pk-layout nav button span{display:block;margin-top:10px}
+.pk-layout nav button[aria-current=true]{border-color:#526bff;background:#eef2ff;color:#15244b}
+.pk-layout article{border:1px solid #dbe1eb;border-radius:12px;padding:24px;overflow-wrap:anywhere}
+.pk-layout h3{margin-top:0}.pk-layout h4{font-size:18px}.pk-layout p,.pk-layout summary,.pk-layout li{font-size:16px;line-height:1.65}
+.pk-version{margin:16px 0;padding-bottom:16px;border-bottom:1px solid #dbe1eb}
+.pk-layout blockquote{margin:16px 0;padding:12px 18px;border-left:3px solid #94a7d4;background:#f5f7fb;white-space:pre-wrap;font-size:16px;line-height:1.65}
+.pk-layout blockquote p{margin-bottom:0}.pk-warning{background:#fff5e2;padding:16px;border-radius:8px}
+.pk-layout details{margin:20px 0}.pk-layout .actions{flex-wrap:wrap}
+@media(max-width:800px){.pk-layout{grid-template-columns:1fr}.pk-layout article{padding:18px}.pk-layout nav{max-height:380px;overflow:auto}}

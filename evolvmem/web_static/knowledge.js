@@ -12,15 +12,18 @@
   const errors = {revision_conflict:'资料已被其他操作更新，请重新打开后再保存。',project_required:'请选择所属项目，或明确选择全局知识。',project_not_found:'项目未登记，请先在项目知识库添加。',confirm_project_first:'请先确认资料归属，再确认入库。',qa_source_changed:'来源已变化，请到经验问答重新核对和保存答案。',invalid_qa_question:'请填写 4–160 字的明确问题。',invalid_qa_answer:'请填写 5–400 字的简洁答案。',qa_conflict_requires_confirmation:'同一问题和条件已有不同答案。请核对来源后，勾选替换旧答案或保存待确认。',invalid_content:'请填写标题和正文；正文最多 100,000 字。',workstream_move_confirmation_required:'任务断点需要整组迁移，请打开详情操作。',workstream_has_related_tasks:'此任务有关联父任务或子任务，暂不能单独迁移。请先在任务管理中核对关联关系。',workstream_lifecycle_managed_by_task:'任务断点的状态由任务管理维护，请到顶部的项目进展查看任务。',managed_content_create_correction:'此内容由任务或经验生成，请新增补充资料。',invalid_rule_settings:'入库条件格式不正确，请检查 JSON 设置。',invalid_skill_format:'Skill 格式不完整，请保留文件头和 JSON 入库条件。',invalid_skill_frontmatter:'请保留 Skill 的 name 和 description。',identity_conflict:'目标项目已存在同一资料，请先核对重复内容。',alias_conflict:'别名已属于其他项目，请换一个别名。',invalid_items:'请先选择要整理的资料。',invalid_instructions:'请填写 AI 执行说明。',invalid_confidence:'置信度需在 0 到 1 之间。',invalid_content_limits:'最少字数不能大于最多字数。',invalid_collaboration_skill:'协作 Skill 需保留 name/description 文件头。',invalid_project_id:'项目标识需以小写字母或数字开头，只能包含小写字母、数字、点、下划线或连字符，最长 64 个字符。',invalid_preview_messages:'样例格式不正确：请以“用户：”“助手：”或“工具：”标明每轮角色，总长度不超过 20,000 字。',extraction_provider_unavailable:'尚未配置提炼模型，请先完成模型配置再验证。',extraction_summary_missing:'模型这次没有返回会话摘要，请调整样例后重试。'};
   const state = {view:'projects',project:'__all__',q:'',status:'',type:'',category:'',page:1,queue:'all',rows:[],selected:new Set(),projects:[],rules:null,total:0,document:null,memoryLane:'overview',projectSort:'recent',qaSort:'recent',fragmentsOpen:false};
   let toastTimer, renderSequence=0, rulesDirty=false, actionBusy=false;
-  let organizationTab='review';const memoryFilters=new Map();
+  let organizationTab='review';const memoryFilters=new Map(), projectReaders=new Map(), projectDocuments=new Map();
   let cleaningNode=null;let organizationNode=null,organizationHandle=null;const cleaningState={dirty:false,busy:false,background:false};
   function syncCleaning(){if(state.view==='cleaning'){rulesDirty=cleaningState.dirty;actionBusy=cleaningState.busy&&!cleaningState.background;mount.setAttribute('aria-busy',String(cleaningState.busy));}}
   function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,6500); }
   async function api(route, body, options={}) {
+    if(body===undefined&&route.startsWith('project-memory?')&&projectDocuments.has(route))return projectDocuments.get(route);
     const response=await EvolvAuth.fetch('/api/knowledge/'+route,{...options,...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})});
     const result=await response.json();
     if(!response.ok || result.ok===false) throw new Error(errors[result.error] || result.error || '操作失败，请重试。');
     if(body!==undefined&&!['rules','preview','extraction/preview'].includes(route)&&!/^organization(\/|$)/.test(route)&&(route!=='organize'||body.apply))hooks.changed?.();
+    if(body!==undefined){projectDocuments.clear();projectReaders.forEach(r=>r.invalidate());}
+    else if(route.startsWith('project-memory?'))projectDocuments.set(route,result);
     return result;
   }
   function projectName(id) { return state.projects.find(p=>p.project===id)?.display_name || id || '未归属'; }
@@ -49,7 +52,7 @@
     $('.knowledge-tabs').hidden=!management;$('.knowledge-flow').hidden=true;mount.dataset.workspaceView=state.view;
     const flowSteps={intake:3,library:3,rules:3,skill:3,learning:4};
     mount.querySelectorAll('.knowledge-flow li').forEach((li,i)=>{const current=flowSteps[state.view]===i+1;li.classList.toggle('current',current);if(current)li.setAttribute('aria-current','step');else li.removeAttribute('aria-current');});
-    const titles={projects:'项目历史',unassigned:'项目历史',organization:'自动整理',cleaning:'数据清洗',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'经验知识',intake:'存量资料',rules:'清洗与入库规则',skill:'整理规则',learning:'协作学习'};
+    const titles={projects:'项目知识',unassigned:'项目历史',organization:'自动整理',cleaning:'数据清洗',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'经验知识',intake:'存量资料',rules:'清洗与入库规则',skill:'整理规则',learning:'协作学习'};
     $('#knowledge-title').textContent=titles[state.view];$('#knowledge-description').textContent='';
     try {
     mount.querySelectorAll('[data-view]').forEach(a=>{const active=a.dataset.view===state.view;a.classList.toggle('active',active);a.setAttribute('aria-current',active?'page':'false');});
@@ -156,14 +159,17 @@
       const content=$('#content');
       const fragments=document.createElement('details');fragments.className='project-fragments';
       fragments.innerHTML='<summary>来源片段 · 查看、纠正与更改归属</summary>';
-      const stay=new Set([content.querySelector('.project-context'),content.querySelector('.toolbar')].filter(Boolean));
+      const stay=new Set([content.querySelector('.project-context')].filter(Boolean));
       [...content.children].forEach(el=>{if(!stay.has(el))fragments.append(el);});
       fragments.open=!!state.fragmentsOpen;
       fragments.addEventListener('toggle',()=>{state.fragmentsOpen=fragments.open;});
       const manager=document.createElement('div');manager.className='memory-manager';
-      const toolbar=content.querySelector('.toolbar');
-      content.append(manager);if(toolbar)content.append(toolbar);content.append(fragments);
-      await EvolvMemory.render({mount:manager,doc:state.document,filters:memoryFilters.get(state.project),onFilters:v=>memoryFilters.set(v.project,v),projects:state.projects,api,esc,toast,lane:state.memoryLane,onLane:v=>{state.memoryLane=v;history.replaceState(null,'',hash());},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));},onChanged:render,onSource:detail,onDirty:v=>rulesDirty=v});
+      content.append(manager);content.append(fragments);
+      await EvolvMemory.render({mount:manager,doc:state.document,filters:memoryFilters.get(state.project),onFilters:v=>memoryFilters.set(v.project,v),projects:state.projects,api,esc,toast,lane:state.memoryLane,onLane:v=>{state.memoryLane=v;history.replaceState(null,'',hash());},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));},onChanged:render,onSource:detail,onDirty:v=>rulesDirty=v,onDirectory:async pane=>{
+        const project=state.document.project;
+        if(!projectReaders.has(project))projectReaders.set(project,EvolvProjectKnowledge.create({mount:document.createElement('div'),project,api,esc,projects:state.projects}));
+        const reader=projectReaders.get(project);pane.replaceChildren(reader.node);await reader.load();
+      }});
     }
 
   }
@@ -273,11 +279,11 @@
     get project(){return state.project;}, set project(value){state.project=value||'__all__';state.q='';state.type='';state.category='';state.status='';state.queue='all';state.view='library';state.memoryLane='overview';state.fragmentsOpen=false;},
     get query(){return state.q;}, set query(value){state.q=value;state.view='library';state.memoryLane='overview';},
     set view(value){if(value!==state.view)$('#knowledge-receipt').hidden=true;if(['projects','unassigned','organization','cleaning','library','intake','rules','skill','learning','qa'].includes(value))state.view=value;},
-    set organizationTab(value){organizationTab=['review','failed','completed','history','guidance','all'].includes(value)?value:'review';},
+    set organizationTab(value){organizationTab=['review','failed','completed','history','guidance','facts','all'].includes(value)?value:'review';},
     hash,
     set projectSort(value){if(state.view==='qa'){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';return;}state.projectSort=Object.hasOwn(projectSorts,value)?value:'recent';},
     set qaSort(value){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';},
-    set lane(value){state.memoryLane=['overview','history','qa'].includes(value)?value:'overview';},
+    set lane(value){state.memoryLane=['overview','summary','history','qa'].includes(value)?value:'overview';},
     // Cleaning and automatic-organization drafts are kept in the mounted panel,
     // so switching views never has to discard them.
     canLeave(){if(actionBusy){toast('正在处理，请稍候再切换。');return false;}if(!['cleaning','organization'].includes(state.view)&&rulesDirty&&!confirm('当前内容有未保存的修改。放弃修改并离开？'))return false;rulesDirty=false;return true;},

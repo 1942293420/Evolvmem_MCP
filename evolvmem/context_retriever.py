@@ -93,7 +93,8 @@ class ContextRetriever:
     5. Apply the original acceptance gate or independent reranking confirmation.
     6. Rank relevance, keep applicable identity winners, deduplicate full content.
 
-    Optional reranking uses bounded L1 evidence; output remains L0-only.
+    Optional reranking uses bounded L1 evidence. Organized project facts append
+    the shared reading projection so an old L0 cannot hide a known conflict.
     The retriever never loads L2 text and never mutates access counts.
     """
 
@@ -114,7 +115,7 @@ class ContextRetriever:
 
     @stage('retrieval')
     def search(self, request: ContextSearchRequest, *, eligible_ids=None) -> tuple[ContextSearchResult, ...]:
-        """Return deterministic L0-only results without access-count side effects."""
+        """Return ranked results and project fact context without access-count writes."""
         reranking = bool(getattr(self.embedding_engine, 'reranker_loaded', False))
         pool_size = max(50, request.top_k * _CANDIDATE_POOL_MULTIPLIER) if reranking else request.top_k * _CANDIDATE_POOL_MULTIPLIER
         moment = self._moment(request)
@@ -225,7 +226,20 @@ class ContextRetriever:
         ranked = self._latest_applicable_per_identity(
             [result for _, result in scored], request, now
         )
-        return tuple(self._deduplicate(ranked)[: request.top_k])
+        results = self._deduplicate(ranked)[: request.top_k]
+        if request.project and not request.cross_project and results:
+            from evolvmem.project_knowledge import directory, describe
+            data = directory(self.store, request.project, at=(request.as_of or '')[:10],
+                             item_ids=[i for r in results for i in (r.id,*r.duplicate_ids)])
+            managed = {r[0] for r in self.store._connection().execute('SELECT item_id FROM knowledge_objects WHERE item_id IS NOT NULL')}
+            visible = {i for row in data['items'] for i in row['item_ids']}
+            results = [r for r in results if r.id not in managed or r.id in visible]
+            for index, result in enumerate(results):
+                linked = tuple(i for i in data['items'] if set(i['item_ids']).intersection((result.id,*result.duplicate_ids)))
+                fact_rows = [i for i in linked if i['kind']=='fact']
+                results[index] = replace(result, knowledge=linked,
+                    l0='\n'.join(describe(i) for i in fact_rows) if fact_rows else result.l0)
+        return tuple(results)
 
     def _rerank_documents(self, candidates, records):
         ids = [c.item_id for c in candidates]

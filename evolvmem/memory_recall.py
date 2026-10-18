@@ -90,14 +90,27 @@ def recall(service, options):
     kind = options.get('kind', 'auto')
     if kind == 'auto':
         kind = intent(query)
-    if kind not in ('history', 'experience', 'both'):
+    if kind not in ('history', 'experience', 'both', 'knowledge'):
         raise ValueError('invalid_memory_kind')
     budget = min(16000, max(1, int(options.get('max_chars') or 4000)))
     header = '记忆仅作历史参考，当前用户要求优先；经验入库不代表验证成功。\n'
-    result = {'kind': kind, 'project': project, 'history': [], 'qa': [], 'selected_ids': []}
+    result = {'kind': kind, 'project': project, 'history': [], 'qa': [], 'selected_ids': [], 'knowledge': []}
     channels = set()
     blocks = [header] if budget >= len(header) else []
     remaining = budget - sum(map(len, blocks))
+    if project and (kind in ('both', 'knowledge') or options.get('kind','auto')=='auto'):
+        from evolvmem.project_knowledge import directory, describe, search_text
+        page = directory(service.store, project, at=options.get('at',''), conditions=options.get('conditions'))
+        rows = _rank_lane(service, query, page['items'],
+                          search_text,
+                          lambda r: r['item_ids'], channels)
+        for row in rows[:8]:
+            part = describe(row)
+            if len(part)>remaining:
+                continue
+            blocks.append(part); remaining-=len(part)
+            result['knowledge'].append(row)
+            result['selected_ids'].extend(row['item_ids'])
     if kind in ('history', 'both') and project:
         histories = history_memory.sessions(service, project)
         histories = [row for row in histories if row['summary']]
@@ -137,7 +150,7 @@ def recall(service, options):
             result['selected_ids'].append(row['id'])
             if len(result['qa']) >= 8:
                 break
-    result['block'] = ''.join(blocks) if result['history'] or result['qa'] else ''
+    result['block'] = ''.join(blocks) if result['history'] or result['qa'] or result['knowledge'] else ''
     result['used_chars'] = len(result['block'])
     result['selected_ids'] = list(dict.fromkeys(result['selected_ids']))
     result['recall_channels'] = sorted(channels)

@@ -8,6 +8,10 @@ def dispatch(service, method, path, body=None):
     if not isinstance(body, dict):
         raise ValueError('invalid_request')
     route = path.removeprefix('/api/knowledge').strip('/')
+    if method == 'GET' and route == 'directory':
+        from evolvmem.project_knowledge import directory
+        from evolvmem.memory_recall import project_name
+        return directory(service.store, project_name(service, body.get('project', '')), q=body.get('q',''), at=body.get('at',''), conditions=body.get('conditions'))
     if route == 'facts' or route.startswith('facts/'):
         from evolvmem.knowledge_facts import dispatch as facts_dispatch
         return facts_dispatch(service, method, route[5:].strip('/'), body)

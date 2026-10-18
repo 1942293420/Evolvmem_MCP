@@ -242,7 +242,8 @@ def test_session_start_receives_whole_project_overview_within_budget(service):
     add(service, '本项目的界面管理保留在知识库内。')
     add(service, '商店项目约定禁止跨项目混用。', 'shop')
     result = service.session_start(ContextSessionStartRequest(project='evo', query='本项目', max_chars=1400))
-    assert '项目总记忆' in result.block and '商店项目' not in result.block
+    assert '项目知识' in result.block and '商店项目' not in result.block
+    assert '来源：#' in result.block
     assert len(result.block) == result.used_chars <= 1400
 
 

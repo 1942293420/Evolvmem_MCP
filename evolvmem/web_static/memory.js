@@ -1,5 +1,5 @@
 /* Project history and concise Q&A share one workbench and source links. */
-window.EvolvMemory = {async render({mount, doc, projects, api, esc, toast, lane='overview', onLane, onBusy, onChanged, onSource, onDirty=()=>{}, filters={}, onFilters=()=>{}, standalone=false}) {
+window.EvolvMemory = {async render({mount, doc, projects, api, esc, toast, lane='overview', onLane, onBusy, onChanged, onSource, onDirty=()=>{}, filters={}, onFilters=()=>{}, standalone=false,onDirectory=null}) {
   const labels={habit:'长期习惯',project_convention:'项目约定',task_requirement:'任务要求',environment:'环境配置',decision:'决策依据',experience:'技术经验',reference:'参考知识'};
   const state={project:doc.project||'__global__',lane,category:'',status:'',q:'',reason:'',page:1,...filters,editing:null,busy:false,dirty:false};
   let scopePicker=null;
@@ -10,7 +10,7 @@ window.EvolvMemory = {async render({mount, doc, projects, api, esc, toast, lane=
   const reasonOptions=r=>{const counts=r.review_reason_counts||{};const entries=Object.entries(counts).map(([code,v])=>[code,`${v.label||reasonLabels[code]||code}（${v.count}）`]);if(state.reason&&!counts[state.reason])entries.push([state.reason,`${reasonLabels[state.reason]||state.reason}（0）`]);return options(Object.fromEntries([['','全部原因'],...entries]),state.reason);};
   const reasonLines=row=>{const reasons=row.review_reasons&&row.review_reasons.length?row.review_reasons:(row.review_reason?[row.review_reason]:[]);if(!reasons.length)return row.effective?'':`<p class="reason">${esc(row.reason)}</p>`;return reasons.map(x=>`<p class="reason">${esc(x.label)}：${esc(x.detail)}</p>`).join('')+(reasons.length>1?`<p class="hint">这一组有 ${reasons.length} 种待确认原因，按任一原因都能筛到。</p>`:'');};
   mount.innerHTML=`<header class="memory-heading"><div><a class="hint" href="#knowledge/projects" data-view="projects">← 所有项目</a><h2>${esc(doc.name)}</h2></div></header>
-    <nav class="memory-lanes" aria-label="项目记忆类型"><button data-memory-lane="overview">项目总览</button>${doc.project?'<button data-memory-lane="history">历史记录</button>':''}<button data-memory-lane="qa">经验问答</button></nav><div class="memory-pane"></div>
+    <nav class="memory-lanes" aria-label="项目记忆类型"><button data-memory-lane="overview">项目知识</button>${doc.project?'<button data-memory-lane="summary">历史摘要</button>':''}${doc.project?'<button data-memory-lane="history">历史记录</button>':''}<button data-memory-lane="qa">经验问答</button></nav><div class="memory-pane"></div>
     <dialog class="memory-dialog" aria-label="记忆详情"><div class="memory-dialog-content"></div></dialog>`;
   if(standalone){$('.memory-heading').hidden=true;$('.memory-lanes').hidden=true;}
   const modal=(title,body,footer='')=>{$('.memory-dialog-content').innerHTML=`<div class="dialog-header"><h2>${title}</h2><button data-memory-action="close" aria-label="关闭记忆详情">✕</button></div><div class="dialog-body">${body}</div><div class="dialog-footer">${footer||'<button data-memory-action="close">关闭</button>'}</div>`;if(!$('.memory-dialog').open)$('.memory-dialog').showModal();};
@@ -38,7 +38,7 @@ window.EvolvMemory = {async render({mount, doc, projects, api, esc, toast, lane=
   }
   async function draw(){
     mount.querySelectorAll('.memory-lanes button').forEach(b=>{b.classList.toggle('active',b.dataset.memoryLane===state.lane);b.setAttribute('aria-pressed',String(b.dataset.memoryLane===state.lane));});
-    if(state.lane==='history'&&doc.project)history();else if(state.lane==='qa')await qa();else overview();
+    if(state.lane==='overview'&&doc.project&&onDirectory)await onDirectory($('.memory-pane'));else if(state.lane==='history'&&doc.project)history();else if(state.lane==='qa')await qa();else overview();
   }
   const dirty=value=>{state.dirty=value;onDirty(value);};
   const discard=()=>{if(state.dirty&&!confirm('问答有未保存的修改，放弃修改？'))return false;dirty(false);return true;};

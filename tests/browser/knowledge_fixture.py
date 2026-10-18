@@ -354,6 +354,10 @@ if os.environ.get('EVOLVMEM_FACTS_FIXTURE')=='1':
     for i,subject in enumerate(['Demo 部署方式','Demo 目录位置']):
         for j,value in enumerate(['Windows','Linux']):
             add(s,value,subject=subject,session=f'{10+i*2+j:08d}-0000-4000-8000-000000000001')
+if os.environ.get('EVOLVMEM_DIRECTORY_FIXTURE')=='1':
+    from tests.test_knowledge_identity import material, save
+    task,_=material(s, session='10000000-0000-4000-8000-000000000099', text='Demo 归档必须由用户选择项目后保存。',category='project_convention')
+    save(s,task['id'])
 print('Temporary browser fixture ready',flush=True)
 try:server.serve_forever()
 finally:

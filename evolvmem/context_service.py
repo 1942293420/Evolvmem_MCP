@@ -778,10 +778,12 @@ class ContextService:
                 project, request.query, reserved_id=reserved_id
             )
         )
+        from evolvmem.project_knowledge import describe
         candidates = tuple(
             ContextRenderCandidate(
                 result=result,
-                l1=self.store.get_layer(result.id, ContextLayer.L1) or "",
+                l1=("\n".join(describe(i) for i in result.knowledge if i["kind"]=="fact")
+                    or self.store.get_layer(result.id, ContextLayer.L1) or ""),
                 reserved=reserved_id is not None and result.id == reserved_id,
             )
             for result in candidates_pool
