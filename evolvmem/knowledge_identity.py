@@ -15,6 +15,12 @@ from evolvmem import knowledge_scope as ks, topic_segmentation
 from evolvmem.context_store import _now_iso
 
 SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS knowledge_equivalences (
+        source_knowledge_id TEXT PRIMARY KEY REFERENCES knowledge_objects(knowledge_id),
+        target_knowledge_id TEXT NOT NULL REFERENCES knowledge_objects(knowledge_id),
+        active INTEGER NOT NULL DEFAULT 1, revision INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )""",
     """CREATE TABLE IF NOT EXISTS knowledge_objects (
         knowledge_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
         category TEXT NOT NULL, item_id INTEGER, history_json TEXT NOT NULL DEFAULT '{}',
@@ -181,8 +187,7 @@ def _covering(service, anchors, parts):
 
 
 def _verbatim_fact(service, task, unit):
-    if unit['category'] not in ('environment', 'decision', 'project_convention', 'habit'):
-        return set()
+    ordinary = unit['category'] in ('environment', 'decision', 'project_convention', 'habit')
     conn = service.store._connection()
     # Lazily adopt exact legacy manual records too. No model call, source
     # rewrite or global historical reprocessing is needed for this upgrade.
@@ -201,6 +206,10 @@ def _verbatim_fact(service, task, unit):
             "SELECT * FROM knowledge_objects WHERE fingerprint=? AND retired=0 AND decision_json!='{}'",
             (_hash(unit['text'].strip()),)):
         row = dict(raw)
+        if not ordinary and not conn.execute(
+                'SELECT 1 FROM knowledge_equivalences WHERE source_knowledge_id=?',
+                (row['knowledge_id'],)).fetchone():
+            continue
         decision = json.loads(row['decision_json'])
         saved = conn.execute('SELECT d.coverage_json,t.source_snapshot FROM knowledge_decisions d '
                              'JOIN organization_tasks t ON t.id=d.task_id WHERE d.knowledge_id=? AND d.revision=?',

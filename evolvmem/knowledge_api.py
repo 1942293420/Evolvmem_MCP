@@ -12,6 +12,9 @@ def dispatch(service, method, path, body=None):
         from evolvmem.project_knowledge import directory
         from evolvmem.memory_recall import project_name
         return directory(service.store, project_name(service, body.get('project', '')), q=body.get('q',''), at=body.get('at',''), conditions=body.get('conditions'))
+    if route == 'equivalences' or route.startswith('equivalences/'):
+        from evolvmem.knowledge_equivalence import dispatch as equivalence_dispatch
+        return equivalence_dispatch(service, method, route[len('equivalences'):].strip('/'), body)
     if route == 'facts' or route.startswith('facts/'):
         from evolvmem.knowledge_facts import dispatch as facts_dispatch
         return facts_dispatch(service, method, route[5:].strip('/'), body)
@@ -25,6 +28,9 @@ def dispatch(service, method, path, body=None):
     if route == 'history/organization' or route.startswith('history/organization/'):
         from evolvmem.history_organization import dispatch as organization_dispatch
         return organization_dispatch(service, method, route[len('history/organization'):], body)
+    if method == 'POST' and route == 'organization/prepare-review':
+        from evolvmem.knowledge_delta import prepare
+        return prepare(service, body)
     if route == 'organization' or route.startswith('organization/'):
         from evolvmem.auto_organization import dispatch as auto_dispatch
         return auto_dispatch(service, method, route[len('organization'):], body)

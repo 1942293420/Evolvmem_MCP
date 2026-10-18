@@ -1595,6 +1595,8 @@ class OrganizationWorker:
         with service.store.transaction():
             _assert_current(service, task, conn=conn)
             knowledge_identity.capture_existing(service, task)
+            from evolvmem.knowledge_delta import split
+            units = split(service, task, units, messages)
             prior = {r['digest']: dict(r) for r in conn.execute(
                 "SELECT u.* FROM organization_units u JOIN organization_tasks t ON t.id=u.task_id "
                 "WHERE t.source_key=? AND u.decision='manual' AND NOT EXISTS (SELECT 1 FROM knowledge_objects k "

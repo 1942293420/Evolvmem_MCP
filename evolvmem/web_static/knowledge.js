@@ -22,7 +22,7 @@
     const result=await response.json();
     if(!response.ok || result.ok===false) throw new Error(errors[result.error] || result.error || '操作失败，请重试。');
     if(body!==undefined&&!['rules','preview','extraction/preview'].includes(route)&&!/^organization(\/|$)/.test(route)&&(route!=='organize'||body.apply))hooks.changed?.();
-    if(body!==undefined){projectDocuments.clear();projectReaders.forEach(r=>r.invalidate());}
+    if(body!==undefined&&(route!=='organization/prepare-review'||result.changed)){projectDocuments.clear();projectReaders.forEach(r=>r.invalidate());}
     else if(route.startsWith('project-memory?'))projectDocuments.set(route,result);
     return result;
   }
@@ -279,7 +279,7 @@
     get project(){return state.project;}, set project(value){state.project=value||'__all__';state.q='';state.type='';state.category='';state.status='';state.queue='all';state.view='library';state.memoryLane='overview';state.fragmentsOpen=false;},
     get query(){return state.q;}, set query(value){state.q=value;state.view='library';state.memoryLane='overview';},
     set view(value){if(value!==state.view)$('#knowledge-receipt').hidden=true;if(['projects','unassigned','organization','cleaning','library','intake','rules','skill','learning','qa'].includes(value))state.view=value;},
-    set organizationTab(value){organizationTab=['review','failed','completed','history','guidance','facts','all'].includes(value)?value:'review';},
+    set organizationTab(value){organizationTab=['review','failed','completed','history','guidance','facts','equivalences','all'].includes(value)?value:'review';},
     hash,
     set projectSort(value){if(state.view==='qa'){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';return;}state.projectSort=Object.hasOwn(projectSorts,value)?value:'recent';},
     set qaSort(value){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';},

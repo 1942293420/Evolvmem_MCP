@@ -116,7 +116,7 @@ def directory(store, project, *, q='', at='', conditions=None, item_ids=None):
                     warnings=warnings,relations=[r for r in group['relations'] if r['knowledge_id'] in kids],
                     sources=[s for v in versions for s in v['sources']],body='',trigger='')
         items.append(item)
-    fallback_ids = [i for i in admitted if not wanted and i not in covered and (item_ids is None or i in item_ids)]
+    fallback_ids = [i for i in admitted if not wanted and i not in covered]
     layers_by_id, sources_by_id, titles = {}, {}, {}
     categories_by_id = {o['item_id']:o['category'] for o in objects.values()}
     for offset in range(0,len(fallback_ids),400):
@@ -143,8 +143,10 @@ def directory(store, project, *, q='', at='', conditions=None, item_ids=None):
             section='问题处理'
         title = titles.get(item_id) or re.sub(r'^[a-z_]+:\s*','',row['title'] or layers.get('l0','')[:120])
         items.append(dict(id='item:'+str(item_id),kind='material',title=title,
-                          section=section,item_ids=[item_id],knowledge_ids=[],body=text,trigger=row['trigger'] or '',
+                          section=section,item_ids=[item_id],knowledge_ids=[k for k,o in objects.items() if o['item_id']==item_id],body=text,trigger=row['trigger'] or '',
                           sources=sources,versions=[],current=[],relations=[],warnings=[],alternatives=[]))
+    from evolvmem.knowledge_equivalence import coalesce
+    items = coalesce(store, items, objects)
     if item_ids is not None:
         allowed=set(item_ids)
         items=[i for i in items if allowed.intersection(i['item_ids'])]
@@ -161,7 +163,8 @@ def directory(store, project, *, q='', at='', conditions=None, item_ids=None):
 def search_text(item):
     return '\n'.join([item['title'], item['body'], item['trigger'],
                       *[v['value']+' '+facts.encoded(v['conditions']) for v in item['versions']],
-                      *[r['target'] for r in item['relations']]])
+                      *[r['target'] for r in item['relations']],
+                      *[e['text'] for e in item.get('expressions',[])]])
 
 
 def describe(item):
@@ -173,6 +176,8 @@ def describe(item):
         if item['trigger']:
             lines.append('适用：'+item['trigger'])
     else:
+        if item['body']:
+            lines.append(item['body'])
         for v in item['current']:
             lines.append(('已确认结论：' if v['state']=='confirmed' else '已归档资料中的说法：')+v['value']+
                          '；适用：'+('、'.join(k+'='+x for k,x in v['conditions'].items()) or '未注明')+
@@ -191,4 +196,5 @@ def describe(item):
         for r in item['relations']:
             if r['type']!='属于项目':
                 lines.append(f"关联建议：{r['type']} {r['target']}；依据：{r['quote']}")
+    lines.extend('已确认的同义表达：'+e['text'] for e in item.get('expressions',[]))
     return '\n'.join(lines)+'\n'
