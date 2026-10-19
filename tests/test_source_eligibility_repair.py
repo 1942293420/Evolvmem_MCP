@@ -507,7 +507,7 @@ def test_superseded_automatic_output_is_downgraded_not_left_eligible(service, co
     # The already-superseded row still settles its own automatic output.
     assert summary['examined'] >= 1, summary
     states = {row['id']: row['status'] for row in conn.execute('SELECT id,status FROM context_items')}
-    assert states[auto_item] == 'candidate', states
+    assert states[auto_item] == 'superseded', states
     assert states[manual_item] == 'active', 'a human-confirmed output keeps its status'
     assert conn.execute('SELECT status FROM organization_tasks WHERE id=900').fetchone()['status'] == 'superseded'
     # The existing legacy projection moves with the downgrade, never silently.
@@ -516,7 +516,7 @@ def test_superseded_automatic_output_is_downgraded_not_left_eligible(service, co
             'SELECT m.status FROM memories m JOIN legacy_memory_migrations mm '
             'ON mm.legacy_memory_id=m.id WHERE mm.context_item_id=?', (auto_item,)).fetchone()
         if legacy is not None:
-            assert legacy['status'] == 'candidate', dict(legacy)
+            assert legacy['status'] == 'superseded', dict(legacy)
     assert service.store.get_session_archive(old.id)['state'] == 'available'
     assert service.store.get_session_archive(newer.id)['state'] == 'available'
     assert conn.execute('SELECT count(*) c FROM organization_units').fetchone()['c'] == 2

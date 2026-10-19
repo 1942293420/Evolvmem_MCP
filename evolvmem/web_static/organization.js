@@ -63,7 +63,7 @@
   const $ = s => mount.querySelector(s);
   const name = p => projects.find(x => x.project === p)?.display_name || p || '未归属';
   const statusText = {pending:'等待处理',running:'处理中',completed:'已完成',review:'待确认',failed:'失败',superseded:'已被新版本替代'};
-  const stageText = {queued:'排队',cleaning:'清洗',segmentation:'识别完整任务',narrative:'整理需求、过程与结果',assignment:'生成项目建议',extraction:'提取问答与经验',done:'完成',stale:'过期',retired:'已退出'};
+  const stageText = {queued:'排队',cleaning:'清洗',segmentation:'识别完整任务',narrative:'整理需求、过程与结果',assignment:'归类项目',extraction:'提取问答与经验',done:'完成',stale:'过期',retired:'已退出'};
   const errorText = e => ({task_coverage_gap:'部分原文尚未整理，进度已保存，可重试。',task_quote_not_found:'需求引用未能对应原文，进度已保存，可重试。',task_narrative_evidence:'整理结果的引用未通过原文核验，可重试。',task_narrative_invalid:'模型返回的整理结果不完整，可重试。',task_invalid_response:'模型返回格式不正确，可重试。',task_unknown_reference:'模型未能正确关联前后任务，可重试。',task_context_too_large:'会话中的任务过多，需要核对。',task_upgrade_failed:'旧资料暂时无法整理，请核对原文。',conversation_overlap:'会话的原文范围重叠，需要核对。',revision_conflict:'任务或来源已变化，请刷新后重试。',cleaning_source_deleted:'来源已被永久删除。',cleaning_source_unavailable:'原文暂不可读取。',source_no_dialogue:'这次会话没有对话内容，无需审核，也不进入整理。',source_superseded:'旧快照已退出当前队列，原始归档仍保留；最新版本会正常整理。',source_excluded:'系统子会话已自动排除，不进入整理。',extraction_provider_unavailable:'尚未配置整理模型。',coverage_coverage_gap:'有段落未被处理，已停止；请核对原文后重试。',coverage_coverage_overlap:'分段位置重叠，已停止；请核对原文后重试。',coverage_quote_not_found:'模型引用的原话在原文中找不到，已停止。',units_need_review:'部分单元需要人工确认。',organization_failed:'整理失败，可重试。',organization_needs_context_mode:'当前服务模式不写入知识库，无法自动整理。',task_superseded:'任务已被新版本替代。',resegment_manual_review_required:'这份资料已有人工确认，不能重新分段覆盖；请在现有单元中修改。',guidance_not_found:'这条指导已不存在。',invalid_guidance:'请填写 1–1000 字的指导。',invalid_guidance_scope:'适用范围不正确。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_condition_required:'请填写明确的业务归类依据。',project_required:'请先指定适用范围。'})[e]||e;
   let groupDirty = false;
   const dirty = () => onDirty(drafts.size > 0 || groupDirty);
@@ -71,8 +71,8 @@
   mount.innerHTML = `<section class="panel organization-panel">
   <div class="organization-topbar"><span id="org-arrival-state">${arrival.auto_new?'自动处理已开启':'自动处理已暂停'}</span><div class="actions"><button data-org-action="refresh">刷新状态</button><details class="organization-options"><summary>处理设置</summary><div class="organization-settings"><label class="extraction-choice"><input type="checkbox" data-org-arrival ${arrival.auto_new?'checked':''}>自动处理新资料</label><button class="write" data-org-action="backlog">整理未处理的历史（每次 20 份）</button></div></details></div></div>
   <nav class="organization-tabs" role="tablist" aria-label="整理工作区">${Object.entries(tabs).map(([key,label])=>`<button role="tab" id="org-tab-${key}" aria-controls="org-pane-${key}" aria-selected="${key==='review'}" data-org-tab="${key}">${label}</button>`).join('')}</nav>
-  <section class="review-decision-notice" aria-label="完整任务整理进度"><strong>整理完整任务，选择项目后归档</strong><p id="org-complete-status" role="status"></p></section><p id="org-notice" role="status"></p>
-  <section data-org-pane="review" id="org-pane-review" role="tabpanel" aria-labelledby="org-tab-review"><div class="review-decision-notice"><strong>已确认的内容沿用归属，只处理新内容</strong><div class="actions"><a href="#knowledge/projects">查看项目知识目录 →</a><a href="#knowledge/intake">存量资料待确认 →</a></div></div><div id="org-review-groups"></div></section>
+  <section class="review-decision-notice" aria-label="完整任务整理进度"><strong>AI 自动归档，分错可以修改</strong><p id="org-complete-status" role="status"></p></section><p id="org-notice" role="status"></p>
+  <section data-org-pane="review" id="org-pane-review" role="tabpanel" aria-labelledby="org-tab-review"><div class="review-decision-notice"><strong>需要你判断的归属与分歧</strong><div class="actions"><a href="#knowledge/projects">查看项目知识目录 →</a><a href="#knowledge/intake">存量资料待确认 →</a></div></div><div id="org-review-groups"></div></section>
   <section data-org-pane="failed" id="org-pane-failed" role="tabpanel" aria-labelledby="org-tab-failed" hidden><div class="review-decision-notice"><strong>处理失败，无需重新判断项目</strong><button class="write" data-org-action="retry-failed">重试本页失败任务</button></div></section>
   <section data-org-pane="completed" id="org-pane-completed" role="tabpanel" aria-labelledby="org-tab-completed" hidden><div class="actions"><strong>结果已保存，无需再次审核</strong><a href="#knowledge/projects">查看项目历史 →</a><a href="#knowledge/qa">查看可用知识 →</a></div></section>
   <section data-org-pane="equivalences" id="org-pane-equivalences" role="tabpanel" aria-labelledby="org-tab-equivalences" hidden><div id="org-equivalences"></div></section>
@@ -111,10 +111,11 @@
   </article>`;
   }
   function unitGroups(task,rows){
+    const assigned = unit => unit.knowledge_scope==='global' || EvolvProjects.projectIds(unit).length>0;
     // Grouping is only a convenience: every item keeps its own decision and save.
-    const order = [['review','待确认（需要你决定）'],['auto','历史自动归档'],['manual','人工已确认'],['aside','暂不归档（可返回待归档）'],['history','仅留历史（可恢复处理）']];
+    const order = [['review','待确认（需要你决定）'],['auto','AI 已自动归档'],['manual','人工已确认'],['aside','暂不归档（可返回待归档）'],['history','仅留历史（可恢复处理）']];
     return order.map(([decision,label]) => {
-      const group = rows.filter(unit => decision==='history' ? unit.disposition==='history_only' : decision==='aside' ? unit.disposition==='set_aside' : !['set_aside','history_only'].includes(unit.disposition) && (decision==='review' ? unit.decision==='review'||unit.disposition==='review'||!unit.project : unit.disposition!=='review'&&unit.decision===decision&&unit.project));
+      const group = rows.filter(unit => decision==='history' ? unit.disposition==='history_only' : decision==='aside' ? unit.disposition==='set_aside' : !['set_aside','history_only'].includes(unit.disposition) && (decision==='review' ? unit.decision==='review'||unit.disposition==='review'||!assigned(unit) : unit.disposition!=='review'&&unit.decision===decision&&assigned(unit)));
       if(!group.length) return '';
       const heading = `<div class="organization-group-head"><strong>${label} · ${group.length} 条</strong>${decision==='review'?`<span class="actions"><label>批量选择项目<select data-org-group-project="${task.id}"><option value="">不批量改</option>${projects.filter(p=>p.status==='active').map(p=>`<option value="${esc(p.project)}">${esc(p.display_name||p.project)}</option>`).join('')}</select></label><button class="write" data-org-action="stage-group" data-id="${task.id}">应用到本组所选</button><label class="extraction-choice"><input type="checkbox" data-org-select-group="${task.id}">选择本组全部</label></span>`:''}</div>`;
       return decision==='review'?`<section class="organization-group" data-org-group="${decision}">${heading}${group.map(unitRow).join('')}</section>`:`<details class="organization-group" data-org-group="${decision}"><summary>${label} · ${group.length} 条</summary>${group.map(unitRow).join('')}</details>`;
@@ -127,7 +128,7 @@
     const aside = unit.disposition === 'set_aside', historyOnly = unit.disposition === 'history_only';
     const ctx = unit.context && unit.context.state === 'ready' ? unit.context : null;
     return `<div class="organization-unit ${unit.decision==='manual'?'is-manual':''} ${aside?'is-aside':''}" data-org-unit="${esc(unit.digest)}">
-   <div class="section-head"><div><label class="extraction-choice"><input type="checkbox" data-org-select-unit="${key}" ${selected.has(key)?'checked':''} aria-label="选择 ${esc(unit.title)}"> <strong>${esc(unit.title)}</strong></label> <span class="unit-category">${esc(({habit:'长期习惯',project_convention:'项目约定',task_requirement:'任务要求',environment:'环境事实',decision:'决策依据',experience:'技术经验',reference:'参考资料'})[unit.category]||unit.category)} · ${historyOnly?'仅留历史':unit.decision==='manual'?'人工已确认':unit.decision==='auto'?'历史自动归档':'待确认'} · 提炼：${historyOnly?'无需提炼，可恢复':extractionText[unit.extraction_stage]||esc(unit.extraction_stage)}${unit.extraction_error?'（'+esc(unit.extraction_error)+'）':''}</span>${aside?' <span class="badge">暂不归档</span>':''}</div><span>${esc(EvolvProjects.scopeLabel(unit,projects)||'未归属')}</span></div>
+   <div class="section-head"><div><label class="extraction-choice"><input type="checkbox" data-org-select-unit="${key}" ${selected.has(key)?'checked':''} aria-label="选择 ${esc(unit.title)}"> <strong>${esc(unit.title)}</strong></label> <span class="unit-category">${esc(({habit:'长期习惯',project_convention:'项目约定',task_requirement:'任务要求',environment:'环境事实',decision:'决策依据',experience:'技术经验',reference:'参考资料'})[unit.category]||unit.category)} · ${historyOnly?'仅留历史':unit.decision==='manual'?'人工已确认':unit.decision==='auto'?'AI 已自动归档':'待确认'} · 提炼：${historyOnly?'无需提炼，可恢复':extractionText[unit.extraction_stage]||esc(unit.extraction_stage)}${unit.extraction_error?'（'+esc(unit.extraction_error)+'）':''}</span>${aside?' <span class="badge">暂不归档</span>':''}</div><span>${esc(EvolvProjects.scopeLabel(unit,projects)||'未归属')}</span></div>
    <div class="review-evidence-grid"><section><span class="review-question-label">${unit.decision==='review'||unit.disposition==='review'?'为什么需要你':'整理依据'}</span><p class="organization-reason">${esc(unit.disposition==='review'?'待你选择归入项目或暂不归档':unit.reason)}</p></section><section><span class="review-question-label">当前判断</span><p>${esc(EvolvProjects.scopeLabel(unit,projects)||'尚未确定适用范围')}</p></section></div>
    ${unit.diagnostic_text?`<details><summary>查看失败详情</summary><p class="error">${esc(unit.diagnostic_text)}</p></details>`:''}
    <details class="optional-check"><summary>抽检反馈（可选）</summary><div class="actions"><span>整理判断${unit.feedback?` · 已标记${unit.feedback==='correct'?'正确':'有误'}`:''}</span><button data-org-action="feedback" data-verdict="correct" data-key="${key}" data-revision="${esc(unit.revision)}">判断正确</button><button data-org-action="feedback" data-verdict="incorrect" data-key="${key}" data-revision="${esc(unit.revision)}">判断有误</button></div></details>
@@ -139,16 +140,23 @@
    <details class="unit-decision" ${unit.decision==='review'||unit.disposition==='review'?'open':''}><summary>${unit.decision==='review'||unit.disposition==='review'?'你的决定':'修改整理结果'}</summary><div class="organization-correct">
     <label>改为单个项目（选填）<select data-org-project="${key}" aria-label="所属项目">${'<option value="">保持当前适用范围</option>'+projects.filter(p=>p.status==='active').map(p=>`<option value="${esc(p.project)}" ${p.project===draft?.project?'selected':''}>${esc(p.display_name||p.project)}</option>`).join('')}</select></label>
     <label>补充指导（可选）<input data-org-guidance="${key}" maxlength="200" placeholder="例如：这类导出要求属于 Evo 项目" value="${esc(applied)}"></label>
-    <label>适用范围<select data-org-scope="${key}" aria-label="适用范围"><option value="batch" ${draft?.scope!=='future'?'selected':''}>仅本次</option><option value="future" ${draft?.scope==='future'?'selected':''}>以后由 AI 按业务依据建议</option></select></label>
+    <label>适用范围<select data-org-scope="${key}" aria-label="适用范围"><option value="batch" ${draft?.scope!=='future'?'selected':''}>仅本次</option><option value="future" ${draft?.scope==='future'?'selected':''}>以后按这份依据自动归类</option></select></label>
     ${draft?.scope==='future'?`<label>归类依据<input data-org-condition="${key}" maxlength="1000" placeholder="说明哪些业务内容属于这个范围，以及判断理由" value="${esc(draft?.condition||'')}"></label><label>例外<input data-org-exceptions="${key}" maxlength="200" placeholder="例如：只是介绍技术概念，没有针对该项目提出要求" value="${esc(draft?.exceptions||'')}"></label><label class="extraction-choice"><input type="checkbox" data-org-negative="${key}" ${draft?.negative?'checked':''}>这是反例：以后遇到类似内容不要套用</label>`:''}
     <span class="actions"><button class="write" data-org-action="correct" data-key="${key}">保存归档</button>${`<button class="write" data-org-action="disposition" data-key="${key}" data-value="${aside||historyOnly?'keep':'set_aside'}" data-revision="${esc(unit.revision)}">${aside||historyOnly?'返回待归档':'暂不归档'}</button>`}</span>
     ${errors.has(key)?`<p class="error" role="alert">${esc(errors.get(key))}</p>`:''}
-    ${draft?`<p class="review-outcome">保存后：${draft.scope==='future'?'AI 按条件建议以后同类资料的项目，归属仍由你保存':'仅修改当前资料'}</p>`:''}
+    ${draft?`<p class="review-outcome">保存后：${draft.scope==='future'?'以后同类资料按这份依据自动归类，有冲突时再请你判断':'仅修改当前资料'}</p>`:''}
    </div></details></div>`;
   }
   function renderTaskList(){
+    // A project change or background refresh must leave the correction form
+    // open. Preserve both expanded and collapsed panels by task/unit identity.
+    const panelKey = el => JSON.stringify([el.closest('[data-org-task]')?.dataset.orgTask,
+      el.closest('[data-org-unit]')?.dataset.orgUnit || '',
+      el.dataset.orgGroup || el.className || el.querySelector(':scope > summary')?.textContent]);
+    const panels = new Map([...$('#org-tasks').querySelectorAll('details')].map(el=>[panelKey(el),el.open]));
     const ordered = [...tasks].sort((a,b) => (current.has(b.id)-current.has(a.id)) || b.id-a.id);
     $('#org-tasks').innerHTML = ordered.length ? ordered.map(taskCard).join('') : `<div class="empty">${tab==='failed'?'当前没有处理失败':tab==='completed'?'暂无完成记录':tab==='review'?'当前没有需要逐条判断的任务':'暂无处理记录'}</div>`;
+    $('#org-tasks').querySelectorAll('details').forEach(el=>{if(panels.has(panelKey(el)))el.open=panels.get(panelKey(el));});
     updatePager();
   }
   // Polling only refreshes the counters: rewriting the list would collapse an

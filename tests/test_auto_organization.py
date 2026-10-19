@@ -42,7 +42,7 @@ def test_multi_project_source_keeps_middle_units_and_exact_spans(service, monkey
     task = next(t for t in tasks if t['id'] == task_id)
     assert task['status'] == 'review'
     units = org(service, '/units', {'task_id': task_id})['items']
-    assert [u['project'] for u in units] == ['', '', '']
+    assert [u['project'] for u in units] == ['evo', 'dsh', '']
     assert [u['business_analysis'].get('projects', []) for u in units] == [['evo'], ['dsh'], []]
     detail = org(service, '/detail', {'task_id': task_id})
     stored = service.store._connection().execute(
@@ -55,8 +55,7 @@ def test_multi_project_source_keeps_middle_units_and_exact_spans(service, monkey
     assert any(u['business_analysis'].get('projects') == ['dsh'] and '不能只看开头结尾' in u['text'] for u in units)
     assert any('中间这段' in u['text'] for u in units)
     # One incomplete unit is grouped for review with its own decision.
-    assert all(u['decision'] == 'review' for u in units)
-    assert any(u['decision'] == 'review' for u in units)
+    assert [u['decision'] for u in units] == ['auto', 'auto', 'review']
     assert task['stage'] == 'done'
 
 

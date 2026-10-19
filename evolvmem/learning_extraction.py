@@ -229,21 +229,32 @@ def plan(service, item, messages, *, policy=None):
     # History summaries are records, not knowledge peers: the same text in a
     # session summary must never make its own extracted candidate look like a
     # duplicate of itself.
+    from evolvmem.organization_retirement import RETIRED_REASON
     peers = service.store._connection().execute(
-        "SELECT id FROM context_items WHERE project=? AND scope=? AND status NOT IN ('deleted','superseded') "
-        "AND content_type NOT IN ('session_summary','project_summary','workstream_checkpoint')",
-        (project, scope)).fetchall()
+        "SELECT i.id FROM context_items i LEFT JOIN knowledge_metadata m ON m.item_id=i.id "
+        "WHERE i.project=? AND i.scope=? AND i.status!='deleted' "
+        "AND (i.status!='superseded' OR (i.superseded_by IS NULL AND m.ingestion_reason=?)) "
+        "AND i.content_type NOT IN ('session_summary','project_summary','workstream_checkpoint') "
+        "ORDER BY (i.status='superseded'),i.id", (project, scope, RETIRED_REASON)).fetchall()
     # The explicit basis/answer-support gate is a pure check: run it before the
     # duplicate shortcut so a failed or missing review can never be bypassed by
     # "the same body already exists".
     gate_data = _hydrate_qa(service, item)
     qa_reason, qa = basis_gate(gate_data, messages, item, service)
     blocked_reuse = ''
+    reuse_retired_id = None
     same_key = []
     for peer in peers:
         row = kb.detail(peer['id'])
         if (row['body'] == item.value and row['learning'].get('trigger', '') == data.get('trigger', '')
                 and row['learning'].get('category') == data.get('category', row['learning'].get('category'))):
+            if row['status'] == 'superseded':
+                # Reuse the identity, not its old approval. The new source must
+                # pass every admission check below before it can become active.
+                from evolvmem.organization_retirement import human_owned
+                if action == 'add' and not row['managed_content'] and not human_owned(kb.conn, row['id']):
+                    reuse_retired_id = reuse_retired_id or row['id']
+                continue
             if data.get('basis') == 'explicit' and qa_reason:
                 # This round's own evidence did not pass the deterministic gate:
                 # never re-use the old active row as the source of record for it.
@@ -298,6 +309,7 @@ def plan(service, item, messages, *, policy=None):
         decision.update(action='review', reason=reason)
     status = {'auto': 'active', 'review': 'candidate', 'ignore': 'archived'}[decision['action']]
     return {'action': action if action in ('add', 'supplement', 'replace') else 'add',
+            'reuse_retired_id': reuse_retired_id,
             'status': status, 'reason': decision['reason'], 'decision': decision,
             'target_id': target['id'] if target else None, 'relation': relation, 'process': process,
             'process_errors': errors, 'rule_revision': policy['revision'], 'body': item.value,
@@ -335,11 +347,19 @@ def persist(service, item, messages, source_session, archive_id):
     body = result['body']
     # Always append a versioned source; only a proven correction supersedes a predecessor.
     digest = hashlib.sha256(json.dumps([item.key, body, metadata.get('trigger', ''), result['relation']], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
-    added, aftermath = service._add_dual_in_transaction(LegacyAddRequest(
-        key=item.key + ':learn:' + digest, value=body, attribute=item.attribute,
-        tags=item.tags, confidence=item.confidence, importance=item.importance,
-        tier='normal' if category == 'task_requirement' else item.tier, expires_at=item.expires_at,
-        source_session=source_session, project_hint=decision['project']), record_source=False)
+    if result.get('reuse_retired_id'):
+        existing = kb.detail(result['reuse_retired_id'])
+        legacy = existing['legacy_ids']
+        added = LegacyMutationResult(legacy_id=legacy[0] if legacy else None,
+            context_id=existing['id'], changed=True, old_legacy_id=None, old_context_id=None, available_layers=())
+        aftermath = _VectorAftermath(context_upserts=((existing['id'], body),),
+            legacy_upserts=tuple((i, body) for i in legacy))
+    else:
+        added, aftermath = service._add_dual_in_transaction(LegacyAddRequest(
+            key=item.key + ':learn:' + digest, value=body, attribute=item.attribute,
+            tags=item.tags, confidence=item.confidence, importance=item.importance,
+            tier='normal' if category == 'task_requirement' else item.tier, expires_at=item.expires_at,
+            source_session=source_session, project_hint=decision['project']), record_source=False)
     cid = added.context_id
     removed, old_legacy = [], []
     if result['action'] == 'replace' and result['status'] == 'active':
