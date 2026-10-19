@@ -7,7 +7,7 @@
     let detailRequest=null,requestedGroup='';
     const $=s=>mount.querySelector(s);
     const projectName=p=>projects.find(x=>x.project===p)?.display_name||p;
-    const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_retrieval_unavailable:'相似资料检索暂不可用，本次未启动 AI 判断。请稍后重试。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
+    const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_retrieval_unavailable:'暂时无法查找相似资料。可重试批量建议，或直接保存当前这条。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
     mount.innerHTML=`<section class="review-groups"><div class="section-head"><h2>待归档的新内容</h2><button data-rg="refresh">刷新资料</button></div><p data-rg-status role="status"></p><div class="review-workspace"><div class="review-list-column"><h3>1. 选择要审核的资料</h3><p data-rg-total></p><div data-rg-list></div><div class="actions"><button data-rg="previous">上一页</button><span data-rg-page></span><button data-rg="next">下一页</button></div></div>
     <div class="review-editor"><div data-rg-empty><h3>点击左侧资料，在这里核对原文和归属</h3></div><form data-rg-form hidden>
       <h3 data-rg-heading>2. 看清需求、处理经过和结果</h3><h4 data-rg-title></h4><p data-rg-source-label></p>
@@ -28,7 +28,8 @@
       </div><details><summary>补充说明（选填）</summary><input name="guidance" maxlength="1000" aria-label="补充归类说明"></details>
       <input type="hidden" name="group_id"><input type="hidden" name="task_id"><input type="hidden" name="digest"><input type="hidden" name="continue_job_id">
       <button type="button" data-rg="preview">预览建议</button><div data-rg-analysis class="review-analysis-status" role="status" aria-live="polite" hidden><span class="review-spinner" aria-hidden="true"></span><span data-rg-analysis-text></span><button type="button" data-rg="stop-analysis">停止判断</button><progress aria-label="归类判断进度"></progress></div><div data-rg-reprocess-status role="status"></div><div data-rg-preview></div>
-      <div class="review-apply-bar"><p data-rg-save-status role="status"></p><button type="button" class="primary write" data-rg="apply" disabled>保存本批选择</button></div></details>
+      <div class="actions review-archive-actions" data-rg-failure-actions hidden><button type="button" class="primary write" data-rg="archive-current">仅归档当前这条</button><button type="button" class="write" data-rg="defer-current">当前这条暂不归档</button></div>
+      <div class="review-apply-bar" hidden><p data-rg-save-status role="status"></p><button type="button" class="primary write" data-rg="apply" disabled>保存本批选择</button></div></details>
     </div></form></div></div></section>`;
     const form=$('[data-rg-form]');
     const scopePicker=EvolvProjects.scopePicker({mount:$('[data-rg-scope]'),projects,esc});
@@ -55,15 +56,18 @@
       $('[data-rg=stop-analysis]').hidden=!active;
       if(active&&job.elapsed_seconds)text+=` · 已用时 ${job.elapsed_seconds} 秒`;
       $('[data-rg-analysis-text]').textContent=text;
+      $('[data-rg-failure-actions]').hidden=stage!=='failed';
+      $('.review-apply-bar').hidden=!proposal;
+      updateArchive();
       const progress=status.querySelector('progress');progress.hidden=!active;progress.max=job.total||1;
       if(Number.isFinite(job.processed))progress.value=job.processed;else progress.removeAttribute('value');
       if(active){$('[data-rg=apply]').disabled=true;$('[data-rg-save-status]').textContent='';}
     }
     function setBusy(value){busy=value;onBusy(value);const resume=$('[data-rg=resume-batch]');if(resume)resume.disabled=value;updateArchive();}
-    function updateArchive(){const target=scopePicker.read();$('[data-rg=file]').disabled=busy||!(target.projects.length||target.knowledge_scope==='global');$('[data-rg=defer]').disabled=busy;}
+    function updateArchive(){const target=scopePicker.read();mount.querySelectorAll('[data-rg=file],[data-rg=archive-current]').forEach(b=>b.disabled=busy||!(target.projects.length||target.knowledge_scope==='global'));mount.querySelectorAll('[data-rg=defer],[data-rg=defer-current]').forEach(b=>b.disabled=busy);}
     function values(){const data=Object.fromEntries(new FormData(form));data.task_id=Number(data.task_id);return {...data,...scopePicker.read(),matching_mode:data.selection==='item'?'phrase':'semantic'};}
     function remember(){if(selectedGroup)drafts.set(selectedGroup,{values:values(),proposal,aiOpen:$('[data-rg-ai]').open});}
-    function invalidate(){form.elements.continue_job_id.value='';manualPreviews.clear();previewState();analyses.delete(selectedGroup);proposal=null;$('[data-rg="apply"]').hidden=false;$('[data-rg="apply"]').disabled=true;$('[data-rg-preview]').replaceChildren();$('[data-rg-save-status]').textContent='';updateArchive();remember();onDirty(true);}
+    function invalidate(){form.elements.continue_job_id.value='';manualPreviews.clear();proposal=null;previewState();analyses.delete(selectedGroup);$('[data-rg="apply"]').hidden=false;$('[data-rg="apply"]').disabled=true;$('[data-rg-preview]').replaceChildren();$('[data-rg-save-status]').textContent='';updateArchive();remember();onDirty(true);}
     function highlight(){mount.querySelectorAll('[data-rg="choose"]').forEach(b=>{const yes=b.dataset.id===(requestedGroup||selectedGroup);b.setAttribute('aria-pressed',String(yes));b.closest('.review-source-card')?.classList.toggle('selected',yes);});}
     function closeEditor(){
       detailRequest?.controller.abort();detailRequest=null;requestedGroup='';$('.review-editor').setAttribute('aria-busy','false');
@@ -250,6 +254,7 @@
       const status=$('[data-rg-selected-count]');if(status)status.textContent=`已勾选 ${state.picked.length} 条`;
       for(const action of ['batch-include','batch-exclude']){const b=$(`[data-rg=${action}]`);if(b)b.disabled=!state.picked.length;}
       const button=$('[data-rg=apply]');button.hidden=false;button.disabled=!decisions.length||decisions.length>100;button.textContent='保存本批选择';
+      $('.review-apply-bar').hidden=false;
       $('[data-rg-save-status]').textContent=decisions.length?`待保存：归入项目 ${included} 条；暂不归档 ${excluded} 条${decisions.length>100?'。每次最多保存 100 条。':''}`:
         proposal.excluded.some(u=>['rule_changed','review_changed'].includes(u.reason_code))?'有资料需要重新核对，完成后可保存。':'请选择归入项目或暂不归档。';
       remember();onDirty(decisions.length>0);
@@ -392,12 +397,13 @@
           const dest=b.nextElementSibling;
           if(!dest.hidden){dest.hidden=true;b.textContent='展开原文';return;}
           dest.hidden=false;await EvolvTaskContext.render({mount:dest,api,esc,query:'organization/context?'+new URLSearchParams({task_id:b.dataset.task,digest:b.dataset.digest})});b.textContent='收起原文';
-        }else if(action==='file'||action==='defer'){
+        }else if(['file','defer','archive-current','defer-current'].includes(action)){
+          const include=['file','archive-current'].includes(action);
           const u=detail.items.find(x=>x.digest===form.elements.digest.value&&x.task_id===Number(form.elements.task_id.value));
           const target=scopePicker.read();
-          const result=await api('organization/archive',{task_id:u.task_id,digest:u.digest,expected_revision:u.revision,action:action==='file'?'include':'defer',...target});
-          const message=action==='file'?`已归入「${EvolvProjects.scopeLabel(target,projects)}」${result.unit?.item_id?1:0} 条知识。`:'暂不归档，原文仍在，可在运行记录中返回待归档。';
-          receipt(action==='file'?'归档已保存':'暂不归档',message);
+          const result=await api('organization/archive',{task_id:u.task_id,digest:u.digest,expected_revision:u.revision,action:include?'include':'defer',...target});
+          const message=include?`已归入「${EvolvProjects.scopeLabel(target,projects)}」${result.unit?.item_id?1:0} 条知识。`:'暂不归档，原文仍在，可在运行记录中返回待归档。';
+          receipt(include?'归档已保存':'暂不归档',message);
           await refreshSaved(message);
         }else if(action==='resume-batch'){
           await resumeBatch();

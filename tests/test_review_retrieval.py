@@ -60,6 +60,56 @@ def test_unavailable_similarity_service_never_falls_back_to_full_ai_scan(service
     assert calls == []
 
 
+@pytest.mark.parametrize('initial', ['startup_failure', 'embedding_failure', 'reranker_failure'])
+def test_review_recovers_when_shared_model_returns_without_restarting_worker(service, monkeypatch, initial):
+    from evolvmem.auto_organization import OrganizationWorker
+    from evolvmem.context_models import ContextMode
+    from evolvmem.lan_http_client import JsonClient
+    service.config.embedding_http_url = 'http://shared-model.test'
+    available = False
+    def model_request(client, body):
+        if not available:
+            raise RuntimeError('lan_http_unavailable')
+        if client.url.endswith('/embedding/status'):
+            return dict(available=True, dimension=service.config.embedding_dim,
+                        query_prefix=service.config.embedding_query_prefix,
+                        document_prefix=service.config.embedding_doc_prefix, reranker_available=True)
+        if client.url.endswith('/embedding'):
+            return {'vector':[1.] + [0.] * (service.config.embedding_dim-1)}
+        if client.url.endswith('/rerank'):
+            return {'scores':[.9] * len(body['documents'])}
+        raise AssertionError(client.url)
+    monkeypatch.setattr(JsonClient, 'post', model_request)
+    task_id, request, calls = setup_job(service, monkeypatch, count=2)
+    worker = OrganizationWorker(service.config, mode=ContextMode.SHADOW)
+    try:
+        available = initial != 'startup_failure'
+        client = worker._connect()
+        if initial == 'startup_failure':
+            assert client.embedding_engine is None
+        else:
+            # Exercise the real provider's failure state, not a replacement flag.
+            available = False
+            with pytest.raises(RuntimeError):
+                if initial == 'embedding_failure': client.embedding_engine.encode_query('模拟查询')
+                else: client.embedding_engine.rerank('模拟查询',['模拟正文'])
+        failed = semantic.start(service, request)
+        worker.tick()
+        assert semantic.get(service,failed['id'])['error'] == 'review_retrieval_unavailable'
+        assert calls == []
+        available = True
+        retried = semantic.start(service, request)
+        worker.tick()
+        result = semantic.get(service,retried['id'])
+        assert result['status'] == 'completed', result['error']
+        assert len(calls) == 2
+        assert client.store._connection().execute(
+            "SELECT COUNT(*) FROM organization_units WHERE task_id=? AND decision='manual'", (task_id,)
+        ).fetchone()[0] == 0, 'recovered AI suggestions must not archive material'
+    finally:
+        worker.stop()
+
+
 def test_stop_keeps_finished_judgments_and_never_starts_another_call(service, monkeypatch):
     _, request, calls = setup_job(service, monkeypatch, count=8)
     job=semantic.start(service,request)
