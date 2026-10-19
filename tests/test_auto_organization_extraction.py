@@ -150,7 +150,7 @@ def test_project_correction_during_delayed_extraction_invalidates_the_result(ser
         base.extract_calls.append(prompt)
         # The operator corrects the unit while the provider is still answering.
         row = conn.execute("SELECT digest FROM organization_units WHERE project='dsh' LIMIT 1").fetchone()
-        if row:
+        if row and '中间这段是 DSH' in prompt:
             conn.execute("UPDATE organization_units SET project='evo',decision='manual',revision=revision+1 "
                          'WHERE digest=?', (row['digest'],))
             conn.commit()
@@ -162,9 +162,7 @@ def test_project_correction_during_delayed_extraction_invalidates_the_result(ser
     worker = OrganizationWorker(service.config, mode=ContextMode.SHADOW)
     try:
         worker.tick()  # segmentation
-        worker.tick()  # AI suggestions
-        save_suggestions_as_user(service)
-        worker.tick()  # delayed extraction, before the next retry
+        worker.tick()  # automatic assignment and delayed extraction, before retry
     finally:
         worker.stop()
     units = org(service, '/units', {'task_id': task_id})['items']
@@ -234,13 +232,14 @@ def test_ambiguous_and_unresolved_units_are_not_in_project_history(service, monk
         listed = [u['digest'] for u in history_memory.project_units(service, project, source.id)]
         for unit in unresolved:
             assert unit['digest'] not in listed
-    # A model suggestion that was not confirmed is not exposed either.
+    # Clear, source-validated ownership enters history automatically; the
+    # unresolved unit above contributes no history or knowledge.
     conn = service.store._connection()
     suggestion = conn.execute(
         "SELECT count(*) FROM context_items WHERE status='candidate' AND project!=''").fetchone()[0]
     active = conn.execute(
         "SELECT count(*) FROM context_items WHERE status='active' AND project!=''").fetchone()[0]
-    assert active == 0 and suggestion == 0, 'unconfirmed AI suggestions must not reach project history'
+    assert active > 0 and suggestion == 0
 
 
 def test_set_aside_units_leave_the_pending_queue_but_stay_restorable(service, monkeypatch):

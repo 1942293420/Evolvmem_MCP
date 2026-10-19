@@ -427,7 +427,7 @@ body[data-design=signal] .principle-board .product-diagram svg{min-width:980px;m
 .organization-correct input[type="text"],.organization-correct input:not([type]),.organization-correct select{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--line);border-radius:6px}
 .organization-correct .extraction-choice{display:flex;align-items:center;gap:8px}
 .organization-correct button{justify-self:start}
-@media(max-width:760px){.organization-task{padding:12px}.organization-unit{padding:10px}}
+@media(max-width:760px){.organization-task{padding:12px}.organization-task>.section-head{flex-direction:column}.organization-task>.section-head>div{width:100%}.organization-task>.section-head>.actions{flex-wrap:wrap}.organization-unit{padding:10px}}
 .organization-group{display:grid;gap:10px;margin:10px 0}
 .organization-group-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:8px 10px;border-radius:6px;background:var(--pale)}
 .organization-group-head .actions{gap:8px}

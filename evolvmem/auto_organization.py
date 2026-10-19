@@ -411,11 +411,12 @@ def _mark_outputs_stale(service, source_key, *, current_task, deferred_sync=None
     Candidates are every output the retired tasks of this source produced: their
     unit history item (``organization_units.item_id``) and their knowledge
     derivations (``unit_derivations``). Only purely automatic items are
-    downgraded: a human-confirmed project decision keeps its status, an item a
+    retired: a human-confirmed project decision keeps its status, an item a
     live (non-superseded) task still owns is a current output, and an item an
     independent source link backs is shared history. A source-only output with no
     other backing never stays active. The same transaction mirrors the new
-    candidate status onto the exact legacy rows it changed. Nothing is deleted.
+    historical status onto the exact legacy rows it changed. Nothing is deleted
+    or put back into the user's review queue.
     """
     conn = service.store._connection()
     retired = [dict(row) for row in conn.execute(
@@ -450,15 +451,13 @@ def _mark_outputs_stale(service, source_key, *, current_task, deferred_sync=None
                 continue
             if _independent_source_link(conn, item_id, own_keys=own_keys, own_archives=own_archives):
                 continue
-            cursor = conn.execute("UPDATE context_items SET status='candidate',updated_at=? "
-                                  "WHERE id=? AND status='active'", (_now_iso(), item_id))
-            if cursor.rowcount:
+            from evolvmem.organization_retirement import mark_retired
+            if mark_retired(service, item_id):
                 downgraded.append(item_id)
-        _mirror_legacy_candidate(service, downgraded)
     if downgraded:
         # After the commit, drop these exact ids from the active-only Context
         # vector cache and the legacy index. Otherwise the database says
-        # candidate while the indexes still hold the old ids, and the vector
+        # historical while the indexes still hold the old ids, and the vector
         # counts keep disagreeing with the rows.
         if deferred_sync is not None:deferred_sync.extend(downgraded)
         else:service.knowledge()._sync(downgraded)
@@ -772,7 +771,7 @@ def _retire_task(service, task_id, *, status, reason, successor=None):
 
     The task keeps its attempt count, gets a truthful terminal status, and only
     a ``superseded`` verdict settles its own outputs through the existing
-    stale-output policy (candidate + legacy mirror + vector sync). Nothing is
+    stale-output policy (historical version + legacy mirror + vector sync). Nothing is
     published or deleted.
     """
     if task_id is None:
@@ -1850,14 +1849,9 @@ class OrganizationWorker:
                 blocked=organization_exclusions.active(service,dict(row),knowledge_target or {'project':project})
                 if blocked:
                     project,decision,reason,context_basis,guidance_id,knowledge_target='', 'review',blocked['reason'],'',0,{'project':''}
-            if decision == 'auto':
-                # Model output and saved guidance are suggestions. Only a
-                # human save may assign ownership or start project ingestion.
-                target = knowledge_target or {'project': project}
-                ownership_analysis = dict(ownership_analysis or json.loads(row['ownership_analysis'] or '{}'))
-                ownership_analysis.update(projects=ks.projects(target), knowledge_scope=ks.scope(target), reason=reason)
-                project, decision, context_basis, guidance_id, knowledge_target = '', 'review', '', 0, {'project': ''}
-                reason = 'AI 已提供归档建议，等待你选择项目并保存。'
+            # Validated ownership is applied automatically. Source revisions,
+            # exclusions and human decisions above remain authoritative; merely
+            # having a project hint never reaches this path.
             conn.execute(
                 'UPDATE organization_units SET project=?,decision=?,reason=?,evidence_quote=?,'
                 'context_basis=?,applied_guidance_id=?,projects=?,knowledge_scope=?,revision=revision+1,updated_at=? WHERE task_id=? AND digest=?',
@@ -2065,6 +2059,10 @@ def correct_one(service, body, *, record_guidance=True):
         from evolvmem import knowledge_identity
         if decision == 'manual':
             knowledge_identity.record_decision(service, task, find_unit(service, task_id, digest))
+            # Clearing an assignment is also a human decision. Identity reuse
+            # may leave its scope unresolved, but must not make it automatic.
+            conn.execute("UPDATE organization_units SET decision='manual' WHERE task_id=? AND digest=?",
+                         (task_id, digest))
     refreshed = find_unit(service, task_id, digest)
     if ks.assigned(target):
         item_id = _ensure_unit_item(service, task, refreshed)

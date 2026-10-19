@@ -57,7 +57,7 @@ def _projection_lag(service):
     return check_projection_lag(service.config, service.store).projection_lag
 
 
-def test_superseded_outputs_mirror_candidate_status_into_the_legacy_projection(service, monkeypatch):
+def test_superseded_outputs_mirror_historical_status_into_the_legacy_projection(service, monkeypatch):
     """A new rule revision must not leave the legacy projection active."""
     from evolvmem.context_models import ContextStatus
     source = many_topic_archive(service, session='stale-legacy-drift')
@@ -94,10 +94,10 @@ def test_superseded_outputs_mirror_candidate_status_into_the_legacy_projection(s
     stale = sorted({*_unit_item_ids(service, task_id), *_derivation_item_ids(service, task_id)})
     assert stale
     downgraded = [item_id for item_id in stale
-                  if service.store.get_item(item_id).status is ContextStatus.CANDIDATE]
+                  if service.store.get_item(item_id).status is ContextStatus.SUPERSEDED]
     assert downgraded == stale, downgraded
     for item_id in downgraded:
-        assert _legacy_status(service, item_id) == 'candidate'
+        assert _legacy_status(service, item_id) == 'superseded'
     assert sorted(downgraded) in synced, 'the changed ids must reach the vector sync'
     assert _projection_lag(service) == 0
 

@@ -1,4 +1,4 @@
-/* People archive material; AI previews only supply optional suggestions. */
+/* Resolve remaining exceptions; explicit batch previews still await the selected action. */
 (() => {
   window.EvolvReviewGroups = {async render({mount, api, esc, projects, onSaved, onDirty, onBusy, historyMount=mount, onReady=()=>{}}) {
     let page=1, proposal=null, busy=false, selectedGroup='', detail=null, pendingTasks=[], recoveryTimer=null, recoveryGroup='', listSnapshot='', loadSequence=0;
@@ -8,7 +8,7 @@
     const $=s=>mount.querySelector(s);
     const projectName=p=>projects.find(x=>x.project===p)?.display_name||p;
     const messages={review_preview_changed:'资料或规则已变化，请刷新资料并重新预览。',review_condition_required:'请说明按什么业务依据判断这些资料的适用范围。',review_ai_invalid_response:'AI 返回的判断不完整，请重试。',review_ai_failed:'AI 判断未完成，资料尚未修改，请重试。',review_retrieval_unavailable:'暂时无法查找相似资料。可重试批量建议，或直接保存当前这条。',review_ai_not_ready:'AI 还在判断，请等待预览完成。',extraction_provider_unavailable:'整理模型暂不可用，资料尚未修改。',review_excluded:'你已确认这条不归入当前范围，请先撤销该决定再归入。',review_preview_required:'请先预览并核对本次归类范围。',invalid_project:'请先选择适用项目。',project_required:'请勾选至少一个项目，或选择“个人通用”。',invalid_projects:'请选择有效的项目。',invalid_review_model:'请选择列表中的判断模型。',review_model_unavailable:'这个模型尚未配置，请选择其他模型。',revision_conflict:'资料已更新，请刷新原文后重试。',review_reprocess_not_needed:'当前没有需要按新规则重新整理的资料。'};
-    mount.innerHTML=`<section class="review-groups"><div class="section-head"><h2>待归档的新内容</h2><button data-rg="refresh">刷新资料</button></div><p data-rg-status role="status"></p><div class="review-workspace"><div class="review-list-column"><h3>1. 选择要审核的资料</h3><p data-rg-total></p><div data-rg-list></div><div class="actions"><button data-rg="previous">上一页</button><span data-rg-page></span><button data-rg="next">下一页</button></div></div>
+    mount.innerHTML=`<section class="review-groups"><div class="section-head"><h2>需要你判断的资料</h2><button data-rg="refresh">刷新资料</button></div><p data-rg-status role="status"></p><div class="review-workspace"><div class="review-list-column"><h3>1. 选择要审核的资料</h3><p data-rg-total></p><div data-rg-list></div><div class="actions"><button data-rg="previous">上一页</button><span data-rg-page></span><button data-rg="next">下一页</button></div></div>
     <div class="review-editor"><div data-rg-empty><h3>点击左侧资料，在这里核对原文和归属</h3></div><form data-rg-form hidden>
       <h3 data-rg-heading>2. 看清需求、处理经过和结果</h3><h4 data-rg-title></h4><p data-rg-source-label></p>
       <label data-rg-unit-picker>这份来源会话中的待确认任务<select name="unit"></select></label>
@@ -24,7 +24,7 @@
         <label>判断模型<select name="model_choice" aria-label="本次 AI 建议模型"><option value="auto">自动选择（正在读取模型）</option></select></label><label>本次处理哪些资料<select name="selection"><option value="item">只处理正在看的这一条</option><option value="group">从这份来源会话的待确认任务中查找</option><option value="all">从全部待确认资料中查找相似记忆</option></select></label>
       </div><div data-rg-batch hidden><label>归类依据<textarea rows="4" name="condition" maxlength="1000" placeholder="例如：介绍技术概念、原理或通用使用方法的资料，归入知识问答；实际修改某个项目的需求不属于这一类。"></textarea></label>
         <label>不适用的情况（选填）<textarea name="exceptions" rows="2" maxlength="500" placeholder="例如：虽提到某项技术，但主要是在安排具体项目的开发任务。"></textarea></label>
-        <label>以后遇到同样内容<select name="scope"><option value="batch">只处理本次预览中的资料</option><option value="future">让 AI 继续按这份依据提供建议</option></select></label>
+        <label>以后遇到同样内容<select name="scope"><option value="batch">只处理本次预览中的资料</option><option value="future">以后按这份依据自动归类</option></select></label>
       </div><details><summary>补充说明（选填）</summary><input name="guidance" maxlength="1000" aria-label="补充归类说明"></details>
       <input type="hidden" name="group_id"><input type="hidden" name="task_id"><input type="hidden" name="digest"><input type="hidden" name="continue_job_id">
       <button type="button" data-rg="preview">预览建议</button><div data-rg-analysis class="review-analysis-status" role="status" aria-live="polite" hidden><span class="review-spinner" aria-hidden="true"></span><span data-rg-analysis-text></span><button type="button" data-rg="stop-analysis">停止判断</button><progress aria-label="归类判断进度"></progress></div><div data-rg-model-status class="review-model-status" role="status" hidden></div><div data-rg-reprocess-status role="status"></div><div data-rg-preview></div>
@@ -315,7 +315,7 @@
       const stale=[...new Set(p.excluded.filter(u=>u.reason_code==='rule_changed').map(u=>u.source_key))];
       $('[data-rg-preview]').innerHTML=`<h3>AI 建议与本批选择</h3><p>${manualPending.length?`本次待处理资料：${p.eligible.length+p.excluded.length} 条${judged?`；已由 AI 判断：${judged} 条`:""}。`:semantic&&!Number.isFinite(p.recalled_count)?`这是之前完成的判断结果。点击预览，按相似度重新查找候选。已判断 ${judged} 条。`:semantic?`本次查找范围：${p.selection==='all'?'全部待确认资料':'这份来源会话的待确认任务'}。待确认 ${p.pool_count} 条，召回 ${p.recalled_count} 条相似记忆，筛选出 ${p.ranked_count} 条；本批已判断 ${judged} 条。`:`正在看的这一条：共 ${p.searched_count} 条。`}</p>
         ${semantic?`<p>判断依据：${esc(p.condition)}</p><p>${manualPending.length&&!rejected.length?"":`AI 判断不符合：${rejected.length} 条；`}需要你判断：${pending.length+manualPending.length} 条${manuallyExcluded.length?`；你已确认不归入：${manuallyExcluded.length} 条`:''}${p.handled_count?`；已人工处理：${p.handled_count} 条`:''}</p>`:''}<div class="review-counts">${manualPending.length?`<strong>待你决定是否录入「${esc(target)}」：${manualPending.length} 条</strong>`:''}${p.eligible.length||!manualPending.length?`<strong>${semantic?'AI 建议录入':'本次可归入'}「${esc(target)}」：${p.eligible.length} 条</strong>`:''}${p.excluded.length>manualPending.length||!manualPending.length?`<strong>未推荐或此前不录入：${semantic?rejected.length+pending.length+manuallyExcluded.length:p.excluded.length-manualPending.length} 条</strong>`:''}</div>
-        ${p.scope==='future'?`<p>以后 AI 将按这份依据建议录入「${esc(target)}」，由你保存后归档。</p>`:''}
+        ${p.scope==='future'?`<p>以后同类资料按这份依据自动归入「${esc(target)}」，有冲突时再请你判断。</p>`:''}
         ${stale.length?`<div class="review-recovery"><p>${stale.length} 份来源还需按最新规则整理。完成后会自动更新本次归类结果。</p><button type="button" class="write" data-rg="reprocess">按最新规则重新整理 ${Math.min(20,stale.length)} 份来源</button>${stale.length>20?'<p>其余来源留待下一批处理。</p>':''}</div>`:''}
         ${section('待你决定是否录入',manualPending,true)}
         ${semantic?section('按相关度排序的判断结果',[...p.eligible,...pending,...rejected].sort((a,b)=>(b.relevance||0)-(a.relevance||0)),true,true):section('待保存的资料',p.eligible,true)}
@@ -418,7 +418,7 @@
           const result=await api('organization/groups/decisions',{proposal:saved,decisions});
           decisionDrafts.delete(saved.revision);try{sessionStorage.removeItem('evolvmem.review.decisions.'+saved.group_id);}catch(_){}
           const target=EvolvProjects.scopeLabel(saved,projects);
-          const message=`已保存：归入项目 ${result.included} 条；暂不归档 ${result.deferred} 条${result.guidance?'；已保存以后 AI 提供建议的依据':''}。`;
+          const message=`已保存：归入项目 ${result.included} 条；暂不归档 ${result.deferred} 条${result.guidance?'；已保存以后自动归类的依据':''}。`;
           // Close the saved editor before refreshing anything. A failed refresh
           // must never resurrect its stale prompt or invite a duplicate write.
           receipt('归档选择已保存',`归入「${target}」${result.included} 条；暂不归档 ${result.deferred} 条。`,saved.job_id);

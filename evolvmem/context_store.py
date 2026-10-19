@@ -121,6 +121,8 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
     )""",
     """CREATE INDEX IF NOT EXISTS idx_organization_units_digest
         ON organization_units(task_id, digest)""",
+    """CREATE INDEX IF NOT EXISTS idx_organization_units_item
+        ON organization_units(item_id)""",
     """CREATE TABLE IF NOT EXISTS organization_review_feedback (
         task_id INTEGER NOT NULL,
         digest TEXT NOT NULL,
@@ -146,6 +148,8 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
     )""",
     """CREATE INDEX IF NOT EXISTS idx_unit_derivations_digest
         ON unit_derivations(unit_digest, item_id)""",
+    """CREATE INDEX IF NOT EXISTS idx_unit_derivations_item
+        ON unit_derivations(item_id)""",
     """CREATE TABLE IF NOT EXISTS organization_context_basis (
         unit_task_id INTEGER NOT NULL,
         unit_digest TEXT NOT NULL,
