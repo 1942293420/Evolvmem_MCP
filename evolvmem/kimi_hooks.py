@@ -19,6 +19,7 @@ import socket
 import sys
 import time
 import urllib.request
+import uuid
 from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -119,11 +120,28 @@ def llm_provider_status(callback):
         _PROVIDER_STATUS.reset(token)
 
 
-def _report_provider(config: LLMConfig, *, fallback: bool = False) -> None:
+def select_llm_config(config: LLMConfig, choice: str = 'auto') -> LLMConfig:
+    """A per-request choice; explicit selection never changes global defaults."""
+    if choice not in ('auto', 'primary', 'fallback'):
+        raise ValueError('invalid_review_model')
+    if choice == 'auto':
+        return config
+    selected = config if choice == 'primary' else getattr(config, 'fallback', None)
+    if selected is None:
+        raise ValueError('review_model_unavailable')
+    return LLMConfig(selected.provider, selected.api_key, selected.base_url, selected.model)
+
+
+def _report_provider(config: LLMConfig, *, fallback: bool = False,
+                     state=None, call_id=None, elapsed_ms=None) -> None:
     callback = _PROVIDER_STATUS.get()
     if callback is not None:
-        callback({"provider": config.provider, "model": config.model,
-                  "fallback": fallback})
+        status = {"provider": config.provider, "model": config.model, "fallback": fallback}
+        if state is not None:
+            status.update(state=state, call_id=call_id)
+        if elapsed_ms is not None:
+            status['elapsed_ms'] = elapsed_ms
+        callback(status)
 
 
 def _url_origin(url: str) -> tuple[str, str, int] | None:
@@ -433,10 +451,23 @@ def _http_error_body(
 def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
                          deadline: float | None = None) -> str:
     """Try the primary briefly, then the backup within the original budget."""
+    def tracked(config, *, fallback=False, **kwargs):
+        call_id, started = uuid.uuid4().hex, time.monotonic()
+        _report_provider(config, fallback=fallback, state='running', call_id=call_id)
+        try:
+            response = _call_single_provider_with_retry(prompt, config, **kwargs)
+        except Exception:
+            # Never persist exception messages: they may contain provider payloads.
+            _report_provider(config, fallback=fallback, state='failed', call_id=call_id,
+                             elapsed_ms=max(0, round((time.monotonic()-started)*1000)))
+            raise
+        _report_provider(config, fallback=fallback, state='succeeded', call_id=call_id,
+                         elapsed_ms=max(0, round((time.monotonic()-started)*1000)))
+        return response
+
     backup = llm_config.fallback
     if backup is None:
-        _report_provider(llm_config)
-        return _call_single_provider_with_retry(prompt, llm_config, deadline=deadline)
+        return tracked(llm_config, deadline=deadline)
     now = time.monotonic()
     if deadline is None:
         deadline = now + _EXTRACTION_BUDGET_S
@@ -448,17 +479,14 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
         if expires <= now:
             _PROVIDER_RETRY_AFTER.pop(old_key, None)
     if key not in _PROVIDER_RETRY_AFTER:
-        _report_provider(llm_config)
         # Reserve at least two thirds of a short request's budget for backup.
         primary_deadline = now + min(_PRIMARY_FAILOVER_TIMEOUT_S, (deadline - now) / 3)
         try:
-            return _call_single_provider_with_retry(
-                prompt, llm_config, deadline=primary_deadline, max_attempts=1)
+            return tracked(llm_config, deadline=primary_deadline, max_attempts=1)
         except RetryableExtractionError:
             _PROVIDER_RETRY_AFTER[key] = time.monotonic() + _PROVIDER_COOLDOWN_S
             _log(f"{llm_config.provider} unavailable; switching to {backup.provider}")
-    _report_provider(backup, fallback=True)
-    return _call_single_provider_with_retry(prompt, backup, deadline=deadline)
+    return tracked(backup, fallback=True, deadline=deadline)
 
 
 def _call_single_provider_with_retry(prompt: str, llm_config: LLMConfig,

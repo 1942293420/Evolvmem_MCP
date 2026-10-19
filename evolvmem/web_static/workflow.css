@@ -124,3 +124,9 @@ body[data-design=signal] .ui-detail-section,body[data-design=signal] .ui-detail-
 #knowledge-receipt button{margin-left:12px}
 
 .task-narrative{display:block;border:1px solid var(--line);border-radius:8px;padding:16px}.task-narrative dl{margin:0}.task-summary-row{display:grid;grid-template-columns:80px minmax(0,1fr);gap:16px;padding:10px 0;font-size:16px;line-height:1.7}.task-summary-row dt{font-weight:600}.task-summary-row dd{margin:0;white-space:pre-wrap}.task-summary-row+.task-summary-row{border-top:1px solid var(--line)}@media(max-width:600px){.task-summary-row{grid-template-columns:1fr;gap:4px}}
+
+.review-model-status{font-size:16px;padding:16px;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}
+.review-model-status ol{padding-left:24px;margin:10px 0}
+.review-model-status li+li{margin-top:8px}
+
+[data-rg-action-status],[data-rg-failure-save-status],.review-model-status p{font-size:16px;color:var(--text)}

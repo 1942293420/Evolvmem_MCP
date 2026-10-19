@@ -2319,6 +2319,9 @@ def dispatch(service, method, route, body):
             return organization_review.groups(service, body)
         if route == '/groups/detail':
             return organization_review.detail(service, body)
+        if method == 'GET' and route == '/groups/models':
+            from evolvmem.organization_semantic_review import model_options
+            return model_options()
         if method == 'POST' and route == '/groups/reprocess':
             return organization_review.reprocess(service, body)
         if method == 'POST' and route == '/groups/exclusion':

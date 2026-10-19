@@ -19,8 +19,14 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(await form.locator('[data-rg=apply]').isVisible(),false,'changing criteria clears the old save action');
   await form.locator('[data-rg=preview]').click();
   await page.waitForFunction(()=>!!document.querySelector('[data-rg-choice]')&&!document.querySelector('[data-rg=apply]').disabled,{},{timeout:30000});
+  let release,writes=0;const gate=new Promise(r=>release=r);
+  await page.route('**/organization/groups/decisions',async route=>{writes++;await gate;await route.continue();});
   const response=page.waitForResponse(r=>r.url().endsWith('/organization/groups/decisions'));
-  await form.locator('[data-rg=apply]').click();const saved=await (await response).json();
+  const save=form.locator('[data-rg=apply]');await save.click();
+  assert.equal(await save.getAttribute('aria-busy'),'true');assert.match(await save.innerText(),/正在保存/);
+  await save.evaluate(b=>{b.click();b.click();});assert.equal(writes,1);
+  assert.match(await form.locator('[data-rg-save-status]').innerText(),/正在保存/);
+  release();const saved=await (await response).json();
   assert.ok(saved.included>0);await page.waitForFunction(()=>document.querySelector('[data-rg-form]').hidden);
   assert.deepEqual(errors,[]);console.log('PASS: successful AI suggestions expose batch choices and save actual selected materials.');
  }finally{await browser.close();}

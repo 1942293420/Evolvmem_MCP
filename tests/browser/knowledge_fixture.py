@@ -182,7 +182,7 @@ def model(prompt, *a, **kw):
          'learning':{'category':'project_convention','basis':'explicit','quote':text,'question':'修改界面时先明确什么？','answer':text,'instruction':text,'topic':'ui',
           'process':{'goal':{'quote':text},'understanding':{'quote':'我会新建一个独立管理页面。'},
           'correction':{'quote':'管理保留在原知识库，不另建页面。'}}}}]},ensure_ascii=False)
-kimi_hooks._load_llm_config=lambda **kwargs: object()
+kimi_hooks._load_llm_config=lambda **kwargs: kimi_hooks.LLMConfig('deepseek','fixture-only','http://unused.test','deepseek-test',fallback=kimi_hooks.LLMConfig('mimo','fixture-only','http://unused.test','mimo-v2.6-flash'))
 kimi_hooks._call_llm_with_retry=model
 kimi_hooks._llm_callable=lambda credentials:model
 if os.environ.get('EVOLVMEM_CARD_FIXTURE') == '1':

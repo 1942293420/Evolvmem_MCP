@@ -9,7 +9,7 @@ window.EvolvKnowledgeEquivalence={
     mount.addEventListener('change',e=>e.stopPropagation());
     function draw(){
       let selected=null,searching=false;const key=unit.task_id+':'+unit.digest;
-      mount.innerHTML=`<details data-ke-open><summary>与已有知识相同</summary><div class="organization-settings"><label>查找已归档知识<input type="search" data-ke-query placeholder="知识原文或标题"></label><button type="button" data-ke-search>查找</button></div><p role="status" data-ke-status></p><div data-ke-list></div><div data-ke-compare></div></details>`;
+      mount.innerHTML=`<details data-ke-open><summary>关联已有知识，沿用归属</summary><p>仅用于同一条知识的不同说法。确认后沿用原知识的项目，两份来源都会保留；新增要求请单独归档。</p><div class="organization-settings"><label>查找已归档知识<input type="search" data-ke-query placeholder="知识原文或标题"></label><button type="button" data-ke-search>查找</button></div><p role="status" data-ke-status></p><div data-ke-list></div><div data-ke-compare></div></details>`;
       const $=s=>mount.querySelector(s);
       let loaded=false;
       async function search(){
@@ -26,10 +26,10 @@ window.EvolvKnowledgeEquivalence={
             selected=result.items[Number(b.dataset.keCandidate)];
             $('[data-ke-compare]').innerHTML=`<div class="ke-compare"><section><h4>本次表述</h4><pre class="review-original">${esc(unit.text)}</pre></section><section><h4>已有知识</h4><pre class="review-original">${esc(selected.text)}</pre><p>已归入「${esc(label(selected))}」</p></section></div><button type="button" class="primary write" data-ke-confirm>确认相同，沿用归属</button>`;
             $('[data-ke-confirm]').onclick=async()=>{
-              const button=$('[data-ke-confirm]');button.disabled=true;
+              const button=$('[data-ke-confirm]');const finish=EvolvUI.busy(button,'正在保存关联…');
               try{await onConfirm({task_id:unit.task_id,digest:unit.digest,expected_revision:unit.revision,target_knowledge_id:selected.knowledge_id,target_revision:selected.revision});}
               catch(error){$('[data-ke-status]').textContent=errors[error.message]||error.message;}
-              finally{button.disabled=false;}
+              finally{finish();}
             };
           };
         }catch(error){if(token===sequence)$('[data-ke-status]').textContent=errors[error.message]||error.message;}
