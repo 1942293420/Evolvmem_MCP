@@ -177,6 +177,8 @@ def analyze(service, units, *, criteria='', exceptions='', target=None):
     from evolvmem import knowledge_scope as ks
     rendered_target=ks.fields(target) if target is not None else None
     config, call = _load_llm()
+    from evolvmem.kimi_hooks import select_llm_config
+    config = select_llm_config(config, (target or {}).get('model_choice', 'auto'))
     registry = [{k:p.get(k) for k in ('project','display_name','aliases')} for p in service.knowledge().registry() if p['status']=='active']
     names = {p['project'] for p in registry}
     policy = service.knowledge().rules.read()

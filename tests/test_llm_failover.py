@@ -142,9 +142,11 @@ def test_provider_progress_is_scoped_and_marks_backup(monkeypatch):
     monkeypatch.setattr(hooks, '_call_llm', call)
     with hooks.llm_provider_status(events.append):
         assert hooks._call_llm_with_retry('prompt', pair()) == 'ok'
-    assert [(e['provider'], e['fallback']) for e in events] == [('deepseek', False), ('mimo', True)]
+    assert [(e['provider'], e['fallback'], e['state']) for e in events] == [
+        ('deepseek', False, 'running'), ('deepseek', False, 'failed'),
+        ('mimo', True, 'running'), ('mimo', True, 'succeeded')]
     hooks._call_llm_with_retry('next', pair())
-    assert len(events) == 2
+    assert len(events) == 4
 
 
 def test_response_body_uses_time_remaining_after_headers(monkeypatch):

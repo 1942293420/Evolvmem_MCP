@@ -26,7 +26,19 @@ def judge(service, units, criteria, exceptions, target):
 
 # Only server-created snapshots are accepted; browser fields cannot seed verdicts.
 _REQUEST_FIELDS = ('group_id', 'selection', 'task_id', 'digest', 'projects', 'project',
-                   'knowledge_scope', 'condition', 'exceptions', 'scope', 'guidance', 'continue_job_id')
+                   'knowledge_scope', 'condition', 'exceptions', 'scope', 'guidance', 'continue_job_id', 'model_choice')
+
+
+def model_options():
+    from evolvmem.kimi_hooks import _load_llm_config
+    config = _load_llm_config(log_errors=False)
+    items = [{'id':'auto', 'label':'自动选择（失败时切换备用模型）'}]
+    for key, candidate in [('primary', config), ('fallback', getattr(config, 'fallback', None))]:
+        if candidate is not None and getattr(candidate, 'provider', None):
+            name = {'deepseek':'DeepSeek', 'mimo':'MiMo', 'kimi':'Kimi'}.get(candidate.provider, candidate.provider)
+            items.append({'id':key, 'provider':candidate.provider, 'model':candidate.model,
+                          'label':f'{name} · {candidate.model}'})
+    return {'items':items}
 
 
 def _units(service):
@@ -48,18 +60,23 @@ def _signature(service, request):
     names={p['project']:p['display_name'] or p['project'] for p in service.knowledge().registry()}
     from evolvmem.ownership_reasoning import VERSION
     from evolvmem.task_context import VERSION as CONTEXT_VERSION
-    return _hash([VERSION, CONTEXT_VERSION, retrieval.VERSION, target, [names.get(p,p) for p in target['projects']],
+    signature = [VERSION, CONTEXT_VERSION, retrieval.VERSION, target, [names.get(p,p) for p in target['projects']],
                   str(request.get('condition','')).strip(), str(request.get('exceptions','')).strip(),
                   service.config.context_vector_min_similarity,service.config.context_reranker_min_score,
                   str(service.config.model_path),service.config.embedding_dim,
-                  service.knowledge().rules.read()['revision']])
+                  service.knowledge().rules.read()['revision']]
+    if request.get('model_choice', 'auto') != 'auto':
+        signature.append(request['model_choice'])
+    return _hash(signature)
 
 
 def _prepare(service, request, base, units):
+    checks = {}
+    stamps = {_key(u):_stamp(units[_key(u)],service,source_checks=checks) for u in base['excluded']
+              if u.get('reason_code') in ('ai_pending','batch_limit') and _key(u) in units}
     return {**request, '_preview':base, '_signature':_signature(service,request),
-            '_candidate_snapshots':{_key(u):_stamp(units[_key(u)],service) for u in base['excluded']
-                          if u.get('reason_code') in ('ai_pending','batch_limit') and _key(u) in units},
-            '_snapshots':{_key(u):_stamp(units[_key(u)],service) for u in base['excluded']
+            '_candidate_snapshots':stamps,
+            '_snapshots':{_key(u):stamps[_key(u)] for u in base['excluded']
                           if u.get('reason_code')=='ai_pending' and _key(u) in units}}
 
 
@@ -109,7 +126,17 @@ def _same_continuation(current, previous):
 
 def start(service, body, *, _cached_only=False):
     from evolvmem import organization_review as review
+    submitted_at = _now_iso()
     request={k:body[k] for k in _REQUEST_FIELDS if k in body}
+    choice = request.get('model_choice', 'auto')
+    if choice not in ('auto','primary','fallback'):
+        raise ValueError('invalid_review_model')
+    if choice != 'auto':
+        from evolvmem.kimi_hooks import _load_llm_config, select_llm_config
+        config = _load_llm_config()
+        if config is None:
+            raise ValueError('review_model_unavailable')
+        select_llm_config(config, choice)
     request.update(matching_mode='semantic',job_id=uuid.uuid4().hex)
     conn=service.store._connection()
     with service.store.transaction():
@@ -174,7 +201,7 @@ def start(service, body, *, _cached_only=False):
         status='completed' if len(cached)==total and '_ranking' in request else 'pending'
         conn.execute('INSERT INTO organization_review_jobs(id,status,request,base_revision,judgments,processed,total,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
                      (request['job_id'],status,json.dumps(request,ensure_ascii=False),base['revision'],
-                      json.dumps(cached,ensure_ascii=False),len(cached),total,_now_iso(),_now_iso()))
+                      json.dumps(cached,ensure_ascii=False),len(cached),total,submitted_at,_now_iso()))
     return get(service,request['job_id'])
 
 
@@ -188,7 +215,9 @@ def _row(service, job_id):
 def get(service, job_id, *, _current_units=None):
     row=_row(service,job_id)
     result={k:row[k] for k in ('id','status','error','processed','total')}
-    result['elapsed_seconds'] = max(0, int((datetime.now(timezone.utc) -
+    end = (datetime.fromisoformat(row['updated_at']).replace(tzinfo=timezone.utc)
+           if row['status'] in ('completed','failed','stopped') else datetime.now(timezone.utc))
+    result['elapsed_seconds'] = max(0, int((end -
         datetime.fromisoformat(row['created_at']).replace(tzinfo=timezone.utc)).total_seconds()))
     result['waiting_for'] = ''
     if row['status'] == 'pending':
@@ -198,6 +227,8 @@ def get(service, job_id, *, _current_units=None):
     result.update(request.get('_retrieval',{}))
     result['phase']=request.get('_phase','retrieval')
     result['model_status']=request.get('_model_status',{})
+    result['model_calls']=request.get('_model_calls',[])
+    result['reused_count']=request.get('_reused',0)
     result['request']={k:request[k] for k in _REQUEST_FIELDS if k in request}
     if request.get('_signature') != _signature(service,request):
         result['request'].pop('continue_job_id',None)
@@ -378,6 +409,14 @@ def tick(service):
             if _row(service,row['id'])['status']=='stopped':raise ValueError('review_stopped')
             request['_phase']='judging'
             request['_model_status']=status
+            if status.get('call_id'):
+                calls = request.setdefault('_model_calls', [])
+                index = next((i for i,c in enumerate(calls) if c.get('call_id')==status['call_id']), None)
+                if index is None:
+                    calls.append(status)
+                else:
+                    calls[index]=status
+                request['_model_calls']=calls[-40:]
             with service.store.transaction():
                 conn.execute('UPDATE organization_review_jobs SET request=?,updated_at=? WHERE id=?',
                              (json.dumps(request,ensure_ascii=False),_now_iso(),row['id']))
