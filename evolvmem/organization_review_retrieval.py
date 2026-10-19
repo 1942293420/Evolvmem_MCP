@@ -24,8 +24,28 @@ def rank(service, units, request, progress=lambda **kw: None):
         progress(phase='judging',pool_count=0,recalled_count=0,ranked_count=0)
         return []
     engine = service.embedding_engine
-    if engine is None or not engine.is_loaded or not engine.reranker_loaded:
-        raise ValueError('review_retrieval_unavailable')
+    reconnect = engine is None or not engine.is_loaded or not engine.reranker_loaded
+    if reconnect:
+        if not service.config.embedding_http_url:
+            raise ValueError('review_retrieval_unavailable')
+        # A worker can outlive a model-server restart or an HTTP failure. Its
+        # cached availability flags are not a permanent verdict. Recheck only
+        # for this requested review, without loading another local model or
+        # changing the shared client's lifecycle under other operations.
+        from evolvmem.embedding import EmbeddingEngine
+        engine = EmbeddingEngine(service.config)
+    try:
+        if reconnect:
+            engine.initialize()
+            if not engine.is_loaded or not engine.reranker_loaded:
+                raise ValueError('review_retrieval_unavailable')
+        return _rank(service, units, request, progress, engine)
+    finally:
+        if reconnect:
+            engine.close()
+
+
+def _rank(service, units, request, progress, engine):
     conn = service.store._connection()
     with service.store.transaction():
         conn.execute('CREATE TABLE IF NOT EXISTS organization_review_vectors('
