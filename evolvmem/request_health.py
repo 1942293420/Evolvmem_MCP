@@ -1,4 +1,5 @@
 """Reuse a health observation within one request, never across requests."""
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -46,20 +47,33 @@ def _state(server):
     )
 
 
+# Health reuse is bounded in time as well as by state: a fingerprint cannot see
+# every conceivable degradation, so an answer is never reused for longer than this
+# even when the state looks unchanged.
+_REUSE_TTL_S = 5.0
+
+
 def current_status(server, evaluate):
     observations = _observations.get()
-    if observations is None:
-        return evaluate()
     try:
         state = _state(server)
     except Exception:
         # Unknown observations must never authorize reuse of earlier health.
         return evaluate()
-    previous = observations.get(server)
-    if previous is not None and previous[0] == state:
-        return previous[1]
+    # Cross-request reuse: _state already covers writes from this connection and,
+    # through PRAGMA data_version, from every other one. The evaluation is a pure
+    # function of that state, so an unchanged state means an unchanged answer.
+    # The TTL is a belt-and-braces bound for anything the fingerprint cannot see.
+    cached = getattr(server, '_health_state_cache', None)
+    if cached is not None and cached[0] == state:
+        if (time.monotonic() - cached[2]) <= _REUSE_TTL_S:
+            if observations is not None:
+                observations[server] = (state, cached[1])
+            return cached[1]
     result = evaluate()
-    # Evaluating health can itself refresh a resident vector image. Bind the
-    # result to the state actually checked, without masking a concurrent write.
-    observations[server] = (state, result)
+    # Bind the result to the state actually checked, without masking a concurrent
+    # write: a change inside evaluate() makes the next call's state differ.
+    server._health_state_cache = (state, result, time.monotonic())
+    if observations is not None:
+        observations[server] = (state, result)
     return result

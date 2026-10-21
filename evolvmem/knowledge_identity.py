@@ -30,6 +30,10 @@ SCHEMA = (
     )""",
     """CREATE INDEX IF NOT EXISTS idx_knowledge_fingerprint
         ON knowledge_objects(fingerprint, retired)""",
+    # Items are mapped back to their knowledge object by item_id on every
+    # project-knowledge read; without this the join scans the table.
+    """CREATE INDEX IF NOT EXISTS idx_knowledge_objects_item
+        ON knowledge_objects(item_id)""",
     """CREATE TABLE IF NOT EXISTS knowledge_source_bindings (
         knowledge_id TEXT NOT NULL REFERENCES knowledge_objects(knowledge_id),
         source_key TEXT NOT NULL, source_start INTEGER NOT NULL, source_end INTEGER NOT NULL,
@@ -104,6 +108,31 @@ def _bind(service, task, unit, knowledge_id, anchors, *, approved=False):
              task['id'], _hash(task['source_snapshot']), _now_iso(), int(approved)))
 
 
+def _reusable_by_fingerprint(service, unit):
+    """An existing knowledge object carrying exactly this text, or ``None``.
+
+    Returns a candidate only when the project sets agree. A unit whose project is
+    still undecided may join an object that also has no project; it may not join
+    one already committed to a project, and vice versa.
+    """
+    from evolvmem import knowledge_scope as ks
+    fingerprint = _hash(unit['text'].strip())
+    mine = {p for p in ks.projects(unit) if p}
+    rows = service.store._connection().execute(
+        'SELECT knowledge_id, decision_json FROM knowledge_objects '
+        'WHERE fingerprint=? AND retired=0 ORDER BY knowledge_id', (fingerprint,)).fetchall()
+    for raw in rows:
+        decision_text = raw['decision_json'] or '{}'
+        try:
+            decision = json.loads(decision_text)
+        except ValueError:
+            continue
+        theirs = {p for p in ks.projects(decision) if p}
+        if mine == theirs:
+            return raw['knowledge_id']
+    return None
+
+
 def _new(service, unit):
     kid = 'kn_' + uuid.uuid4().hex
     service.store._connection().execute(
@@ -126,8 +155,15 @@ def _remember(service, task, unit, anchors):
     if kid and not _object(service, kid):
         return None
     if not kid:
-        kid = _new(service, unit)
-        _bind(service, task, unit, kid, anchors)
+        # Identical text in the same project is the same knowledge: bind the new
+        # source to the existing object instead of creating a twin. Without this
+        # every extraction produced a fresh object and reuse stayed at zero.
+        kid = _reusable_by_fingerprint(service, unit)
+        if kid:
+            _bind(service, task, unit, kid, anchors)
+        else:
+            kid = _new(service, unit)
+            _bind(service, task, unit, kid, anchors)
     saved = _object(service, kid)
     if not saved['decision_json'] or saved['decision_json'] == '{}':
         if unit['decision'] == 'manual' or unit.get('disposition_reason') == '用户选择暂不归档':

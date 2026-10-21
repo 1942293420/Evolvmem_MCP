@@ -16,8 +16,38 @@
   let cleaningNode=null;let organizationNode=null,organizationHandle=null;const cleaningState={dirty:false,busy:false,background:false};
   function syncCleaning(){if(state.view==='cleaning'){rulesDirty=cleaningState.dirty;actionBusy=cleaningState.busy&&!cleaningState.background;mount.setAttribute('aria-busy',String(cleaningState.busy));}}
   function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,6500); }
+  function documentExpired(nextExpiry) {
+    if (!nextExpiry) return false;
+    const when = Date.parse(String(nextExpiry).replace(' ', 'T'));
+    return Number.isFinite(when) && when <= Date.now();
+  }
+  async function cachedDocumentFresh(route, cached) {
+    // Another agent, the background worker or a second window can change the
+    // project without this page writing anything, so the in-memory cache cannot
+    // be trusted on its own. Ask the cheap version probe before reusing it.
+    if (!cached || !cached.version) return false;
+    let params;
+    try { params = new URLSearchParams(route.slice(route.indexOf('?') + 1)); } catch (error) { return false; }
+    const project = params.get('project') || '';
+    if (!project) return true;
+    let probe;
+    try {
+      probe = await api('version?project=' + encodeURIComponent(project));
+    } catch (error) {
+      // Unreachable probe: re-read rather than risk showing stale content.
+      return false;
+    }
+    if (!probe || probe.ok === false) return false;
+    if (probe.version !== cached.version) return false;
+    return !documentExpired(probe.next_expiry);
+  }
   async function api(route, body, options={}) {
-    if(body===undefined&&route.startsWith('project-memory?')&&projectDocuments.has(route))return projectDocuments.get(route);
+    if(body===undefined&&route.startsWith('project-memory?')&&projectDocuments.has(route)){
+      const cached=projectDocuments.get(route);
+      if(await cachedDocumentFresh(route,cached))return cached;
+      // Stale (changed elsewhere, expired, or unprobeable): re-read below.
+      projectDocuments.delete(route);
+    }
     // Bound reads only. Aborting a write cannot establish whether it committed,
     // so saving keeps its existing receipt and is never automatically retried.
     const deadline=body===undefined?new AbortController():null;

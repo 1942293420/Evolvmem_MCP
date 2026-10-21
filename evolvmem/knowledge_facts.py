@@ -53,6 +53,14 @@ SCHEMA = (
         base_group TEXT NOT NULL, knowledge_id TEXT NOT NULL,
         group_id TEXT NOT NULL REFERENCES knowledge_fact_groups(id),
         PRIMARY KEY(base_group,knowledge_id))""",
+    # Declared last on purpose: knowledge_fact_sources is created earlier in this
+    # tuple, and an index written before its table fails on a fresh database.
+    """CREATE INDEX IF NOT EXISTS idx_fact_source_active
+        ON knowledge_fact_sources(active, knowledge_id)""",
+    # Read per version on every fact browse; without it each of ~4.5k versions
+    # scans the whole relations table (measured 2.20 s of a 3.96 s directory).
+    """CREATE INDEX IF NOT EXISTS idx_fact_relations_version
+        ON knowledge_fact_relations(version_id)""",
 )
 
 RELATIONS = {'涉及', '使用', '修改', '适用于', '支持', '验证', '补充', '替代', '存在分歧'}

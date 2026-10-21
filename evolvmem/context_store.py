@@ -328,6 +328,13 @@ _SCHEMA_TABLE_STATEMENTS: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS idx_context_sources_item
         ON context_sources(item_id)
     """,
+    # The project history listing resolves which items each archive binds in one
+    # pass; without this the join scans context_sources per unit. Measured on the
+    # live database: 1.118 s -> 0.614 s for a session listing.
+    """
+    CREATE INDEX IF NOT EXISTS idx_context_sources_archive_item
+        ON context_sources(archive_id, item_id, source_kind)
+    """,
     """
     CREATE INDEX IF NOT EXISTS idx_context_evidence_item
         ON context_evidence(item_id)
@@ -742,7 +749,26 @@ class ContextStore:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_experience_event "
                      "ON context_evidence(item_id,event_key,revision) WHERE event_key != ''")
-
+        # Project knowledge resolves units by knowledge_id on every fact
+        # verification. Without this index that predicate scans the whole table
+        # and the project-materials page took 39 s instead of 0.5 s. It has to
+        # live here, after the incremental column migration above has guaranteed
+        # the column exists — putting it with the table statements fails on a
+        # fresh database.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_organization_units_knowledge "
+                     "ON organization_units(knowledge_id)")
+        # The history listing filters archives by project and reconciliation
+        # looks them up by state; without these both scan every archive.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_session_archives_project "
+                     "ON session_archives(project)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_session_archives_state "
+                     "ON session_archives(state)")
+        # The planner needs row counts to choose a join order. This database had
+        # never been analysed, so adding an index could make a page *slower*
+        # (measured: 0.69 s -> 5.45 s, back to 0.78 s after ANALYZE). Run it once
+        # when no statistics exist at all; later starts skip it.
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'").fetchone() is None:
+            conn.execute("ANALYZE")
         conn.execute(_FTS_TABLE_STATEMENT)
         try:
             conn.execute(_FTS_TRIGRAM_TABLE_STATEMENT)

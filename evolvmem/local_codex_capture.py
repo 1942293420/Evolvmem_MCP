@@ -29,6 +29,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from evolvmem.codex_transcript import dialogue_messages, workspace_details
 from evolvmem.conversation import clean_messages
@@ -379,6 +380,53 @@ def _peek_session_id(path):
     return ''
 
 
+def _peek_workspace(path):
+    """First record's session cwd, or ``''`` when it does not declare one.
+
+    Only the first ``session_meta`` record carries the workspace, and an
+    incremental batch that starts after line 1 does not include it. The value
+    therefore comes from the file head, not from the batch being archived.
+    """
+    row = _first_record(path)
+    if row is None or row.get('type') != 'session_meta':
+        return ''
+    payload = row.get('payload')
+    if not isinstance(payload, dict):
+        return ''
+    cwd = payload.get('cwd')
+    return cwd if isinstance(cwd, str) else ''
+
+
+def workspace_project(config, store, workspace_path):
+    """Deterministic project for a session workspace; ``''`` when not unique.
+
+    Reuses the continuity backfill rule: the path must fingerprint to a binding
+    naming exactly one active project. A generic home directory, an unreadable
+    path, a missing workspace key, or a workspace bound to several projects all
+    return ``''`` — the archive then records no project rather than a wrong one.
+    """
+    if not workspace_path:
+        return ''
+    try:
+        resolved = Path(workspace_path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return ''
+    if resolved == Path.home():
+        return ''
+    try:
+        from evolvmem.workspace_identity import WorkspaceIdentityProvider
+        provider = WorkspaceIdentityProvider(
+            key_path=config.data_dir / 'workspace.key')
+        fingerprint = provider.resolve(workspace_path).fingerprint
+    except Exception:
+        return ''
+    try:
+        from evolvmem.continuity_service import _resolve_bound_project
+        return _resolve_bound_project(store, fingerprint, '') or ''
+    except Exception:
+        return ''
+
+
 def subagent_session(path):
     """Whether the first session_meta declares a system sub-session.
 
@@ -668,10 +716,15 @@ def build_batch(config, store, row, records):
     if hashlib.sha256(transcript.encode('utf-8')).hexdigest() != digest:
         raise RuntimeError('batch_bytes_changed')
     event_ids = [location['event_id'] for location in locations if location['event_id']]
+    # The session's own working directory decides the project, exactly as the
+    # continuity backfill does it: a bound workspace with one active project,
+    # never a guess. Without this every locally captured session archived an
+    # empty project and could never be attributed downstream.
+    project = workspace_project(config, store, _peek_workspace(row['path']))
     payload = json.dumps({
         'conversation': cleaned,
         'transcript': transcript,
-        'project': '',
+        'project': project,
         'source_sha256': digest,
         'source': {'kind': 'local_codex_jsonl', 'adapter': ADAPTER, 'session_id': row['session_id'],
                    'file': row['path'], 'start_offset': records[0]['start'],
@@ -681,7 +734,8 @@ def build_batch(config, store, row, records):
         'line_locations': locations,
     }, ensure_ascii=False)
     archive = SessionArchiver(config, store).archive_session(
-        '', ADAPTER, batch_external_id(row['session_id'], records[0]['line'], records[-1]['line'], digest),
+        project, ADAPTER,
+        batch_external_id(row['session_id'], records[0]['line'], records[-1]['line'], digest),
         payload)
     if archive is None:
         # Encryption unavailable: a real failure, never a silent consumption.

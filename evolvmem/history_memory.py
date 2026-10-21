@@ -48,7 +48,7 @@ def _unit_archive(archive_sql):
             "AND us.source_ref LIKE t.source_key||'#'||u.digest||'@%'))")
 
 
-def project_units(service, project, archive_id):
+def project_units(service, project, archive_id, *, task_cache=None):
     """Range-exact organization units attributed to one project for one archive.
 
     A multi-project archive is never forced into a single project, so the read
@@ -67,7 +67,18 @@ def project_units(service, project, archive_id):
         'ORDER BY u.source_start,u.ordinal',
         (archive_id,archive_id,project)).fetchall()
     from evolvmem.auto_organization import task_view
-    current = {row['task_id']: task_view(service, row['task_id'])['source_current'] for row in rows}
+    if task_cache is None:
+        current = {row['task_id']: task_view(service, row['task_id'])['source_current']
+                   for row in rows}
+    else:
+        # 224 archives resolve to only six distinct tasks on the live data, so a
+        # request-scoped cache removes 97% of these calls. The values are current
+        # state and the cache never outlives the request.
+        for row in rows:
+            task_id = row['task_id']
+            if task_id not in task_cache:
+                task_cache[task_id] = task_view(service, task_id)['source_current']
+        current = task_cache
     return [dict(row) for row in rows if current[row['task_id']]]
 
 
@@ -154,14 +165,29 @@ def sessions(service, project):
     has_units = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE name='organization_units'").fetchone() is not None
     if has_units:
+        # Same set as the correlated EXISTS this replaces, but driven from the
+        # project's own units instead of scanning every unbound archive: that
+        # form compares a computed LIKE inside a per-archive subquery, which no
+        # index can serve, and measured 253 s against 0.06 s for this one.
         extra = conn.execute(
             'SELECT a.*,h.content_hash,h.cleaned_at FROM session_archives a '
             'LEFT JOIN conversation_history h ON h.archive_id=a.id '
-            "WHERE a.project='' AND EXISTS(SELECT 1 FROM organization_units u "
+            "WHERE a.project='' AND a.id IN ("
+            'SELECT a2.id FROM session_archives a2 '
+            "JOIN context_sources us ON us.archive_id=a2.id AND us.source_kind='organization' "
+            'JOIN organization_units u ON u.item_id=us.item_id '
             'JOIN organization_tasks t ON t.id=u.task_id '
-            "WHERE "+_unit_archive("a.id")+" AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
-            "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' AND u.item_id IS NOT NULL) "
-            'ORDER BY a.created_at DESC,a.id DESC', (project,)).fetchall()
+            "WHERE a2.project='' AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) "
+            "AND t.status!='superseded' AND u.decision IN ('auto','manual') "
+            "AND u.disposition!='set_aside' AND u.item_id IS NOT NULL "
+            'UNION '
+            'SELECT a3.id FROM session_archives a3 '
+            "JOIN organization_tasks t ON t.source_key='archive:'||a3.id "
+            'JOIN organization_units u ON u.task_id=t.id '
+            "WHERE a3.project='' AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) "
+            "AND t.status!='superseded' AND u.decision IN ('auto','manual') "
+            "AND u.disposition!='set_aside' AND u.item_id IS NOT NULL) "
+            'ORDER BY a.created_at DESC,a.id DESC', (project, project)).fetchall()
         rows = list(rows) + [row for row in extra if row['id'] not in {r['id'] for r in rows}]
     jobs = {}
     from evolvmem.history_organization import _excluded_archive_ids
@@ -173,11 +199,41 @@ def sessions(service, project):
                 'JOIN lan_session_heads h ON h.device_id=u.device_id AND h.session_id=u.session_id '
                 'WHERE h.sha256!=u.sha256 AND u.archive_id IS NOT NULL')}
     result, seen = [], set()
+    # Shared across the per-archive loop below; see project_units.
+    unit_cache = {}
+    # The per-archive unit lookup below is one query per session; profiling put
+    # 5.97 s of 6.95 s of SQL time in it, because the project predicate parses
+    # json_each(u.projects) for ~12k candidate rows on every call. Compute it
+    # once for the whole project instead. The two UNION branches are the two arms
+    # of _unit_archive: an explicit archive source_key, and a context_sources row
+    # that binds the unit's item to the archive.
+    unit_items_by_archive = {}
+    if has_units:
+        for archive_id, item_id in conn.execute(
+                'SELECT DISTINCT s.archive_id AS archive_id,u.item_id AS item_id '
+                'FROM organization_units u '
+                'JOIN organization_tasks t ON t.id=u.task_id '
+                "JOIN context_sources s ON s.item_id=u.item_id AND s.source_kind='organization' "
+                "AND s.source_ref LIKE t.source_key||'#'||u.digest||'@%' "
+                "WHERE ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) "
+                "AND t.status!='superseded' AND u.decision IN ('auto','manual') "
+                "AND u.disposition!='set_aside' AND u.item_id IS NOT NULL "
+                'UNION '
+                'SELECT CAST(substr(t.source_key,9) AS INTEGER) AS archive_id,u.item_id AS item_id '
+                'FROM organization_units u '
+                'JOIN organization_tasks t ON t.id=u.task_id '
+                "WHERE t.source_key LIKE 'archive:%' "
+                "AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) "
+                "AND t.status!='superseded' AND u.decision IN ('auto','manual') "
+                "AND u.disposition!='set_aside' AND u.item_id IS NOT NULL",
+                (project, project)):
+            unit_items_by_archive.setdefault(archive_id, set()).add(item_id)
     from evolvmem.unit_derivations import current_item_ids
     for row in rows:
         if row['id'] in ignored:
             continue
-        if not row['project'] and not project_units(service, project, row['id']):
+        if not row['project'] and not project_units(service, project, row['id'],
+                                                     task_cache=unit_cache):
             continue
         key = identity_key(row['adapter'], row['external_session_id'])
         if key in seen:
@@ -196,14 +252,7 @@ def sessions(service, project):
         # A project correction can leave the same unit summary under two
         # identities. Show it once, preferring the item the current unit points
         # at, so the listing and its source ids stay a single current source.
-        unit_items = set()
-        if has_units:
-            unit_items = {item[0] for item in conn.execute(
-                'SELECT DISTINCT u.item_id FROM organization_units u '
-                'JOIN organization_tasks t ON t.id=u.task_id '
-                "WHERE "+_unit_archive("?")+" AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
-                "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' "
-                'AND u.item_id IS NOT NULL', (row['id'],row['id'],project))}
+        unit_items = unit_items_by_archive.get(row['id'], set()) if has_units else set()
         kept, contents = [], set()
         for item in sorted(linked, key=lambda r: (r['id'] not in unit_items, r['id'])):
             if item['content'] in contents:
