@@ -30,6 +30,16 @@ from evolvmem import organization_guidance as guidance_store
 from evolvmem import topic_segmentation
 
 MAX_ATTEMPTS = 3
+
+import logging
+
+_LOG = logging.getLogger(__name__)
+
+# A task that has been 'running' longer than this is treated as abandoned. The
+# worker only claims pending rows, so without this a row left behind by a dead
+# worker stays invisible until the next successful startup restore.
+_STALE_RUNNING_MINUTES = 30
+_STALE_SWEEP_SECONDS = 600
 POLL_SECONDS = 2
 PAGE_SIZE = 20
 # Bounded per-index work for one background discovery/reconcile tick.
@@ -1216,13 +1226,20 @@ class OrganizationWorker:
             try:
                 self._restore()
             except Exception:
-                pass
+                # Never silent: interrupted work stays queued in 'running' when
+                # this fails, and nothing else would report it.
+                _LOG.exception(
+                    'organization restore failed; interrupted work may stay in running')
             next_discovery = 0
+            next_stale_sweep = 0
             while not self._stop.is_set():
                 worked = False
                 try:
                     if self._stop.is_set():
                         break
+                    if time.monotonic() >= next_stale_sweep:
+                        next_stale_sweep = time.monotonic() + _STALE_SWEEP_SECONDS
+                        self._restore_stale()
                     if time.monotonic() >= next_discovery:
                         next_discovery = time.monotonic() + 30
                         try:
@@ -1233,12 +1250,11 @@ class OrganizationWorker:
                     worked = self.tick()
                     if self.capture_once():
                         worked = True
-                    if not worked and not self._stop.is_set():
-                        try:
-                            from evolvmem.organization_arrival import discover_new
-                            worked = bool(discover_new(self._connect())['created'])
-                        except Exception:
-                            worked = False
+                    # Arrival discovery stays on the rate-limited branch above.
+                    # Calling it again here (as this loop used to) ran a 15 s
+                    # no-op scan on every 2 s idle poll, which is why the worker
+                    # held the CPU at ~85% for days. New arrivals are still
+                    # picked up within the same 30 s window.
                 except Exception:
                     worked = False
                 if worked:
@@ -1274,6 +1290,28 @@ class OrganizationWorker:
             service.store._connection().execute(
                 "UPDATE organization_tasks SET status='pending',updated_at=? WHERE status='running'",
                 (_now_iso(),))
+
+    def _restore_stale(self):
+        """Return abandoned 'running' tasks to the queue.
+
+        Recovery used to depend on a restart: the worker only claims 'pending'
+        rows, so a task left in 'running' by a dead worker was never retried.
+        Sweeping on a timer bounds that to _STALE_RUNNING_MINUTES.
+        """
+        service = self._connect()
+        with service.store.transaction():
+            cursor = service.store._connection().execute(
+                "UPDATE organization_tasks SET status='pending',updated_at=? "
+                "WHERE status='running' AND updated_at < datetime('now',?)",
+                (_now_iso(), '-%d minutes' % _STALE_RUNNING_MINUTES),
+            )
+            released = cursor.rowcount
+        if released:
+            _LOG.warning(
+                'organization returned %d stale running task(s) to the queue',
+                released,
+            )
+        return released
 
     # -- one unit of work --
 
@@ -1748,6 +1786,22 @@ class OrganizationWorker:
             hint = unit['project_hint'] if unit['project_hint'] in names else ''
             used = {}
             project, reason, decision = self._decide(service, unit, hint, policy, names, basis, used)
+            if decision == 'review':
+                # The model-backed pass declined, so apply the operator's written
+                # project standards before giving up. Only 'review' means declined:
+                # 'manual' is a human attribution and must never be overwritten by
+                # a machine guess, and 'auto' is already decided. This is the only path by
+                # which a unit with clear vocabulary but no ownership analysis
+                # reaches a project; the standards pass answers only on
+                # high-confidence evidence, so an uncertain unit still waits.
+                try:
+                    from evolvmem.project_classifier import decide as _standards_decide
+                    _std_project, _std_evidence = _standards_decide(service.config, unit['text'])
+                except Exception:
+                    _std_project, _std_evidence = '', []
+                if _std_project and _std_project in names:
+                    project, decision = _std_project, 'auto'
+                    reason = '按项目标准归类：命中 ' + '、'.join(_std_evidence[:5])
             inherited = decision == 'auto' and used.get('context') is True
             self._update_unit(service, task['id'], unit['digest'], project=project, decision=decision,
                               expected_revision=unit, reason=reason, evidence_quote=resolved_quote,
