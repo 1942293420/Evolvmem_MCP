@@ -5,13 +5,17 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf('--task') + 1] : 'all';
 
 (async () => {
-  const remote = spawn('ssh', ['-L','39480:127.0.0.1:39479','codex-linux',
-    'cd /home/jiangli/.local/share/evolvmem-worktrees/frontend-refresh && PYTHONPATH=.tools/site exec python3 tests/browser/capability_archives_fixture.py'],
+  const remote = spawn('ssh', ['-L','39480:127.0.0.1:39479','codex-linux','sleep 30'],
     {stdio:['ignore','pipe','pipe']});
   let browser;
   const errors = [];
   try {
-    await sleep(800);
+    let ready = false;
+    for (let i = 0; i < 50 && !ready; i++) {
+      try { ready = (await fetch('http://127.0.0.1:39480/api/capabilities')).ok; }
+      catch { await sleep(200); }
+    }
+    assert.ok(ready, 'disposable web fixture did not start');
     browser = await chromium.launch({headless:true,args:['--no-sandbox']});
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
@@ -69,6 +73,26 @@ const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf
       await page.locator('[data-suggestion="accept"]').click();
       await page.waitForTimeout(700);
       assert.match(await page.locator('.refresh-notice').innerText(), /创建新分类/);
+      for (const width of [390,768,1024,1440]) {
+        await page.setViewportSize({width,height:1000});
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+      }
+    }
+    if (task === 'archives' || task === 'all') {
+      await page.goto(base + '/#knowledge/archives');
+      await page.locator('[name=project]').fill('蓝鲸');
+      await page.locator('#project-archive-form button').click();
+      await page.waitForTimeout(1500);
+      console.log('ARCHIVE_BODY', (await page.locator('body').innerText()).slice(0,1500));
+      assert.equal(await page.locator('pre.project-archive-summary').count(), 0);
+      assert.ok(await page.locator('[data-project-event]').count() > 0);
+      await page.locator('[data-project-event]').first().click();
+      assert.ok(await page.locator('[data-event-source]').count());
+      await page.locator('[name=project]').fill('不存在的项目');
+      await page.locator('#project-archive-form button').click();
+      await page.waitForTimeout(1000);
+      assert.match(await page.locator('#project-archive-result').innerText(), /project_not_registered|未找到/);
+      assert.equal(await page.locator('[name=project]').inputValue(), '不存在的项目');
       for (const width of [390,768,1024,1440]) {
         await page.setViewportSize({width,height:1000});
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
