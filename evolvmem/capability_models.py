@@ -10,6 +10,16 @@ CAPABILITY_CATEGORIES = (
     "delivery",
 )
 
+CAPABILITY_CATEGORY_LABELS = {
+    "frontend": "前端",
+    "backend": "后端",
+    "business_logic": "业务逻辑",
+    "database": "数据库与数据处理",
+    "architecture": "架构与技术设计",
+    "quality": "测试与问题治理",
+    "delivery": "部署与工程协作",
+}
+
 CAPABILITY_SCHEMA = (
     """CREATE TABLE IF NOT EXISTS capability_categories(
         id TEXT PRIMARY KEY, label TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
@@ -40,6 +50,7 @@ CAPABILITY_SCHEMA = (
         suggested_category TEXT NOT NULL DEFAULT '', source_project TEXT NOT NULL DEFAULT '',
         source_ref TEXT NOT NULL DEFAULT '', occurred_at TEXT, fingerprint TEXT NOT NULL UNIQUE,
         status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','assigned','ignored')),
+        revision INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS knowledge_restructure_state(
         key TEXT PRIMARY KEY, value TEXT NOT NULL)""",

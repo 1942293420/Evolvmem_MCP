@@ -5,19 +5,10 @@ from dataclasses import dataclass
 import hashlib
 import json
 
-from evolvmem.capability_models import CAPABILITY_CATEGORIES
+from evolvmem.capability_models import CAPABILITY_CATEGORIES, CAPABILITY_CATEGORY_LABELS
 from evolvmem.context_store import _now_iso
 
 
-_CATEGORY_LABELS = {
-    "frontend": "前端",
-    "backend": "后端",
-    "business_logic": "业务逻辑",
-    "database": "数据库与数据处理",
-    "architecture": "架构与技术设计",
-    "quality": "测试与问题治理",
-    "delivery": "部署与工程协作",
-}
 _STATUSES = {"active", "pending", "ignored", "archived"}
 
 
@@ -53,12 +44,10 @@ class CapabilityStore:
         self.conn.executemany(
             "INSERT OR IGNORE INTO capability_categories"
             "(id,label,created_at,updated_at) VALUES(?,?,?,?)",
-            [(key, _CATEGORY_LABELS[key], now, now) for key in CAPABILITY_CATEGORIES],
+            [(key, CAPABILITY_CATEGORY_LABELS[key], now, now) for key in CAPABILITY_CATEGORIES],
         )
 
     def categories(self) -> list[dict]:
-        with self.context_store.transaction():
-            self._ensure_categories()
         return [dict(row) for row in self.conn.execute(
             "SELECT * FROM capability_categories ORDER BY rowid"
         )]

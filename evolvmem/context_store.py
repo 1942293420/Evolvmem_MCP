@@ -655,7 +655,7 @@ class ContextStore:
         conn.execute(review_schema)
         from evolvmem.knowledge_identity import SCHEMA as identity_schema
         from evolvmem.knowledge_facts import SCHEMA as fact_schema
-        from evolvmem.capability_models import CAPABILITY_SCHEMA
+        from evolvmem.capability_models import CAPABILITY_SCHEMA, CAPABILITY_CATEGORIES, CAPABILITY_CATEGORY_LABELS
         from evolvmem.project_archive_models import PROJECT_ARCHIVE_SCHEMA
         for statement in (
             *_SCHEMA_TABLE_STATEMENTS,
@@ -666,6 +666,12 @@ class ContextStore:
             *PROJECT_ARCHIVE_SCHEMA,
         ):
             conn.execute(statement)
+        now = _now_iso()
+        conn.executemany(
+            "INSERT OR IGNORE INTO capability_categories(id,label,created_at,updated_at) "
+            "VALUES(?,?,?,?)",
+            [(key, CAPABILITY_CATEGORY_LABELS[key], now, now) for key in CAPABILITY_CATEGORIES],
+        )
 
         # 既有库增量列：项目中文显示名（2026-09-02）。新库已由上面的
         # CREATE TABLE 带上该列；老库在这里幂等补齐。

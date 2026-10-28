@@ -29,7 +29,7 @@ import time
 from functools import wraps
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 from evolvmem.config import Config
 from evolvmem.context_models import (
@@ -1346,6 +1346,18 @@ def make_handler(service: ContextService):
             views = TrustViews(read_service)
             parsed = urlparse(self.path)
             path = parsed.path
+            if path == '/api/capabilities':
+                from evolvmem.capability_web import capabilities
+                self._send_json(capabilities(read_service, {k: v[0] for k, v in parse_qs(parsed.query).items()}))
+                return
+            archive_match = re.fullmatch(r'/api/project-archives/(.+)', path)
+            if archive_match:
+                from evolvmem.capability_web import project_archive
+                try:
+                    self._send_json(project_archive(read_service, unquote(archive_match.group(1))))
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 404)
+                return
             if path.startswith('/api/knowledge/'):
                 self._knowledge('GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()})
                 return
@@ -1358,7 +1370,7 @@ def make_handler(service: ContextService):
                 except Exception as exc:  # bounded surface, no internal detail
                     self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
                 return
-            if path in ('/ui-feedback.js', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/project-review.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js'):
+            if path in ('/ui-feedback.js', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/project-review.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js', '/capabilities.js', '/project-archives.js'):
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 data = asset.read_bytes()
                 self.send_response(200)
@@ -1533,6 +1545,25 @@ def make_handler(service: ContextService):
                 body, failed = self._read_body()
                 if not failed:
                     self._knowledge('POST', path, body)
+                return
+            intake_match = re.fullmatch(r'/api/capabilities/intake/(\d+)/assign', path)
+            suggestion_match = re.fullmatch(r'/api/capability-categories/suggestions/(\d+)/(accept|reject)', path)
+            if intake_match or suggestion_match or path == '/api/capability-categories/suggestions':
+                body, failed = self._read_body()
+                if failed:
+                    return
+                try:
+                    from evolvmem.capability_web import assign_intake, create_category_suggestion, review_category_suggestion
+                    if intake_match:
+                        result = assign_intake(service, int(intake_match.group(1)), body)
+                    elif suggestion_match:
+                        result = review_category_suggestion(service, int(suggestion_match.group(1)), suggestion_match.group(2))
+                    else:
+                        result = {'suggestion_id': create_category_suggestion(service, body), 'status': 'pending'}
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 400)
+                    return
+                self._send_json({'ok': True, **result})
                 return
             m = _MEM_ACTION_RE.match(path)
             if m:

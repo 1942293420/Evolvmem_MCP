@@ -64,10 +64,12 @@
     $('.knowledge-tabs').hidden=!management;$('.knowledge-flow').hidden=true;mount.dataset.workspaceView=state.view;
     const flowSteps={intake:3,library:3,rules:3,skill:3,learning:4};
     mount.querySelectorAll('.knowledge-flow li').forEach((li,i)=>{const current=flowSteps[state.view]===i+1;li.classList.toggle('current',current);if(current)li.setAttribute('aria-current','step');else li.removeAttribute('aria-current');});
-    const titles={projects:'项目知识',unassigned:'项目历史',organization:'自动整理',cleaning:'数据清洗',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'经验知识',intake:'存量资料',rules:'清洗与入库规则',skill:'整理规则',learning:'协作学习'};
+    const titles={projects:'项目知识',unassigned:'项目历史',organization:'自动整理',cleaning:'数据清洗',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'经验知识',intake:'存量资料',rules:'清洗与入库规则',skill:'整理规则',learning:'协作学习',capabilities:'开发能力记忆',archives:'项目存档'};
     $('#knowledge-title').textContent=titles[state.view];$('#knowledge-description').textContent='';
     try {
     mount.querySelectorAll('[data-view]').forEach(a=>{const active=a.dataset.view===state.view;a.classList.toggle('active',active);a.setAttribute('aria-current',active?'page':'false');});
+    if(state.view==='capabilities'){await EvolvCapabilities.render({mount:$('#content'),esc,toast});return;}
+    if(state.view==='archives'){await EvolvProjectArchives.render({mount:$('#content'),esc});return;}
     const info=await refreshProjects();if(seq!==renderSequence)return;
     $('#content').onclick=null;$('#content').oninput=null;$('#content').onchange=null;
     if(state.view==='learning'){$('#content').innerHTML='<section class="panel"><h2>协作学习已停用</h2><p>各环节由 Skill 明确维护。旧学习资料保留，但不再自动生成或注入规则。</p><a href="#knowledge/skill" data-view="skill">打开经验提取与验证 Skill</a></section>';return;}
@@ -311,7 +313,7 @@
     kind:'memories', integrated:true,
     get project(){return state.project;}, set project(value){state.project=value||'__all__';state.q='';state.type='';state.category='';state.status='';state.queue='all';state.view='library';state.memoryLane='overview';state.fragmentsOpen=false;},
     get query(){return state.q;}, set query(value){state.q=value;state.view='library';state.memoryLane='overview';},
-    set view(value){if(value!==state.view)$('#knowledge-receipt').hidden=true;if(['projects','unassigned','organization','cleaning','library','intake','rules','skill','learning','qa'].includes(value))state.view=value;},
+    set view(value){if(value!==state.view)$('#knowledge-receipt').hidden=true;if(['projects','unassigned','organization','cleaning','library','intake','rules','skill','learning','qa','capabilities','archives'].includes(value))state.view=value;},
     set organizationTab(value){organizationTab=['review','failed','completed','history','guidance','facts','equivalences','all'].includes(value)?value:'review';},
     hash,
     set projectSort(value){if(state.view==='qa'){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';return;}state.projectSort=Object.hasOwn(projectSorts,value)?value:'recent';},

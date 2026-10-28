@@ -76,3 +76,20 @@ def test_capability_store_rejects_unknown_category_and_only_suggests_new_one(tes
         ).fetchone()
         assert suggestion["status"] == "pending"
         assert suggestion["source_memory_id"] == memory_id
+
+
+def test_categories_are_seeded_at_schema_creation_and_readable_from_read_only_db(test_config):
+    import sqlite3
+    from types import SimpleNamespace
+
+    with ContextStore(test_config):
+        pass
+    connection = sqlite3.connect(
+        test_config.db_path.resolve().as_uri() + "?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        read_only_store = SimpleNamespace(_connection=lambda: connection)
+        categories = CapabilityStore(read_only_store).categories()
+        assert len(categories) == len(CAPABILITY_CATEGORIES)
+    finally:
+        connection.close()
