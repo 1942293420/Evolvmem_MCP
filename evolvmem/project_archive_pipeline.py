@@ -53,3 +53,62 @@ class ProjectArchivePipeline:
                     (watermark, _now_iso(), project),
                 )
         return result
+
+
+def resolve_archive_project(service, name: str) -> str:
+    value = str(name).strip()
+    if not value:
+        raise ValueError("project_not_registered")
+    rows = service.store._connection().execute(
+        "SELECT project FROM context_project_registry WHERE status='active' AND "
+        "(project=? OR display_name=?) UNION "
+        "SELECT project FROM context_project_aliases WHERE alias=?",
+        (value, value, value),
+    ).fetchall()
+    if len(rows) != 1:
+        raise ValueError("project_not_registered" if not rows else "project_ambiguous")
+    return str(rows[0][0])
+
+
+def get_project_archive(service, project: str) -> dict:
+    resolved = resolve_archive_project(service, project)
+    archive = ProjectArchiveStore(service.store).get(resolved)
+    if archive is None:
+        raise ValueError("project_archive_not_found")
+    return archive
+
+
+def list_project_events(service, project: str, limit: int = 100) -> list[dict]:
+    resolved = resolve_archive_project(service, project)
+    events = ProjectArchiveStore(service.store).events(resolved)
+    return events[-max(1, min(int(limit), 500)):]
+
+
+def recall_project_archive(service, query: str, *, max_chars: int = 6000) -> dict:
+    text = str(query).strip().casefold()
+    if not text:
+        raise ValueError("invalid_query")
+    names = set()
+    for row in service.store._connection().execute(
+        "SELECT project,display_name FROM context_project_registry WHERE status='active'"
+    ):
+        names.add((row["project"], row["project"]))
+        if row["display_name"]:
+            names.add((row["display_name"], row["project"]))
+    for row in service.store._connection().execute("SELECT alias,project FROM context_project_aliases"):
+        names.add((row["alias"], row["project"]))
+    matched = sorted({project for name, project in names if name.casefold() in text})
+    if len(matched) != 1:
+        raise ValueError("project_not_registered" if not matched else "project_ambiguous")
+    archive = get_project_archive(service, matched[0])
+    events = list_project_events(service, matched[0], limit=20)
+    block = archive["summary"][:max_chars]
+    return {
+        "block": block,
+        "selected_ids": [event["event_id"] for event in events],
+        "matched_projects": [matched[0]],
+        "used_chars": len(block),
+        "unverified_ids": [],
+        "excluded": [],
+        "diagnostics": {},
+    }

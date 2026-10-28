@@ -329,6 +329,17 @@ _CAPABILITY_SEARCH_SPEC = McpToolSpec(
     annotations=_READ_ONLY,
 )
 
+_PROJECT_ARCHIVE_GET_SPEC = McpToolSpec(
+    name="project_archive_get",
+    description="Read one project's current archive summary, development period and source-backed history events by exact project name or alias. Does not return development-capability memories.",
+    input_schema={
+        "type": "object",
+        "properties": {"project": {"type": "string", "description": "Registered project name or alias"}},
+        "required": ["project"],
+    },
+    annotations=_READ_ONLY,
+)
+
 _CONTEXT_SEARCH_SPEC = McpToolSpec(
     name="context_search",
     description="Search Context Core memory: thresholded hybrid retrieval returning context IDs, identity keys, L0 summaries, scores, and match metadata. L1/L2 bodies are never returned; use context_read with an exact ID.",
@@ -591,6 +602,7 @@ _CONTEXT_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     _CONTEXT_SESSION_START_SPEC,
     _CONTEXT_SEARCH_SPEC,
     _CAPABILITY_SEARCH_SPEC,
+    _PROJECT_ARCHIVE_GET_SPEC,
     _CONTEXT_PROJECT_RECALL_SPEC,
     _CONTEXT_DECISION_WINDOW_SPEC,
     _CONTEXT_READ_SPEC,

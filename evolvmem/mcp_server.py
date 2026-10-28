@@ -340,6 +340,7 @@ class MemoryMCPServer:
             "conversation_read": self._conversation_read,
             "context_search": self._context_search,
             "capability_search": self._capability_search,
+            "project_archive_get": self._project_archive_get,
             "context_project_recall": self._context_project_recall,
             "context_decision_window": self._context_decision_window,
             "experience_recall": self._experience_recall,
@@ -881,6 +882,19 @@ class MemoryMCPServer:
             return self._context_error("context_unavailable")
         return {"results": results, "count": len(results)}
 
+    def _project_archive_get(self, args: dict) -> dict:
+        if not isinstance(args, dict) or set(args) != {"project"}:
+            return self._context_error("invalid_arguments")
+        try:
+            from evolvmem.project_archive_pipeline import get_project_archive, list_project_events
+            archive = get_project_archive(self.context_service, args["project"])
+            archive["events"] = list_project_events(self.context_service, args["project"])
+            return archive
+        except ValueError as exc:
+            return self._context_error(str(exc))
+        except Exception:
+            return self._context_error("context_unavailable")
+
     def _context_project_recall(self, args: dict) -> dict:
         """只读项目提及召回：query 文本 + 已登记项目，绝不改绑定/焦点。"""
         if not isinstance(args, dict) or set(args) - {"query", "max_chars"}:
@@ -899,9 +913,15 @@ class MemoryMCPServer:
         if gate_error is not None:
             return gate_error
         try:
-            result = recall_mentioned_projects(
-                self.context_service, query=query, max_chars=max_chars,
-            )
+            if self.context_service.config.knowledge_structure_mode == 'primary':
+                from evolvmem.project_archive_pipeline import recall_project_archive
+                result = recall_project_archive(
+                    self.context_service, query=query, max_chars=max_chars,
+                )
+            else:
+                result = recall_mentioned_projects(
+                    self.context_service, query=query, max_chars=max_chars,
+                )
         except (ContextValidationError, ValueError, TypeError):
             return self._context_error("invalid_arguments")
         except ContextServiceError as exc:
