@@ -50,6 +50,10 @@ class Config:
     def context_vector_path(self) -> Path:
         return self.data_dir / "context_vectors.usearch"
 
+    @property
+    def capability_vector_path(self) -> Path:
+        return self.data_dir / "capability_vectors.usearch"
+
     # GGUF 模型路径
     @property
     def model_path(self) -> Path:
@@ -97,6 +101,7 @@ class Config:
 
     # --- Context Core 读取与注入（独立于旧 fts_*/vector_*/inject_* 参数）---
     context_mode: str = "legacy"   # legacy|compat|shadow|primary；未知值 fail-closed
+    knowledge_structure_mode: str = "legacy"  # legacy|dual|primary；默认不改变旧读写
     adapter: str = ""              # 当前适配器标识（codex/claude/kimi/dsh/web），空=未指定
     context_inject_max_chars: int = 6000         # Context 注入总字符预算
     context_inject_max_items: int = 12           # Context 注入最大条目数
@@ -400,6 +405,7 @@ class Config:
             "context_l1_max_chars": self.context_l1_max_chars,
             "context_l2_max_chars": self.context_l2_max_chars,
             "context_mode": self.context_mode,
+            "knowledge_structure_mode": self.knowledge_structure_mode,
             "adapter": self.adapter,
             "context_inject_max_chars": self.context_inject_max_chars,
             "context_inject_max_items": self.context_inject_max_items,
