@@ -1398,6 +1398,19 @@ def make_handler(service: ContextService):
                 self.end_headers()
                 self.wfile.write(data)
                 return
+            if path in ('/redesign', '/redesign/'):
+                asset = _STATIC_INDEX.parent / 'redesign' / 'index.html'
+                if not asset.is_file():
+                    self._send_json({'ok': False, 'error': 'redesign not found'}, 404)
+                    return
+                data = asset.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if path in _INSIGHT_ASSETS:
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 if not asset.is_file():
