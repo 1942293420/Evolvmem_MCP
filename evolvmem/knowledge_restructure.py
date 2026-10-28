@@ -139,11 +139,28 @@ def infer_capability_category(value) -> str:
     return winners[0] if len(winners) == 1 else ""
 
 
+def _offline_capability(store, row, body, summary) -> dict:
+    metadata = store._connection().execute(
+        "SELECT title FROM knowledge_metadata WHERE item_id=?", (row["id"],)
+    ).fetchone()
+    learning = store._connection().execute(
+        "SELECT category FROM learning_memories WHERE item_id=?", (row["id"],)
+    ).fetchone()
+    return {
+        "action": "keep",
+        "category": infer_capability_category("\n".join((summary, body))),
+        "title": (metadata[0] if metadata and metadata[0] else summary) or f"旧资料 #{row['id']}",
+        "content": body,
+        "keywords": [learning[0]] if learning else [],
+        "occurred_at": row["occurred_at"],
+    }
+
+
 def migrate_capability(service, row, provider=None) -> tuple[str, str, int, str]:
     store = service.store
     body, summary = _content(store, row["id"])
     prompt = "CAPABILITY\n只迁移开发记忆，不判断项目归属或跨项目通用性。\n" + body
-    candidate = _call_provider(prompt, provider)
+    candidate = _offline_capability(store, row, body, summary) if provider is None else _call_provider(prompt, provider)
     source_project = _source_project(store, row)
     source_ref = _source_ref(store, row["id"])
     if candidate.get("action") == "ignore":
@@ -193,7 +210,8 @@ def migrate_project_event(service, row, provider=None) -> tuple[str, str, int, s
         return "skipped", "none", 0, "missing_project"
     body, title = _content(store, row["id"])
     prompt = "PROJECT_HISTORY\n只迁移项目历史事件。\n" + body
-    candidate = _call_provider(prompt, provider)
+    candidate = ({"event_type": "milestone", "title": title, "content": body}
+                if provider is None else _call_provider(prompt, provider))
     metadata = store._connection().execute(
         "SELECT title FROM knowledge_metadata WHERE item_id=?", (row["id"],)
     ).fetchone()

@@ -58,6 +58,26 @@ def test_migration_is_resumable_and_preserves_sources(test_config):
         assert verify_migration(svc)["ok"] is True
 
 
+def test_offline_migration_reuses_existing_content_without_model(test_config, monkeypatch):
+    with ContextStore(test_config) as store:
+        svc = service(test_config, store)
+        add_legacy_item(store, "fact", "Vue前端表单提交前统一校验")
+        add_legacy_item(store, "session_summary", "蓝鲸新增统一权限管理")
+        monkeypatch.setattr(
+            "evolvmem.knowledge_restructure._call_provider",
+            lambda *args: (_ for _ in ()).throw(AssertionError("offline migration called the model")),
+        )
+
+        result = migrate_batch(svc)
+
+        assert result["capabilities"] == 1
+        assert result["events"] == 1
+        memory = CapabilityStore(store).search("Vue")[0]
+        assert memory["category"] == "frontend"
+        assert "统一校验" in memory["content"]
+        assert "新增统一权限管理" in ProjectArchiveStore(store).get("bluewhale")["summary"]
+
+
 def test_unknown_category_is_pending_not_forced_into_taxonomy(test_config):
     with ContextStore(test_config) as store:
         svc = service(test_config, store)
