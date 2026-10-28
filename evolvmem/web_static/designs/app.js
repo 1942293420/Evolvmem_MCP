@@ -133,11 +133,11 @@
     if(!window.EvolvOrganizationMetrics)return;
     const request=++overviewRequest;
     const routes=['organization/metrics','organization?status=current','organization/settings'];
-    const responses=await Promise.allSettled(routes.map(r=>get('/api/knowledge/'+r)));
+    const responses=await Promise.allSettled([...routes.map(r=>get('/api/knowledge/'+r)),get('/api/overview')]);
     if(token!==state.boot||request!==overviewRequest)return;
-    const [metrics,queue,settings]=responses.map(r=>r.status==='fulfilled'?r.value:null);
+    const [metrics,queue,settings,overview]=responses.map(r=>r.status==='fulfilled'?r.value:null);
     $$('[data-slot="organization-metrics"]').forEach(el=>el.innerHTML=metrics?EvolvOrganizationMetrics.html(metrics,esc):'<p class="ui-error">统计暂不可用，请刷新重试。</p>');
-    if(window.EvolvWorkflowOverview)$$('[data-workflow-overview]').forEach(el=>el.innerHTML=EvolvWorkflowOverview.html({metrics,queue,settings},esc));
+    if(window.EvolvWorkflowOverview)$$('[data-workflow-overview]').forEach(el=>el.innerHTML=EvolvWorkflowOverview.html({metrics,queue,settings,overview},esc));
   }
   setInterval(()=>{if(state.ready&&state.page==='home'&&!document.hidden)refreshOrganizationMetrics(state.boot);},15000);
   async function boot(refreshBrowser=true) {

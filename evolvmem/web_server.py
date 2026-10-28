@@ -1346,6 +1346,10 @@ def make_handler(service: ContextService):
             views = TrustViews(read_service)
             parsed = urlparse(self.path)
             path = parsed.path
+            if path == '/api/overview':
+                from evolvmem.capability_web import overview
+                self._send_json(overview(read_service))
+                return
             if path == '/api/capabilities':
                 from evolvmem.capability_web import capabilities
                 self._send_json(capabilities(read_service, {k: v[0] for k, v in parse_qs(parsed.query).items()}))

@@ -81,6 +81,16 @@ def capabilities(service, params) -> dict:
     }
 
 
+def overview(service) -> dict:
+    conn = service.store._connection()
+    return {
+        "capabilities": conn.execute("SELECT count(*) FROM capability_memories WHERE status='active'").fetchone()[0],
+        "project_archives": conn.execute("SELECT count(*) FROM project_archives").fetchone()[0],
+        "intake": conn.execute("SELECT count(*) FROM capability_intake WHERE status='pending'").fetchone()[0],
+        "events": conn.execute("SELECT count(*) FROM project_events WHERE status='active'").fetchone()[0],
+    }
+
+
 def create_category_suggestion(service, body) -> int:
     return CapabilityStore(service.store).suggest_category(
         str(body.get("label", "")), str(body.get("reason", "")), body.get("source_memory_id")

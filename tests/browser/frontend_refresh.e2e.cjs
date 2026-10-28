@@ -98,6 +98,33 @@ const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
       }
     }
+    if (task === 'consistency' || task === 'all') {
+      await page.goto(base + '/#home');
+      await page.waitForSelector('[data-overview-capabilities]');
+      assert.ok(await page.locator('[data-overview-archives]').count());
+      await page.goto(base + '/#knowledge/capabilities');
+      await page.route('**/api/capabilities?*', async route => {
+        const query = new URL(route.request().url()).searchParams.get('q');
+        if (query === '旧查询') await sleep(1500);
+        await route.continue();
+      });
+      await page.locator('[data-memory-query]').fill('旧查询');
+      await page.locator('[data-memory-search]').click();
+      await page.locator('[data-memory-query]').fill('Vue表单');
+      await page.locator('[data-memory-search]').click();
+      await sleep(1800);
+      assert.equal(await page.locator('[data-memory-card]').count(), 1);
+      await page.route('**/api/capabilities?*', route => route.fulfill({status:500,json:{error:'读取暂时失败'}}));
+      await page.locator('[data-memory-search]').click();
+      await sleep(500);
+      assert.match(await page.locator('.refresh-notice').innerText(), /读取失败/);
+      assert.equal(await page.locator('[data-memory-query]').inputValue(), 'Vue表单');
+      await page.unroute('**/api/capabilities?*');
+      for (const width of [390,768,1024,1440]) {
+        await page.setViewportSize({width,height:1000});
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+      }
+    }
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({task, errors}));
   } finally {
