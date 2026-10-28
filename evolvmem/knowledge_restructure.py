@@ -120,6 +120,25 @@ def _save_intake(store, row, candidate, source_project, source_ref) -> int:
     return int(saved[0])
 
 
+CATEGORY_TERMS = {
+    "frontend": ("前端", "vue", "react", "页面", "组件", "样式", "浏览器", "设计偏好", "css"),
+    "backend": ("后端", "django", "api", "接口", "缓存", "队列", "python", "hook", "cli", "execute_code"),
+    "business_logic": ("业务", "采购", "订单", "审批", "流程", "状态", "节点", "规则", "供应商"),
+    "database": ("mysql", "数据库", "sql", "索引", "事务", "表结构", "多维表格", "base"),
+    "architecture": ("架构", "技术选型", "模块划分", "系统设计"),
+    "quality": ("测试", "test", "报错", "修复", "故障", "性能", "调试", "验证", "陷阱"),
+    "delivery": ("部署", "docker", "运维", "发布", "config", "配置", "环境", "密钥", "api key", "secrets"),
+}
+
+
+def infer_capability_category(value) -> str:
+    text = str(value).casefold()
+    scores = {category: sum(term in text for term in terms) for category, terms in CATEGORY_TERMS.items()}
+    best = max(scores.values(), default=0)
+    winners = [category for category, score in scores.items() if score == best and score > 0]
+    return winners[0] if len(winners) == 1 else ""
+
+
 def migrate_capability(service, row, provider=None) -> tuple[str, str, int, str]:
     store = service.store
     body, summary = _content(store, row["id"])
@@ -129,17 +148,22 @@ def migrate_capability(service, row, provider=None) -> tuple[str, str, int, str]
     source_ref = _source_ref(store, row["id"])
     if candidate.get("action") == "ignore":
         return "skipped", "none", 0, "ignored"
-    title = str(candidate.get("title", "")).strip()
+    metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+    title = str(candidate.get("title") or candidate.get("description") or candidate.get("name") or "").strip()
     content = str(candidate.get("content", "")).strip()
+    if not candidate.get("keywords") and metadata.get("tags"):
+        candidate = {**candidate, "keywords": metadata["tags"]}
     category = str(candidate.get("category", ""))
+    if not category:
+        category = infer_capability_category("\n".join((title, content, body)))
     if not title or not content:
-        candidate = {
-            **candidate,
-            "title": title or summary or f"旧资料 #{row['id']}",
-            "content": content or body,
-            "category": "",
-        }
         category = ""
+    candidate = {
+        **candidate,
+        "title": title or summary or f"旧资料 #{row['id']}",
+        "content": content or body,
+        "category": category,
+    }
     if not str(candidate["content"]).strip():
         return "skipped", "none", 0, "invalid_candidate"
     if category not in CAPABILITY_CATEGORIES:
