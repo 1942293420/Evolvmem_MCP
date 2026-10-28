@@ -149,8 +149,9 @@ def migrate_capability(service, row, provider=None) -> tuple[str, str, int, str]
     if candidate.get("action") == "ignore":
         return "skipped", "none", 0, "ignored"
     metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
-    title = str(candidate.get("title") or candidate.get("description") or candidate.get("name") or "").strip()
-    content = str(candidate.get("content", "")).strip()
+    description = str(candidate.get("description") or "").strip()
+    title = str(candidate.get("title") or description or candidate.get("name") or "").strip()
+    content = str(candidate.get("content") or description).strip()
     if not candidate.get("keywords") and metadata.get("tags"):
         candidate = {**candidate, "keywords": metadata["tags"]}
     category = str(candidate.get("category", ""))

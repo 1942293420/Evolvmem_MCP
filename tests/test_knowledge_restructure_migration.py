@@ -105,6 +105,22 @@ def test_skill_shaped_model_response_is_normalized_and_classified(test_config):
         assert memory["title"] == "编辑 Hermes config.yaml 时 API key 的脱敏规则。"
 
 
+def test_description_can_supply_missing_model_content(test_config):
+    with ContextStore(test_config) as store:
+        svc = service(test_config, store)
+        add_legacy_item(store, "fact", "Hermes配置编辑")
+
+        result = migrate_batch(svc, provider=lambda _: {
+            "name":"hermes-config-editing",
+            "description":"编辑 Hermes config.yaml 时 API key 的脱敏规则。",
+            "metadata":{"tags":["config","secrets"]},
+        })
+
+        assert result["capabilities"] == 1
+        memory = CapabilityStore(store).search("Hermes")[0]
+        assert memory["content"] == "编辑 Hermes config.yaml 时 API key 的脱敏规则。"
+
+
 def test_backup_and_dry_run_use_consistent_database_copy(test_config, tmp_path):
     with ContextStore(test_config) as store:
         add_legacy_item(store, "fact", "Vue提交前统一校验")
