@@ -122,14 +122,26 @@ def _save_intake(store, row, candidate, source_project, source_ref) -> int:
 
 def migrate_capability(service, row, provider=None) -> tuple[str, str, int, str]:
     store = service.store
-    body, _ = _content(store, row["id"])
+    body, summary = _content(store, row["id"])
     prompt = "CAPABILITY\n只迁移开发记忆，不判断项目归属或跨项目通用性。\n" + body
     candidate = _call_provider(prompt, provider)
     source_project = _source_project(store, row)
     source_ref = _source_ref(store, row["id"])
-    category = str(candidate.get("category", ""))
     if candidate.get("action") == "ignore":
         return "skipped", "none", 0, "ignored"
+    title = str(candidate.get("title", "")).strip()
+    content = str(candidate.get("content", "")).strip()
+    category = str(candidate.get("category", ""))
+    if not title or not content:
+        candidate = {
+            **candidate,
+            "title": title or summary or f"旧资料 #{row['id']}",
+            "content": content or body,
+            "category": "",
+        }
+        category = ""
+    if not str(candidate["content"]).strip():
+        return "skipped", "none", 0, "invalid_candidate"
     if category not in CAPABILITY_CATEGORIES:
         intake_id = _save_intake(store, row, candidate, source_project, source_ref)
         return "intake", str(intake_id), intake_id, "pending"

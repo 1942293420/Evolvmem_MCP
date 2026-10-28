@@ -72,6 +72,21 @@ def test_unknown_category_is_pending_not_forced_into_taxonomy(test_config):
         assert CapabilityStore(store).search("离线") == []
 
 
+def test_incomplete_model_candidate_is_pending_instead_of_aborting_batch(test_config):
+    with ContextStore(test_config) as store:
+        svc = service(test_config, store)
+        legacy_id = add_legacy_item(store, "fact", "Vue提交前统一校验")
+
+        result = migrate_batch(svc, provider=lambda _: {
+            "action":"keep", "category":"frontend", "title":"", "content":"", "keywords":[]})
+
+        assert result["pending"] == 1
+        row = store._connection().execute("SELECT * FROM capability_intake").fetchone()
+        assert row["content"] == "Vue提交前统一校验"
+        assert row["source_ref"] == f"context_item:{legacy_id}"
+        assert result["last_item_id"] == legacy_id
+
+
 def test_backup_and_dry_run_use_consistent_database_copy(test_config, tmp_path):
     with ContextStore(test_config) as store:
         add_legacy_item(store, "fact", "Vue提交前统一校验")
