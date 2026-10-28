@@ -14,6 +14,7 @@
   "context_l1_max_chars": 1200,
   "context_l2_max_chars": 6000,
   "context_mode": "legacy",
+  "knowledge_structure_mode": "legacy",
   "adapter": "",
   "context_inject_max_chars": 6000,
   "context_inject_max_items": 12,

@@ -74,11 +74,6 @@ def document(service, project, *, include_sessions=True):
         summary=summary[:1760]+'\n…其余内容见总记忆正文。'
     revision=hashlib.sha256(json.dumps([project,name,digest_parts],ensure_ascii=False).encode()).hexdigest()
     result={'project':project,'name':name,'body':body,'summary':summary,'revision':revision,'source_ids':ids,'sessions':[]}
-    # The console compares this against a fresh /version call before reusing a
-    # cached document; revision above is only known after the body is built.
-    info=content_version(service,project)
-    result['version']=info['version']
-    result['next_expiry']=info['next_expiry']
     from evolvmem import qa_memory, history_memory
     result['qa_count'] = qa_memory.list_items(service, {'project': project, 'state': 'active'})['total']
     if include_sessions:
@@ -89,53 +84,6 @@ def document(service, project, *, include_sessions=True):
         result['project_summary'] = (service.insights().summary(rollups[0]['id'])
                                      if rollups and rollups[0]['id'] is not None else None)
     return result
-
-
-def content_version(service, project):
-    """Cheap token that changes whenever the project document body would change.
-
-    Derived from the source rows instead of a maintained counter, so no write
-    path can forget to bump it. Returns the token and the earliest expiry among
-    the project's rows, because content can also become stale purely by time
-    passing, which no version counter can observe.
-    """
-    if not project:
-        raise ValueError('project_required')
-    conn = service.store._connection()
-    row = conn.execute(
-        "SELECT COUNT(*) AS n,COALESCE(MAX(updated_at),'') AS mx,"
-        "COALESCE(MAX(id),0) AS mxid,COALESCE(SUM(length(identity_key)),0) AS sig "
-        "FROM context_items "
-        "WHERE ? IN (SELECT context_items.project UNION SELECT value FROM json_each(context_items.projects)) "
-        "AND scope='project' AND status='active' "
-        "AND content_type IN ('session_summary','workstream_checkpoint') "
-        "AND (expires_at IS NULL OR expires_at='' OR expires_at>?)",
-        (project, _now_iso())).fetchone()
-    # The earliest expiry that is still in the *future*: already-expired rows no
-    # longer contribute content (the body query filters them out), so reporting
-    # them here would mark every cache entry stale forever.
-    # The body text lives in context_layers, not in context_items, so an edit that
-    # rewrites a summary changes nothing in the aggregate above. Fold in the
-    # newest layer revision too; a real edit stamps updated_at, which becomes the
-    # new maximum.
-    layer = conn.execute(
-        'SELECT COALESCE(MAX(l.updated_at),\'\') AS mx FROM context_layers l '
-        'WHERE l.item_id IN ('
-        'SELECT id FROM context_items '
-        'WHERE ? IN (SELECT context_items.project UNION SELECT value FROM json_each(context_items.projects)) '
-        "AND scope='project' AND status='active' "
-        "AND content_type IN ('session_summary','workstream_checkpoint'))",
-        (project,)).fetchone()
-    expiry = conn.execute(
-        'SELECT MIN(expires_at) FROM context_items '
-        'WHERE ? IN (SELECT context_items.project UNION SELECT value FROM json_each(context_items.projects)) '
-        "AND scope='project' AND status='active' AND expires_at IS NOT NULL AND expires_at!='' "
-        'AND expires_at>?',
-        (project, _now_iso())).fetchone()[0]
-    return {'project': project,
-            'version': '%d:%s:%d:%d:%s' % (row['n'], row['mx'], row['mxid'], row['sig'], layer['mx']),
-            'next_expiry': expiry or ''}
-
 
 
 def refresh(service, project):

@@ -173,6 +173,14 @@ python -m evolvmem.archive_storage_cli verify --data-dir ~/.claude/evolvmem
 
 备份时将数据库、archive.key、session_archives/ 和 session_chunks/ 作为同一数据集保存；恢复前先停止写入。新格式需使用本版程序读取，不能只回退程序版本后继续写入。上述命令不会生成数据库或归档的完整备份。
 
+开发能力记忆与项目存档
+
+新版知识库把开发记录分成两条独立链路：7 类开发能力记忆用于以后做同类开发，项目摘要与历史事件用于查询项目过去做了什么。能力记忆保留来源项目用于追溯，但不按来源项目限制默认检索，也不在入库时判断是否属于跨项目经验。
+
+knowledge_structure_mode 默认为 legacy，新 schema 不改变现有行为；dual 新旧双写，primary 使用新结构。项目摘要不参与开发能力召回，项目续接和原始会话归档保持独立。分类建议只有经用户接受才创建新类，未分类内容留在待分类暂存。
+
+迁移必须先备份并在副本预演，之后才能双写、校验和切主读。命令、回退和验收见 Context Core 的开发能力与项目存档章节 (docs/context-core.md#development-capability-memories-and-project-archives-2026-10-28)。
+
 原始 Kimi 会话仍从 ~/.kimi-code/sessions 读取，数据目录变量不会移动宿主的会话来源。
 现有 project_cli / maintenance_cli 的 --data-dir 选择操作库，但不会同步传给共享 LLM 凭据加载器；它们还会在执行期间清除目录环境覆盖。
 因此不能用该参数承诺凭据也随之切换。自定义库的模型提取建议从设置好环境变量的 hook/MCP 流程启用；手工 CLI 需单独核对凭据来源。

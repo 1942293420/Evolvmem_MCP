@@ -797,7 +797,7 @@ class TestIntegration:
                 adapter_names = {t["name"] for t in response["result"]["tools"]}
                 assert adapter_names == expected | {
                     "knowledge_recall", "conversation_read", "collaboration_recall", "context_decision_window", "context_session_start", "context_project_recall", "context_search",
-                    "context_read", "context_status",
+                    "context_read", "context_status", "capability_search", "project_archive_get",
                     "context_confirm", "context_record_outcome",
                     "context_archive_project", "context_sweep",
                     "experience_recall", "experience_record",

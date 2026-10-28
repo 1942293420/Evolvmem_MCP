@@ -504,9 +504,6 @@ def check_projection_lag(
         {int(row["context_item_id"]) for row in rows if row["context_item_id"] is not None}
     )
     items_by_id, layers_by_item = _load_mapped_items(store, mapped_item_ids)
-    # Batched: the per-row store.get_layer() call below cost one query per legacy
-    # row (11,189 on the live database) on every health evaluation.
-    l1_by_item = _load_l1_contents(store, mapped_item_ids)
     quarantined = _duplicate_active_quarantined_items(store, mapped_item_ids)
 
     duplicate_active = duplicate_active_legacy_ids(rows)
@@ -551,7 +548,7 @@ def check_projection_lag(
             "\r\n", "\n"
         )
         expected_l1 = migrator.layers_for(original_l2, content_type).l1
-        if l1_by_item.get(item_id) != expected_l1:
+        if store.get_layer(item_id, ContextLayer.L1) != expected_l1:
             l1_mismatch += 1
         if (
             item["supersedes"] != _expected_link(row.get("supersedes"), mapping_by_legacy)
@@ -590,26 +587,6 @@ def check_projection_lag(
         context_vector_dirty=context_vector_dirty,
         duration_ms=(time.monotonic() - started) * 1000.0,
     )
-
-
-def _load_l1_contents(store: ContextStore, item_ids: list[int]) -> dict[int, str]:
-    """Stored L1 text per item, in one query.
-
-    Mirrors ``ContextStore.get_layer``: absent rows are simply missing from the
-    map (callers see ``None`` via ``.get``) and the value is cast with ``str`` so
-    the comparison cannot differ from the per-row call this replaces.
-    """
-    if not item_ids:
-        return {}
-    placeholders = ",".join("?" for _ in item_ids)
-    return {
-        int(row["item_id"]): str(row["content"])
-        for row in store._connection().execute(
-            "SELECT item_id, content FROM context_layers "
-            f"WHERE layer='l1' AND item_id IN ({placeholders})",
-            tuple(item_ids),
-        )
-    }
 
 
 def _load_mapped_items(

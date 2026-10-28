@@ -172,7 +172,7 @@ def test_continuation_batch_inherits_the_project_with_full_evidence(
     run_worker(service, monkeypatch, provider)
     save_suggestions_as_user(service, [task_a])
     unit_a = units(service, task_a)[0]
-    assert (unit_a['project'], unit_a['decision']) == ('demo', 'auto')
+    assert (unit_a['project'], unit_a['decision']) == ('demo', 'manual')
     assert unit_a['context'] == {}, 'the first batch has nothing to inherit'
     snapshot_a = org(service, '/detail', {'task_id': task_a})['source_text']
     conn = service.store._connection()
@@ -191,7 +191,7 @@ def test_continuation_batch_inherits_the_project_with_full_evidence(
     # The bounded background block reached the segmentation prompt.
     assert any(CONTEXT_MARKER in prompt for prompt in provider.calls)
     unit_b = units(service, task_b)[0]
-    assert (unit_b['project'], unit_b['decision']) == ('demo', 'auto')
+    assert (unit_b['project'], unit_b['decision']) == ('', 'review')
     assert unit_b['business_analysis']['projects'] == ['demo'], unit_b['reason']
     assert unit_b['business_analysis']['uses_predecessor'] is True
     assert basis_of(service, task_b)['source_key']==f'archive:{first}', 'the evidence must identify the predecessor'
@@ -218,8 +218,7 @@ def test_continuation_batch_inherits_the_project_with_full_evidence(
     assert unit_a['text'] not in unit_b['text']
 
     # Only a user save makes the suggested continuation project history.
-    # 8430256: clear source-validated ownership is ingested without a save.
-    assert unit_b['context'] and unit_b['item_id']
+    assert unit_b['context'] == {} and not unit_b['item_id']
     save_suggestions_as_user(service, [task_b])
     run_worker(service, monkeypatch, provider)
     listed = [row for row in history_memory.sessions(service, 'demo') if row['summary']]
@@ -278,7 +277,7 @@ def test_a_batch_naming_its_own_project_records_no_context_dependency(
     # The batch names the project itself: the answer is its own, not the
     # predecessor's, so it must not become a dependency that a later edit of the
     # predecessor could drag back to review.
-    assert (unit_b['project'], unit_b['decision']) == ('demo', 'auto')
+    assert (unit_b['project'], unit_b['decision']) == ('', 'review')
     assert unit_b['business_analysis']['projects'] == ['demo']
     assert unit_b['business_analysis']['uses_predecessor'] is False
     assert unit_b['context_basis'] == ''
@@ -307,7 +306,7 @@ def test_the_backlog_orders_same_session_batches_before_organizing(
     ])
     run_worker(service, monkeypatch, provider)
     got = [units(service, item['id']) for item in result['items']]
-    assert [unit[0]['project'] for unit in got] == ['demo']
+    assert [unit[0]['project'] for unit in got] == ['']
     assert [unit[0]['business_analysis']['projects'] for unit in got] == [['demo']], [u[0]['reason'] for u in got]
     assert len(got[0])==1 and all(text in got[0][0]['text'] for text in ('验收条件','批量删除','撤销'))
 
@@ -329,8 +328,8 @@ def test_a_three_batch_chain_stays_stable(service, config, tmp_path, monkeypatch
     run_worker(service, monkeypatch, provider)
     # Queuing three batches cannot turn an unconfirmed suggestion into ownership.
     unit_a, unit_b, unit_c = (units(service, task)[0] for task in (task_a, task_b, task_c))
-    assert [u['project'] for u in (unit_a,unit_b,unit_c)] == ['demo', 'demo', 'demo']
-    assert all(u['decision']=='auto' and u['item_id'] for u in (unit_a,unit_b,unit_c))
+    assert [u['project'] for u in (unit_a,unit_b,unit_c)] == ['', '', '']
+    assert all(u['decision']=='review' and not u['item_id'] and not u['context'] for u in (unit_a,unit_b,unit_c))
     assert unit_a['business_analysis']['projects'] == ['demo']
 
 
@@ -357,7 +356,7 @@ def test_an_explicit_switch_repoints_the_context(service, config, tmp_path, monk
     task_x = enqueue(service, ids[1])
     run_worker(service, monkeypatch, provider)
     unit_x = units(service, task_x)[0]
-    assert (unit_x['project'], unit_x['decision']) == ('other', 'auto')
+    assert (unit_x['project'], unit_x['decision']) == ('', 'review')
     assert unit_x['business_analysis']['projects'] == ['other']
     save_suggestions_as_user(service, [task_x])
     assert unit_x['context'] == {}, 'an explicit switch must not inherit the old basis'
@@ -369,7 +368,7 @@ def test_an_explicit_switch_repoints_the_context(service, config, tmp_path, monk
     run_worker(service, monkeypatch, provider)
     unit_c = units(service, task_c)[0]
     # The old demo context is broken: C continues X, so it continues `other`.
-    assert unit_c['project'] == 'other'
+    assert unit_c['project'] == ''
     assert unit_c['business_analysis']['projects'] == ['other'], unit_c['reason']
     assert basis_of(service, task_c)['source_key'] == f'archive:{ids[1]}'
     assert context.validate(service, basis_of(service, task_c)) is True
@@ -601,7 +600,7 @@ def test_twenty_five_unrelated_archives_between_batches_are_never_read(
     run_worker(service, monkeypatch, provider)
 
     unit_b = units(service, task_b)[0]
-    assert unit_b['project'] == 'demo'
+    assert unit_b['project'] == ''
     assert unit_b['business_analysis']['projects'] == ['demo'], unit_b['reason']
     assert basis_of(service, task_b)['archive_id'] == first
     # Only the batch itself and its real predecessor were ever decrypted.
@@ -662,7 +661,7 @@ def test_a_tool_mention_never_moves_an_explicit_business_project(
     task_b = enqueue(service, ids[1])
     run_worker(service, monkeypatch, provider)
     unit_b = units(service, task_b)[0]
-    assert unit_b['project'] == 'demo'
+    assert unit_b['project'] == ''
     assert unit_b['business_analysis']['projects'] == ['demo'], 'a delegation to a tool is not a project switch'
     assert unit_b['business_analysis']['uses_predecessor'] is True
     assert basis_of(service, task_b)['archive_id'] == ids[0]
@@ -674,7 +673,7 @@ def test_a_tool_mention_never_moves_an_explicit_business_project(
     task_c = enqueue(service, ids[2])
     run_worker(service, monkeypatch, provider)
     unit_c = units(service, task_c)[0]
-    assert unit_c['project'] == 'dsh'
+    assert unit_c['project'] == ''
     assert unit_c['business_analysis']['projects'] == ['dsh'], 'a genuine switch must beat the old context'
     assert unit_c['context_basis'] == ''
     assert context.mention_kind('现在修改 DSH 工具，先补验收条件。', 'dsh') == 'decisive'
@@ -690,8 +689,7 @@ def seed_legacy_automatic_unit(service, task_id):
     """
     from evolvmem import auto_organization as auto, organization_context as context
     for unit in units(service, task_id):
-        # New contract (8430256): clear, source-validated ownership is already
-        # assigned; this helper only needs the legacy row shape below.
+        assert unit['decision'] == 'review' and not unit['project']
         analysis = unit['business_analysis']
         assert analysis['projects'] == ['demo']
         basis = basis_of(service, task_id) if analysis.get('uses_predecessor') else None
@@ -858,9 +856,9 @@ def test_discovery_across_the_five_source_limit_keeps_session_order(
     assert discover_new(service)['created']==0
     run_worker(service,monkeypatch,provider)
     current=org(service,'/detail',{'task_id':first['items'][0]['id']})
-    assert current['status']=='completed'
+    assert current['status']=='review'
     assert len(current['units'])==1
-    assert current['units'][0]['project']=='demo'
+    assert current['units'][0]['project']==''
     assert current['units'][0]['business_analysis']['projects']==['demo']
     assert all(text in current['units'][0]['text'] for text in texts)
     assert current['source_key']==key
@@ -934,9 +932,9 @@ def test_a_reversed_batch_waits_instead_of_burning_attempts(
     assert tasks[task_b]['attempts'] == 2, tasks
     assert tasks[task_b]['error_code'] in ('', 'units_need_review')
     unit_b = units(service, task_b)[0]
-    assert (unit_b['project'], unit_b['decision']) == ('demo', 'auto')
-    assert unit_b['business_analysis']['projects'] == ['demo'], 'the predecessor is auto-confirmed under the 8430256 contract'
-    assert unit_b['context']
+    assert (unit_b['project'], unit_b['decision']) == ('', 'review')
+    assert not unit_b['business_analysis']['projects'], 'an unconfirmed predecessor cannot assign its continuation'
+    assert unit_b['context'] == {}
 
 
 # ============================================== G: changed-basis protection
@@ -1187,7 +1185,7 @@ def test_an_assistant_progress_report_continues_the_business_project(
     task_b = enqueue(service, second)
     run_worker(service, monkeypatch, provider)
     unit_b = units(service, task_b)[0]
-    assert (unit_b['project'], unit_b['decision']) == ('demo', 'auto')
+    assert (unit_b['project'], unit_b['decision']) == ('', 'review')
     assert unit_b['business_analysis']['projects'] == ['demo'], unit_b['reason']
     assert unit_b['business_analysis']['uses_predecessor'] is True
     assert basis_of(service, task_b)['archive_id'] == first
@@ -1307,7 +1305,7 @@ def test_a_business_project_plus_a_tool_mention_can_supply_the_next_context(
     task_b = enqueue(service, second)
     run_worker(service, monkeypatch, provider)
     unit_b = units(service, task_b)[0]
-    assert unit_b['project'] == 'demo'
+    assert unit_b['project'] == ''
     assert unit_b['business_analysis']['projects'] == ['demo'], unit_b['reason']
     assert context.validate(service, basis_of(service, task_b)) is True
 

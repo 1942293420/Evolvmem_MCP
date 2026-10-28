@@ -348,3 +348,45 @@ flowchart TD
 The existing LAN capture worker runs bounded `archive_maintenance.py` batches. Collection marks all available manifests inside the same writer transaction used by archive creation; unreadable manifests or missing blocks stop collection. Only unreferenced files older than one hour are swept. Old LAN history caches can be dropped only with a readable original and no knowledge, review, hold, current-head or pending-job references. Raw history remains reconstructable. Unique originals are never age-deleted by this automatic job. One small status file is overwritten; maintenance creates no full snapshots and calls no model.
 
 Uploads use compressed encrypted staging with legacy reads. `context_archive_min_free_mb` (1024 by default), plus temporary-write headroom, is checked before both staging and archive writes. Low space refuses new work for retry without erasing useful data. Check `archive_storage_cli status`, run a bounded `maintain`, or verify all available versions with `verify`. Backups require the database, archive key, manifests and shared blocks together.
+
+## Development capability memories and project archives (2026-10-28)
+
+The restructured knowledge model has two independent write and read lanes. Development records produce capability memories answering “how to do this kind of development later”, and project events answering “what happened in this project”. They do not form a project-owned knowledge hierarchy.
+
+`capability_memories` stores one primary category per memory: `frontend`, `backend`, `business_logic`, `database`, `architecture`, `quality`, or `delivery`. `source_project` is provenance only and is not a default retrieval boundary. The system may suggest a new category, but only user acceptance creates it. Unclassified candidates remain in `capability_intake` and never enter active recall. No cross-project or universal-experience decision is made during ingestion; the AI judges applicability when using a memory.
+
+`project_archives` stores one current summary per project. `project_events` stores the source-backed `major_change`, `feature`, `problem`, and `milestone` records from which that summary is rebuilt. The development period is calculated at query time rather than persisted as a stale day count. A failed rebuild keeps the previous summary and does not advance `source_watermark`.
+
+**项目摘要不得进入开发能力检索。** Capability recall returns candidates for the current development need; project archive queries return only the current summary, development period, and project events. Existing continuity and encrypted session archives remain independent.
+
+### Three-mode migration and rollback
+
+`knowledge_structure_mode` defaults to `legacy`, so installing the new schema does not change existing reads or writes. `dual` runs both old and new write lanes. `primary` uses the new capability and project-archive lanes and is allowed only after migration verification passes. Old Context tables, old vector caches, and legacy rows remain available for rollback; **不得删除原始会话** as part of this restructure.
+
+Run the migration first on a consistent database copy:
+
+```bash
+python -m evolvmem.knowledge_restructure_cli backup --data-dir ~/.claude/evolvmem
+python -m evolvmem.knowledge_restructure_cli dry-run --copy /absolute/path/to/backup.db --report restructure-dry-run.json
+python -m evolvmem.knowledge_restructure_cli migrate --copy /absolute/path/to/backup.db --batch 100 --resume
+python -m evolvmem.knowledge_restructure_cli verify --copy /absolute/path/to/backup.db
+```
+
+The dry run is read-only. Migration is resumable and idempotent: old Context items remain unchanged, active capability candidates move into capability storage or pending intake, and historical summaries become project events. `verify` checks SQLite integrity, foreign keys, category references, project registry coverage, and whether the scan completed. Pending intake is allowed and must not be forced into a category.
+
+After reviewing the copy report, enable dual writes, run and verify the production backfill, then enable primary reads:
+
+```bash
+python -m evolvmem.knowledge_restructure_cli set-mode --data-dir ~/.claude/evolvmem dual
+python -m evolvmem.knowledge_restructure_cli migrate --data-dir ~/.claude/evolvmem --batch 100 --resume
+python -m evolvmem.knowledge_restructure_cli verify --data-dir ~/.claude/evolvmem
+python -m evolvmem.knowledge_restructure_cli set-mode --data-dir ~/.claude/evolvmem primary
+```
+
+Restart Web, MCP, hooks, and organization workers after each mode change. Verify capability recall, project archive queries, duplicate suppression, summary failure preservation, and continuity before proceeding. On any failure, run:
+
+```bash
+python -m evolvmem.knowledge_restructure_cli set-mode --data-dir ~/.claude/evolvmem legacy
+```
+
+Rollback changes only the routing mode. It does not delete new tables, migration state, old Context items, or encrypted archives, so a corrected migration can resume later. Restoring the database backup is required only for actual data damage, not for an ordinary routing rollback.

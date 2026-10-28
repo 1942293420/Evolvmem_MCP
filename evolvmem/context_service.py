@@ -753,6 +753,25 @@ class ContextService:
             if isinstance(routed, ContextSessionStartResult):
                 return routed
             continuation_code, continuation = routed
+        if self.config.knowledge_structure_mode == 'primary' and not project_only:
+            from evolvmem.capability_retriever import CapabilityRetriever
+            budget = min(
+                request.max_chars or self.config.context_inject_max_chars,
+                self.config.context_inject_max_chars,
+            )
+            block, selected_ids = CapabilityRetriever(self).render(
+                request.query,
+                max_chars=budget,
+                max_items=self.config.context_inject_max_items,
+            )
+            return ContextSessionStartResult(
+                block=block,
+                selected_ids=selected_ids,
+                used_chars=len(block),
+                excluded_counts=(),
+                continuation_code=continuation_code,
+                continuation=continuation,
+            )
         if project and not project_only:
             from evolvmem.memory_recall import recall
             budget = min(request.max_chars or self.config.context_inject_max_chars, self.config.context_inject_max_chars)
@@ -2830,6 +2849,14 @@ class ContextService:
                 self.config, self.store, self.vector_index, self.embedding_engine
             )
         return self._synchronizer
+
+    def capability_index(self):
+        if getattr(self, '_capability_index', None) is None:
+            from evolvmem.capability_index import CapabilityIndex
+            self._capability_index = CapabilityIndex(
+                self.store, self.config, self.embedding_engine
+            )
+        return self._capability_index
 
     def _apply_vector_aftermath(self, aftermath: _VectorAftermath) -> None:
         """Best-effort post-commit dual-index sync with independent dirty markers.

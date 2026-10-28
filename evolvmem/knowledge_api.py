@@ -77,13 +77,6 @@ def dispatch(service, method, path, body=None):
         if route == 'project-memory':
             from evolvmem.project_memory import document
             return document(service, str(body.get('project') or ''))
-        if route == 'version':
-            # Cheap staleness probe: the console asks this before reusing a
-            # cached project document, so it never renders another agent's stale
-            # copy. ~2 ms against ~800 ms to rebuild the document.
-            from evolvmem.project_memory import content_version
-            from evolvmem.memory_recall import project_name
-            return content_version(service, project_name(service, body.get('project') or ''))
         if re.fullmatch(r'conversations/\d+', route):
             from evolvmem.project_memory import conversation
             return conversation(service, str(body.get('project') or ''), int(route.split('/')[1]))
