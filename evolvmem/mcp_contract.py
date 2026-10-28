@@ -307,6 +307,28 @@ _CONTEXT_SESSION_START_SPEC = McpToolSpec(
     annotations=_READ_ONLY,
 )
 
+_CAPABILITY_SEARCH_SPEC = McpToolSpec(
+    name="capability_search",
+    description="Search development memories by capability category. Source projects are provenance only, never a default retrieval boundary; the AI judges applicability to the current task.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Current development need"},
+            "categories": {
+                "type": "array",
+                "items": {"type": "string", "enum": [
+                    "frontend", "backend", "business_logic", "database",
+                    "architecture", "quality", "delivery",
+                ]},
+                "description": "Optional capability filters; omit to search all categories",
+            },
+            "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+        },
+        "required": ["query"],
+    },
+    annotations=_READ_ONLY,
+)
+
 _CONTEXT_SEARCH_SPEC = McpToolSpec(
     name="context_search",
     description="Search Context Core memory: thresholded hybrid retrieval returning context IDs, identity keys, L0 summaries, scores, and match metadata. L1/L2 bodies are never returned; use context_read with an exact ID.",
@@ -568,6 +590,7 @@ _CONTEXT_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     _EXPERIENCE_RECORD_SPEC,
     _CONTEXT_SESSION_START_SPEC,
     _CONTEXT_SEARCH_SPEC,
+    _CAPABILITY_SEARCH_SPEC,
     _CONTEXT_PROJECT_RECALL_SPEC,
     _CONTEXT_DECISION_WINDOW_SPEC,
     _CONTEXT_READ_SPEC,

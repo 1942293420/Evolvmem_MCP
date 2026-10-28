@@ -121,5 +121,10 @@ class CapabilityPipeline:
                 source_ref=source_ref(task, unit),
                 occurred_at=candidate.get("occurred_at"),
             )
-            result["memory_ids"].append(capabilities.upsert(draft))
+            memory_id = capabilities.upsert(draft)
+            result["memory_ids"].append(memory_id)
+            index_factory = getattr(self.service, "capability_index", None)
+            if callable(index_factory):
+                memory = capabilities.get(memory_id)
+                index_factory().sync(memory_id, memory["title"] + "\n" + memory["content"])
         return result

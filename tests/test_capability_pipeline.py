@@ -60,3 +60,19 @@ def test_non_development_content_is_ignored(test_config):
         result = CapabilityPipeline(service).process_task(task, provider=lambda _: {"action":"ignore"})
         assert result["memory_ids"] == []
         assert store._connection().execute("SELECT count(*) FROM capability_memories").fetchone()[0] == 0
+
+
+def test_capability_pipeline_syncs_vector_after_memory_write(test_config):
+    from unittest.mock import Mock
+
+    with ContextStore(test_config) as store:
+        service, task = service_with_task(test_config, store)
+        index = SimpleNamespace(sync=Mock(return_value="synchronized"))
+        service.capability_index = lambda: index
+
+        result = CapabilityPipeline(service).process_task(task, provider=lambda _: {
+            "action":"keep", "category":"frontend", "title":"前端表单校验",
+            "content":"提交前统一校验字段。", "keywords":["Vue"]})
+
+        memory = CapabilityStore(store).get(result["memory_ids"][0])
+        index.sync.assert_called_once_with(memory["memory_id"], memory["title"] + "\n" + memory["content"])

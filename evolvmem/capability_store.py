@@ -133,6 +133,17 @@ class CapabilityStore:
         terms = [term.strip() for term in query.split() if term.strip()]
         return " AND ".join('"' + term.replace('"', '""') + '"' for term in terms)
 
+    @staticmethod
+    def _query_terms(query: str) -> tuple[str, ...]:
+        import re
+        terms = re.findall(r"[A-Za-z][A-Za-z0-9_+.-]*", query)
+        for sequence in re.findall(r"[\u4e00-\u9fff]+", query):
+            if len(sequence) <= 4:
+                terms.append(sequence)
+            else:
+                terms.extend(sequence[index:index + 2] for index in range(len(sequence) - 1))
+        return tuple(dict.fromkeys(term.casefold() for term in terms if len(term) >= 2))
+
     def search(self, query: str, categories=(), top_k: int = 10) -> list[dict]:
         query = str(query).strip()
         if not query:
@@ -157,14 +168,19 @@ class CapabilityStore:
             for row in rows:
                 hits[int(row["memory_id"])] = row
         if not hits:
-            like = "%" + query.replace("%", "") + "%"
+            terms = self._query_terms(query)
             rows = self.conn.execute(
-                "SELECT m.*,1.0 AS score FROM capability_memories m WHERE m.status='active' "
-                "AND (m.title LIKE ? OR m.content LIKE ? OR m.keywords LIKE ?)"
-                + category_sql + " ORDER BY m.updated_at DESC,m.memory_id DESC LIMIT ?",
-                (like, like, like, *params, top_k * 3),
+                "SELECT m.*,0.0 AS score FROM capability_memories m WHERE m.status='active'"
+                + category_sql,
+                params,
             ).fetchall()
-            hits.update((int(row["memory_id"]), row) for row in rows)
+            for row in rows:
+                text = (row["title"] + "\n" + row["content"] + "\n" + row["keywords"]).casefold()
+                matched = sum(term in text for term in terms)
+                if matched:
+                    row = dict(row)
+                    row["score"] = matched / max(1, len(terms))
+                    hits[int(row["memory_id"])] = row
         ordered = sorted(
             hits.values(), key=lambda row: (-float(row["score"]), int(row["memory_id"]))
         )

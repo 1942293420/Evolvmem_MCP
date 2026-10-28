@@ -339,6 +339,7 @@ class MemoryMCPServer:
             "knowledge_recall": self._knowledge_recall,
             "conversation_read": self._conversation_read,
             "context_search": self._context_search,
+            "capability_search": self._capability_search,
             "context_project_recall": self._context_project_recall,
             "context_decision_window": self._context_decision_window,
             "experience_recall": self._experience_recall,
@@ -861,6 +862,24 @@ class MemoryMCPServer:
             "count": len(results),
             "as_of": request.as_of,
         }
+
+    def _capability_search(self, args: dict) -> dict:
+        if not isinstance(args, dict) or set(args) - {"query", "categories", "top_k"}:
+            return self._context_error("invalid_arguments")
+        query = args.get("query")
+        categories = args.get("categories") or ()
+        if not isinstance(query, str) or not query.strip() or not isinstance(categories, (list, tuple)):
+            return self._context_error("invalid_arguments")
+        try:
+            from evolvmem.capability_retriever import CapabilityRetriever
+            results = CapabilityRetriever(self.context_service).search(
+                query, categories=tuple(categories), top_k=args.get("top_k", 10)
+            )
+        except (ValueError, TypeError):
+            return self._context_error("invalid_arguments")
+        except Exception:
+            return self._context_error("context_unavailable")
+        return {"results": results, "count": len(results)}
 
     def _context_project_recall(self, args: dict) -> dict:
         """只读项目提及召回：query 文本 + 已登记项目，绝不改绑定/焦点。"""
