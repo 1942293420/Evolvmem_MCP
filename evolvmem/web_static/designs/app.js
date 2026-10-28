@@ -301,6 +301,7 @@
   window.addEventListener('hashchange',navigateFromLocation);
   window.EvolvAuth.ready.then(()=>{
     state.ready=true;
+    if(window.EvolvRefresh)EvolvRefresh.initNavigation(document);
     navigateFromLocation();
     if(state.page!=='home')boot(![...browsers.values()].some(c=>c.integrated));
   }).catch(error=>{
