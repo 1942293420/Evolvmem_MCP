@@ -1346,6 +1346,10 @@ def make_handler(service: ContextService):
             views = TrustViews(read_service)
             parsed = urlparse(self.path)
             path = parsed.path
+            if path == '/api/overview':
+                from evolvmem.capability_web import overview
+                self._send_json(overview(read_service))
+                return
             if path == '/api/capabilities':
                 from evolvmem.capability_web import capabilities
                 self._send_json(capabilities(read_service, {k: v[0] for k, v in parse_qs(parsed.query).items()}))
@@ -1370,7 +1374,7 @@ def make_handler(service: ContextService):
                 except Exception as exc:  # bounded surface, no internal detail
                     self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
                 return
-            if path in ('/ui-feedback.js', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/project-review.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js', '/capabilities.js', '/project-archives.js'):
+            if path in ('/ui-feedback.js', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/project-review.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js', '/capabilities.js', '/project-archives.js', '/refresh.css', '/refresh.js'):
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 data = asset.read_bytes()
                 self.send_response(200)
@@ -1389,6 +1393,19 @@ def make_handler(service: ContextService):
                 data = asset.read_bytes()
                 self.send_response(200)
                 self.send_header('Content-Type', _DESIGN_ASSETS[name])
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if path in ('/redesign', '/redesign/'):
+                asset = _STATIC_INDEX.parent / 'redesign' / 'index.html'
+                if not asset.is_file():
+                    self._send_json({'ok': False, 'error': 'redesign not found'}, 404)
+                    return
+                data = asset.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
                 self.send_header('Content-Length', str(len(data)))
                 self.send_header('Cache-Control', 'no-cache')
                 self.end_headers()

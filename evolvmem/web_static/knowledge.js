@@ -60,7 +60,7 @@
     if(state.view==='cleaning')syncCleaning();else{if($('#content').contains(cleaningNode)||$('#content').contains(organizationNode))rulesDirty=false;actionBusy=false;mount.setAttribute('aria-busy','false');}
     $('#new-item').hidden=!['intake','library'].includes(state.view)||(state.view==='library'&&!state.project.startsWith('__'));
     const management=['intake','rules','skill','learning'].includes(state.view)||(state.view==='library'&&state.project==='__all__');
-    $('.knowledge-heading').hidden=state.view==='library'&&!state.project.startsWith('__');
+    $('.knowledge-heading').hidden=(state.view==='library'&&!state.project.startsWith('__'))||['capabilities','archives'].includes(state.view);
     $('.knowledge-tabs').hidden=!management;$('.knowledge-flow').hidden=true;mount.dataset.workspaceView=state.view;
     const flowSteps={intake:3,library:3,rules:3,skill:3,learning:4};
     mount.querySelectorAll('.knowledge-flow li').forEach((li,i)=>{const current=flowSteps[state.view]===i+1;li.classList.toggle('current',current);if(current)li.setAttribute('aria-current','step');else li.removeAttribute('aria-current');});

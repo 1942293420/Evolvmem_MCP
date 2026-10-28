@@ -6,7 +6,9 @@
     const mode=s?(s.auto_new?'新资料自动处理已开启':'新资料自动处理已暂停'):'自动处理状态无法读取';
     const sync=!m?'同步状态未知':m.index.pending?'新变动正在同步':m.index.exists?'检索索引已同步':'检索索引尚未建立';
     const step=(n,title)=>`<li><span>${n}</span><b>${title}</b></li>`;
-    return `<section class="flow-health" data-flow-health><div><span class="health-dot ${s?.auto_new?'on':''}"></span><strong>${mode}</strong></div><a class="ui-button" href="${link('all')}">查看运行记录 →</a></section>
+    const o=arguments[0].overview;
+    return `<section class="refresh-overview-grid" data-dual-overview><a href="#knowledge/capabilities" data-overview-capabilities><span>开发能力记忆</span><strong>${o?.capabilities??unknown}</strong><em>按能力检索历史经验 →</em></a><a href="#knowledge/archives" data-overview-archives><span>项目存档</span><strong>${o?.project_archives??unknown}</strong><em>查看项目摘要与历史 →</em></a><a href="#knowledge/capabilities" data-overview-intake><span>待分类</span><strong>${o?.intake??unknown}</strong><em>确认归类或新增分类 →</em></a></section>
+      <section class="flow-health" data-flow-health><div><span class="health-dot ${s?.auto_new?'on':''}"></span><strong>${mode}</strong></div><a class="ui-button" href="${link('all')}">查看运行记录 →</a></section>
       ${!m?'<p class="flow-unavailable" role="status">统计暂不可用，请刷新重试。</p>':''}
       ${!q?'<p class="flow-unavailable" role="status">任务状态暂不可用，请刷新重试。</p>':''}
       <div class="flow-summary">
