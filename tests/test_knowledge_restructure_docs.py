@@ -17,3 +17,9 @@ def test_restructure_runbook_contains_copy_first_and_rollback():
 def test_example_config_defaults_to_legacy():
     data = json.loads(Path("examples/config.example.json").read_text(encoding="utf-8"))
     assert data["knowledge_structure_mode"] == "legacy"
+
+
+def test_frontend_refresh_is_documented():
+    text = Path("docs/context-core.md").read_text(encoding="utf-8")
+    for phrase in ("阅读优先", "开发能力", "项目存档", "每页 20 条", "390、768、1024、1440"):
+        assert phrase in text

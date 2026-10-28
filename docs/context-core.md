@@ -390,3 +390,15 @@ python -m evolvmem.knowledge_restructure_cli set-mode --data-dir ~/.claude/evolv
 ```
 
 Rollback changes only the routing mode. It does not delete new tables, migration state, old Context items, or encrypted archives, so a corrected migration can resume later. Restoring the database backup is required only for actual data damage, not for an ordinary routing rollback.
+
+## Reading-first frontend (2026-10-29)
+
+The workspace uses a **阅读优先** layout with an ice-white and light-cyan background, cyan/teal accents, deep navy text, and white cards. The top navigation contains 总览、开发能力、项目存档、任务断点、自动整理 and 更多. 整理规则、工作原理、旧项目知识和旧经验知识 live under 更多 instead of competing with the two primary knowledge lanes.
+
+`refresh.css` owns the shared visual tokens, and `refresh.js` owns navigation and keyboard behavior. The centered content column is approximately 1120px wide, with a single title per page. Mobile navigation scrolls horizontally, cards remain single-column, and reduced-motion preferences are respected.
+
+Capability memories support text search, the seven category filters, source-project filters, and server-side pagination **每页 20 条**. Cards expose original source references only after user expansion. Pending intake and category suggestions remain separate tabs; accepting a suggestion creates the category, rejecting it leaves the taxonomy unchanged.
+
+Project archives use readable summary cards and an expandable event timeline rather than displaying raw Markdown or JSON. Queries preserve user input on failure. Loading, empty, error, and saving states retain current content and drafts, and stale responses cannot overwrite newer searches.
+
+Frontend acceptance covers 390、768、1024、1440px widths, keyboard interaction, source expansion, pending-intake assignment, category-suggestion review, project-event expansion, stale-response protection, and zero page-script errors. Production rollout backs up the existing frontend first and restarts only `evolvmem-web.service`; rollback restores the backed-up static files and restarts that service. Authentication behavior does not change.

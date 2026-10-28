@@ -5,7 +5,8 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf('--task') + 1] : 'all';
 
 (async () => {
-  const remote = spawn('ssh', ['-L','39480:127.0.0.1:39479','codex-linux','sleep 30'],
+  const remote = spawn('ssh', ['-L','39480:127.0.0.1:39479','codex-linux',
+    'cd /home/jiangli/.local/share/evolvmem-worktrees/frontend-refresh && PYTHONPATH=.tools/site exec python3 tests/browser/capability_archives_fixture.py'],
     {stdio:['ignore','pipe','pipe']});
   let browser;
   const errors = [];

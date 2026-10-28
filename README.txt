@@ -181,6 +181,8 @@ knowledge_structure_mode 默认为 legacy，新 schema 不改变现有行为；d
 
 迁移必须先备份并在副本预演，之后才能双写、校验和切主读。命令、回退和验收见 Context Core 的开发能力与项目存档章节 (docs/context-core.md#development-capability-memories-and-project-archives-2026-10-28)。
 
+前端采用阅读优先布局：顶部 5 个主导航与“更多”、科技清新视觉、能力搜索与筛选、每页 20 条、项目摘要卡片和事件时间线。移动端与键盘操作、错误保留和迟到响应保护见 阅读优先前端说明 (docs/context-core.md#reading-first-frontend-2026-10-29)。
+
 原始 Kimi 会话仍从 ~/.kimi-code/sessions 读取，数据目录变量不会移动宿主的会话来源。
 现有 project_cli / maintenance_cli 的 --data-dir 选择操作库，但不会同步传给共享 LLM 凭据加载器；它们还会在执行期间清除目录环境覆盖。
 因此不能用该参数承诺凭据也随之切换。自定义库的模型提取建议从设置好环境变量的 hook/MCP 流程启用；手工 CLI 需单独核对凭据来源。
