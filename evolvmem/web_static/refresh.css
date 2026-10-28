@@ -74,6 +74,30 @@ body[data-design="signal"] {
   .refresh-topnav .signal-nav button { white-space: nowrap; padding: 7px 9px; }
   .refresh-main { padding: 20px 14px 42px; }
 }
+.refresh-main .toolbar { display: flex; gap: 10px; flex-wrap: wrap; }
+.refresh-main .input { flex: 1; min-width: 220px; padding: 10px 12px; }
+.refresh-main .select { min-width: 150px; padding: 10px 12px; }
+.refresh-main .btn { border: 1px solid var(--refresh-line); border-radius: 9px; padding: 10px 14px; color: var(--refresh-ink); background: #fff; cursor: pointer; }
+.refresh-main .btn.small { padding: 6px 10px; font-size: 12px; }
+.refresh-main .chips { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 14px; }
+.refresh-main .chip { border: 1px solid var(--refresh-line); border-radius: 18px; padding: 6px 10px; background: #fff; color: var(--refresh-muted); cursor: pointer; }
+.refresh-main .chip.active { background: var(--refresh-soft); color: var(--refresh-accent-dark); border-color: #a9d9e2; font-weight: 700; }
+.refresh-main .memory-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.refresh-main .memory-card { padding: 16px; cursor: pointer; }
+.refresh-main .memory-card h3 { margin: 0 0 9px; font-size: 16px; }
+.refresh-main .memory-card p { color: var(--refresh-muted); line-height: 1.7; margin: 0 0 12px; }
+.refresh-main .memory-card:hover { border-color: #9ed4df; transform: translateY(-1px); }
+.refresh-main .meta { display: flex; gap: 8px; flex-wrap: wrap; color: var(--refresh-muted); font-size: 12px; }
+.refresh-main .tag { background: var(--refresh-soft); color: var(--refresh-accent-dark); padding: 3px 7px; border-radius: 5px; }
+.refresh-main .source-detail { border-top: 1px solid var(--refresh-line); margin-top: 12px; padding-top: 12px; color: var(--refresh-muted); font: 12px/1.7 ui-monospace, monospace; word-break: break-all; }
+.refresh-main .pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; color: var(--refresh-muted); }
+.refresh-main .refresh-notice,
+.refresh-notice { padding: 11px 13px; margin-bottom: 14px; border-radius: 9px; background: var(--refresh-soft); color: var(--refresh-accent-dark); }
+.refresh-main .empty { padding: 28px; text-align: center; color: var(--refresh-muted); }
+@media (max-width: 800px) {
+  .refresh-main .input { min-width: 100%; }
+  .refresh-main .select { flex: 1; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }

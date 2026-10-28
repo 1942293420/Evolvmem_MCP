@@ -29,6 +29,13 @@ with service.store.transaction():
 CapabilityStore(service.store).upsert(CapabilityMemoryDraft(
     category="frontend", title="Vue表单校验", content="提交前统一校验字段。",
     keywords=("Vue", "表单"), source_project="bluewhale", source_ref="archive:memory"))
+for index in range(25):
+    CapabilityStore(service.store).upsert(CapabilityMemoryDraft(
+        category="database" if index % 2 else "frontend",
+        title=f"开发记忆 {index}", content=f"第 {index} 条用于分页验证的合成开发记忆。",
+        keywords=("MySQL" if index % 2 else "Vue",),
+        source_project="integration" if index % 2 else "bluewhale",
+        source_ref=f"archive:{index}"))
 create_category_suggestion(service, {"label":"移动端", "reason":"出现独立移动开发记忆"})
 archives = ProjectArchiveStore(service.store)
 archives.record_event(ProjectEventDraft(

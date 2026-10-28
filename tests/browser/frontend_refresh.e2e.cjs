@@ -1,31 +1,25 @@
-// Real Chromium checks for the reading-first frontend refresh.
 const assert = require('node:assert/strict');
 const {spawn} = require('node:child_process');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf('--task') + 1] : 'all';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf('--task') + 1] : 'all';
 
 (async () => {
-  const remote = spawn('ssh', ['-L', '39480:127.0.0.1:39479', 'codex-linux',
+  const remote = spawn('ssh', ['-L','39480:127.0.0.1:39479','codex-linux',
     'cd /home/jiangli/.local/share/evolvmem-worktrees/frontend-refresh && PYTHONPATH=.tools/site exec python3 tests/browser/capability_archives_fixture.py'],
     {stdio:['ignore','pipe','pipe']});
   let browser;
   const errors = [];
   try {
-    let ready = false;
-    for (let i=0;i<50&&!ready;i++) {
-      try { ready = (await fetch('http://127.0.0.1:39480/api/capabilities')).ok; } catch { await sleep(200); }
-    }
-    assert.ok(ready, 'disposable web fixture did not start');
+    await sleep(800);
     browser = await chromium.launch({headless:true,args:['--no-sandbox']});
-    const page = await browser.newPage({viewport:{width:1440,height:1000}});
+    const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
-    page.setDefaultTimeout(15000);
+    await page.goto('http://127.0.0.1:39480/#knowledge/capabilities');
+    await page.waitForTimeout(1500);
     const base = 'http://127.0.0.1:39480';
 
     if (task === 'navigation' || task === 'all') {
-      await page.goto(base + '/#knowledge/capabilities');
-      await page.waitForSelector('.refresh-topnav');
       const labels = await page.locator('[data-page-link]').allTextContents();
       for (const label of ['总览','开发能力','项目存档','任务断点','自动整理']) {
         assert.ok(labels.some(text => text.includes(label)), `missing navigation: ${label}`);
@@ -38,6 +32,43 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       await page.goto(base + '/#knowledge/projects');
       assert.ok(await page.locator('.refresh-topnav').count());
       assert.equal(await page.locator('.refresh-duplicate-title').count(), 0);
+      for (const width of [390,768,1024,1440]) {
+        await page.setViewportSize({width,height:1000});
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+      }
+    }
+
+    if (task === 'capabilities' || task === 'all') {
+      await page.goto(base + '/#knowledge/capabilities');
+      await page.waitForTimeout(500);
+      await page.locator('[data-memory-query]').fill('Vue表单');
+      await page.locator('[data-memory-search]').click();
+      await page.waitForTimeout(1500);
+      assert.equal(await page.locator('[data-memory-card]').count(), 1);
+      await page.locator('[data-memory-card]').click();
+      assert.ok(await page.locator('[data-memory-source-detail]').count());
+
+      await page.locator('[data-memory-query]').fill('');
+      await page.locator('[data-memory-search]').click();
+      await page.waitForTimeout(1500);
+      assert.equal(await page.locator('[data-memory-card]').count(), 20);
+      await page.locator('[data-page="next"]').click();
+      await page.waitForTimeout(500);
+      assert.match(await page.locator('[data-page-status]').innerText(), /第 2 \/ 2 页/);
+
+      await page.locator('[data-memory-source]').selectOption('integration');
+      await page.waitForTimeout(1000);
+      const cards = await page.locator('[data-memory-card]').allTextContents();
+      assert.ok(cards.length > 0 && cards.every(text => text.includes('integration')));
+
+      await page.locator('[data-tab="intake"]').click();
+      await page.locator('[data-assign="1"]').click();
+      await page.waitForTimeout(700);
+      assert.match(await page.locator('.refresh-notice').innerText(), /正式能力记忆/);
+      await page.locator('[data-tab="suggestions"]').click();
+      await page.locator('[data-suggestion="accept"]').click();
+      await page.waitForTimeout(700);
+      assert.match(await page.locator('.refresh-notice').innerText(), /创建新分类/);
       for (const width of [390,768,1024,1440]) {
         await page.setViewportSize({width,height:1000});
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
