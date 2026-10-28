@@ -15,20 +15,53 @@ def _intake_public(row) -> dict:
     return result
 
 
+def _capability_filters(store, query, category, source):
+    clauses = ["status='active'"]
+    values = []
+    if category:
+        clauses.append("category=?")
+        values.append(category)
+    if source:
+        clauses.append("source_project=?")
+        values.append(source)
+    if query:
+        clauses.append("(title LIKE ? OR content LIKE ? OR keywords LIKE ? OR source_project LIKE ?)")
+        pattern = "%" + query.replace("%", "") + "%"
+        values.extend((pattern, pattern, pattern, pattern))
+    return " AND ".join(clauses), values
+
+
+def filtered_capability_rows(store, *, query, category, source_project):
+    where, values = _capability_filters(store, query, category, source_project)
+    return [store._public(row) for row in store.conn.execute(
+        "SELECT * FROM capability_memories WHERE " + where +
+        " ORDER BY updated_at DESC,memory_id DESC", values,
+    )]
+
+
+def capability_counts(store, *, query, source_project):
+    where, values = _capability_filters(store, query, "", source_project)
+    return {row["category"]: row["n"] for row in store.conn.execute(
+        "SELECT category,count(*) AS n FROM capability_memories WHERE " + where +
+        " GROUP BY category", values,
+    )}
+
+
 def capabilities(service, params) -> dict:
     store = CapabilityStore(service.store)
     query = str(params.get("q", "")).strip()
     category = str(params.get("category", "")).strip()
-    if query:
-        items = store.search(query, (category,) if category else (), top_k=100)
-    else:
-        sql = "SELECT * FROM capability_memories WHERE status='active'"
-        values = []
-        if category:
-            sql += " AND category=?"
-            values.append(category)
-        sql += " ORDER BY updated_at DESC,memory_id DESC LIMIT 200"
-        items = [store._public(row) for row in store.conn.execute(sql, values)]
+    source = str(params.get("source_project", "")).strip()
+    page_size = max(1, min(int(params.get("page_size", 20)), 50))
+    requested_page = max(1, int(params.get("page", 1)))
+    rows = filtered_capability_rows(
+        store, query=query, category=category, source_project=source,
+    )
+    total = len(rows)
+    pages = max(1, (total + page_size - 1) // page_size)
+    page = min(requested_page, pages)
+    start = (page - 1) * page_size
+    items = rows[start:start + page_size]
     intake = [_intake_public(row) for row in store.conn.execute(
         "SELECT * FROM capability_intake WHERE status='pending' ORDER BY created_at,intake_id LIMIT 200"
     )]
@@ -40,7 +73,11 @@ def capabilities(service, params) -> dict:
         "items": items,
         "intake": intake,
         "suggestions": suggestions,
-        "total": len(items),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+        "counts": capability_counts(store, query=query, source_project=source),
     }
 
 
