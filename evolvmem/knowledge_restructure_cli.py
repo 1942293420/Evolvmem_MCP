@@ -9,11 +9,13 @@ from types import SimpleNamespace
 
 from evolvmem.config import Config
 from evolvmem.context_store import ContextStore
-from evolvmem.knowledge_restructure import backup_database, dry_run, migrate_batch, verify_migration
+from evolvmem.knowledge_restructure import (
+    backup_database, dry_run, migrate_batch, set_structure_mode, verify_migration,
+)
 
 
 def _service(data_dir: Path):
-    config = Config(data_dir=Path(data_dir))
+    config = Config.from_file(data_dir=Path(data_dir))
     store = ContextStore(config)
     store.initialize()
     return SimpleNamespace(config=config, store=store)
@@ -38,8 +40,11 @@ def main(argv=None) -> int:
         if name == "migrate":
             command.add_argument("--batch", type=int, default=100)
             command.add_argument("--resume", action="store_true")
+    mode_parser = sub.add_parser("set-mode")
+    mode_parser.add_argument("--data-dir", type=Path, required=True)
+    mode_parser.add_argument("mode", choices=("legacy", "dual", "primary"))
     args = parser.parse_args(argv)
-    data_dir = args.data_dir or args.copy
+    data_dir = args.data_dir or getattr(args, "copy", None)
     if args.command == "backup":
         target = args.target or data_dir / "backups" / (
             "knowledge-restructure-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".db"
@@ -55,6 +60,9 @@ def main(argv=None) -> int:
         return 0
     service = _service(data_dir)
     try:
+        if args.command == "set-mode":
+            _emit(set_structure_mode(service, args.mode))
+            return 0
         if args.command == "verify":
             report = verify_migration(service)
             _emit(report)

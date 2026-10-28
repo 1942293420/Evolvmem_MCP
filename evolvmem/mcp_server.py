@@ -787,6 +787,8 @@ class MemoryMCPServer:
         return self.context_service.learning().skill(project)
 
     def _knowledge_recall(self, args: dict) -> dict:
+        if self.context_service.config.knowledge_structure_mode == 'primary':
+            return {'error': 'legacy_read_only'}
         error = self._context_gate_error()
         if error is not None:
             return error

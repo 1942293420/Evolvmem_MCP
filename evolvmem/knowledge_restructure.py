@@ -270,6 +270,21 @@ def verify_migration(service) -> dict:
     }
 
 
+def set_structure_mode(service, mode, allow_incomplete=False) -> dict:
+    if mode not in {"legacy", "dual", "primary"}:
+        raise ValueError("invalid_knowledge_structure_mode")
+    if mode == "primary" and not allow_incomplete and not verify_migration(service)["ok"]:
+        raise ValueError("migration_not_verified")
+    previous = service.config.knowledge_structure_mode
+    try:
+        service.config.knowledge_structure_mode = mode
+        service.config.save()
+    except Exception:
+        service.config.knowledge_structure_mode = previous
+        raise
+    return {"mode": mode, "verified": verify_migration(service)["ok"]}
+
+
 def backup_database(config, target: Path) -> Path:
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
