@@ -1375,7 +1375,18 @@ class OrganizationWorker:
             elif task['stage'] in ('queued', 'cleaning', 'segmentation', 'narrative'):
                 self._segment(service, task)
             elif task['stage'] == 'assignment':
-                self._assign(service, task)
+                mode = getattr(service.config, 'knowledge_structure_mode', 'legacy')
+                if mode == 'legacy':
+                    self._assign(service, task)
+                else:
+                    from evolvmem.capability_pipeline import CapabilityPipeline
+                    from evolvmem.project_archive_pipeline import ProjectArchivePipeline
+                    CapabilityPipeline(service).process_task(task)
+                    ProjectArchivePipeline(service).process_task(task)
+                    if mode == 'dual':
+                        self._assign(service, task)
+                    else:
+                        self._finish(service, task_id, 'completed', 'done')
             elif task['stage'] == 'extraction':
                 self._extract_units(service, task)
             else:

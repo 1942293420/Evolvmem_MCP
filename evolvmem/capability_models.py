@@ -34,6 +34,13 @@ CAPABILITY_SCHEMA = (
         label TEXT NOT NULL, reason TEXT NOT NULL, source_memory_id INTEGER,
         status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted','rejected')),
         created_at TEXT NOT NULL, reviewed_at TEXT)""",
+    """CREATE TABLE IF NOT EXISTS capability_intake(
+        intake_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL, content TEXT NOT NULL, keywords TEXT NOT NULL DEFAULT '[]',
+        suggested_category TEXT NOT NULL DEFAULT '', source_project TEXT NOT NULL DEFAULT '',
+        source_ref TEXT NOT NULL DEFAULT '', occurred_at TEXT, fingerprint TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','assigned','ignored')),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS knowledge_restructure_state(
         key TEXT PRIMARY KEY, value TEXT NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS knowledge_restructure_map(
