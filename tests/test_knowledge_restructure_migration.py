@@ -97,3 +97,21 @@ def test_cli_dry_run_prints_machine_readable_report(test_config, tmp_path, capsy
     assert main(["dry-run", "--copy", str(target)]) == 0
     output = json.loads(capsys.readouterr().out)
     assert output["capability_candidates"] == 1
+
+
+def test_cli_migrate_accepts_database_copy_path(test_config, tmp_path, monkeypatch):
+    from evolvmem.knowledge_restructure_cli import main
+
+    with ContextStore(test_config) as store:
+        add_legacy_item(store, "fact", "Vue提交前统一校验")
+        target = tmp_path / "backup.db"
+        backup_database(test_config, target)
+    monkeypatch.setattr(
+        "evolvmem.knowledge_restructure_cli.migrate_batch",
+        lambda service, batch_size: {
+            "scanned": 0, "capabilities": 0, "events": 0,
+            "pending": 0, "skipped": 0, "last_item_id": 1,
+        },
+    )
+
+    assert main(["migrate", "--copy", str(target), "--batch", "1"]) == 0

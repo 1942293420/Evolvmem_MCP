@@ -15,7 +15,11 @@ from evolvmem.knowledge_restructure import (
 
 
 def _service(data_dir: Path):
-    config = Config.from_file(data_dir=Path(data_dir))
+    path = Path(data_dir)
+    is_copy = path.is_file()
+    config = Config.from_file(data_dir=path.parent if is_copy else path)
+    if is_copy:
+        config.database_path = path.resolve()
     store = ContextStore(config)
     store.initialize()
     return SimpleNamespace(config=config, store=store)

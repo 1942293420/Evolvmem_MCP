@@ -23,6 +23,7 @@ class Config:
     # LAN runtime passes explicit namespace settings and must not inherit a
     # process-wide client override intended for standalone usage.
     apply_environment: bool = field(default=True, repr=False, compare=False)
+    database_path: Path | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Honour EVOLVMEM_DATA_DIR for all construction paths.
@@ -39,7 +40,7 @@ class Config:
     # SQLite 数据库路径
     @property
     def db_path(self) -> Path:
-        return self.data_dir / "memory.db"
+        return self.database_path or self.data_dir / "memory.db"
 
     # USearch 向量索引路径
     @property
