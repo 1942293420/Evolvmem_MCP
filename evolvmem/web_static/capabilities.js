@@ -73,7 +73,8 @@
       });
     };
     function render() {
-      mount.innerHTML = `<header class="data-page-header"><h1>开发能力记忆</h1><p>按能力查找历史经验，来源项目仅用于追溯</p></header>${state.notice ? `<div class="refresh-notice" role="status">${esc(state.notice)}</div>` : ''}${tabs()}${state.tab === 'formal' ? renderFormal() : state.tab === 'intake' ? renderIntake() : renderSuggestions()}`;
+      const content = !state.data ? '' : state.tab === 'formal' ? renderFormal() : state.tab === 'intake' ? renderIntake() : renderSuggestions();
+      mount.innerHTML = `<header class="data-page-header"><h1>开发能力记忆</h1><p>按能力查找历史经验，来源项目仅用于追溯</p></header>${state.notice ? `<div class="refresh-notice" role="status">${esc(state.notice)}</div>` : ''}${tabs()}${content}`;
       bind();
     }
     await load();

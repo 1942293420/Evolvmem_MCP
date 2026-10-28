@@ -12,6 +12,7 @@
 }
 html { background: var(--refresh-bg); color: var(--refresh-ink); }
 body[data-design="signal"] {
+  display: block;
   background:
     linear-gradient(rgba(14,159,186,.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(14,159,186,.025) 1px, transparent 1px),
@@ -19,16 +20,17 @@ body[data-design="signal"] {
   background-size: 32px 32px, 32px 32px, auto;
   color: var(--refresh-ink);
 }
-.refresh-topnav {
+body[data-design="signal"] .refresh-topnav {
   position: sticky; top: 0; z-index: 40;
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  display: flex; flex: 0 0 100%; flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap;
+  width: 100%; max-width: none; min-height: 0; height: auto;
   padding: 12px 24px;
   background: rgba(255,255,255,.92);
   border-bottom: 1px solid var(--refresh-line);
   backdrop-filter: blur(14px);
 }
 .refresh-topnav .signal-brand { color: var(--refresh-accent-dark); margin-right: 16px; }
-.refresh-topnav .signal-nav { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.refresh-topnav .signal-nav { display: flex; flex-direction: row !important; align-items: center; justify-content: flex-start !important; gap: 5px; flex-wrap: wrap; height: auto; }
 .refresh-topnav .signal-nav a,
 .refresh-topnav .signal-nav button {
   border: 0; border-radius: 9px; padding: 8px 12px;
@@ -46,7 +48,7 @@ body[data-design="signal"] {
   background: var(--refresh-panel); box-shadow: var(--refresh-shadow);
 }
 .refresh-more-menu a { display: block; }
-.refresh-main { max-width: 1120px; margin: auto; padding: 28px 24px 56px; }
+body[data-design="signal"] .refresh-main { max-width: 1120px; margin: auto; padding: 28px 24px 56px; }
 .refresh-main .data-page-header h1,
 .refresh-main .knowledge-heading h1 { color: var(--refresh-ink); letter-spacing: -.02em; }
 .refresh-main .data-page-header p,
