@@ -91,3 +91,27 @@ def test_project_archive_read_model_excludes_capability_memories(test_config):
         assert "新增权限管理" in result["summary"]
         assert "capability_memories" not in result
         assert len(result["events"]) == 1
+
+
+def add_capability(service, title, source):
+    from evolvmem.capability_store import CapabilityMemoryDraft
+    return CapabilityStore(service.store).upsert(CapabilityMemoryDraft(
+        category="frontend", title=title, content=title + "正文",
+        keywords=("Vue",), source_project=source, source_ref="archive:test"))
+
+
+def test_capabilities_filters_source_and_paginates(test_config):
+    with ContextStore(test_config) as store:
+        svc = service(test_config, store)
+        for index in range(25):
+            add_capability(svc, f"记忆{index}", "bluewhale" if index % 2 else "integration")
+
+        result = capabilities(svc, {"source_project":"bluewhale", "page":"2", "page_size":"20"})
+
+        assert result["total"] == 12
+        assert result["pages"] == 1
+        assert result["page"] == 1
+        assert len(result["items"]) == 12
+        assert all(item["source_project"] == "bluewhale" for item in result["items"])
+        assert result["counts"]["frontend"] == 12
+        assert result["page_size"] == 20
