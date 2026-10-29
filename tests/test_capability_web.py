@@ -115,3 +115,123 @@ def test_capabilities_filters_source_and_paginates(test_config):
         assert all(item["source_project"] == "bluewhale" for item in result["items"])
         assert result["counts"]["frontend"] == 12
         assert result["page_size"] == 20
+
+
+def test_capability_sources_include_later_pages_and_ignore_current_filters(test_config):
+    with ContextStore(test_config) as store:
+        svc = service(test_config, store)
+        add_capability(svc, "Old source", "z-later-page")
+        for index in range(21):
+            add_capability(svc, f"Recent {index}", "alpha")
+        archived_id = add_capability(svc, "Archived source", "archived-only")
+        CapabilityStore(store).set_status(archived_id, "archived")
+        add_capability(svc, "No source", "")
+
+        result = capabilities(svc, {"page_size": "20"})
+
+        assert len(result["items"]) == 20
+        assert all(item["source_project"] != "z-later-page" for item in result["items"])
+        assert result["source_projects"] == ["alpha", "z-later-page"]
+
+        empty = capabilities(svc, {"q": "no-such-record", "source_project": "alpha"})
+        assert empty["items"] == []
+        assert empty["source_projects"] == ["alpha", "z-later-page"]
+        assert (empty["total"], empty["page"], empty["pages"]) == (0, 1, 1)
+
+
+def test_capability_queue_totals_include_pending_rows_beyond_display_limit(test_config):
+    with ContextStore(test_config) as store:
+        svc = service(test_config, store)
+        for index in range(205):
+            intake(store, fingerprint=f"pending-{index}")
+        assigned_id = intake(store, fingerprint="assigned")
+        with store.transaction():
+            store._connection().execute(
+                "UPDATE capability_intake SET status='assigned' WHERE intake_id=?",
+                (assigned_id,),
+            )
+        for index in range(2):
+            create_category_suggestion(svc, {"label": f"Pending {index}", "reason": "Reason"})
+        rejected_id = create_category_suggestion(svc, {"label": "Rejected", "reason": "Reason"})
+        review_category_suggestion(svc, rejected_id, "reject")
+
+        result = capabilities(svc, {"q": "no-such-record"})
+
+        assert len(result["intake"]) == 200
+        assert result["intake_total"] == 205
+        assert len(result["suggestions"]) == result["suggestions_total"] == 2
+
+
+def test_capability_paging_materializes_only_requested_memory_rows(test_config):
+    with ContextStore(test_config) as store:
+        svc = service(test_config, store)
+        ids = [add_capability(svc, f"Record {index}", "project") for index in range(9)]
+        connection = store._connection()
+        original_factory = connection.row_factory
+        materialized = []
+
+        def counted_row(cursor, values):
+            row = original_factory(cursor, values)
+            if {"memory_id", "content", "keywords", "status"} <= set(row.keys()):
+                materialized.append(row["memory_id"])
+            return row
+
+        connection.row_factory = counted_row
+        try:
+            result = capabilities(svc, {"page": "3", "page_size": "2"})
+        finally:
+            connection.row_factory = original_factory
+
+        assert [item["memory_id"] for item in result["items"]] == [ids[4], ids[3]]
+        assert (result["total"], result["pages"], result["page"]) == (9, 5, 3)
+        assert materialized == [ids[4], ids[3]]
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_page", "expected_size", "expected_indexes"),
+    [
+        ({"page": "999", "page_size": "2"}, 3, 2, [0]),
+        ({"page": "0", "page_size": "2"}, 1, 2, [4, 3]),
+        ({"page": "1", "page_size": "0"}, 1, 1, [4]),
+        ({"page": "1", "page_size": "999"}, 1, 50, [4, 3, 2, 1, 0]),
+    ],
+)
+def test_capability_sql_paging_preserves_clamping(
+    test_config, params, expected_page, expected_size, expected_indexes,
+):
+    with ContextStore(test_config) as store:
+        svc = service(test_config, store)
+        ids = [add_capability(svc, f"Record {index}", "project") for index in range(5)]
+
+        result = capabilities(svc, params)
+
+        assert result["total"] == 5
+        assert result["page"] == expected_page
+        assert result["page_size"] == expected_size
+        assert [item["memory_id"] for item in result["items"]] == [ids[i] for i in expected_indexes]
+
+
+def test_capability_paging_preserves_category_counts_and_status_filters(test_config):
+    with ContextStore(test_config) as store:
+        svc = service(test_config, store)
+        frontend_id = add_capability(svc, "Match frontend", "project")
+        database_id = add_capability(svc, "Match database", "project")
+        with store.transaction():
+            store._connection().execute(
+                "UPDATE capability_memories SET category='database' WHERE memory_id=?",
+                (database_id,),
+            )
+        archived_id = add_capability(svc, "Match archived", "project")
+        CapabilityStore(store).set_status(archived_id, "archived")
+        add_capability(svc, "Unrelated title", "project")
+        add_capability(svc, "Match other project", "elsewhere")
+
+        result = capabilities(svc, {
+            "q": "Match ", "category": "frontend", "source_project": "project",
+            "page": "999", "page_size": "1",
+        })
+
+        assert result["total"] == 1
+        assert result["counts"] == {"frontend": 1, "database": 1}
+        assert result["page"] == 1
+        assert [item["memory_id"] for item in result["items"]] == [frontend_id]

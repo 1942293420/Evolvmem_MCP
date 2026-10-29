@@ -6,12 +6,23 @@ window.EvolvPrinciples={render(mount){
  const e=(id,from,to,label='',d='',x=0,y=0)=>({id,from,to,label,d,x,y});
  const r=(id,label,nodes,edges)=>({id,label,nodes:nodes.split(' '),edges:edges.split(' ')});
  const facts=(owner,input,output,rule='',tool='',link='')=>({owner,input,output,rule,tool,link});
- const modules=[['home','总览','处理进度与系统问题','#home'],['organization','自动整理','自动归档、纠正与提炼','#knowledge/organization'],['history','项目知识','目录、来源与历史变化','#knowledge/projects'],['capabilities','开发能力','7 类记忆、来源项目与待分类','#knowledge/capabilities'],['archives','项目存档','当前摘要、开发周期与历史事件','#knowledge/archives'],['qa','经验知识','明确问答与适用范围','#knowledge/qa'],['checkpoint','任务断点','当前进度与下一步','#progress'],['cleaning','数据清洗','核对来源、修改与删除','#knowledge/cleaning'],['intake','存量资料','按项目集中归档与纠正','#knowledge/intake'],['rules','整理规则','处理规则与样例预览','#knowledge/skill']];
+ const modules=[['home','总览','处理进度与系统问题','#home'],['organization','自动整理','自动归档、纠正与提炼','#knowledge/organization'],['history','项目知识','目录、来源与历史变化','#knowledge/projects'],['capabilities','开发能力','分类检索、来源追溯与待分类','#knowledge/capabilities'],['archives','项目存档','当前摘要、开发周期与历史事件','#knowledge/archives'],['qa','经验知识','明确问答与适用范围','#knowledge/qa'],['checkpoint','任务断点','当前进度与下一步','#progress'],['cleaning','数据清洗','核对来源、修改与删除','#knowledge/cleaning'],['intake','存量资料','按项目集中归档与纠正','#knowledge/intake'],['rules','整理规则','处理规则与样例预览','#knowledge/skill']];
  const diagrams={
+ capabilities:{title:'查找开发经验与确认分类',type:'业务流程图',goal:'先筛选需要的经验，再查看正文与来源；待分类资料在确认后进入正式记忆。',height:810,nodes:[
+ n('open','打开开发能力',350,20,'start',facts('你','当前开发问题','正式记忆与待分类入口','','','#knowledge/capabilities')),
+ n('filter','按关键词、分类|和来源项目筛选',30,180,'action',facts('你','需要查找的问题与来源范围','符合条件的记忆列表','来源选项覆盖全部有效记忆，不因当前页或筛选结果而消失。')),
+ n('page','分页查看匹配的记忆',30,350,'action',facts('能力记忆','已生效的筛选条件与页码','当前页正文、结果总数与分类数量','每次只读取当前页的正文；更改筛选后从第一页查看。')),
+ n('source','展开正文与原始来源',30,520,'action',facts('你','已加载的记忆条目','完整内容、来源项目和来源引用','在当前卡片展开已加载内容，不为展开重复读取列表。')),
+ n('intake','查看待分类资料',690,180,'action',facts('你','尚未确定分类的资料','正文、来源与可选分类','待分类总数按全部未处理资料计数；本次列表最多展示 200 条。')),
+ n('confirm','选择分类并确认',690,350,'action',facts('你','资料内容与选定分类','已确认的分类决定','确认时检查资料版本；保存失败不能显示已归类。')),
+ n('saved','保存为正式能力记忆',690,520,'store',facts('能力记忆','确认归类的资料','带来源的正式记忆','保存成功后更新列表与待分类数量；只查看资料不会修改分类。')),
+ n('end','继续查找与使用经验',350,690,'end',facts('你与助手','正式记忆及其来源','按当前任务判断适用性','归入正式记忆不等于方法已经验证成功。'))],edges:[
+ e('cb1','open','filter'),e('cb2','filter','page'),e('cb3','page','source'),e('cb4','source','end'),e('cb5','open','intake'),e('cb6','intake','confirm'),e('cb7','confirm','saved'),e('cb8','saved','end')],routes:[
+ r('browse','筛选并追溯来源','open filter page source end','cb1 cb2 cb3 cb4'),r('classify','确认待分类资料','open intake confirm saved end','cb5 cb6 cb7 cb8')]},
  restructure:{title:'开发记录分成能力记忆与项目存档',type:'业务流程图',goal:'能力记忆回答以后怎么做，项目存档回答这个项目以前做了什么；两条链路独立保存和查询。',height:850,nodes:[
  n('source','接收开发过程记录',350,20,'start',facts('开发整理','完整开发记录','待分流的原始内容')),
  n('filter','过滤无用内容|保留原始记录',350,150,'action',facts('开发整理','闲聊、重复日志和有效内容','有用候选；原文仍可追溯','过滤不删除原始会话。')),
- n('capability','归入 7 类能力记忆',30,300,'store',facts('能力知识链路','有用开发记忆','一个主分类、来源项目和原始来源','无法确定分类时进入待分类；新增大类由你确认。','capability_search','#knowledge/capabilities')),
+ n('capability','按分类保存能力记忆',30,300,'store',facts('能力知识链路','有用开发记忆','一个主分类、来源项目和原始来源','无法确定分类时进入待分类；新增大类由你确认。','capability_search','#knowledge/capabilities')),
  n('archive','保存项目事件|重建当前摘要',690,300,'store',facts('项目存档链路','重大改动、功能更新、问题解决和里程碑','项目事件和当前摘要','项目摘要根据全部有效事件重建，失败保留旧摘要。','project_archive_get','#knowledge/archives')),
  n('recall','新开发任务|按能力检索候选',30,570,'action',facts('AI 与你','当前开发需求','相关历史能力记忆','不在入库时判断跨项目通用性，由 AI 在当前任务中判断适用性。')),
  n('query','查询项目|返回摘要和周期',690,570,'action',facts('你','项目名称或别名','当前摘要、开发周期和历史事件','项目查询不展开能力记忆列表。'))],edges:[
@@ -102,7 +113,7 @@ window.EvolvPrinciples={render(mount){
  e('d1','dialogue','archive','会话与来源'),e('d2','dialogue','organize','新增对话'),e('d3','archive','organize','原文'),e('d4','rules','organize','指导'),e('d5','organize','history','对话与摘要'),e('d6','organize','qa','有效问答'),e('d7','organize','cases','方法与来源'),e('d8','history','prepare','摘要'),e('d9','qa','prepare','问答'),e('d10','cases','prepare','案例'),e('d11','prepare','recall','检索候选'),e('d12','question','recall','问题'),e('d13','recall','answer','相关内容与来源'),e('d14','archive','answer','按引用读取原文','M160 290H20V1140H480V1120',179,1125)],routes:[
  r('qa','新对话成为可用知识','dialogue organize qa prepare recall answer','d2 d6 d9 d11 d13'),r('history','新对话成为项目历史','dialogue organize history prepare recall answer','d2 d5 d8 d11 d13'),r('read','找到来源后读取原文','dialogue archive answer','d1 d14')]}
  };
- const tabs=[['modules','页面职责'],['restructure','能力记忆与项目存档'],['flow','完整流程'],['activity','入库活动'],['organization','角色泳道'],['recall','知识召回'],['dataflow','资料数据流'],['storage','存储与回收']];
+ const tabs=[['modules','页面职责'],['restructure','能力记忆与项目存档'],['capabilities','能力浏览'],['flow','完整流程'],['activity','入库活动'],['organization','角色泳道'],['recall','知识召回'],['dataflow','资料数据流'],['storage','存储与回收']];
  let saved={};try{saved=JSON.parse(sessionStorage.getItem('evolvmem-business-diagrams')||'{}');}catch(_){}
  let kind=diagrams[saved.kind]?saved.kind:'flow',routeId=saved.route||'',step=-1,timer=null,zoom=saved.zoom===1.3?1.3:1;
  const reduced=matchMedia('(prefers-reduced-motion: reduce)');

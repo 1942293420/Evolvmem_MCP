@@ -54,14 +54,33 @@ def capabilities(service, params) -> dict:
     source = str(params.get("source_project", "")).strip()
     page_size = max(1, min(int(params.get("page_size", 20)), 50))
     requested_page = max(1, int(params.get("page", 1)))
-    rows = filtered_capability_rows(
-        store, query=query, category=category, source_project=source,
-    )
-    total = len(rows)
+    where, values = _capability_filters(store, query, category, source)
+    # Facet counts use the same query/source filters and are already required
+    # by the response. Reuse them instead of scanning LIKE predicates again.
+    counts = capability_counts(store, query=query, source_project=source)
+    total = counts.get(category, 0) if category else sum(counts.values())
     pages = max(1, (total + page_size - 1) // page_size)
     page = min(requested_page, pages)
     start = (page - 1) * page_size
-    items = rows[start:start + page_size]
+    # Page only IDs in the sort: deep OFFSETs must not build a temporary
+    # ordering table containing every full memory body before discarding it.
+    items = [] if not total else [store._public(row) for row in store.conn.execute(
+        "SELECT * FROM capability_memories WHERE memory_id IN ("
+        "SELECT memory_id FROM capability_memories WHERE " + where +
+        " ORDER BY updated_at DESC,memory_id DESC LIMIT ? OFFSET ?)"
+        " ORDER BY updated_at DESC,memory_id DESC",
+        [*values, page_size, start],
+    )]
+    source_projects = [row[0] for row in store.conn.execute(
+        "SELECT DISTINCT source_project FROM capability_memories "
+        "WHERE status='active' AND source_project<>'' ORDER BY source_project"
+    )]
+    intake_total = store.conn.execute(
+        "SELECT count(*) FROM capability_intake WHERE status='pending'"
+    ).fetchone()[0]
+    suggestions_total = store.conn.execute(
+        "SELECT count(*) FROM capability_category_suggestions WHERE status='pending'"
+    ).fetchone()[0]
     intake = [_intake_public(row) for row in store.conn.execute(
         "SELECT * FROM capability_intake WHERE status='pending' ORDER BY created_at,intake_id LIMIT 200"
     )]
@@ -72,12 +91,15 @@ def capabilities(service, params) -> dict:
         "categories": store.categories(),
         "items": items,
         "intake": intake,
+        "intake_total": intake_total,
         "suggestions": suggestions,
+        "suggestions_total": suggestions_total,
+        "source_projects": source_projects,
         "total": total,
         "page": page,
         "page_size": page_size,
         "pages": pages,
-        "counts": capability_counts(store, query=query, source_project=source),
+        "counts": counts,
     }
 
 

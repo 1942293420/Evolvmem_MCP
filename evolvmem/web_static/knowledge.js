@@ -13,6 +13,7 @@
   const state = {view:'projects',intakeMode:'groups',project:'__all__',q:'',status:'',type:'',category:'',page:1,queue:'all',rows:[],selected:new Set(),projects:[],rules:null,total:0,document:null,memoryLane:'overview',projectSort:'recent',qaSort:'recent',fragmentsOpen:false};
   let toastTimer, renderSequence=0, rulesDirty=false, actionBusy=false;
   let organizationTab='review';const memoryFilters=new Map(), projectReaders=new Map(), projectDocuments=new Map(), projectReviews=new Map();
+  let capabilitiesNode=null,capabilitiesHandle=null;
   let cleaningNode=null;let organizationNode=null,organizationHandle=null;const cleaningState={dirty:false,busy:false,background:false};
   function syncCleaning(){if(state.view==='cleaning'){rulesDirty=cleaningState.dirty;actionBusy=cleaningState.busy&&!cleaningState.background;mount.setAttribute('aria-busy',String(cleaningState.busy));}}
   function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,6500); }
@@ -56,6 +57,9 @@
   async function refreshProjects(){const result=await api('projects');state.projects=result.projects;$('#pending-count').textContent=result.pending||'';return result;}
   async function render(){
     const seq=++renderSequence; $('#content').inert=true;$('#knowledge-loading').hidden=false;
+    if(state.view!=='capabilities'&&capabilitiesNode&&$('#content').contains(capabilitiesNode)){
+      capabilitiesHandle?.suspend?.();capabilitiesNode.remove();
+    }
     if($('#knowledge-receipt').querySelector('[data-action="retry"]'))$('#knowledge-receipt').hidden=true;
     if(state.view==='cleaning')syncCleaning();else{if($('#content').contains(cleaningNode)||$('#content').contains(organizationNode))rulesDirty=false;actionBusy=false;mount.setAttribute('aria-busy','false');}
     $('#new-item').hidden=!['intake','library'].includes(state.view)||(state.view==='library'&&!state.project.startsWith('__'));
@@ -68,7 +72,19 @@
     $('#knowledge-title').textContent=titles[state.view];$('#knowledge-description').textContent='';
     try {
     mount.querySelectorAll('[data-view]').forEach(a=>{const active=a.dataset.view===state.view;a.classList.toggle('active',active);a.setAttribute('aria-current',active?'page':'false');});
-    if(state.view==='capabilities'){await EvolvCapabilities.render({mount:$('#content'),esc,toast});return;}
+    if(state.view==='capabilities'){
+      // Retain this panel across navigation, including drafts, cached results,
+      // expanded cards and pending writes. Reads never block its controls.
+      $('#content').onclick=null;$('#content').oninput=null;$('#content').onchange=null;
+      if(!capabilitiesNode){
+        capabilitiesNode=document.createElement('div');
+        $('#content').replaceChildren(capabilitiesNode);
+        capabilitiesHandle=EvolvCapabilities.render({mount:capabilitiesNode,esc,toast});
+      }else{
+        $('#content').replaceChildren(capabilitiesNode);capabilitiesHandle?.resume?.();
+      }
+      $('#content').inert=false;$('#knowledge-loading').hidden=true;return;
+    }
     if(state.view==='archives'){
       await EvolvProjectArchives.render({mount:$('#content'),esc});
       if(!state.project.startsWith('__')){
@@ -121,9 +137,13 @@
     }
     state.document=null;
     if(state.view==='library'&&state.projects.some(p=>p.project===state.project&&p.status==='active')){
-      state.document=await api('project-memory?'+new URLSearchParams({project:state.project}));if(seq!==renderSequence)return;
+      const document=await api('project-memory?'+new URLSearchParams({project:state.project}));if(seq!==renderSequence)return;
+      state.document=document;
     }
-    if(state.view==='library'&&state.project==='__global__')state.document={project:'',name:'全局知识',summary:'跨项目通用的经验与习惯，在经验问答中维护。',body:'',source_ids:[],sessions:[],qa_count:(await api('qa?project=__global__&state=active')).total};
+    if(state.view==='library'&&state.project==='__global__'){
+      const qa=await api('qa?project=__global__&state=active');if(seq!==renderSequence)return;
+      state.document={project:'',name:'全局知识',summary:'跨项目通用的经验与习惯，在经验问答中维护。',body:'',source_ids:[],sessions:[],qa_count:qa.total};
+    }
     state.rows=result.items;state.total=result.total;state.selected.clear();await renderLibrary(result);
     } finally {if(seq===renderSequence){$('#content').inert=false;$('#knowledge-loading').hidden=true;}}
   }
