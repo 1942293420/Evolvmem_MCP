@@ -32,6 +32,8 @@ body[data-design="signal"] .refresh-topnav {
 }
 body[data-design="signal"] .refresh-topnav .signal-brand { color: var(--refresh-accent-dark); margin: 0 18px 0 0; flex: 0 0 auto; }
 body[data-design="signal"] .refresh-topnav .signal-nav { display: flex !important; flex-direction: row !important; align-items: center; justify-content: flex-start !important; gap: 4px; flex-wrap: nowrap; height: auto; margin: 0; }
+body[data-design="signal"] .refresh-topnav .signal-nav > a { flex: 0 0 auto; height: 40px; min-height: 40px; border: 0; white-space: nowrap; }
+body[data-design="signal"] .refresh-topnav .refresh-more { flex: 0 0 auto; }
 .refresh-topnav .signal-nav a,
 .refresh-topnav .signal-nav button {
   border: 0; border-radius: 9px; padding: 7px 10px; white-space: nowrap;
@@ -44,11 +46,13 @@ body[data-design="signal"] .refresh-topnav .signal-nav { display: flex !importan
 .refresh-topnav .signal-nav a[aria-current="page"] { background: var(--refresh-soft); color: var(--refresh-accent-dark); font-weight: 700; }
 .refresh-more { position: relative; }
 .refresh-more-menu {
-  position: absolute; right: 0; top: calc(100% + 7px); min-width: 168px; z-index: 60;
+  position: fixed; left: 0; right: auto; top: 0; min-width: 168px; z-index: 60;
+  max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto;
   padding: 7px; border: 1px solid var(--refresh-line); border-radius: 12px;
   background: var(--refresh-panel); box-shadow: var(--refresh-shadow);
 }
-.refresh-more-menu a { display: block; }
+.refresh-more-menu a { display: block; padding: 9px 10px; border-radius: 8px; color: var(--refresh-muted); text-decoration: none; white-space: nowrap; }
+.refresh-more-menu a:hover { background: var(--refresh-soft); color: var(--refresh-accent-dark); }
 body[data-design="signal"] .refresh-main { box-sizing: border-box; max-width: 1120px; margin: auto; padding: 28px 24px 56px; }
 .refresh-main .data-page-header h1,
 .refresh-main .knowledge-heading h1 { color: var(--refresh-ink); letter-spacing: -.02em; }
@@ -77,6 +81,16 @@ body[data-design="signal"] .refresh-main { box-sizing: border-box; max-width: 11
   .refresh-topnav .signal-nav button { white-space: nowrap; padding: 7px 9px; }
   .refresh-main { padding: 20px 14px 42px; }
 }
+body[data-design="signal"] .refresh-main .home-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
+body[data-design="signal"] .refresh-main .home-heading h1 { margin: 0; font-size: 26px; letter-spacing: -.02em; }
+body[data-design="signal"] .refresh-main .knowledge-home { display: flex; flex-direction: column; }
+body[data-design="signal"] .refresh-main [data-workflow-overview] { order: 0; }
+body[data-design="signal"] .refresh-main [data-workflow-overview] .flow-summary,
+body[data-design="signal"] .refresh-main [data-workflow-overview] .flow-pipeline,
+body[data-design="signal"] .refresh-main [data-workflow-overview] .flow-boundaries { display: none; }
+body[data-design="signal"] .refresh-main .home-results-grid { order: 1; margin: 18px 0; }
+body[data-design="signal"] .refresh-main .home-effect-details { order: 2; margin: 18px 0; }
+body[data-design="signal"] .refresh-main .home-resources { order: 3; display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 18px; }
 .refresh-main .toolbar { display: flex; gap: 10px; flex-wrap: wrap; }
 .refresh-main .input { flex: 1; min-width: 220px; padding: 10px 12px; }
 .refresh-main .select { min-width: 150px; padding: 10px 12px; }

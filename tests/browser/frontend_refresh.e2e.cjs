@@ -24,6 +24,26 @@ const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf
     await page.waitForTimeout(1500);
     const base = 'http://127.0.0.1:39480';
 
+    if (task === 'home' || task === 'all') {
+      await page.setViewportSize({width:1440,height:900});
+      await page.goto(base + '/#home');
+      await page.waitForSelector('[data-overview-capabilities]');
+      for (const selector of ['.flow-summary','.flow-pipeline','.flow-boundaries']) {
+        assert.ok(!(await page.locator(selector).isVisible()), `redundant home section remains visible: ${selector}`);
+      }
+      assert.ok(await page.locator('[data-flow-health]').isVisible(), 'system health must remain accessible');
+      const results = await page.locator('.home-results-grid').boundingBox();
+      assert.ok(results.y < 600, `project archives start below the primary view: y=${results.y}`);
+      await page.locator('.home-results-grid a[data-page-link]').first().click();
+      assert.equal(new URL(page.url()).hash, '#knowledge/archives');
+      await page.goto(base + '/#home');
+      await page.waitForSelector('[data-slot=project-list] [data-project]');
+      await page.locator('[data-slot=project-list] [data-project]').first().click();
+      await page.waitForSelector('[data-archive-summary]');
+      assert.equal(new URL(page.url()).hash, '#knowledge/archives?project=bluewhale');
+      assert.equal(await page.locator('#project-archive-form [name=project]').inputValue(), 'bluewhale');
+    }
+
     if (task === 'navigation' || task === 'all') {
       const labels = await page.locator('[data-page-link]').allTextContents();
       for (const label of ['总览','开发能力','项目存档','任务断点','自动整理']) {
@@ -32,6 +52,15 @@ const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf
       assert.match(await page.locator('[data-more-toggle]').innerText(), /更多/);
       await page.locator('[data-more-toggle]').click();
       assert.ok(await page.locator('[data-more-menu]').isVisible());
+      await page.keyboard.press('Escape');
+      assert.ok(!(await page.locator('[data-more-menu]').isVisible()), 'Escape must close the more menu');
+      await page.locator('[data-more-toggle]').click();
+      const menuHit = await page.locator('[data-more-menu] a').first().evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.x + rect.width / 2,rect.y + rect.height / 2);
+        return hit === element || element.contains(hit);
+      });
+      assert.ok(menuHit, 'more menu is clipped by the navigation bar');
       await page.locator('[data-more-menu] a').first().click();
       assert.ok(!(await page.locator('[data-more-menu]').isVisible()));
       await page.goto(base + '/#knowledge/projects');
@@ -40,6 +69,11 @@ const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf
       for (const width of [390,768,1024,1440]) {
         await page.setViewportSize({width,height:1000});
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+        const navItems = await page.locator('.refresh-topnav .signal-nav > a').evaluateAll(elements => elements.map(element => ({
+          height: element.getBoundingClientRect().height,
+          whiteSpace: getComputedStyle(element).whiteSpace,
+        })));
+        assert.ok(navItems.every(item => item.height <= 44 && item.whiteSpace === 'nowrap'), `navigation wraps at ${width}px: ${JSON.stringify(navItems)}`);
       }
     }
 
