@@ -22,18 +22,19 @@ body[data-design="signal"] {
 }
 body[data-design="signal"] .refresh-topnav {
   position: sticky; top: 0; z-index: 40;
-  display: flex; flex: 0 0 100%; flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap;
-  width: 100%; max-width: none; min-height: 0; height: auto;
-  padding: 12px 24px;
+  display: flex; flex: 0 0 100%; flex-direction: row; align-items: center; gap: 8px; flex-wrap: nowrap;
+  box-sizing: border-box; overflow-x: auto;
+  width: 100%; max-width: none; min-height: 56px; height: 56px;
+  padding: 0 20px;
   background: rgba(255,255,255,.92);
   border-bottom: 1px solid var(--refresh-line);
   backdrop-filter: blur(14px);
 }
-.refresh-topnav .signal-brand { color: var(--refresh-accent-dark); margin-right: 16px; }
-.refresh-topnav .signal-nav { display: flex; flex-direction: row !important; align-items: center; justify-content: flex-start !important; gap: 5px; flex-wrap: wrap; height: auto; }
+body[data-design="signal"] .refresh-topnav .signal-brand { color: var(--refresh-accent-dark); margin: 0 18px 0 0; flex: 0 0 auto; }
+body[data-design="signal"] .refresh-topnav .signal-nav { display: flex !important; flex-direction: row !important; align-items: center; justify-content: flex-start !important; gap: 4px; flex-wrap: nowrap; height: auto; margin: 0; }
 .refresh-topnav .signal-nav a,
 .refresh-topnav .signal-nav button {
-  border: 0; border-radius: 9px; padding: 8px 12px;
+  border: 0; border-radius: 9px; padding: 7px 10px; white-space: nowrap;
   color: var(--refresh-muted); background: transparent; text-decoration: none;
   font: inherit; cursor: pointer;
 }
@@ -43,12 +44,12 @@ body[data-design="signal"] .refresh-topnav {
 .refresh-topnav .signal-nav a[aria-current="page"] { background: var(--refresh-soft); color: var(--refresh-accent-dark); font-weight: 700; }
 .refresh-more { position: relative; }
 .refresh-more-menu {
-  position: absolute; right: 0; top: calc(100% + 7px); min-width: 168px;
+  position: absolute; right: 0; top: calc(100% + 7px); min-width: 168px; z-index: 60;
   padding: 7px; border: 1px solid var(--refresh-line); border-radius: 12px;
   background: var(--refresh-panel); box-shadow: var(--refresh-shadow);
 }
 .refresh-more-menu a { display: block; }
-body[data-design="signal"] .refresh-main { max-width: 1120px; margin: auto; padding: 28px 24px 56px; }
+body[data-design="signal"] .refresh-main { box-sizing: border-box; max-width: 1120px; margin: auto; padding: 28px 24px 56px; }
 .refresh-main .data-page-header h1,
 .refresh-main .knowledge-heading h1 { color: var(--refresh-ink); letter-spacing: -.02em; }
 .refresh-main .data-page-header p,
