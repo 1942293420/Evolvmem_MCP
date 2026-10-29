@@ -69,7 +69,15 @@
     try {
     mount.querySelectorAll('[data-view]').forEach(a=>{const active=a.dataset.view===state.view;a.classList.toggle('active',active);a.setAttribute('aria-current',active?'page':'false');});
     if(state.view==='capabilities'){await EvolvCapabilities.render({mount:$('#content'),esc,toast});return;}
-    if(state.view==='archives'){await EvolvProjectArchives.render({mount:$('#content'),esc});return;}
+    if(state.view==='archives'){
+      await EvolvProjectArchives.render({mount:$('#content'),esc});
+      if(!state.project.startsWith('__')){
+        const form=$('#project-archive-form');
+        form.elements.project.value=state.project;
+        form.requestSubmit();
+      }
+      return;
+    }
     const info=await refreshProjects();if(seq!==renderSequence)return;
     $('#content').onclick=null;$('#content').oninput=null;$('#content').onchange=null;
     if(state.view==='learning'){$('#content').innerHTML='<section class="panel"><h2>协作学习已停用</h2><p>各环节由 Skill 明确维护。旧学习资料保留，但不再自动生成或注入规则。</p><a href="#knowledge/skill" data-view="skill">打开经验提取与验证 Skill</a></section>';return;}

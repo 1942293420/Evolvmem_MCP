@@ -281,7 +281,7 @@
     if(event.target.closest('.knowledge-workspace'))return;
     const nav=event.target.closest('[data-page-link]');if(nav){event.preventDefault();navigate(nav.dataset.pageLink,nav.dataset.pageLink==='memories'?'__all__':undefined,undefined,nav.dataset.knowledgeView);return;}
     const detail=event.target.closest('[data-detail]');if(detail&&!detail.disabled){openDetail(detail.dataset.detail,detail.dataset.id);return;}
-    const project=event.target.closest('[data-project]');if(project){navigate('memories',project.dataset.project);return;}
+    const project=event.target.closest('[data-project]');if(project){navigate('memories',project.dataset.project,undefined,'archives');return;}
     const current=[...browsers.values()].find(c=>c.kind===state.page);
     if(event.target.closest('[data-refresh]')) {
       if(!current?.canLeave||current.canLeave()){const button=event.target.closest('[data-refresh]');if(button.disabled)return;const finish=EvolvUI.busy(button,'正在刷新…');Promise.resolve(current?.integrated?current.load():boot()).finally(finish);}
