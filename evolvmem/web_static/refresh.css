@@ -23,17 +23,18 @@ body[data-design="signal"] {
 body[data-design="signal"] .refresh-topnav {
   position: sticky; top: 0; z-index: 40;
   display: flex; flex: 0 0 100%; flex-direction: row; align-items: center; gap: 8px; flex-wrap: nowrap;
-  box-sizing: border-box; overflow-x: auto;
+  box-sizing: border-box; overflow: visible;
   width: 100%; max-width: none; min-height: 56px; height: 56px;
   padding: 0 20px;
   background: rgba(255,255,255,.92);
   border-bottom: 1px solid var(--refresh-line);
   backdrop-filter: blur(14px);
 }
-body[data-design="signal"] .refresh-topnav .signal-brand { color: var(--refresh-accent-dark); margin: 0 18px 0 0; flex: 0 0 auto; }
-body[data-design="signal"] .refresh-topnav .signal-nav { display: flex !important; flex-direction: row !important; align-items: center; justify-content: flex-start !important; gap: 4px; flex-wrap: nowrap; height: auto; margin: 0; }
+body[data-design="signal"] .refresh-topnav .signal-brand { color: var(--refresh-accent-dark); margin: 0 18px 0 0; padding: 0; flex: 0 0 auto; }
+body[data-design="signal"] .refresh-topnav .signal-nav { display: flex !important; flex: 1 1 auto; flex-direction: row !important; align-items: center; justify-content: flex-start !important; gap: 4px; flex-wrap: nowrap; width: auto; min-width: 0; height: auto; margin: 0; overflow: visible; }
 body[data-design="signal"] .refresh-topnav .signal-nav > a { flex: 0 0 auto; height: 40px; min-height: 40px; border: 0; white-space: nowrap; }
 body[data-design="signal"] .refresh-topnav .refresh-more { flex: 0 0 auto; }
+body[data-design="signal"] .refresh-topnav .auth-status { flex: 0 0 auto; margin: 0 0 0 auto; }
 .refresh-topnav .signal-nav a,
 .refresh-topnav .signal-nav button {
   border: 0; border-radius: 9px; padding: 7px 10px; white-space: nowrap;
@@ -73,13 +74,20 @@ body[data-design="signal"] .refresh-main { box-sizing: border-box; max-width: 11
 .refresh-main select,
 .refresh-main textarea { border: 1px solid var(--refresh-line); border-radius: 9px; color: var(--refresh-ink); background: #fff; }
 .refresh-main input::placeholder { color: #86a0ae; }
-@media (max-width: 800px) {
-  .refresh-topnav { flex-wrap: nowrap; overflow-x: auto; padding: 10px 14px; }
-  .refresh-topnav .signal-brand { flex: none; margin-right: 4px; }
-  .refresh-topnav .signal-nav { flex: none; flex-wrap: nowrap; }
-  .refresh-topnav .signal-nav a,
-  .refresh-topnav .signal-nav button { white-space: nowrap; padding: 7px 9px; }
+@media (max-width: 1100px) {
+  body[data-design="signal"] .refresh-topnav { height: auto; min-height: 56px; flex-wrap: wrap; gap: 6px 12px; overflow: visible; padding: 8px 16px; }
+  body[data-design="signal"] .refresh-topnav .signal-brand { margin: 0; }
+  body[data-design="signal"] .refresh-topnav .signal-nav { order: 3; display: grid !important; grid-template-columns: repeat(6,minmax(0,1fr)); flex: 0 0 100%; width: 100%; gap: 4px; }
+  body[data-design="signal"] .refresh-topnav .signal-nav > a { justify-content: center; min-width: 0; padding: 7px 4px; }
+  body[data-design="signal"] .refresh-topnav .nav-icon { display: none; }
+  body[data-design="signal"] .refresh-topnav .refresh-more { justify-self: center; }
   .refresh-main { padding: 20px 14px 42px; }
+}
+@media (max-width: 600px) {
+  body[data-design="signal"] .refresh-topnav .signal-nav { grid-template-columns: repeat(3,minmax(0,1fr)); }
+}
+@media (max-width: 480px) {
+  body[data-design="signal"] .refresh-topnav .auth-status > span { display: none; }
 }
 body[data-design="signal"] .refresh-main .home-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
 body[data-design="signal"] .refresh-main .home-heading h1 { margin: 0; font-size: 26px; letter-spacing: -.02em; }

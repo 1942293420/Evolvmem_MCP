@@ -66,7 +66,7 @@ const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf
       await page.goto(base + '/#knowledge/projects');
       assert.ok(await page.locator('.refresh-topnav').count());
       assert.equal(await page.locator('.refresh-duplicate-title').count(), 0);
-      for (const width of [390,768,1024,1440]) {
+      for (const width of [390,768,1024,1178,1440]) {
         await page.setViewportSize({width,height:1000});
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
         const navItems = await page.locator('.refresh-topnav .signal-nav > a').evaluateAll(elements => elements.map(element => ({
@@ -74,6 +74,22 @@ const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf
           whiteSpace: getComputedStyle(element).whiteSpace,
         })));
         assert.ok(navItems.every(item => item.height <= 44 && item.whiteSpace === 'nowrap'), `navigation wraps at ${width}px: ${JSON.stringify(navItems)}`);
+        const navigation = await page.evaluate(() => {
+          const header = document.querySelector('.refresh-topnav');
+          header.scrollLeft = 0;
+          const elements = [document.querySelector('.signal-brand'),...document.querySelectorAll('.signal-nav > a'),document.querySelector('[data-more-toggle]')];
+          return {
+            clientWidth: header.clientWidth,
+            scrollWidth: header.scrollWidth,
+            items: elements.map(element => {
+              const rect = element.getBoundingClientRect();
+              const hit = document.elementFromPoint(rect.x + rect.width / 2,rect.y + rect.height / 2);
+              return {text:element.textContent.trim(),left:rect.left,right:rect.right,hit:element === hit || element.contains(hit)};
+            }),
+          };
+        });
+        assert.ok(navigation.scrollWidth <= navigation.clientWidth + 1, `navigation requires horizontal scrolling at ${width}px: ${JSON.stringify(navigation)}`);
+        assert.ok(navigation.items.every(item => item.left >= 0 && item.right <= width + 1 && item.hit), `navigation is hidden or covered at ${width}px: ${JSON.stringify(navigation.items)}`);
       }
     }
 
