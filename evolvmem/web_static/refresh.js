@@ -1,8 +1,7 @@
 (() => {
   'use strict';
   function initPreview(root){
-    const selected=new URLSearchParams(location.search).get('nav-design');
-    if(!['contrast','cards'].includes(selected))return false;
+    const selected=new URLSearchParams(location.search).get('nav-design')==='cards'?'cards':'contrast';
     const header=root.querySelector('.refresh-topnav'),nav=header?.querySelector('.signal-nav');
     if(!nav)return false;
     const icons={
@@ -32,16 +31,7 @@
       }nav.append(group);
     }
     const brand=header.querySelector('.signal-brand');if(brand){brand.href='#home';brand.dataset.pageLink='home';}
-    const switcher=document.createElement('div');switcher.className='nav-preview-switcher';
-    switcher.innerHTML='<span class="nav-preview-caption">导航方案对比</span><div><button type="button" data-nav-variant="contrast">A · 撞色</button><button type="button" data-nav-variant="cards">B · 卡片</button></div><a class="nav-preview-exit" href="/">返回原导航 ↗</a>';
-    header.append(switcher);
-    const banner=document.createElement('div');banner.className='nav-preview-banner';banner.innerHTML='<span data-nav-design-title></span><span>全部入口 · 按用途归类</span>';root.querySelector('.refresh-main')?.prepend(banner);
-    const apply=variant=>{document.body.dataset.navDesign=variant;
-      root.querySelector('[data-nav-design-title]').textContent=variant==='contrast'?'A / 深蓝撞色':'B / 白色卡片';
-      switcher.querySelectorAll('[data-nav-variant]').forEach(b=>{b.classList.toggle('active',b.dataset.navVariant===variant);b.setAttribute('aria-pressed',String(b.dataset.navVariant===variant));});
-      const url=new URL(location.href);url.searchParams.set('nav-design',variant);history.replaceState(null,'',url);};
-    switcher.addEventListener('click',e=>{const b=e.target.closest('[data-nav-variant]');if(b)apply(b.dataset.navVariant);});
-    apply(selected);
+    document.body.dataset.navDesign=selected;
     // Sticky height varies when groups wrap, fonts load or the account appears.
     // Keep in-page anchors and the capability sidebar below the frozen header.
     const measureHeader=()=>{
