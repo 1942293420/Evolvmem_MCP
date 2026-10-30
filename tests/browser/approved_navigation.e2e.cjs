@@ -41,6 +41,17 @@ await page.goto(BASE+'/#knowledge/library');await page.locator('#filter-project'
 await Promise.all([page.waitForResponse(r=>r.url().includes('/api/knowledge/items?project=bluewhale')),page.locator('#filter-project').selectOption('bluewhale')]);
 await page.waitForFunction(()=>document.querySelector('.nav-primary-link[aria-current="page"]')?.dataset.navGroup==='project');
 assert.equal(await page.locator('.nav-secondary-link[aria-current="page"]').getAttribute('data-nav-section'),'projects');assert.equal(new URLSearchParams(new URL(page.url()).hash.split('?')[1]).get('project'),'bluewhale');results.internalScopeSync=true;
+results.searchRestored=[];
+for(const [key,group,endpoint,term] of [['experiences','experience','experiences','navigation experience filter'],['progress','task','workstreams','navigation task filter']]){
+  await page.goto(BASE+'/#'+key);
+  const search=page.locator(`[data-page-panel="${key}"] [data-filter="query"]`);await search.waitFor();
+  await Promise.all([page.waitForResponse(r=>{const u=new URL(r.url());return u.pathname==='/api/'+endpoint&&u.searchParams.get('q')===term;}),search.fill(term)]);
+  await page.waitForFunction(k=>document.querySelector(`[data-page-panel="${k}"] [data-results]`)?.getAttribute('aria-busy')==='false',key);
+  await page.locator('[data-nav-group="home"]').click();
+  await Promise.all([page.waitForResponse(r=>{const u=new URL(r.url());return u.pathname==='/api/'+endpoint&&u.searchParams.get('q')===term;}),page.locator(`[data-nav-group="${group}"]`).click()]);
+  assert.equal(await search.inputValue(),term,'returning to '+key+' must preserve the existing controller search');
+  assert.equal(new URL(page.url()).hash,'#'+key);results.searchRestored.push({page:key,query:term});
+}
 await page.goto(BASE+'/#knowledge/rules');const field=page.locator('#min-confidence');await field.waitFor();const old=await field.inputValue(),draft=old==='0.55'?'0.65':'0.55';await field.fill(draft);await page.waitForFunction(()=>document.querySelector('#rules-save-state')?.textContent.includes('未保存'));
 const hash=new URL(page.url()).hash;
 for(const selector of ['[data-nav-group="home"]','[data-nav-section="cleaning"]']){const dialogPromise=page.waitForEvent('dialog'),clicked=page.locator(selector).click();const dialog=await dialogPromise;assert.equal(dialog.type(),'confirm');await dialog.dismiss();await clicked;assert.equal(new URL(page.url()).hash,hash);assert.equal(await field.inputValue(),draft);assert.equal(await page.locator('.nav-primary-link[aria-current="page"]').getAttribute('data-nav-group'),'organize');assert.equal(await page.locator('.nav-secondary-link[aria-current="page"]').getAttribute('data-nav-section'),'skill');}

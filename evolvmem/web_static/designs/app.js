@@ -337,7 +337,7 @@
       event.preventDefault();
       if(nav.dataset.navShell){
         const search=nav.hash.split('?')[1]||'',params=new URLSearchParams(search);
-        navigate(nav.dataset.pageLink,nav.dataset.pageLink==='memories'?(params.get('project')||'__all__'):undefined,params.get('q')||'',nav.dataset.knowledgeView,false,search);
+        navigate(nav.dataset.pageLink,nav.dataset.pageLink==='memories'?(params.get('project')||'__all__'):undefined,nav.dataset.pageLink==='memories'?(params.get('q')||''):undefined,nav.dataset.knowledgeView,false,search);
       }else navigate(nav.dataset.pageLink,nav.dataset.pageLink==='memories'?'__all__':undefined,undefined,nav.dataset.knowledgeView);
       return;
     }
