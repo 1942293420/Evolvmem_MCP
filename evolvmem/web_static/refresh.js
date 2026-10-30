@@ -1,7 +1,52 @@
 (() => {
   'use strict';
+  function initPreview(root){
+    const selected=new URLSearchParams(location.search).get('nav-design');
+    if(!['contrast','cards'].includes(selected))return false;
+    const header=root.querySelector('.refresh-topnav'),nav=header?.querySelector('.signal-nav');
+    if(!nav)return false;
+    const icons={
+      home:'<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
+      capabilities:'<path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>',
+      archives:'<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3V7Z"/><path d="M8 12h8M8 16h5"/>',
+      progress:'<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 7v10M8 5h4a6 6 0 0 1 6 5"/>',
+      organization:'<path d="m12 3 2 6 7 3-7 3-2 6-2-6-7-3 7-3 2-6Z"/>',
+      cleaning:'<path d="m15 3-5 8M6 11h8l4 9H2l4-9Z"/><path d="m7 15-1 5M11 15l1 5M18 6h4M20 4v4"/>',
+      intake:'<path d="M3 12h5l2 4h4l2-4h5M5 4h14l2 8v8H3v-8l2-8Z"/>',
+      skill:'<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="18" r="2"/>',
+      projects:'<path d="M12 6c-3-2-6-2-9-1v15c3-1 6-1 9 1 3-2 6-2 9-1V5c-3-1-6-1-9 1Zm0 0v15"/>',
+      qa:'<path d="M21 11a8 8 0 0 1-8 8H8l-5 3v-7a8 8 0 1 1 18-4Z"/><path d="M9 8a3 3 0 0 1 6 0c0 2-3 2-3 4M12 15h.01"/>',
+      principles:'<rect x="8" y="2" width="8" height="6" rx="1"/><rect x="2" y="16" width="7" height="6" rx="1"/><rect x="15" y="16" width="7" height="6" rx="1"/><path d="M12 8v4H5v4m7-4h7v4"/>'
+    };
+    const links=new Map([...nav.querySelectorAll('a[data-page-link]')].map(a=>[a.dataset.knowledgeView||a.dataset.pageLink,a]));
+    const groups=[['日常工作','work',['home','capabilities','archives','progress']],['整理与维护','manage',['organization','cleaning','intake','skill']],['历史与说明','history',['projects','qa','principles']]];
+    nav.replaceChildren();nav.setAttribute('aria-label','按用途分组的主导航');
+    for(const [title,tone,keys] of groups){
+      const group=document.createElement('section');group.className='nav-preview-group';group.dataset.tone=tone;
+      const heading=document.createElement('h2');heading.textContent=title;group.append(heading);
+      const list=document.createElement('div');list.className='nav-preview-links';group.append(list);
+      for(const key of keys){const a=links.get(key);if(!a)continue;
+        const label=key==='projects'?'旧项目知识':key==='qa'?'旧经验知识':a.textContent.trim().replace(/^[◫▦▥↳◎]\s*/,'');
+        a.className='nav-preview-link';a.innerHTML=`<span class="nav-preview-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${icons[key]}</svg></span><span class="nav-preview-label"></span><span class="nav-preview-arrow" aria-hidden="true">›</span>`;
+        a.querySelector('.nav-preview-label').textContent=label;list.append(a);
+      }nav.append(group);
+    }
+    const brand=header.querySelector('.signal-brand');if(brand){brand.href='#home';brand.dataset.pageLink='home';}
+    const switcher=document.createElement('div');switcher.className='nav-preview-switcher';
+    switcher.innerHTML='<span class="nav-preview-caption">导航方案对比</span><div><button type="button" data-nav-variant="contrast">A · 撞色</button><button type="button" data-nav-variant="cards">B · 卡片</button></div><a class="nav-preview-exit" href="/">返回原导航 ↗</a>';
+    header.append(switcher);
+    const banner=document.createElement('div');banner.className='nav-preview-banner';banner.innerHTML='<span data-nav-design-title></span><span>全部入口 · 按用途归类</span>';root.querySelector('.refresh-main')?.prepend(banner);
+    const apply=variant=>{document.body.dataset.navDesign=variant;
+      root.querySelector('[data-nav-design-title]').textContent=variant==='contrast'?'A / 深蓝撞色':'B / 白色卡片';
+      switcher.querySelectorAll('[data-nav-variant]').forEach(b=>{b.classList.toggle('active',b.dataset.navVariant===variant);b.setAttribute('aria-pressed',String(b.dataset.navVariant===variant));});
+      const url=new URL(location.href);url.searchParams.set('nav-design',variant);history.replaceState(null,'',url);};
+    switcher.addEventListener('click',e=>{const b=e.target.closest('[data-nav-variant]');if(b)apply(b.dataset.navVariant);});
+    apply(selected);return true;
+  }
+
   window.EvolvRefresh = {
     initNavigation(root) {
+      if(initPreview(root))return;
       const toggle = root.querySelector('[data-more-toggle]');
       const menu = root.querySelector('[data-more-menu]');
       if (!toggle || !menu) return;
