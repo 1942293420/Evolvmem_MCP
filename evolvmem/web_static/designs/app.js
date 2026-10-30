@@ -29,10 +29,14 @@
   const list = (items, ordered=false) => items?.length ? `<${ordered?'ol':'ul'}>${items.map(v=>`<li>${esc(v)}</li>`).join('')}</${ordered?'ol':'ul'}>` : '<p class="ui-note">尚未记录</p>';
   const conditions = values => values && Object.keys(values).length ? `<dl class="ui-conditions">${Object.entries(values).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>` : '<p class="ui-note">未记录明确条件，采用前仍需核对当前场景。</p>';
   function errorBox(message='暂时无法读取数据。') { return `<div class="ui-empty"><strong>${esc(message)}</strong><span>可以刷新重试，已保存的内容不会因此改变。</span><button class="ui-button" data-refresh>重新读取</button></div>`; }
-  async function get(path) {
-    const response=await window.EvolvAuth.fetch(path,{cache:'no-store'});
+  async function get(path, timeout=0) {
+    const controller=timeout?new AbortController():null;
+    const timer=controller?setTimeout(()=>controller.abort(),timeout):null;
+    try {
+    const response=await window.EvolvAuth.fetch(path,{cache:'no-store',...(controller?{signal:controller.signal}:{})});
     if(!response.ok) throw new Error(response.status===404?'这条记录已不存在，请刷新列表。':'暂时无法读取数据，请稍后重试。');
-    return response.json();
+    return await response.json();
+    } finally {if(timer)clearTimeout(timer);}
   }
   function valid(row) { return row.status==='active' && !row.expired && ['single_verified','repeated_verified'].includes(row.validation_level); }
   function caseBadge(row) { return badge(row.expired?'已过期':valid(row)?label(row.validation_level):label(row.status),valid(row)); }
@@ -128,8 +132,50 @@
     const tick=now=>{if(!el.isConnected)return;const t=Math.min(1,(now-start)/650);el.textContent=Math.round(value*(1-(1-t)**3)).toLocaleString('en-US');if(t<1)requestAnimationFrame(tick);};
     requestAnimationFrame(tick);
   }
+  const homeSnapshot={overview:null,settings:null,loading:{},errors:{},at:0};
+  let homeFlight=null,metricsFlight=null,metricsAt=0;
+  const compactHome=()=>document.body.dataset.design==='signal';
+  function paintHome(){
+    if(!window.EvolvWorkflowOverview)return;
+    $$('[data-workflow-overview]').forEach(el=>{
+      el.innerHTML=EvolvWorkflowOverview.html({...homeSnapshot,compact:true},esc);
+      el.setAttribute('aria-busy',String(Object.values(homeSnapshot.loading).some(Boolean)));
+    });
+  }
+  async function loadHomeMetrics(force=false){
+    if(metricsFlight)return metricsFlight;
+    if(!force&&Date.now()-metricsAt<30000)return;
+    const hosts=$$('[data-slot="organization-metrics"]');
+    hosts.forEach(el=>{el.setAttribute('aria-busy','true');if(!el.hasChildNodes())el.innerHTML='<p role="status">正在读取效果统计…</p>';});
+    metricsFlight=(async()=>{
+      try{
+        const metrics=await get('/api/knowledge/organization/metrics',20000);
+        hosts.forEach(el=>el.innerHTML=EvolvOrganizationMetrics.html(metrics,esc));metricsAt=Date.now();
+      }catch(error){hosts.forEach(el=>el.innerHTML='<p class="ui-error">效果统计暂不可用，请重试。</p><button class="ui-button" data-home-metrics-retry>重新读取统计</button>');}
+      finally{hosts.forEach(el=>el.setAttribute('aria-busy','false'));metricsFlight=null;}
+    })();
+    return metricsFlight;
+  }
+  function loadFastHome(force=false){
+    if(homeFlight)return homeFlight;
+    if(!force&&homeSnapshot.at&&Date.now()-homeSnapshot.at<15000){paintHome();return Promise.resolve();}
+    homeSnapshot.at=Date.now();homeSnapshot.loading={overview:true,settings:true};homeSnapshot.errors={};paintHome();
+    homeFlight=Promise.allSettled([['overview','/api/overview'],['settings','/api/knowledge/organization/settings']].map(async([key,url])=>{
+      try{homeSnapshot[key]=await get(url,10000);}
+      catch(error){homeSnapshot.errors[key]=true;}
+      finally{homeSnapshot.loading[key]=false;paintHome();}
+    })).finally(()=>{homeFlight=null;});
+    return homeFlight;
+  }
+  document.querySelector('.home-effect-details')?.addEventListener('toggle',event=>{if(event.target.open)loadHomeMetrics();});
+  document.addEventListener('click',event=>{if(event.target.closest('[data-home-metrics-retry]'))loadHomeMetrics(true);});
+
   let overviewRequest=0;
-  async function refreshOrganizationMetrics(token){
+  async function refreshOrganizationMetrics(token,force=false){
+    if(compactHome()){
+      if(document.querySelector('.home-effect-details[open]'))loadHomeMetrics(force);
+      return loadFastHome(force);
+    }
     if(!window.EvolvOrganizationMetrics)return;
     const request=++overviewRequest;
     const routes=['organization/metrics','organization?status=current','organization/settings'];
@@ -157,7 +203,7 @@
     }
     const urls=['/api/stats','/api/insights','/api/projects','/api/memories?status=active&page_size=200&sort=access_count','/api/experiences?status=verified&page_size=3','/api/workstreams?status=unfinished&page_size=3','/api/memories?status=active&sort=created_at&order=desc&page_size=3','/api/knowledge/qa?state=active&page_size=1','/api/knowledge/projects'];
     const needed=['[data-stat],[data-slot=metrics],[data-galaxy]','[data-stat],[data-slot=metrics]','[data-slot=project-list],[data-galaxy]','[data-galaxy]','[data-slot=featured-experiences]','[data-slot=task-list]','[data-slot=recent-memories]','[data-stat=qa_active]','[data-stat=pending_items]'];
-    const overview=refreshOrganizationMetrics(token);
+    const overview=refreshOrganizationMetrics(token,refreshBrowser);
     const responses=await Promise.allSettled(urls.map((url,i)=>$(needed[i])?get(url):Promise.resolve(null)));
     if(token!==state.boot) return;
     const [stats,insights,projects,memories,experiences,tasks,recent,qa,knowledge]=responses.map(r=>r.status==='fulfilled'?r.value:null);
@@ -180,7 +226,7 @@
       else {const error=document.createElement('div');error.className='galaxy-error';error.innerHTML=errorBox('星图数据暂不可用。');el.append(error);}
     });
     await overview;if(token!==state.boot)return;
-    const failures=responses.filter(r=>r.status==='rejected').length;
+    const failures=responses.filter(r=>r.status==='rejected').length+(compactHome()?Object.keys(homeSnapshot.errors).length:0);
     $$('[data-data-status]').forEach(el=>{el.textContent=failures?'部分数据未能加载 · 可刷新重试':'实时数据已连接';el.classList.toggle('ui-status-error',!!failures);el.classList.remove('ui-loading');});
     if(refreshBrowser&&state.page!=='home') {const controller=[...browsers.values()].find(c=>c.kind===state.page);if(controller){controller.draw();await controller.load();}}
   }

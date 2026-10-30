@@ -6,7 +6,7 @@ window.EvolvPrinciples={render(mount){
  const e=(id,from,to,label='',d='',x=0,y=0)=>({id,from,to,label,d,x,y});
  const r=(id,label,nodes,edges)=>({id,label,nodes:nodes.split(' '),edges:edges.split(' ')});
  const facts=(owner,input,output,rule='',tool='',link='')=>({owner,input,output,rule,tool,link});
- const modules=[['home','总览','处理进度与系统问题','#home'],['organization','自动整理','自动归档、纠正与提炼','#knowledge/organization'],['history','项目知识','目录、来源与历史变化','#knowledge/projects'],['capabilities','开发能力','分类检索、来源追溯与待分类','#knowledge/capabilities'],['archives','项目存档','当前摘要、开发周期与历史事件','#knowledge/archives'],['qa','经验知识','明确问答与适用范围','#knowledge/qa'],['checkpoint','任务断点','当前进度与下一步','#progress'],['cleaning','数据清洗','核对来源、修改与删除','#knowledge/cleaning'],['intake','存量资料','按项目集中归档与纠正','#knowledge/intake'],['rules','整理规则','处理规则与样例预览','#knowledge/skill']];
+ const modules=[['home','总览','先显示概览与运行状态，展开后读取效果统计','#home'],['organization','自动整理','自动归档、纠正与提炼','#knowledge/organization'],['history','项目知识','目录、来源与历史变化','#knowledge/projects'],['capabilities','开发能力','分类检索、来源追溯与待分类','#knowledge/capabilities'],['archives','项目存档','当前摘要、开发周期与历史事件','#knowledge/archives'],['qa','经验知识','明确问答与适用范围','#knowledge/qa'],['checkpoint','任务断点','当前进度与下一步','#progress'],['cleaning','数据清洗','核对来源、修改与删除','#knowledge/cleaning'],['intake','存量资料','按项目集中归档与纠正','#knowledge/intake'],['rules','整理规则','处理规则与样例预览','#knowledge/skill']];
  const diagrams={
  capabilities:{title:'查找开发经验与确认分类',type:'业务流程图',goal:'先筛选需要的经验，再查看正文与来源；待分类资料在确认后进入正式记忆。',height:810,nodes:[
  n('open','打开开发能力',350,20,'start',facts('你','当前开发问题','正式记忆与待分类入口','','','#knowledge/capabilities')),
