@@ -30,7 +30,39 @@
         a.querySelector('.nav-preview-label').textContent=label;list.append(a);
       }nav.append(group);
     }
-    const brand=header.querySelector('.signal-brand');if(brand){brand.href='#home';brand.dataset.pageLink='home';}
+    const brand=header.querySelector('.signal-brand');if(brand){brand.href='#home';brand.dataset.pageLink='home';brand.title='EvolvMem 首页';}
+    const account=header.querySelector('[data-auth-status]');
+    const identity=account?.querySelector(':scope > span'),logout=account?.querySelector(':scope > button');
+    if(identity && logout && !account.hidden){
+      const toggle=document.createElement('button');toggle.type='button';toggle.className='nav-account-toggle';
+      toggle.textContent=[...identity.textContent.trim()][0]||'我';
+      toggle.title=identity.textContent;toggle.setAttribute('aria-label','当前账号：'+identity.textContent);
+      toggle.setAttribute('aria-expanded','false');toggle.setAttribute('aria-controls','nav-account-panel');
+      const panel=document.createElement('div');panel.id='nav-account-panel';panel.className='nav-account-panel';panel.hidden=true;
+      panel.setAttribute('role','region');panel.setAttribute('aria-label','当前账号');panel.append(identity);document.body.append(panel);
+      account.prepend(toggle);
+      // Decorate the existing button; auth.js still owns CSRF, logout and errors.
+      logout.classList.add('nav-logout');
+      logout.innerHTML='<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5H5v14h5M10 12h11m-4-4 4 4-4 4"/></svg><span class="nav-sr-only">退出登录</span>';
+      let openedBounds=null;
+      const close=()=>{openedBounds=null;panel.hidden=true;toggle.setAttribute('aria-expanded','false');};
+      toggle.addEventListener('click',()=>{
+        if(!panel.hidden){close();return;}
+        panel.hidden=false;toggle.setAttribute('aria-expanded','true');
+        const box=toggle.getBoundingClientRect();openedBounds=box;
+        panel.style.left=Math.max(12,Math.min(innerWidth-panel.offsetWidth-12,box.right-panel.offsetWidth))+'px';
+        panel.style.top=Math.min(innerHeight-panel.offsetHeight-12,box.bottom+8)+'px';
+      });
+      document.addEventListener('pointerdown',event=>{if(!panel.contains(event.target)&&!toggle.contains(event.target))close();});
+      document.addEventListener('focusin',event=>{if(!panel.contains(event.target)&&!toggle.contains(event.target))close();});
+      document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!panel.hidden){close();toggle.focus();}});
+      document.addEventListener('scroll',()=>{
+        if(panel.hidden||!openedBounds)return;
+        const current=toggle.getBoundingClientRect();
+        if(Math.abs(current.top-openedBounds.top)>.5||Math.abs(current.left-openedBounds.left)>.5)close();
+      },true);
+      window.addEventListener('resize',close);window.addEventListener('hashchange',close);
+    }
     document.body.dataset.navDesign=selected;
     // Sticky height varies when groups wrap, fonts load or the account appears.
     // Keep in-page anchors and the capability sidebar below the frozen header.
