@@ -21,7 +21,7 @@
     const groups=[['日常工作','work',['home','capabilities','archives','progress']],['整理与维护','manage',['organization','cleaning','intake','skill']],['历史与说明','history',['projects','qa','principles']]];
     nav.replaceChildren();nav.setAttribute('aria-label','按用途分组的主导航');
     for(const [title,tone,keys] of groups){
-      const group=document.createElement('section');group.className='nav-preview-group';group.dataset.tone=tone;
+      const group=document.createElement('section');group.className='nav-preview-group';group.dataset.tone=tone;group.setAttribute('aria-label',title);group.title=title;
       const heading=document.createElement('h2');heading.textContent=title;group.append(heading);
       const list=document.createElement('div');list.className='nav-preview-links';group.append(list);
       for(const key of keys){const a=links.get(key);if(!a)continue;

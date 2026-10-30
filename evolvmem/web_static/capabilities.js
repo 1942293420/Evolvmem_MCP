@@ -3,6 +3,7 @@
   // One controller belongs to one retained workspace node. No persistent cache
   // is shared between users, and browsing never implicitly starts a write.
   const controllers = new WeakMap();
+  let selectSequence = 0;
   window.EvolvCapabilities = {render({mount, esc, toast}) {
     if (controllers.has(mount)) {
       const existing = controllers.get(mount);
@@ -20,6 +21,116 @@
     let cacheBytes = 0;
     const renderedPanels = new Map();
     const $ = selector => mount.querySelector(selector);
+    const selectWidgets = new Map();
+    let dropdown = null;
+    function closeSelect() {
+      if (!dropdown) return;
+      const {button, menu, release} = dropdown;
+      dropdown = null;
+      button.setAttribute('aria-expanded','false');
+      button.removeAttribute('aria-activedescendant');
+      menu.remove(); release();
+    }
+    function enhanceSelects() {
+      for (const [select, widget] of selectWidgets) if (!mount.contains(select)) {
+        if (dropdown?.select === select) closeSelect();
+        widget.observer.disconnect(); selectWidgets.delete(select);
+      }
+      mount.querySelectorAll('select[data-memory-source],select[data-intake-category]').forEach(select => {
+        let widget = selectWidgets.get(select);
+        if (!widget) {
+          const wrapper = document.createElement('div'); wrapper.className='capability-select';
+          if (select.hasAttribute('data-memory-source')) wrapper.classList.add('capability-source-select');
+          select.before(wrapper); wrapper.append(select);
+          select.classList.add('capability-native-select'); select.tabIndex=-1; select.setAttribute('aria-hidden','true');
+          const button = document.createElement('button'); button.type='button'; button.className='capability-select-trigger';
+          button.setAttribute('role','combobox'); button.setAttribute('aria-haspopup','listbox'); button.setAttribute('aria-expanded','false');
+          const menuId='capability-options-'+(++selectSequence); button.setAttribute('aria-controls',menuId);
+          const caption=document.createElement('span'); caption.className='capability-select-value'; button.append(caption);
+          const chevron=document.createElement('span'); chevron.className='capability-select-chevron'; chevron.setAttribute('aria-hidden','true'); chevron.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>'; button.append(chevron);
+          wrapper.append(button);
+          const sync = () => {
+            caption.textContent=select.selectedOptions[0]?.textContent || '请选择分类';
+            button.setAttribute('aria-label',(select.getAttribute('aria-label') || '选择')+'：'+caption.textContent);
+            button.disabled=select.disabled || !select.options.length;
+            if (dropdown?.select===select && button.disabled) closeSelect();
+          };
+          const observer=new MutationObserver(sync); observer.observe(select,{attributes:true,attributeFilter:['disabled','selected'],childList:true,subtree:true});
+          widget={button,menuId,observer,sync}; selectWidgets.set(select,widget);
+          select.addEventListener('change',sync);
+          button.addEventListener('click',()=>{if (dropdown?.select===select) closeSelect(); else openSelect(select);});
+          button.addEventListener('keydown',event=>{
+            if (button.disabled) return;
+            const key=event.key, navigation=['ArrowDown','ArrowUp','Home','End'];
+            if (navigation.includes(key)) {
+              event.preventDefault();
+              if (!dropdown || dropdown.select!==select) {openSelect(select); if(key==='Home'||key==='End') dropdown?.move(key);}
+              else dropdown.move(key);
+            } else if (key==='Escape') {if(dropdown){event.preventDefault();closeSelect();}}
+            else if (key==='Tab') closeSelect();
+            else if (key==='Enter'||key===' ') {
+              event.preventDefault();
+              if (dropdown?.select===select) dropdown.choose(); else openSelect(select);
+            } else if (key.length===1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+              event.preventDefault(); if(dropdown?.select!==select)openSelect(select); dropdown?.search(key);
+            }
+          });
+        }
+        widget.sync();
+      });
+    }
+    function openSelect(select) {
+      closeSelect();
+      const widget=selectWidgets.get(select); if(!widget || widget.button.disabled)return;
+      const {button,menuId}=widget;
+      const options=[...select.options]; const enabled=options.map((o,i)=>!o.disabled?i:-1).filter(i=>i>=0); if(!enabled.length)return;
+      const menu=document.createElement('div'); menu.className='capability-select-menu'; menu.id=menuId; menu.setAttribute('role','listbox');
+      menu.setAttribute('aria-label',select.getAttribute('aria-label')||'选择分类');
+      let active=enabled.includes(select.selectedIndex)?select.selectedIndex:enabled[0], searchText='',searchTime=0;
+      options.forEach((option,index)=>{
+        const row=document.createElement('div'); row.className='capability-select-option'; row.id=menuId+'-'+index; row.dataset.optionIndex=index;
+        row.setAttribute('role','option'); row.setAttribute('aria-selected',String(option.selected)); row.setAttribute('aria-disabled',String(option.disabled));
+        const text=document.createElement('span');text.textContent=option.textContent;row.append(text);
+        const mark=document.createElement('span');mark.className='capability-select-check';mark.setAttribute('aria-hidden','true');mark.textContent=option.selected?'✓':'';row.append(mark);menu.append(row);
+      });
+      document.body.append(menu);
+      const bounds=button.getBoundingClientRect(),width=Math.min(Math.max(bounds.width,220),innerWidth-24);
+      menu.style.width=width+'px';menu.style.left=Math.max(12,Math.min(bounds.left,innerWidth-width-12))+'px';
+      const desired=Math.min(menu.scrollHeight,300),below=innerHeight-bounds.bottom-12,above=bounds.top-12;
+      const upward=below<desired && above>below,available=Math.max(40,upward?above:below);
+      menu.style.maxHeight=Math.min(300,available)+'px';
+      menu.style.top=(upward?Math.max(12,bounds.top-Math.min(desired,available)-6):bounds.bottom+6)+'px';
+      const highlight=()=>{
+        [...menu.children].forEach((row,i)=>row.classList.toggle('is-active',i===active));
+        button.setAttribute('aria-activedescendant',menu.children[active].id);
+        const row=menu.children[active];
+        if(row.offsetTop<menu.scrollTop)menu.scrollTop=row.offsetTop;
+        else if(row.offsetTop+row.offsetHeight>menu.scrollTop+menu.clientHeight)menu.scrollTop=row.offsetTop+row.offsetHeight-menu.clientHeight;
+      };
+      const choose=()=>{
+        if(select.disabled || options[active]?.disabled){closeSelect();return;}
+        const changed=select.selectedIndex!==active;select.selectedIndex=active;closeSelect();widget.sync();button.focus({preventScroll:true});
+        if(changed){select.dispatchEvent(new Event('input',{bubbles:true}));select.dispatchEvent(new Event('change',{bubbles:true}));}
+      };
+      const outside=event=>{if(!menu.contains(event.target)&&!button.contains(event.target))closeSelect();};
+      const scroll=event=>{
+        if(menu.contains(event.target))return;
+        const current=button.getBoundingClientRect();
+        // A click may first scroll its trigger into view. Ignore that queued
+        // event when the trigger is already at the position used to place us.
+        if(Math.abs(current.top-bounds.top)>.5 || Math.abs(current.left-bounds.left)>.5)closeSelect();
+      };
+      const focus=event=>{if(event.target!==button&&!menu.contains(event.target))closeSelect();};
+      document.addEventListener('pointerdown',outside,true);document.addEventListener('scroll',scroll,true);document.addEventListener('focusin',focus);window.addEventListener('resize',closeSelect);
+      dropdown={select,button,menu,choose,release:()=>{document.removeEventListener('pointerdown',outside,true);document.removeEventListener('scroll',scroll,true);document.removeEventListener('focusin',focus);window.removeEventListener('resize',closeSelect);},
+        move:key=>{const i=enabled.indexOf(active);active=key==='Home'?enabled[0]:key==='End'?enabled[enabled.length-1]:enabled[(i+(key==='ArrowDown'?1:enabled.length-1))%enabled.length];highlight();},
+        search:key=>{const now=Date.now();searchText=now-searchTime>700?key:searchText+key;searchTime=now;const match=enabled.find(i=>options[i].textContent.toLocaleLowerCase().startsWith(searchText.toLocaleLowerCase()));if(match!==undefined){active=match;highlight();}}
+      };
+      menu.addEventListener('pointerdown',event=>event.preventDefault());
+      menu.addEventListener('pointermove',event=>{const row=event.target.closest('[data-option-index]');if(row&&!options[Number(row.dataset.optionIndex)].disabled){active=Number(row.dataset.optionIndex);highlight();}});
+      menu.addEventListener('click',event=>{const row=event.target.closest('[data-option-index]');if(row&&!options[Number(row.dataset.optionIndex)].disabled){active=Number(row.dataset.optionIndex);choose();}});
+      button.setAttribute('aria-expanded','true');highlight();
+    }
     const icon = path => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">${path}</svg>`;
     const refreshIcon = icon('<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/>');
     const searchIcon = icon('<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>');
@@ -110,7 +221,7 @@
       return (state.data?.intake || []).map(item => {
         const id = String(item.intake_id), categories = state.data.categories || [];
         const selected = state.intakeChoices.get(id) || (categories.some(c => c.id === item.suggested_category) ? item.suggested_category : categories[0]?.id || '');
-        return `<article class="memory-card" data-intake-card="${esc(id)}"><h3>${esc(item.title)}</h3><p class="intake-content">${esc(item.content)}</p><div class="meta">来源项目：${esc(item.source_project || '未记录')} · 建议：${esc(labels()[item.suggested_category] || item.suggested_category || '无')}</div><div class="toolbar"><label class="intake-category-label">归入分类<select class="select" data-intake-category="${esc(id)}" aria-label="${esc(item.title)}的分类">${categories.map(category => `<option value="${esc(category.id)}" ${selected === category.id ? 'selected' : ''}>${esc(category.label)}</option>`).join('')}</select></label><button class="btn primary small" type="button" data-assign="${esc(id)}" data-revision="${esc(item.revision)}">确认归类</button></div></article>`;
+        return `<article class="memory-card" data-intake-card="${esc(id)}"><h3>${esc(item.title)}</h3><p class="intake-content">${esc(item.content)}</p><div class="meta">来源项目：${esc(item.source_project || '未记录')} · 建议：${esc(labels()[item.suggested_category] || item.suggested_category || '无')}</div><div class="toolbar"><div class="intake-category-label"><span>归入分类</span><select class="select" data-intake-category="${esc(id)}" aria-label="${esc(item.title)}的分类">${categories.map(category => `<option value="${esc(category.id)}" ${selected === category.id ? 'selected' : ''}>${esc(category.label)}</option>`).join('')}</select></div><button class="btn primary small" type="button" data-assign="${esc(id)}" data-revision="${esc(item.revision)}">确认归类</button></div></article>`;
       }).join('') || '<div class="empty capability-empty">待分类已清空。</div>';
     }
     function suggestionCards() {
@@ -130,8 +241,11 @@
         button.setAttribute('aria-disabled', String(button.disabled));
         button.title = !canWrite() ? '当前为只读访问' : '';
       });
+      mount.querySelectorAll('[data-intake-category]').forEach(select => {select.disabled = !canWrite() || state.writing || state.loading;});
+      enhanceSelects();
     }
     function update() {
+      closeSelect();
       const data = state.data;
       mount.setAttribute('aria-busy', String(state.loading));
       $('[data-memory-refresh]').disabled = state.loading;
@@ -262,7 +376,7 @@
       if (event.target.matches('[data-memory-card]') && (event.key === 'Enter' || event.key === ' ')) {event.preventDefault(); toggleCard(event.target);}
     });
     const handle = {
-      suspend() {state.suspended = true; if (state.loading) state.needsLoad = true; stopRead(); update();},
+      suspend() {closeSelect(); state.suspended = true; if (state.loading) state.needsLoad = true; stopRead(); update();},
       resume() {state.suspended = false; updateWriteControls(); if (state.needsLoad) load();},
       refresh() {return load({force:true});},
     };
