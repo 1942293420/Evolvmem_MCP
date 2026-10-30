@@ -10,28 +10,19 @@
   <link rel="stylesheet" href="/designs/signal.css">
   <link rel="stylesheet" href="/knowledge.css">
   <link rel="stylesheet" href="/workflow.css">
-  <link rel="stylesheet" href="/refresh.css">
+  <link rel="stylesheet" href="/refresh.css?v=20261031-nav1">
 </head>
-<body data-design="signal">
+<body data-design="signal" data-nav-design="refined">
   <header class="signal-masthead refresh-topnav">
     <a href="/" class="signal-brand" aria-label="EvolvMem 知识库首页"><span class="signal-brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="11" stroke="currentColor" stroke-width="1.4"/><path d="M20 3v34M3 20h34M8 8l24 24M8 32 32 8" stroke="currentColor" stroke-width="1.1"/><circle cx="20" cy="20" r="4" fill="currentColor"/></svg></span><span>EvolvMem</span></a>
+    <!-- Tabler Outline icons, MIT; full license is included in refresh.js. -->
     <nav class="signal-nav" aria-label="主导航">
-      <a href="#home" data-page-link="home"><span class="nav-icon">◫</span>总览</a>
-      <a href="#knowledge/capabilities" data-page-link="memories" data-knowledge-view="capabilities"><span class="nav-icon">▦</span>开发能力</a>
-      <a href="#knowledge/archives" data-page-link="memories" data-knowledge-view="archives"><span class="nav-icon">▥</span>项目存档</a>
-      <a href="#progress" data-page-link="progress"><span class="nav-icon">↳</span>任务断点</a>
-      <a href="#knowledge/organization" data-page-link="memories" data-knowledge-view="organization"><span class="nav-icon">◎</span>自动整理</a>
-      <span class="refresh-more">
-        <button type="button" data-more-toggle aria-expanded="false" aria-controls="refresh-more-menu">更多⌄</button>
-        <span id="refresh-more-menu" class="refresh-more-menu" data-more-menu hidden>
-          <a href="#knowledge/skill" data-page-link="memories" data-knowledge-view="skill">整理规则</a>
-          <a href="#principles" data-page-link="principles">工作原理</a>
-          <a href="#knowledge/projects" data-page-link="memories" data-knowledge-view="projects">旧项目知识</a>
-          <a href="#knowledge/qa" data-page-link="memories" data-knowledge-view="qa">旧经验知识</a>
-          <a href="#knowledge/cleaning" data-page-link="memories" data-knowledge-view="cleaning">数据清洗</a>
-          <a href="#knowledge/intake" data-page-link="memories" data-knowledge-view="intake">存量资料</a>
-        </span>
-      </span>
+      <a href="#home" class="nav-primary-link" data-nav-group="home" data-nav-shell="true" data-page-link="home"><span class="nav-line-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4a1 1 0 0 1 1 1v6a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1v-6a1 1 0 0 1 1 -1" /><path d="M5 16h4a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1v-2a1 1 0 0 1 1 -1" /><path d="M15 12h4a1 1 0 0 1 1 1v6a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1v-6a1 1 0 0 1 1 -1" /><path d="M15 4h4a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1v-2a1 1 0 0 1 1 -1" /></svg></span><span class="nav-label">总览</span></a>
+      <a href="#knowledge/archives" class="nav-primary-link" data-nav-group="project" data-nav-shell="true" data-page-link="memories" data-knowledge-view="archives"><span class="nav-line-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2" /></svg></span><span class="nav-label">项目库</span></a>
+      <a href="#knowledge/capabilities" class="nav-primary-link" data-nav-group="experience" data-nav-shell="true" data-page-link="memories" data-knowledge-view="capabilities"><span class="nav-line-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 19a9 9 0 0 1 9 0a9 9 0 0 1 9 0" /><path d="M3 6a9 9 0 0 1 9 0a9 9 0 0 1 9 0" /><path d="M3 6l0 13" /><path d="M12 6l0 13" /><path d="M21 6l0 13" /></svg></span><span class="nav-label">经验库</span></a>
+      <a href="#knowledge/organization" class="nav-primary-link" data-nav-group="organize" data-nav-shell="true" data-page-link="memories" data-knowledge-view="organization"><span class="nav-line-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5.5l1.5 1.5l2.5 -2.5" /><path d="M3.5 11.5l1.5 1.5l2.5 -2.5" /><path d="M3.5 17.5l1.5 1.5l2.5 -2.5" /><path d="M11 6l9 0" /><path d="M11 12l9 0" /><path d="M11 18l9 0" /></svg></span><span class="nav-label">资料整理</span></a>
+      <a href="#progress" class="nav-primary-link" data-nav-group="task" data-nav-shell="true" data-page-link="progress"><span class="nav-line-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8l0 4l2 2" /><path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" /></svg></span><span class="nav-label">任务续接</span></a>
+      <a href="#principles" class="nav-primary-link" data-nav-group="principle" data-nav-shell="true" data-page-link="principles"><span class="nav-line-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2l0 -2" /><path d="M15 17a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2l0 -2" /><path d="M9 5a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2l0 -2" /><path d="M6 15v-1a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v1" /><path d="M12 9l0 3" /></svg></span><span class="nav-label">工作原理</span></a>
     </nav>
 
     <div class="auth-status" data-auth-status hidden aria-label="当前账号"></div>
@@ -59,7 +50,7 @@
   <script src="/designs/galaxy.js"></script>
   <script src="/extraction.js"></script>
   <script src="/learning.js"></script>
-  <script src="/knowledge.js"></script>
+  <script src="/knowledge.js?v=20261031-nav1"></script>
   <script src="/project-review.js"></script>
   <script src="/memory.js"></script>
   <script src="/projects.js"></script>
@@ -76,7 +67,7 @@
   <script src="/capabilities.js"></script>
   <script src="/project-archives.js"></script>
   <script src="/principles.js"></script>
-  <script src="/refresh.js"></script>
-  <script src="/designs/app.js"></script>
+  <script src="/refresh.js?v=20261031-nav1"></script>
+  <script src="/designs/app.js?v=20261031-nav1"></script>
 </body>
 </html>

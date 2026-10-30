@@ -78,7 +78,7 @@
   function progressCard(row, kind) {
     return `<button class="ui-card" data-detail="${kind}" data-id="${esc(row.id ?? '')}" ${row.id==null?'disabled':''}><span class="ui-card-head">${badge(label(row.status),['ready','completed'].includes(row.status))}<span>${esc(shortDate(row.updated_at))}</span></span><h3 class="ui-card-title">${esc(kind==='summary'?name(row.project):bareSummary(row.summary))}</h3><p class="ui-card-copy">${esc(kind==='summary'?bareSummary(row.summary):name(row.project))}</p><span class="ui-card-foot"><span>${kind==='summary'?'项目的最近记录':'保存的任务断点'}</span><span>查看详情 ↗</span></span></button>`;
   }
-  function navigate(page, project, query, knowledgeView, replace=false) {
+  function navigate(page, project, query, knowledgeView, replace=false, routeSearch=undefined) {
     if(!state.ready) return;
     if(!['home','memories','experiences','progress','principles'].includes(page)) return;
     const current=[...browsers.values()].find(c=>c.kind===state.page);
@@ -86,6 +86,8 @@
       history.replaceState(null,'',current.hash?.()||`#${state.page}`);
       return;
     }
+    // Remember the displayed controller only after its leave guard accepts.
+    window.EvolvRefresh?.rememberNavigation(current?.hash?.()||`#${state.page}`);
     state.page=page;
     document.body.dataset.activePage=page;
     $$('[data-page-panel]').forEach(el=>el.hidden=el.dataset.pagePanel!==page);
@@ -98,7 +100,7 @@
       let controller=browsers.get(mount);
       if(!controller) {
         if(page==='memories'&&window.EvolvKnowledge) {
-          controller=window.EvolvKnowledge.create(mount,{navigate:(view,project)=>navigate('memories',project,undefined,view),changed:()=>boot(false)});
+          controller=window.EvolvKnowledge.create(mount,{navigate:(view,project)=>navigate('memories',project,undefined,view),changed:()=>boot(false),isActive:()=>state.page==='memories',routeChanged:hash=>{if(state.page==='memories')window.EvolvRefresh?.syncNavigation(hash);}});
         } else if(page==='memories'&&document.body.dataset.design==='signal'&&window.EvolvOrganizer&&window.EvolvAuth.canWrite) {
           controller=window.EvolvOrganizer.create(mount,{
             get,esc,label,projectName:name,projects:()=>state.projects,
@@ -115,12 +117,17 @@
       }
       if(query!==undefined) controller.query=query;
       if(knowledgeView!==undefined)controller.view=knowledgeView;
-      if(knowledgeView==='organization'&&replace)controller.organizationTab=new URLSearchParams(location.hash.split('?')[1]||'').get('tab')||'review';
-      if(page==='memories'&&replace){const params=new URLSearchParams(location.hash.split('?')[1]||'');controller.lane=params.get('lane')||'overview';controller.projectSort=params.get('sort')||'recent';}
+      if(knowledgeView==='organization'&&(replace||routeSearch!==undefined))controller.organizationTab=new URLSearchParams(routeSearch??(location.hash.split('?')[1]||'')).get('tab')||'review';
+      if(page==='memories') {
+        const params=new URLSearchParams(routeSearch??(replace?(location.hash.split('?')[1]||''):''));
+        controller.intakeMode=params.get('mode');
+        if(replace||routeSearch!==undefined){controller.lane=params.get('lane')||'overview';controller.projectSort=params.get('sort')||'recent';}
+      }
       targetHash=controller.hash?.()||targetHash;
       controller.page=1;controller.draw();controller.load();
     }
     if(location.hash!==targetHash)history[replace?'replaceState':'pushState'](null,'',targetHash);
+    window.EvolvRefresh?.syncNavigation(targetHash);
     window.scrollTo({top:0,behavior:'instant'});
     if(page==='home') {requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));boot(false);}
   }
@@ -325,7 +332,15 @@
   }
   document.addEventListener('click',event=>{
     if(event.target.closest('.knowledge-workspace'))return;
-    const nav=event.target.closest('[data-page-link]');if(nav){event.preventDefault();navigate(nav.dataset.pageLink,nav.dataset.pageLink==='memories'?'__all__':undefined,undefined,nav.dataset.knowledgeView);return;}
+    const nav=event.target.closest('[data-page-link]');
+    if(nav){
+      event.preventDefault();
+      if(nav.dataset.navShell){
+        const search=nav.hash.split('?')[1]||'',params=new URLSearchParams(search);
+        navigate(nav.dataset.pageLink,nav.dataset.pageLink==='memories'?(params.get('project')||'__all__'):undefined,params.get('q')||'',nav.dataset.knowledgeView,false,search);
+      }else navigate(nav.dataset.pageLink,nav.dataset.pageLink==='memories'?'__all__':undefined,undefined,nav.dataset.knowledgeView);
+      return;
+    }
     const detail=event.target.closest('[data-detail]');if(detail&&!detail.disabled){openDetail(detail.dataset.detail,detail.dataset.id);return;}
     const project=event.target.closest('[data-project]');if(project){navigate('memories',project.dataset.project,undefined,'archives');return;}
     const current=[...browsers.values()].find(c=>c.kind===state.page);
