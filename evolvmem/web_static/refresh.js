@@ -41,7 +41,16 @@
       switcher.querySelectorAll('[data-nav-variant]').forEach(b=>{b.classList.toggle('active',b.dataset.navVariant===variant);b.setAttribute('aria-pressed',String(b.dataset.navVariant===variant));});
       const url=new URL(location.href);url.searchParams.set('nav-design',variant);history.replaceState(null,'',url);};
     switcher.addEventListener('click',e=>{const b=e.target.closest('[data-nav-variant]');if(b)apply(b.dataset.navVariant);});
-    apply(selected);return true;
+    apply(selected);
+    // Sticky height varies when groups wrap, fonts load or the account appears.
+    // Keep in-page anchors and the capability sidebar below the frozen header.
+    const measureHeader=()=>{
+      const height=Math.ceil(header.getBoundingClientRect().height);
+      document.documentElement.style.setProperty('--nav-header-height',height+'px');
+      document.documentElement.style.scrollPaddingTop=(height+16)+'px';
+    };
+    new ResizeObserver(measureHeader).observe(header);
+    measureHeader();return true;
   }
 
   window.EvolvRefresh = {
