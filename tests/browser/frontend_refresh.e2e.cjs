@@ -5,7 +5,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf('--task') + 1] : 'all';
 
 (async () => {
-  const remote = spawn('ssh', ['-L','39480:127.0.0.1:39479','codex-linux',
+  const remote = process.env.EVOLVMEM_TEST_URL ? null : spawn('ssh', ['-L','39480:127.0.0.1:39479','codex-linux',
     'cd /home/jiangli/.local/share/evolvmem-worktrees/frontend-refresh && PYTHONPATH=.tools/site exec python3 tests/browser/capability_archives_fixture.py'],
     {stdio:['ignore','pipe','pipe']});
   let browser;
@@ -13,16 +13,16 @@ const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf
   try {
     let ready = false;
     for (let i = 0; i < 50 && !ready; i++) {
-      try { ready = (await fetch('http://127.0.0.1:39480/api/capabilities')).ok; }
+      try { ready = (await fetch((process.env.EVOLVMEM_TEST_URL||'http://127.0.0.1:39480')+'/api/capabilities')).ok; }
       catch { await sleep(200); }
     }
     assert.ok(ready, 'disposable web fixture did not start');
-    browser = await chromium.launch({headless:true,args:['--no-sandbox']});
+    browser = await chromium.launch({channel:process.env.BROWSER_CHANNEL||undefined,headless:true,args:['--no-sandbox']});
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto('http://127.0.0.1:39480/#knowledge/capabilities');
+    await page.goto((process.env.EVOLVMEM_TEST_URL||'http://127.0.0.1:39480')+'/#knowledge/capabilities');
     await page.waitForTimeout(1500);
-    const base = 'http://127.0.0.1:39480';
+    const base = process.env.EVOLVMEM_TEST_URL||'http://127.0.0.1:39480';
 
     if (task === 'home' || task === 'all') {
       await page.setViewportSize({width:1440,height:900});
@@ -49,35 +49,24 @@ const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf
       for (const label of ['总览','开发能力','项目存档','任务断点','自动整理']) {
         assert.ok(labels.some(text => text.includes(label)), `missing navigation: ${label}`);
       }
-      assert.match(await page.locator('[data-more-toggle]').innerText(), /更多/);
-      await page.locator('[data-more-toggle]').click();
-      assert.ok(await page.locator('[data-more-menu]').isVisible());
-      await page.keyboard.press('Escape');
-      assert.ok(!(await page.locator('[data-more-menu]').isVisible()), 'Escape must close the more menu');
-      await page.locator('[data-more-toggle]').click();
-      const menuHit = await page.locator('[data-more-menu] a').first().evaluate(element => {
-        const rect = element.getBoundingClientRect();
-        const hit = document.elementFromPoint(rect.x + rect.width / 2,rect.y + rect.height / 2);
-        return hit === element || element.contains(hit);
-      });
-      assert.ok(menuHit, 'more menu is clipped by the navigation bar');
-      await page.locator('[data-more-menu] a').first().click();
-      assert.ok(!(await page.locator('[data-more-menu]').isVisible()));
+      assert.equal(await page.locator('[data-more-toggle]').count(),0);
+      assert.equal(await page.locator('.nav-preview-link').count(),11);
+      await page.locator('.signal-nav [data-knowledge-view="projects"]').click();
       await page.goto(base + '/#knowledge/projects');
       assert.ok(await page.locator('.refresh-topnav').count());
       assert.equal(await page.locator('.refresh-duplicate-title').count(), 0);
       for (const width of [390,768,1024,1178,1440]) {
         await page.setViewportSize({width,height:1000});
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
-        const navItems = await page.locator('.refresh-topnav .signal-nav > a').evaluateAll(elements => elements.map(element => ({
+        const navItems = await page.locator('.refresh-topnav .nav-preview-link').evaluateAll(elements => elements.map(element => ({
           height: element.getBoundingClientRect().height,
           whiteSpace: getComputedStyle(element).whiteSpace,
         })));
-        assert.ok(navItems.every(item => item.height <= 44 && item.whiteSpace === 'nowrap'), `navigation wraps at ${width}px: ${JSON.stringify(navItems)}`);
+        assert.ok(navItems.every(item => item.height <= 62 && item.whiteSpace === 'nowrap'), `navigation wraps at ${width}px: ${JSON.stringify(navItems)}`);
         const navigation = await page.evaluate(() => {
           const header = document.querySelector('.refresh-topnav');
           header.scrollLeft = 0;
-          const elements = [document.querySelector('.signal-brand'),...document.querySelectorAll('.signal-nav > a'),document.querySelector('[data-more-toggle]')];
+          const elements = [document.querySelector('.signal-brand'),...document.querySelectorAll('.nav-preview-link')];
           return {
             clientWidth: header.clientWidth,
             scrollWidth: header.scrollWidth,
@@ -180,6 +169,6 @@ const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf
     console.log(JSON.stringify({task, errors}));
   } finally {
     if (browser) await browser.close();
-    remote.kill('SIGTERM');
+    remote?.kill('SIGTERM');
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
