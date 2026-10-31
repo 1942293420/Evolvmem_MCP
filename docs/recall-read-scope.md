@@ -10,7 +10,11 @@ Unit proofs are memoized only in that scope, bounded to 1,024 entries and 8 MiB 
 
 Final selected-result validation opens a separate current snapshot. It rechecks content, source availability, current project/module ownership and Context structure. A candidate withdrawn or changed after search cannot rely on the earlier scope. The index audit also uses an explicit read scope; its existing database, time-window and index-file publication fences remain in force.
 
-This change does not remove the shared business dispatch lock, migrate databases to PostgreSQL, certify all memories as valuable, or change historical classifications. The UI workflow explicitly keeps those boundaries visible. No schema or production data migration is required for this code change.
+Hosted LAN capability and continuation reads now have independent connections, as documented in `lan-capability-reads.md` and `lan-continuity-reads.md`. Other business paths keep their existing locking. These read optimizations do not migrate databases to PostgreSQL, certify all memories as valuable, or change historical classifications. No schema or production data migration is required for this code change.
+
+Vector lookup also proves ranked windows within its owned snapshot. It retains the same native candidate limit (four times the requested vector result count), ordering, source eligibility and vector/proof checks. Inactive rows, category mismatches and mismatching vector proofs are discarded before expensive source checks. Windows contain at most 20 native matches; source validation stops after enough eligible results survive and otherwise backfills through the same original budget. It does not share proof decisions with the subsequent retriever snapshot or final current validation. Legacy entries without vector proofs retain their pre-existing transitional behavior.
+
+Custom row predicates retain their historical category and vector-proof checks after the callback, since callbacks can modify the supplied row. The standard production batch eligibility path can apply these inexpensive filters first. A failure in any visited source-proof window discards the whole vector contribution, including earlier accumulated hits. Tests cover the production 60-result/240-candidate/20-window path, exhausted budgets, later-window failure and mutable custom predicates with and without batch eligibility.
 
 ## Validation
 

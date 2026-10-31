@@ -427,29 +427,57 @@ class CapabilityIndex:
             if encoded_contract != contract(self.config):
                 raise _Incompatible('embedding_contract_changed')
             with self._snapshot() as (vectors, proof, _):
-                matches = vectors.search(embedding, k=max(1, int(top_k)) * 4)
+                limit = max(1, int(top_k))
+                matches = vectors.search(embedding, k=limit * 4)
                 # A coherent read snapshot, not a promise that no later write
                 # can occur. LAN selected-result revalidation remains in place.
                 with self._read_snapshot():
                     store = CapabilityStore(self.context_store)
-                    with stage('capability_vector_eligibility'):
-                        allowed = (set(self.eligible_ids([int(match["id"]) for match in matches]))
-                                   if self.eligible_ids is not None else None)
                     categories = set(categories)
                     results = []
-                    for match in matches:
-                        ident = int(match["id"])
-                        memory = store.get(ident)
-                        if not self._eligible(memory, allowed=allowed) or (categories and memory["category"] not in categories):
-                            continue
-                        # Legacy IDs without proofs remain searchable during the bounded
-                        # backfill, but cannot count as complete recovery coverage.
-                        if str(ident) in proof["items"] and not self._proof_matches(ident, memory, proof["items"], vectors=vectors):
-                            continue
-                        memory["vector_score"] = 1.0 - float(match["distance"]) / 2.0
-                        results.append(memory)
+                    # Keep the same ranked candidate budget and answer. Deep
+                    # source proofs are needed only until enough valid hits
+                    # survive. All windows share this owned read snapshot.
+                    window = min(20, limit)
+                    for offset in range(0, len(matches), window):
+                        candidates = []
+                        for match in matches[offset:offset + window]:
+                            ident = int(match["id"])
+                            memory = store.get(ident)
+                            if memory is None or memory["status"] != "active":
+                                continue
+                            # Uncertified legacy vectors retain the existing
+                            # backfill behavior; mismatching proofs never pass.
+                            if (self.eligible is None and categories
+                                    and memory["category"] not in categories):
+                                continue
+                            if (self.eligible is None and str(ident) in proof["items"]
+                                    and not self._proof_matches(ident, memory, proof["items"], vectors=vectors)):
+                                continue
+                            candidates.append((match, memory))
+                        with stage('capability_vector_eligibility'):
+                            allowed = (set(self.eligible_ids([row["memory_id"] for _, row in candidates]))
+                                       if candidates and self.eligible_ids is not None else set())
+                        for match, memory in candidates:
+                            if not self._eligible(memory, allowed=allowed):
+                                continue
+                            # Custom predicates historically receive mutable
+                            # rows. Preserve category/proof checks after them.
+                            if self.eligible is not None:
+                                if categories and memory["category"] not in categories:
+                                    continue
+                                ident = int(match["id"])
+                                if (str(ident) in proof["items"] and not self._proof_matches(
+                                        ident, memory, proof["items"], vectors=vectors)):
+                                    continue
+                            memory["vector_score"] = 1.0 - float(match["distance"]) / 2.0
+                            results.append(memory)
+                            if len(results) >= limit:
+                                break
+                        if len(results) >= limit:
+                            break
                 if encoded_contract != contract(self.config):
                     raise _Incompatible('embedding_contract_changed')
-                return results[:max(1, int(top_k))]
+                return results
         except Exception:
             return []

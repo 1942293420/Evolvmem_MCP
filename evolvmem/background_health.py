@@ -11,6 +11,7 @@ from evolvmem.context_store import ContextStore
 from evolvmem.context_service import ContextService, _health_log_codes
 from evolvmem.health_generation import observed
 from evolvmem.vector_index import VectorIndex
+from evolvmem.request_trace import request_trace, stage
 
 
 class BackgroundHealth:
@@ -20,7 +21,7 @@ class BackgroundHealth:
     runtime restart because resident business connections still name the old file.
     Diagnostic semantic staleness does not revoke per-candidate admission.
     """
-    def __init__(self, servers, *, start=True, cadence=5.0):
+    def __init__(self, servers, *, start=True, cadence=30.0):
         self.servers = dict(servers)
         self._identities = {key: self._identity(s.config.db_path) for key, s in servers.items()}
         self._contracts = {}
@@ -187,7 +188,8 @@ class BackgroundHealth:
             if hard[:1] + hard[2:] != expected_contract[:1] + expected_contract[2:]:
                 raise RuntimeError('health_boundary_changed')
             expected = (*self._identities[name], hard[1])
-            physical, physical_checked = self._physical_result(name, config.db_path, expected)
+            with stage('health_physical'):
+                physical, physical_checked = self._physical_result(name, config.db_path, expected)
             hard_codes = tuple(config.validate_runtime())
             store = ContextStore(config)
             store._conn = conn
@@ -240,7 +242,10 @@ class BackgroundHealth:
             epoch = self._epoch
         result = None
         try:
-            result = self._evaluate(name)
+            # This worker has no foreground request trace. Record stage times
+            # and exception categories without original data or exception text.
+            with request_trace('background_health'):
+                result = self._evaluate(name)
         except Exception:
             pass
         with self._condition:
@@ -252,6 +257,8 @@ class BackgroundHealth:
                 else:
                     self._snapshots[name] = result
                     self._errors.pop(name, None)
+                # Writes/status reads coalesce; they cannot turn the full
+                # diagnostic scan into a near-continuous background loop.
                 self._next[name] = time.monotonic() + self._cadence
             self._condition.notify_all()
         return True
