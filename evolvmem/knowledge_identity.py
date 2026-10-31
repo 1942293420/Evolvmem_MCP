@@ -198,7 +198,18 @@ def _verbatim_fact(service, task, unit):
         old = dict(raw)
         old_task = {'id': old['task_id'], 'source_key': old['source_key'],
                     'source_snapshot': old['source_snapshot']}
-        anchors = _anchors(old_task, old, _parts(service, old_task))
+        try:
+            old_parts = _parts(service, old_task)
+        except ValueError as error:
+            # This optional historical match may reference a replaced archive.
+            # It cannot lend evidence or invalidate the distinct current source.
+            # Keep current-source failures and unrelated errors fail-closed.
+            if (str(error) != 'classification_source_changed'
+                    or old_task['id'] == task['id']
+                    or old_task['source_key'] == task['source_key']):
+                raise
+            continue
+        anchors = _anchors(old_task, old, old_parts)
         if anchors:
             _remember(service, old_task, old, anchors)
     matches = set()

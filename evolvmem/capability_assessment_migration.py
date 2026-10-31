@@ -50,12 +50,103 @@ def _policy(service):
     return service.knowledge().rules.read()["revision"]
 
 
+def _role_budget_blocked(proof):
+    reason = proof.get("reason", "")
+    return reason.startswith("unit_source_roles_unproven:") and reason.endswith("over_budget")
+
+
+class _RoleBudgetProvenance(ProvenanceRead):
+    """Keep legacy binding discovery from reading an over-budget unit/source."""
+    def __init__(self, store, roles):
+        super().__init__(store)
+        self.roles = roles
+
+    def unit(self, task_id, digest):
+        gate = self.roles.preflight(task_id, digest)
+        if not gate["ready"]:
+            return gate.get("task"), []
+        return super().unit(task_id, digest)
+
+    def evaluate(self, source):
+        if source["source_kind"] == "unit":
+            gate = self.roles.preflight(source.get("task_id"), source.get("unit_digest"))
+            if not gate["ready"]:
+                return {"source_kind": "unit", "source_key": source["source_key"], "valid": False,
+                        "reason": gate["reason"], "ownership_confirmed": False,
+                        "projects": [], "knowledge_scope": "project"}
+        return super().evaluate(source)
+
+
 class OriginalRead:
     """Current provenance plus a separately proved original; never Context L2 by default."""
     def __init__(self, store):
         self.store, self.conn = store, store._connection()
-        self.provenance = ProvenanceRead(store)
+        from evolvmem.capability_role_proof import UnitRoleRead
+        self.roles = UnitRoleRead(store)
+        self.provenance = _RoleBudgetProvenance(store, self.roles)
         self.current_archives = None
+        self.epoch = self.roles.token()
+        self._scope_active = False
+
+    def _scope_stamp(self):
+        try:
+            policy = self.roles._policy()["revision"]
+        except (ValueError, OSError):
+            # Non-unit originals/empty old stores need no role policy. A unit
+            # read still reports policy_unproven through UnitRoleRead itself.
+            policy = None
+        return (self.roles.token(), self.conn.in_transaction, policy)
+
+    def _begin_scope(self):
+        """Only internal synchronous SELECT call graphs may use this scope.
+
+        Never yield this reader to a provider, callback or external iterator.
+        A read transaction makes the budget and subsequent reads one snapshot.
+        """
+        if self._scope_active:
+            raise RuntimeError("unit_source_roles_scope_nested")
+        self._owns_snapshot = not self.conn.in_transaction
+        if self._owns_snapshot:
+            self.conn.execute("BEGIN")
+        try:
+            self._scope_start = self._scope_stamp()
+            self.roles.cache.clear()
+            self.roles._scope_active = True
+            self._scope_active = True
+            self.provenance = _RoleBudgetProvenance(ReadStore(self.conn), self.roles)
+            self.current_archives = None
+            self.epoch = self.roles.token()
+        except BaseException:
+            if self._owns_snapshot:
+                self.conn.rollback()
+            raise
+
+    def _assert_scope(self):
+        if self._scope_stamp() != self._scope_start:
+            raise ValueError("unit_source_roles_scope_changed")
+
+    def _end_scope(self):
+        self.roles.cache.clear()
+        self.roles._scope_active = False
+        self._scope_active = False
+        self.provenance = _RoleBudgetProvenance(ReadStore(self.conn), self.roles)
+        self.current_archives = None
+        if self._owns_snapshot:
+            self.conn.rollback()
+
+    def _refresh(self):
+        if self._scope_active:
+            self._assert_scope()
+            return
+        token = self.roles.token()
+        if self.conn.in_transaction or token != self.epoch:
+            self.provenance = _RoleBudgetProvenance(self.store, self.roles)
+            self.current_archives = None
+            self.epoch = token
+
+    def memory(self, memory):
+        self._refresh()
+        return self.provenance.memory(memory)
 
     def _heads(self):
         if self.current_archives is not None:
@@ -79,6 +170,29 @@ class OriginalRead:
         return heads
 
     def read(self, source):
+        if self._scope_active:
+            return self._read(source)
+        self._begin_scope()
+        try:
+            result = self._read(source)
+            self._assert_scope()
+            return result
+        finally:
+            self._end_scope()
+
+    def read_many(self, sources):
+        if type(sources) not in (list, tuple):
+            raise TypeError("unit_source_roles_sources_must_be_materialized")
+        self._begin_scope()
+        try:
+            result = [self._read(source) for source in sources]
+            self._assert_scope()
+            return result
+        finally:
+            self._end_scope()
+
+    def _read(self, source):
+        self._refresh()
         fact = self.provenance.evaluate(source)
         kind = source["source_kind"]
         state = [source]
@@ -88,12 +202,22 @@ class OriginalRead:
             from evolvmem.capability_source_proof import unit_source_proof
             task = _rows(self.conn, "SELECT id,source_key,source_revision,rule_revision,status,stage,superseded_by "
                          "FROM organization_tasks WHERE id=?", (source.get("task_id"),))
-            units = _rows(self.conn, "SELECT * FROM organization_units WHERE task_id=? AND digest=?",
-                          (source.get("task_id"), source.get("unit_digest")))
+            gate = self.roles.preflight(source.get("task_id"), source.get("unit_digest"))
+            units = (_rows(self.conn, "SELECT * FROM organization_units WHERE task_id=? AND digest=?",
+                           (source.get("task_id"), source.get("unit_digest"))) if gate["ready"] else [])
             state.extend([task, units])
             if fact["valid"]:
+                role_proof = self.roles.read(source["task_id"])
                 proof = unit_source_proof(self.store, source["task_id"], source["unit_digest"])
-                if proof["valid"]:
+                if not role_proof["ready"]:
+                    result["reason"] = role_proof["reason"]
+                elif proof["valid"]:
+                    from evolvmem.capability_role_proof import project_roles
+                    from evolvmem.capability_source_proof import _hash as source_hash
+                    proof["source_roles"] = project_roles(proof["ranges"], role_proof["spans"])
+                    proof["role_original"] = role_proof["metadata"]
+                    proof["input_hash"] = source_hash([proof["source_key"], proof["source_revision"],
+                        proof["unit_digest"], proof["ranges"], proof["content_hash"], proof["source_roles"]])
                     result.update(ready=True, kind="unit_original", reason="", text=proof["text"],
                                   source_roles=proof["source_roles"], origin_refs=[source["source_ref"]],
                                   metadata={k: v for k, v in proof.items() if k not in {"text", "source_roles", "unit_revision"}})
@@ -194,9 +318,20 @@ def _assessments(conn, memory_id):
 def build_plan(conn, *, rule_revision):
     store = ReadStore(conn)
     read = OriginalRead(store)
+    read._begin_scope()
+    try:
+        result = _build_plan(conn, rule_revision=rule_revision, read=read)
+        read._assert_scope()
+        return result
+    finally:
+        read._end_scope()
+
+
+def _build_plan(conn, *, rule_revision, read):
+    store = read.store
     entries, coverage, blocked = [], [], []
     for memory in _rows(conn, "SELECT * FROM capability_memories ORDER BY memory_id"):
-        fact, sources = read.provenance.memory(memory)
+        fact, sources = read.memory(memory)
         previous = _assessments(conn, memory["memory_id"])
         row = {"memory_id": memory["memory_id"], "status": memory["status"], "eligible": fact["eligible"],
                "source_count": len(sources), "assessment_count": len(previous)}
@@ -204,9 +339,22 @@ def build_plan(conn, *, rule_revision):
         if memory["status"] != "active":
             row["reason"] = "memory_not_active"
             continue
-        for source in sources:
+        proofs = [(source, read.read(source)) for source in sources]
+        budget_sources = [source.get("source_id") for source, proof in proofs if _role_budget_blocked(proof)]
+        if budget_sources:
+            # This is a resource block, not a negative value judgment. Applying
+            # another origin would make legacy preservation inspect this source
+            # through an unbounded reader; never guess/drop that whitelist.
+            for source, proof in proofs:
+                blocked.append({"memory_id": memory["memory_id"], "source_id": source.get("source_id"),
+                    "source_kind": source["source_kind"], "source_key": source["source_key"],
+                    "reason": "unit_source_role_budget_blocked", "budget_source_ids": budget_sources,
+                    "source_valid": proof["source_valid"], "provisional_action": "blocked",
+                    "original_kind": proof["kind"], "original_reason": proof["reason"],
+                    "input_hash": proof["input_hash"], "proof_hash": proof["proof_hash"], "input_chars": 0})
+            continue
+        for source, proof in proofs:
             if source.get("source_id") is None:
-                proof = read.read(source)
                 blocked.append({"memory_id": memory["memory_id"], "source_kind": source["source_kind"],
                                 "source_key": source["source_key"], "reason": "bindings_required" if proof["source_valid"] else "invalid_unbound_origin",
                                 "source_valid": proof["source_valid"],
@@ -215,7 +363,6 @@ def build_plan(conn, *, rule_revision):
                                 "input_hash": proof["input_hash"], "proof_hash": proof["proof_hash"],
                                 "input_chars": len(proof["text"])})
                 continue
-            proof = read.read(source)
             latest = next((r for r in reversed(previous) if r["source_id"] == source["source_id"]), None)
             if latest:
                 details = json.loads(latest["details"])
@@ -247,8 +394,9 @@ def _summary(entries, coverage, blocked):
             "model_ready_sources": sum(e["action"] == "model" for e in entries),
             "review_sources": sum(e["action"] == "review" for e in entries),
             "blocked_sources": len(blocked),
-            "bindings_required": sum(e["source_valid"] for e in blocked),
-            "invalid_unbound_origins": sum(not e["source_valid"] for e in blocked),
+            "bindings_required": sum(e["reason"] == "bindings_required" for e in blocked),
+            "invalid_unbound_origins": sum(e["reason"] == "invalid_unbound_origin" for e in blocked),
+            "role_budget_blocked_memories": len({e["memory_id"] for e in blocked if e["reason"] == "unit_source_role_budget_blocked"}),
             "unbound_model_ready_sources": sum(e["provisional_action"] == "model" for e in blocked),
             "unbound_review_sources": sum(e["provisional_action"] == "review" for e in blocked),
             "unbound_original_kinds": dict(Counter(e["original_kind"] for e in blocked)),
@@ -327,6 +475,17 @@ def _ensure_audit(conn):
 
 
 def _checked(service, plan, entry):
+    original = OriginalRead(service.store)
+    original._begin_scope()
+    try:
+        result = _checked_read(service, plan, entry, original)
+        original._assert_scope()
+        return result
+    finally:
+        original._end_scope()
+
+
+def _checked_read(service, plan, entry, original):
     conn = service.store._connection()
     if _policy(service) != plan["rule_revision"] or assessment.POLICY_VERSION != plan["policy_version"]:
         raise ValueError("assessment_migration_revision_conflict")
@@ -334,7 +493,12 @@ def _checked(service, plan, entry):
     sources = _rows(conn, "SELECT * FROM capability_sources WHERE source_id=? AND memory_id=?", (entry["source_id"], entry["memory_id"]))
     if not memories or not sources or _hash(memories[0]) != entry["memory_hash"] or _hash(sources[0]) != entry["source_hash"]:
         raise ValueError("assessment_migration_revision_conflict")
-    _, current_sources = ProvenanceRead(service.store).memory(memories[0])
+    _, current_sources = original.memory(memories[0])
+    # Reject hand-assembled entries as well as newly prepared plans, before any
+    # lease/model/persist path can bypass the source budget via legacy sources.
+    unit_proofs = [(candidate, original.read(candidate)) for candidate in current_sources if candidate["source_kind"] == "unit"]
+    if any(_role_budget_blocked(proof) for _, proof in unit_proofs):
+        raise ValueError("assessment_source_role_budget_blocked")
     if _hash(current_sources) != entry["source_set_hash"]:
         raise ValueError("assessment_migration_revision_conflict")
     previous = _assessments(conn, entry["memory_id"])
@@ -344,7 +508,7 @@ def _checked(service, plan, entry):
         if not saved or _hash(saved) != row["result_hash"]:
             raise ValueError("assessment_migration_revision_conflict")
     baseline = [r for r in previous if r["assessment_id"] not in own]
-    proof = OriginalRead(service.store).read(sources[0])
+    proof = original.read(sources[0])
     if (_hash(baseline) != entry["assessments_hash"] or proof["state_hash"] != entry["original_state_hash"]
             or proof["input_hash"] != entry["input_hash"] or proof["proof_hash"] != entry["proof_hash"]):
         raise ValueError("assessment_migration_revision_conflict")

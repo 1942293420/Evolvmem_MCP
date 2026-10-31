@@ -234,13 +234,26 @@ def persist(store, memory_id, source_id, result, *, existing_status=None):
 
 
 def _rows(store, ids=None):
+    if not store._connection().execute("SELECT 1 FROM sqlite_master WHERE name='capability_assessments'").fetchone():
+        return []
+    from evolvmem.capability_assessment_migration import OriginalRead
+    reader = OriginalRead(store)
+    reader._begin_scope()
+    try:
+        result = _rows_read(store, ids, reader)
+        reader._assert_scope()
+        return result
+    finally:
+        reader._end_scope()
+
+
+def _rows_read(store, ids, original_read):
     conn = store._connection()
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='capability_assessments'").fetchone():
         return []
     selected = None if ids is None else sorted(set(int(i) for i in ids))
     batches = [None] if selected is None else [selected[i:i+400] for i in range(0, len(selected), 400)]
     result = []
-    original_read = None
     original_cache = {}
     source_stamps = {}
     for batch in batches:
@@ -249,7 +262,9 @@ def _rows(store, ids=None):
             "SELECT a.*,s.revision AS current_binding_revision,s.source_revision AS current_source_revision,"
             "s.source_kind AS current_source_kind,s.source_key AS current_source_key,"
             "s.source_ref AS current_source_ref,s.unit_digest AS current_unit_digest,"
-            "s.unit_revision AS current_bound_unit_revision,u.revision AS current_unit_revision,u.text AS current_text,"
+            "s.unit_revision AS current_bound_unit_revision,u.revision AS current_unit_revision,"
+            "CASE WHEN length(u.text)<=24000 AND length(CAST(u.text AS BLOB))<=8388608 THEN u.text END AS current_text,"
+            "(length(u.text)>24000 OR length(CAST(u.text AS BLOB))>8388608) AS current_text_oversized,"
             "u.disposition AS current_disposition,t.source_revision AS task_source_revision,t.status AS task_status,"
             "m.category AS current_category,m.title AS current_title,m.content AS current_content,"
             "u.source_start AS current_source_start,u.source_end AS current_source_end,"
@@ -291,7 +306,8 @@ def _rows(store, ids=None):
                 if row["task_status"] == "superseded" or row["current_disposition"] != "keep":
                     reasons.append("source_withdrawn")
                 from evolvmem.capability_source_proof import unit_source_proof
-                proof = unit_source_proof(store, source.get("task_id"), source.get("unit_digest"))
+                proof = ({"valid": False} if row["current_text_oversized"] else
+                         unit_source_proof(store, source.get("task_id"), source.get("unit_digest")))
                 if not proof["valid"]:
                     reasons.append("unit_original_unproven")
                 saved_proof = details.get("unit_source_proof")
@@ -315,7 +331,8 @@ def _rows(store, ids=None):
                 source_id = row["source_id"]
                 if source_id not in source_stamps:
                     current = conn.execute("SELECT * FROM capability_sources WHERE source_id=?", (source_id,)).fetchone()
-                    source_stamps[source_id] = _source_stamp(store, dict(current)) if current else None
+                    source_stamps[source_id] = (_source_stamp(store, dict(current))
+                                                if current and not row["current_text_oversized"] else None)
                 if source_stamps[source_id] != details["source_stamp"]:
                     reasons.append("source_origin_changed")
             if row["policy_version"] != POLICY_VERSION:
