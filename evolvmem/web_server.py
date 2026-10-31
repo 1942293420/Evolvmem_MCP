@@ -48,6 +48,73 @@ from evolvmem.web_auth import AuthSettings, WebAuth
 _BUSINESS_WAIT_SECONDS = 5
 _LOG = logging.getLogger(__name__)
 
+# --- 只读接口短缓存：首页三个聚合接口原来每次 15-25s，命中缓存后毫秒级 ---
+import threading as _threading
+import time as _time
+
+_READ_CACHE: dict = {}
+_READ_CACHE_LOCK = _threading.Lock()
+_READ_CACHE_TTL = 60.0
+_READ_CACHE_MAX = 96
+
+
+def _read_cache_get(key):
+    now = _time.time()
+    with _READ_CACHE_LOCK:
+        item = _READ_CACHE.get(key)
+        if item is None:
+            return None
+        stamp, value, ttl = item
+        if now - stamp > ttl:
+            _READ_CACHE.pop(key, None)
+            return None
+        return value
+
+
+def _read_cache_put(key, value, ttl=None):
+    with _READ_CACHE_LOCK:
+        if len(_READ_CACHE) >= _READ_CACHE_MAX:
+            for stale in list(_READ_CACHE)[: max(1, _READ_CACHE_MAX // 3)]:
+                _READ_CACHE.pop(stale, None)
+        _READ_CACHE[key] = (_time.time(), value, _READ_CACHE_TTL if ttl is None else ttl)
+
+
+def _read_cache_clear():
+    with _READ_CACHE_LOCK:
+        _READ_CACHE.clear()
+
+_READ_REFRESHING = set()
+
+
+def _read_cache_swr(key, compute, ttl):
+    """先返回旧值，再在后台刷新：命中过期数据时请求不被 20s 的聚合拖住。"""
+    now = _time.time()
+    with _READ_CACHE_LOCK:
+        item = _READ_CACHE.get(key)
+        if item is not None:
+            stamp, value, item_ttl = item
+            if now - stamp <= item_ttl:
+                return value
+            if key not in _READ_REFRESHING:
+                _READ_REFRESHING.add(key)
+
+                def _refresh():
+                    try:
+                        _read_cache_put(key, compute(), ttl)
+                    except Exception:
+                        pass
+                    finally:
+                        with _READ_CACHE_LOCK:
+                            _READ_REFRESHING.discard(key)
+
+                _threading.Thread(target=_refresh, daemon=True).start()
+            return value
+    value = compute()
+    _read_cache_put(key, value, ttl)
+    return value
+
+
+
 _STATIC_INDEX = Path(__file__).parent / "web_static" / "index.html"
 _STATIC_SIGNAL = _STATIC_INDEX.parent / "designs" / "signal.html"
 _STATIC_ARCH = Path(__file__).parent / "web_static" / "architecture.html"
@@ -1346,21 +1413,35 @@ def make_handler(service: ContextService):
             views = TrustViews(read_service)
             parsed = urlparse(self.path)
             path = parsed.path
+            if path.startswith('/api/project-modules'):
+                from evolvmem.project_module_web import dispatch
+                try:
+                    self._send_json(dispatch(read_service, 'GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()}))
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 400)
+                return
             if path == '/api/overview':
                 from evolvmem.capability_web import overview
                 self._send_json(overview(read_service))
                 return
-            if path == '/api/capabilities':
+            if path in ('/api/capabilities', '/api/project-archives'):
                 from evolvmem.capability_web import capabilities
-                self._send_json(capabilities(read_service, {k: v[0] for k, v in parse_qs(parsed.query).items()}))
+                from evolvmem.project_archive_web import project_archives
+                reader = capabilities if path == '/api/capabilities' else project_archives
+                try:
+                    self._send_json(reader(read_service, {k: v[0] for k, v in parse_qs(parsed.query).items()}))
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 400)
                 return
             archive_match = re.fullmatch(r'/api/project-archives/(.+)', path)
             if archive_match:
-                from evolvmem.capability_web import project_archive
+                from evolvmem.project_archive_web import project_archive
                 try:
-                    self._send_json(project_archive(read_service, unquote(archive_match.group(1))))
+                    self._send_json(project_archive(read_service, unquote(archive_match.group(1)),
+                                                    {k: v[0] for k, v in parse_qs(parsed.query).items()}))
                 except ValueError as exc:
-                    self._send_json({'ok': False, 'error': str(exc)}, 404)
+                    status = 404 if str(exc) == 'project_not_registered' else 409 if str(exc) == 'project_ambiguous' else 400
+                    self._send_json({'ok': False, 'error': str(exc)}, status)
                 return
             if path.startswith('/api/knowledge/'):
                 self._knowledge('GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()})
@@ -1374,7 +1455,7 @@ def make_handler(service: ContextService):
                 except Exception as exc:  # bounded surface, no internal detail
                     self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
                 return
-            if path in ('/ui-feedback.js', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/project-review.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js', '/capabilities.js', '/project-archives.js', '/refresh.css', '/refresh.js'):
+            if path in ('/ui-feedback.js', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/project-review.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js', '/capabilities.js', '/project-archives.js', '/project-library.css', '/refresh.css', '/refresh.js'):
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 data = asset.read_bytes()
                 self.send_response(200)
@@ -1518,7 +1599,8 @@ def make_handler(service: ContextService):
                 self._send_json(api_memories(facade, params, store, read_service.config))
                 return
             if path == "/api/projects":
-                self._send_json(api_projects(facade, store))
+                self._send_json(_read_cache_swr(
+                    ('projects',), lambda: api_projects(facade, store), 300.0))
                 return
             if path == "/api/resolutions":
                 qs = parse_qs(parsed.query)
@@ -1562,6 +1644,17 @@ def make_handler(service: ContextService):
                 body, failed = self._read_body()
                 if not failed:
                     self._knowledge('POST', path, body)
+                return
+            if path.startswith('/api/project-modules'):
+                from evolvmem.project_module_web import dispatch
+                body, failed = self._read_body()
+                if failed:
+                    return
+                try:
+                    result = dispatch(service, 'POST', path, body)
+                    self._send_json({'ok': True, **result})
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 409 if str(exc) == 'revision_conflict' else 400)
                 return
             intake_match = re.fullmatch(r'/api/capabilities/intake/(\d+)/assign', path)
             suggestion_match = re.fullmatch(r'/api/capability-categories/suggestions/(\d+)/(accept|reject)', path)
@@ -1664,7 +1757,14 @@ def make_handler(service: ContextService):
                     from evolvmem.pipeline_skills import verify
                     result = verify(service, 'extraction', body, prepared=self.prepared_extraction)
                 else:
-                    result = dispatch(reader or getattr(self, 'read_service', None) or service, method, path, body)
+                    if method == 'GET':
+                        _key = ('knowledge', path, tuple(sorted((body or {}).items())))
+                        _target = reader or getattr(self, 'read_service', None) or service
+                        result = _read_cache_swr(
+                            _key, lambda: dispatch(_target, method, path, body), 45.0)
+                    else:
+                        _read_cache_clear()
+                        result = dispatch(reader or getattr(self, 'read_service', None) or service, method, path, body)
                 self._send_json(result)
             except LookupError:
                 self._send_json({'ok': False, 'error': 'not_found'}, 404)
@@ -1713,6 +1813,18 @@ def run(port: int = 9377, data_dir: str | None = None,
         rules.save({'expected_revision': rules.read()['revision']})
     # 空闲浏览器连接独立等待；共享 service 的业务处理仍由 handler 串行执行。
     server = make_http_server(service, host=host, port=port)
+
+    def _warm_read_cache():
+        try:
+            fac = service.legacy_facade()
+            _read_cache_swr(('projects',), lambda: api_projects(fac, service.store), 300.0)
+            from evolvmem.knowledge_api import dispatch as _kd
+            _read_cache_swr(('knowledge', '/api/knowledge/organization', ()),
+                            lambda: _kd(service, 'GET', '/api/knowledge/organization', {}), 45.0)
+        except Exception:
+            pass
+
+    _threading.Thread(target=_warm_read_cache, daemon=True).start()
     # 单个有界后台整理 worker：独立连接、独立线程；中断的任务在启动时回到队列
     from evolvmem.auto_organization import OrganizationWorker
     organization = OrganizationWorker(config).start()

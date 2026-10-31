@@ -7,12 +7,15 @@ param(
     [switch]$StrictInjection,
     [switch]$ForceIdentity,
     [switch]$RunSelfTest,
+    [switch]$DeferWorkerStart,
+    [string]$DecoderPython,
     [switch]$Uninstall
 )
 
 $ErrorActionPreference = 'Stop'
 $script:RunningOnWindows = $env:OS -eq 'Windows_NT'
 $sourceClient = [IO.Path]::Combine($PSScriptRoot, 'evolvmem-codex.ps1')
+$sourceDecoder = [IO.Path]::Combine($PSScriptRoot, 'decode-transcript.py')
 $sourceLauncher = [IO.Path]::Combine($PSScriptRoot, 'evolvmem-sync.cs')
 $sourceInstructions = [IO.Path]::Combine($PSScriptRoot, 'AGENTS.evolvmem.md')
 if (-not $env:LOCALAPPDATA) { throw 'The local application data directory is unavailable.' }
@@ -386,10 +389,10 @@ function Register-WorkerTask {
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -Hidden -StartWhenAvailable -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
-        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -Disable:$DeferWorkerStart
     Register-ScheduledTask -TaskName 'EvolvMem Codex Sync' -Action $action -Trigger @($minute, $logon) `
         -Principal $principal -Settings $settings -Force | Out-Null
-    Start-ScheduledTask -TaskName 'EvolvMem Codex Sync'
+    if (-not $DeferWorkerStart) { Start-ScheduledTask -TaskName 'EvolvMem Codex Sync' }
 }
 
 function Remove-WorkerTask {
@@ -466,6 +469,11 @@ Ensure-Directory $codexRoot
 Install-Launcher
 Backup-File $installedClient
 Copy-Item -LiteralPath $sourceClient -Destination $installedClient -Force
+if ([IO.File]::Exists($sourceDecoder)) {
+    $installedDecoder = [IO.Path]::Combine($installRoot, 'decode-transcript.py')
+    Backup-File $installedDecoder
+    Copy-Item -LiteralPath $sourceDecoder -Destination $installedDecoder -Force
+}
 
 $deviceId = [string](Get-Value $existingClient 'device_id' '')
 if (-not $deviceId) { $deviceId = 'win-' + [Guid]::NewGuid().ToString('D') }
@@ -477,6 +485,7 @@ $strictValue = if ($PSBoundParameters.ContainsKey('StrictInjection')) {
 $clientConfig = [ordered]@{
     version = 1; url = $Url; token_env_var = $TokenEnvVar; expected_user = $ExpectedUser
     device_id = $deviceId; projects = $projects; strict_injection = $strictValue
+    decoder_python = if ($DecoderPython) { [IO.Path]::GetFullPath($DecoderPython) } else { [string](Get-Value $existingClient 'decoder_python' '') }
     codex_root = $codexRoot
     capture_since_utc = [string](Get-Value $existingClient 'capture_since_utc' ([DateTime]::UtcNow.ToString('o')))
 }
@@ -496,7 +505,8 @@ Ensure-McpProxyBypass
 Register-WorkerTask
 
 Write-Output ('EvolvMem Windows client installed for expected user ' + $ExpectedUser + ' with device ' + $deviceId + '.')
-Write-Output 'Windowless background sync runs every minute and after user logon. Complete persisted Codex records are queued locally and retried through MCP; AGENTS memory instructions are installed without replacing your rules.'
+if ($DeferWorkerStart) { Write-Output 'Background sync task is registered DISABLED; enable it only after server readiness is verified.' }
+Write-Output 'When enabled, windowless background sync runs every minute and after user logon. Complete persisted Codex records are queued locally and retried through MCP; AGENTS memory instructions are installed without replacing your rules.'
 Write-Output ('NO_PROXY includes the EvolvMem endpoint host ' + ([Uri]$Url).DnsSafeHost + '; existing bypass entries are preserved. Restart Codex from a process that has the updated user environment.')
 Write-Output 'Open Codex CLI in your project and use /hooks to review/trust the six EvolvMem hooks. Windows desktop may not show a review prompt. Then restart desktop Codex and verify a new session; self-test does not check hook trust or event delivery.'
 Write-Output ('Status: powershell.exe -NoProfile -File "' + $installedClient + '" -Action status')

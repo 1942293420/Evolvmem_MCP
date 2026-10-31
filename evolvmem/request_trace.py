@@ -12,7 +12,44 @@ import uuid
 
 SLOW_MS = 1000
 _current = ContextVar('recall_trace', default=None)
-_STAGES = frozenset({'queue', 'dispatch', 'health', 'retrieval', 'lexical', 'vector', 'embedding', 'rerank'})
+_STAGES = frozenset({'queue', 'dispatch', 'health', 'retrieval', 'lexical', 'vector', 'embedding', 'rerank',
+                     'health_state', 'health_physical', 'health_projection', 'health_vector',
+                     'health_documents', 'health_counts'})
+HEALTH_STATE_FIELDS = (
+    'service', 'connection', 'database_changes', 'data_version', 'schema_version',
+    'transaction', 'config', 'configured_mode', 'configured_adapter', 'service_mode',
+    'service_adapter', 'embedding', 'embedding_loaded', 'context_index', 'legacy_index',
+    'physical_cache', 'files',
+)
+_HEALTH_EVENTS = frozenset({
+    'physical_baseline_initial', 'physical_baseline_schema', 'physical_baseline_identity',
+    'physical_uncached_transaction', 'physical_cache_disabled', 'physical_pending',
+    'physical_failed_cached', 'generation_fallback', 'state_unavailable',
+})
+
+
+def health_event(name):
+    trace = _current.get()
+    if trace is None:
+        return
+    if name == 'cache_hit':
+        trace['health_cache_hits'] = trace.get('health_cache_hits', 0) + 1
+    elif name in _HEALTH_EVENTS:
+        events = trace.setdefault('health_events', {})
+        events[name] = events.get(name, 0) + 1
+
+
+def health_evaluation(elapsed_ms, ready, changed):
+    trace = _current.get()
+    if trace is None:
+        return
+    trace['health_evaluations'] = trace.get('health_evaluations', 0) + 1
+    trace['health_evaluate_ms'] = round(trace.get('health_evaluate_ms', 0) + elapsed_ms, 3)
+    passes = trace.setdefault('health_passes', [])
+    if len(passes) < 8:
+        passes.append(dict(elapsed_ms=round(elapsed_ms, 3),
+                           ready=ready if type(ready) is bool else None,
+                           changed=[name for name in HEALTH_STATE_FIELDS if name in changed]))
 
 
 def failure(exc, stage_name='dispatch'):

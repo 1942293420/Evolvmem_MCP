@@ -34,6 +34,32 @@ CAPABILITY_SCHEMA = (
             CHECK(status IN ('active','pending','ignored','archived')),
         revision INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS capability_sources(
+        source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        memory_id INTEGER NOT NULL REFERENCES capability_memories(memory_id),
+        source_kind TEXT NOT NULL CHECK(source_kind IN ('context','unit','reference','manual')),
+        source_key TEXT NOT NULL, source_ref TEXT NOT NULL,
+        source_revision TEXT NOT NULL DEFAULT '', context_item_id INTEGER, task_id INTEGER,
+        unit_digest TEXT NOT NULL DEFAULT '', unit_revision INTEGER,
+        projects TEXT NOT NULL DEFAULT '[]', knowledge_scope TEXT NOT NULL DEFAULT 'project',
+        evidence_status TEXT NOT NULL DEFAULT 'unverified',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        UNIQUE(memory_id,source_kind,source_key))""",
+    """CREATE TABLE IF NOT EXISTS capability_assessments(
+        assessment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        memory_id INTEGER NOT NULL REFERENCES capability_memories(memory_id),
+        source_id INTEGER NOT NULL, source_binding_revision INTEGER NOT NULL,
+        source_revision TEXT NOT NULL, unit_revision INTEGER, unit_text_hash TEXT NOT NULL,
+        policy_version TEXT NOT NULL, assessment_key TEXT NOT NULL,
+        value TEXT NOT NULL CHECK(value IN ('reusable','reference','review','ignore')),
+        verification_status TEXT NOT NULL DEFAULT 'unverified' CHECK(verification_status='unverified'),
+        score INTEGER NOT NULL, details TEXT NOT NULL,
+        legacy_active_preserved INTEGER NOT NULL DEFAULT 0,
+        revision INTEGER NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE(source_id,assessment_key), UNIQUE(source_id,revision))""",
+    """CREATE INDEX IF NOT EXISTS idx_capability_assessment_memory
+        ON capability_assessments(memory_id,source_id,assessment_id)""",
     """CREATE INDEX IF NOT EXISTS idx_capability_recall
         ON capability_memories(category,status,memory_id)""",
     """CREATE VIRTUAL TABLE IF NOT EXISTS capability_memories_fts USING fts5(

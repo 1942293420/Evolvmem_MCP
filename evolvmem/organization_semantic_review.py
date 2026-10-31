@@ -446,7 +446,7 @@ def tick(service):
     return True
 
 
-def classify_guidance(service, unit):
+def classify_guidance(service, unit, direct_analysis=None):
     """Only explicitly saved business criteria can automatically guide new data."""
     from evolvmem import organization_guidance as guidance
     before=guidance.rows(service)
@@ -454,6 +454,9 @@ def classify_guidance(service, unit):
     rules=[r for r in all_rules if r['matching_mode']=='semantic']
     matches=[]
     excluded=[]
+    from evolvmem import ownership_reasoning as reasoning
+    direct = reasoning.current_direct_analysis(service, unit, direct_analysis)
+    ignored_uncertain = []
     from evolvmem import organization_exclusions
     exclusions=organization_exclusions.rows(service)
     for rule in rules:
@@ -466,13 +469,22 @@ def classify_guidance(service, unit):
         if verdict['decision']=='include':
             matches.append({**rule,'reason':verdict['reason'],'evidence_quote':verdict['evidence_quote'],'ownership_analysis':verdict})
         elif verdict['decision']=='uncertain':
+            # Uncertainty about another positive project criterion is not a
+            # contradiction of current, source-proved ownership. Global and
+            # negative rules, and every overlapping scope, remain protective.
+            if (direct and not rule['negative'] and ks.scope(rule) == 'project'
+                    and ks.projects(rule) and set(ks.projects(rule)).isdisjoint(direct['projects'])):
+                ignored_uncertain.append(rule['id'])
+                continue
             return {'status':'review','reason':verdict['reason']}
         else:
             excluded.append(verdict)
     if guidance.rows(service) != before:
         return {'status':'review','reason':'业务依据已变化，请重新判断。'}
+    if ignored_uncertain and reasoning.current_direct_analysis(service, unit, direct_analysis) != direct:
+        return {'status':'review','reason':'原文或关联需求已变化，请重新核对。'}
     if not matches:
-        return {'status':'none'}  # Exclusion from one scope does not exclude all other projects.
+        return {'status':'none', 'ignored_uncertain_guidance_ids': ignored_uncertain}
     if any(r['negative'] for r in matches) or len({(ks.scope(r),tuple(ks.projects(r))) for r in matches})>1:
         return {'status':'review','reason':'多条业务归类依据给出不同范围或反例，需要你核对。'}
     return {'status':'apply',**matches[0]}

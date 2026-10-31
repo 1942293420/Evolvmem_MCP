@@ -13,7 +13,8 @@
   const state = {view:'projects',intakeMode:'groups',project:'__all__',q:'',status:'',type:'',category:'',page:1,queue:'all',rows:[],selected:new Set(),projects:[],rules:null,total:0,document:null,memoryLane:'overview',projectSort:'recent',qaSort:'recent',fragmentsOpen:false};
   let toastTimer, renderSequence=0, rulesDirty=false, actionBusy=false;
   let organizationTab='review';const memoryFilters=new Map(), projectReaders=new Map(), projectDocuments=new Map(), projectReviews=new Map();
-  let capabilitiesNode=null,capabilitiesHandle=null;
+  let capabilitiesNode=null,capabilitiesHandle=null,capabilityTab='formal';
+  let archivesNode=null,archivesHandle=null;
   let cleaningNode=null;let organizationNode=null,organizationHandle=null;const cleaningState={dirty:false,busy:false,background:false};
   function syncCleaning(){if(state.view==='cleaning'){rulesDirty=cleaningState.dirty;actionBusy=cleaningState.busy&&!cleaningState.background;mount.setAttribute('aria-busy',String(cleaningState.busy));}}
   function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,6500); }
@@ -60,6 +61,9 @@
     if(state.view!=='capabilities'&&capabilitiesNode&&$('#content').contains(capabilitiesNode)){
       capabilitiesHandle?.suspend?.();capabilitiesNode.remove();
     }
+    if(state.view!=='archives'&&archivesNode&&$('#content').contains(archivesNode)){
+      archivesHandle?.suspend?.();archivesNode.remove();
+    }
     if($('#knowledge-receipt').querySelector('[data-action="retry"]'))$('#knowledge-receipt').hidden=true;
     if(state.view==='cleaning')syncCleaning();else{if($('#content').contains(cleaningNode)||$('#content').contains(organizationNode))rulesDirty=false;actionBusy=false;mount.setAttribute('aria-busy','false');}
     $('#new-item').hidden=!['intake','library'].includes(state.view)||(state.view==='library'&&!state.project.startsWith('__'));
@@ -68,7 +72,7 @@
     $('.knowledge-tabs').hidden=!management;$('.knowledge-flow').hidden=true;mount.dataset.workspaceView=state.view;
     const flowSteps={intake:3,library:3,rules:3,skill:3,learning:4};
     mount.querySelectorAll('.knowledge-flow li').forEach((li,i)=>{const current=flowSteps[state.view]===i+1;li.classList.toggle('current',current);if(current)li.setAttribute('aria-current','step');else li.removeAttribute('aria-current');});
-    const titles={projects:'项目知识',unassigned:'项目历史',organization:'自动整理',cleaning:'数据清洗',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'经验知识',intake:'存量资料',rules:'清洗与入库规则',skill:'整理规则',learning:'协作学习',capabilities:'开发能力记忆',archives:'项目存档'};
+    const titles={projects:'旧版项目资料',unassigned:'项目历史',organization:'自动整理',cleaning:'数据清洗',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'旧版经验问答',intake:'存量资料',rules:'清洗与入库规则',skill:'整理规则',learning:'协作学习',capabilities:'经验与能力库',archives:'项目库'};
     $('#knowledge-title').textContent=titles[state.view];$('#knowledge-description').textContent='';
     try {
     mount.querySelectorAll('[data-view]').forEach(a=>{const active=a.dataset.view===state.view;a.classList.toggle('active',active);a.setAttribute('aria-current',active?'page':'false');});
@@ -79,19 +83,18 @@
       if(!capabilitiesNode){
         capabilitiesNode=document.createElement('div');
         $('#content').replaceChildren(capabilitiesNode);
-        capabilitiesHandle=EvolvCapabilities.render({mount:capabilitiesNode,esc,toast});
+        capabilitiesHandle=EvolvCapabilities.render({mount:capabilitiesNode,esc,toast,initialTab:capabilityTab,onTab:value=>{capabilityTab=value;if(state.view==='capabilities')syncHash();}});
       }else{
-        $('#content').replaceChildren(capabilitiesNode);capabilitiesHandle?.resume?.();
+        $('#content').replaceChildren(capabilitiesNode);capabilitiesHandle?.resume?.(capabilityTab);
       }
       $('#content').inert=false;$('#knowledge-loading').hidden=true;return;
     }
     if(state.view==='archives'){
-      await EvolvProjectArchives.render({mount:$('#content'),esc});
-      if(!state.project.startsWith('__')){
-        const form=$('#project-archive-form');
-        form.elements.project.value=state.project;
-        form.requestSubmit();
-      }
+      $('#content').onclick=null;$('#content').oninput=null;$('#content').onchange=null;
+      if(!archivesNode){
+        archivesNode=document.createElement('div');$('#content').replaceChildren(archivesNode);
+        archivesHandle=EvolvProjectArchives.render({mount:archivesNode,esc,initialProject:state.project.startsWith('__')?'':state.project,onProject:project=>{state.project=project||'__all__';if(state.view==='archives')syncHash();}});
+      }else{$('#content').replaceChildren(archivesNode);archivesHandle?.resume?.(state.project.startsWith('__')?'':state.project);}
       return;
     }
     const info=await refreshProjects();if(seq!==renderSequence)return;
@@ -336,14 +339,16 @@
   $('#new-item').onclick=()=>newItem();
   mount.classList.toggle('readonly',!EvolvAuth.canWrite);$('#readonly').hidden=EvolvAuth.canWrite;
   window.addEventListener('beforeunload',e=>{if(rulesDirty||cleaningState.dirty||cleaningState.busy||[...projectReviews.values()].some(r=>r.busy)){e.preventDefault();e.returnValue='';}});
+  // Embedded controllers may finish in the background after leaving a page.
   function syncHash(){if(hooks.isActive&&!hooks.isActive())return;const value=hash();history.replaceState(null,'',value);hooks.routeChanged?.(value);}
-  function hash(){const p=new URLSearchParams();if(state.view==='intake'&&state.intakeMode==='records')p.set('mode','records');if(state.view==='organization'&&organizationTab!=='review')p.set('tab',organizationTab);if(state.project!=='__all__')p.set('project',state.project);if(state.q)p.set('q',state.q);if(state.view==='projects'&&state.projectSort!=='recent')p.set('sort',state.projectSort);if(state.view==='qa'&&state.qaSort!=='recent')p.set('sort',state.qaSort);if(state.memoryLane!=='overview'&&state.view==='library')p.set('lane',state.memoryLane);return `#knowledge/${state.view}${p.size?'?'+p:''}`;}
+  function hash(){const p=new URLSearchParams();if(state.view==='intake'&&state.intakeMode==='records')p.set('mode','records');if(state.view==='organization'&&organizationTab!=='review')p.set('tab',organizationTab);if(state.view==='capabilities'&&capabilityTab!=='formal')p.set('tab',capabilityTab);if(state.project!=='__all__')p.set('project',state.project);if(state.q)p.set('q',state.q);if(state.view==='projects'&&state.projectSort!=='recent')p.set('sort',state.projectSort);if(state.view==='qa'&&state.qaSort!=='recent')p.set('sort',state.qaSort);if(state.memoryLane!=='overview'&&state.view==='library')p.set('lane',state.memoryLane);return `#knowledge/${state.view}${p.size?'?'+p:''}`;}
   return {
     kind:'memories', integrated:true,
     get project(){return state.project;}, set project(value){state.project=value||'__all__';state.q='';state.type='';state.category='';state.status='';state.queue='all';state.view='library';state.memoryLane='overview';state.fragmentsOpen=false;},
     get query(){return state.q;}, set query(value){state.q=value;state.view='library';state.memoryLane='overview';},
     set view(value){if(value!==state.view)$('#knowledge-receipt').hidden=true;if(['projects','unassigned','organization','cleaning','library','intake','rules','skill','learning','qa','capabilities','archives'].includes(value))state.view=value;},
     set organizationTab(value){organizationTab=['review','failed','completed','history','guidance','facts','equivalences','all'].includes(value)?value:'review';},
+    set capabilityTab(value){capabilityTab=['formal','intake','suggestions'].includes(value)?value:'formal';},
     set intakeMode(value){state.intakeMode=value==='records'?'records':'groups';},
     hash,
     set projectSort(value){if(state.view==='qa'){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';return;}state.projectSort=Object.hasOwn(projectSorts,value)?value:'recent';},

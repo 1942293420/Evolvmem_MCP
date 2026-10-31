@@ -437,13 +437,15 @@ class ExperienceService:
             })
         return result
 
-    def recall(self, *, project, query, constraints=None, workstream_id=None):
+    def recall(self, *, project, query, constraints=None, workstream_id=None, mode='full'):
         self.core._require_serving()
+        if mode not in ('full', 'hook'):
+            raise ValueError('invalid recall mode')
         project = self.core._normalize_project(_text(project, 'project', 300, required=False))
         query = _text(query,'query',2000)
         constraints = _conditions(constraints or {})
         fingerprint = (self._conn().total_changes,self._conn().execute('PRAGMA data_version').fetchone()[0])
-        cache_key = _json([project,query,constraints,workstream_id,fingerprint])
+        cache_key = _json([project,query,constraints,workstream_id,fingerprint,mode])
         if workstream_id and cache_key in self._cache:
             return json.loads(self._cache[cache_key])
         request = ContextSearchRequest(
@@ -464,7 +466,10 @@ class ExperienceService:
             'SELECT id FROM context_items WHERE ' + ' AND '.join(predicates), params))
         if not eligible_ids:
             return {'results':[], 'used_chars':0}
-        matches = self.core.retriever.search(request, eligible_ids=eligible_ids)
+        # Automatic hooks skip optional online reranking. Every eligibility,
+        # strict vector fallback, condition and evidence gate stays in force.
+        search_options = {'allow_rerank': False} if mode == 'hook' else {}
+        matches = self.core.retriever.search(request, eligible_ids=eligible_ids, **search_options)
         semantic = {m.id:m for m in matches}
         # Chinese natural sentences rarely share a whole phrase. A bounded
         # term query complements the existing vector channel without an LLM.

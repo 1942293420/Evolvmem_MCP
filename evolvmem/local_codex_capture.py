@@ -953,13 +953,20 @@ def _auto_new(store):
 
 def status(config, store):
     """Content-free capture state for the read-only Web view."""
-    ensure_schema(store)
     settings = load_config(config.data_dir)
     connection = store._connection()
-    scan_row = connection.execute('SELECT * FROM local_capture_scans WHERE id=1').fetchone()
+    # The Web view supplies a query-only snapshot. Schema creation belongs to
+    # the collector; an unconfigured collector has no capture tables yet.
+    tables = {row[0] for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name IN ('local_capture_scans', 'local_capture_files')")}
+    scan_row = (connection.execute('SELECT * FROM local_capture_scans WHERE id=1').fetchone()
+                if 'local_capture_scans' in tables else None)
     auto_new = _auto_new(store)
     sessions = []
-    for row in connection.execute('SELECT * FROM local_capture_files ORDER BY updated_at DESC, id DESC'):
+    file_rows = (connection.execute('SELECT * FROM local_capture_files ORDER BY updated_at DESC, id DESC')
+                 if 'local_capture_files' in tables else ())
+    for row in file_rows:
         ignored = row['file_state'] == STATE_IGNORED_SUBAGENT
         if ignored:
             # No file read at all here: the ignored verdict is cached in the

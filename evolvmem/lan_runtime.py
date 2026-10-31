@@ -4,15 +4,19 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 import threading
 
 from evolvmem.config import Config
+from evolvmem.context_store import ContextStore
 from evolvmem.embedding import EmbeddingEngine
 from evolvmem.lan_config import LanSettings
 from evolvmem.lan_daily_rollup import LanDailyRollup
 from evolvmem.mcp_server import MemoryMCPServer
 from evolvmem.recall_recovery import ContextVectorRecoveryLoop
+from evolvmem.capability_recovery import CapabilityVectorRecoveryLoop
 from evolvmem.workspace_identity import WorkspaceIdentityProvider
+from evolvmem.vector_index import VectorIndex
 
 
 _USERS = frozenset({"jiangli", "kane"})
@@ -107,11 +111,16 @@ class LanRuntime:
         self._capture_worker = None
         self._capture_stop = threading.Event()
         self._vector_recovery = ContextVectorRecoveryLoop()
+        self._capability_recovery = CapabilityVectorRecoveryLoop()
+        self._capability_recovery_reports: tuple = ()
         # Content-free reports from the most recent recovery rounds, for
         # operators and tests; never transcript, memory, or model content.
         self._vector_recovery_reports: tuple = ()
         self._recovery_worker = None
         self._recovery_stop = threading.Event()
+        self._resources_lock = threading.RLock()
+        self._workers_running = {'capture': False, 'recovery': False}
+        self._resources_closed = False
 
     def initialize(self) -> None:
         if self._closed:
@@ -178,11 +187,23 @@ class LanRuntime:
         self._close_resources()
 
     def _close_resources(self):
-        for server in set(self._servers.values()):
-            server.shutdown()
-        self._servers.clear()
-        if self._shared_engine is not None:
-            self._shared_engine.close()
+        with self._resources_lock:
+            if self._resources_closed or any(self._workers_running.values()):
+                return
+            for server in set(self._servers.values()):
+                server.shutdown()
+            self._servers.clear()
+            if self._shared_engine is not None:
+                self._shared_engine.close()
+            self._resources_closed = True
+
+    def _worker_finished(self, kind):
+        # Thread.is_alive() is still true inside finally. Record logical exit
+        # only after that worker has released everything it can still use.
+        with self._resources_lock:
+            self._workers_running[kind] = False
+            if self._closed:
+                self._close_resources()
 
     def start_capture_worker(self, adapter):
         if self._capture_worker is not None:
@@ -211,19 +232,24 @@ class LanRuntime:
                         # Daily maintenance must never take the capture worker down.
                         pass
             finally:
-                if self._closed:
-                    self._close_resources()
+                self._worker_finished('capture')
         self._capture_worker = threading.Thread(target=run, name='evolvmem-session-extraction', daemon=True)
-        self._capture_worker.start()
+        with self._resources_lock:
+            self._workers_running['capture'] = True
+        try:
+            self._capture_worker.start()
+        except Exception:
+            self._worker_finished('capture')
+            raise
 
     def start_recovery_worker(self):
         """One bounded Context-vector recovery thread, separate from capture.
 
         A rebuild can encode the whole active library, so it must never run on
-        the request thread or delay uploads and extractions. The thread owns no
-        connection, model, or service: it borrows the resident services, which
-        share the one LAN embedding engine and the store's own
-        ``check_same_thread=False`` connection.
+        the request thread or delay uploads and extractions. The thread owns
+        its SQLite connections and vector handles; only the already-serialized
+        LAN embedding engine is shared. A request can never join or commit a
+        recovery transaction through the resident store's nesting depth.
         """
         if self._recovery_worker is not None:
             return
@@ -233,26 +259,84 @@ class LanRuntime:
             name='evolvmem-context-vector-recovery',
             daemon=True,
         )
-        self._recovery_worker.start()
+        with self._resources_lock:
+            self._workers_running['recovery'] = True
+        try:
+            self._recovery_worker.start()
+        except Exception:
+            self._worker_finished('recovery')
+            raise
 
     def _recovery_loop(self):
+        services = ()
         try:
             while not self._recovery_stop.wait(_RECOVERY_POLL_SECONDS):
                 try:
-                    # Low frequency and bounded: the loop is due at most once a
-                    # minute, skips clean namespaces, refuses to encode a
-                    # library above its document budget, and shares the one LAN
-                    # engine instead of loading a second model.
-                    reports = self._vector_recovery.tick(self._live_servers())
+                    if not self._vector_recovery.due() and not self._capability_recovery.due():
+                        continue
+                    services = self._open_recovery_services(services)
+                    # Scans and encoding hold no dispatch lock. Only the
+                    # existing final writer transaction serializes publication.
+                    reports = self._vector_recovery.tick(services)
                     if reports:
                         self._vector_recovery_reports = reports
+                    capability_reports = self._capability_recovery.tick(services)
+                    if capability_reports:
+                        self._capability_recovery_reports = capability_reports
                 except Exception:
                     # Recovery must never take this thread (or capture) down.
                     pass
         finally:
-            if self._closed:
-                # Last thread out owns final cleanup, mirroring the capture worker.
-                self._close_resources()
+            self._close_recovery_services(services)
+            self._worker_finished('recovery')
+
+    def _open_recovery_services(self, previous=()):
+        """Worker-owned handles, without schema migration or model loading.
+
+        A failed namespace is reported through the normal recovery backoff and
+        retried only when due. Healthy namespaces keep their own open handles.
+        An unreadable vector file must reach atomic rebuilding, not stop the
+        entire worker before its recovery policy can inspect the namespace.
+        """
+        existing = {s.config.db_path.resolve(): s for s in previous}
+        services = []
+        for resident in self._live_servers():
+            config = deepcopy(resident.config)
+            prior = existing.get(config.db_path.resolve())
+            if prior is not None and prior.store is not None:
+                services.append(prior)
+                continue
+            store = ContextStore(config)
+            index = VectorIndex(config, path=config.context_vector_path)
+            service = SimpleNamespace(config=config, store=store,
+                                      vector_index=index,
+                                      embedding_engine=self._shared_engine)
+            try:
+                store.initialize(create_schema=False)
+                try:
+                    index.initialize(dim=config.embedding_dim)
+                except Exception:
+                    # An uninitialized index yields context_vector_unavailable;
+                    # the existing stager can replace its corrupted formal file.
+                    index.close()
+            except Exception:
+                self._close_recovery_services((service,))
+                service.store = None
+                service.vector_index = None
+            services.append(service)
+        return tuple(services)
+
+    @staticmethod
+    def _close_recovery_services(services):
+        for service in services:
+            for resource in (service.vector_index, service.store):
+                if resource is not None:
+                    try:
+                        resource.close()
+                    except Exception:
+                        # Release every other handle without masking the
+                        # original open/recovery failure or skipping cleanup.
+                        pass
 
     def _live_servers(self):
         """Servers that are fully initialized and safe to touch from the worker."""

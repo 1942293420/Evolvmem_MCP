@@ -536,6 +536,8 @@ class ContextSessionStartResult:
     # 审核（历史无 resolution 记录）的 id；两者都有界，不含原文/路径。
     ownership_exclusions: tuple[ContextOwnershipExclusion, ...] = ()
     unverified_ownership_ids: tuple[int, ...] = ()
+    # Capability memory IDs never belong to Context feedback or access counters.
+    capability_ids: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.block, str):
@@ -549,6 +551,13 @@ class ContextSessionStartResult:
         for selected_id in selected_ids:
             _validate_positive_int(selected_id, "selected_ids")
         object.__setattr__(self, "selected_ids", selected_ids)
+        try:
+            capability_ids = tuple(self.capability_ids)
+        except TypeError as exc:
+            raise ContextValidationError("capability_ids must be an iterable of positive integers") from exc
+        for capability_id in capability_ids:
+            _validate_positive_int(capability_id, "capability_ids")
+        object.__setattr__(self, "capability_ids", capability_ids)
         _validate_non_negative_int(self.used_chars, "used_chars")
         try:
             excluded_counts = tuple(self.excluded_counts)

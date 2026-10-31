@@ -41,6 +41,7 @@ evolvmem = [
     "web_static/*.html",
     "web_static/*.css",
     "web_static/*.js",
+    "web_static/redesign/*.html",
     "web_static/designs/*.html",
     "web_static/designs/*.css",
     "web_static/designs/*.js",

@@ -77,8 +77,16 @@ def prepare_memory_revision(server):
             'context_project_resolutions': 'resolution_state,decision_source,review_state,resolved_project,revision',
             'continuity_workstreams': 'checkpoint_revision,state_version',
             'continuity_focus': 'revision',
+            'project_events': 'project,event_type,occurred_at,title,content,source_ref,status',
+            'project_archives': 'display_name,summary,started_at,ended_at,status,source_watermark,revision',
+            'capability_memories': 'category,title,content,keywords,source_project,source_ref,occurred_at,status,revision',
+            'capability_categories': 'label,enabled,revision',
         }
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         for table, columns in tracked.items():
+            # Optional primary-knowledge tables may be absent in older namespaces.
+            if table not in tables:
+                continue
             for action in ('INSERT', 'DELETE', 'UPDATE OF ' + columns):
                 suffix = action.split()[0].lower()
                 condition = (' WHEN ' + ' OR '.join(f'NEW.{c} IS NOT OLD.{c}' for c in columns.split(','))) if suffix == 'update' else ''

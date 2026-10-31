@@ -29,6 +29,7 @@ def test_export_preserves_public_resources_excludes_runtime_and_never_overwrites
         "dsh/cordis.patch.yml": b"# Public configuration example\n",
         "scripts/helper.py": b"print('example')\n",
         "docs/github-sharing.md": b"Sharing instructions\n",
+        "docs/2026-10-31-memory-governance.md": b"Source-bound governance architecture\n",
         "docs/feishu-login.md": b"Feishu setup instructions\n",
         ".github/workflows/check.yml": b"name: check\n",
     }

@@ -1,11 +1,19 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('session-start', 'prompt-submit', 'snapshot', 'worker', 'upload', 'status', 'self-test')]
-    [string]$Action
+    [ValidateSet('session-start', 'prompt-submit', 'snapshot', 'worker', 'upload', 'status', 'self-test', 'discover-history')]
+    [string]$Action,
+    [ValidateRange(1, 10000)][int]$HistoricalLimit = 500
 )
 
 $ErrorActionPreference = 'Stop'
+# The native command hooks have a 12-second outer deadline. Account for all
+# hook work together and keep time for PowerShell startup and JSON delivery.
+$script:HookBudgetMilliseconds = 10500
+$script:HookOutputReserveMilliseconds = 300
+$script:HookBudgetWatch = if ($Action -in @('session-start', 'prompt-submit')) {
+    [Diagnostics.Stopwatch]::StartNew()
+} else { $null }
 $script:MaxContextChars = 8000
 $script:ConnectionMetadataReserveChars = 1600
 # Explicit project mentions get their own bounded slice of the prompt context.
@@ -191,6 +199,12 @@ function Test-ArchiveCurrentConfirmation($Response, [int64]$Order, [string]$Sha)
     return $true
 }
 
+function Get-HookRemainingMilliseconds {
+    if ($null -eq $script:HookBudgetWatch) { return [double]::PositiveInfinity }
+    return [Math]::Max(0, $script:HookBudgetMilliseconds -
+        $script:HookOutputReserveMilliseconds - $script:HookBudgetWatch.ElapsedMilliseconds)
+}
+
 function Invoke-Rpc($Config, [string]$Method, $Parameters, [string]$RpcId) {
     $token = Get-ActionToken $Config
     $headers = @{
@@ -201,9 +215,30 @@ function Invoke-Rpc($Config, [string]$Method, $Parameters, [string]$RpcId) {
     $body = @{ jsonrpc = '2.0'; id = $RpcId; method = $Method; params = $Parameters } |
         ConvertTo-Json -Depth 20 -Compress
     $bodyBytes = [Text.Encoding]::UTF8.GetBytes($body)
+    $timeoutSeconds = $script:RpcTimeoutSeconds
+    if ($null -ne $script:HookBudgetWatch) {
+        # Bootstrap may use the remaining action budget. Healthy project and
+        # experience recall can cross three seconds, so share a five-second
+        # per-call cap within the same deadline. Authentication stays short;
+        # non-hook calls and the background worker retain their own timeout.
+        if ($Method -ceq 'tools/call' -and
+            [string](Get-RecordValue $Parameters 'name' '') -ceq 'context_session_start') {
+            $timeoutSeconds = 10
+        }
+        elseif ($Method -ceq 'tools/call' -and
+            @('context_project_recall', 'experience_recall') -ccontains
+                [string](Get-RecordValue $Parameters 'name' '')) {
+            $timeoutSeconds = 5
+        }
+        $timeoutSeconds = [Math]::Min($timeoutSeconds,
+            [int][Math]::Floor((Get-HookRemainingMilliseconds) / 1000))
+        if ($timeoutSeconds -lt 1) {
+            throw (New-ClientError 'hook_budget_exhausted' 'Hook request budget is exhausted')
+        }
+    }
     $response = Invoke-WebRequest -UseBasicParsing -Uri ([string]$Config.url) -Method Post `
         -ContentType 'application/json; charset=utf-8' -Headers $headers -Body $bodyBytes `
-        -TimeoutSec $script:RpcTimeoutSeconds
+        -TimeoutSec $timeoutSeconds
     # PS 5.1 decodes application/json without charset as Latin-1. MCP JSON
     # is UTF-8; read the response bytes so injected Chinese stays intact.
     $responseText = [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray())
@@ -241,7 +276,9 @@ function Convert-McpToolResult($Config, $Result) {
 
 function Confirm-RemoteIdentity($Config) {
     if ($script:IdentityValidated) { return }
-    $result = Invoke-Rpc $Config 'tools/call' @{ name = 'memory_status'; arguments = @{} } `
+    # Identity and revision require no content scan or readiness assertion.
+    # Actual context tools retain their server-side health gates.
+    $result = Invoke-Rpc $Config 'tools/call' @{ name = 'memory_status'; arguments = @{ detail = 'revision' } } `
         ([Guid]::NewGuid().ToString('N'))
     $script:PreflightStatus = Convert-McpToolResult $Config $result
     $script:IdentityValidated = $true
@@ -249,10 +286,16 @@ function Confirm-RemoteIdentity($Config) {
 
 function Invoke-McpTool($Config, [string]$Name, $Arguments, [string]$RpcId = '') {
     Confirm-RemoteIdentity $Config
-    if ($Name -eq 'memory_status') { return $script:PreflightStatus }
+    if ($Name -eq 'memory_status' -and [string](Get-RecordValue $Arguments 'detail' '') -eq 'revision') {
+        return $script:PreflightStatus
+    }
     if (-not $RpcId) { $RpcId = [Guid]::NewGuid().ToString('N') }
     $result = Invoke-Rpc $Config 'tools/call' @{ name = $Name; arguments = $Arguments } $RpcId
     return Convert-McpToolResult $Config $result
+}
+
+function Get-RemoteRevisionStatus($Config) {
+    return Invoke-McpTool $Config 'memory_status' @{ detail = 'revision' }
 }
 
 function Normalize-WorkspacePath([string]$Path) {
@@ -375,6 +418,49 @@ function Format-InjectionContext($Injection) {
     return Join-Context @($connection, $prefix, [string](Get-Value $Injection.Response 'block' ''))
 }
 
+
+function Open-TranscriptStream([string]$Path, [switch]$HeaderOnly) {
+    if ($Path -notmatch '\.jsonl\.zs(td|t)$') {
+        return New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    }
+    $python = [string](Get-Value (Get-Config) 'decoder_python' '')
+    if (-not $python -or -not [IO.File]::Exists($python)) {
+        throw (New-ClientError 'decoder_unavailable' 'Compressed transcript decoder is not configured')
+    }
+    $helper = [IO.Path]::Combine($PSScriptRoot, 'decode-transcript.py')
+    if (-not [IO.File]::Exists($helper)) { throw (New-ClientError 'decoder_unavailable' 'Compressed transcript helper is missing') }
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $python
+    $info.Arguments = '"' + $helper + '" "' + $Path + '"' + $(if ($HeaderOnly) { ' header' } else { '' })
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $info
+    $memory = New-Object IO.MemoryStream
+    try {
+        [void]$process.Start()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $process.StandardOutput.BaseStream.CopyTo($memory)
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw (New-ClientError 'compressed_decode_failed' 'Compressed transcript could not be decoded') }
+        $memory.Position = 0
+        return ,$memory
+    }
+    catch { $memory.Dispose(); throw }
+    finally { $process.Dispose() }
+}
+
+function Read-TranscriptHeader([string]$Path) {
+    $stream = Open-TranscriptStream $Path -HeaderOnly
+    try {
+        $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8, $true)
+        try { return $reader.ReadLine() } finally { $reader.Dispose() }
+    }
+    finally { $stream.Dispose() }
+}
+
 function Save-SessionRegistration($Config, $Event) {
     $sessionId = [string](Get-Value $Event 'session_id' '')
     if (-not $sessionId) { return }
@@ -382,12 +468,7 @@ function Save-SessionRegistration($Config, $Event) {
     $prior = Read-JsonFile $path
     $transcript = [string](Get-Value $Event 'transcript_path' (Get-Value $prior 'transcript_path' ''))
     if ($transcript -and [IO.File]::Exists($transcript)) {
-        $stream = New-Object IO.FileStream($transcript, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-        try {
-            $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8, $true)
-            try { $line = $reader.ReadLine() } finally { $reader.Dispose() }
-        }
-        finally { $stream.Dispose() }
+        $line = Read-TranscriptHeader $transcript
         $header = $null
         try { $header = $line | ConvertFrom-Json } catch { }
         if ([string](Get-Value $header 'type' '') -eq 'session_meta') {
@@ -404,6 +485,7 @@ function Save-SessionRegistration($Config, $Event) {
         workspace_path = [string](Get-Value $Event 'cwd' (Get-Value $prior 'workspace_path' ''))
         project = Resolve-Project $Config ([string](Get-Value $Event 'cwd' (Get-Value $prior 'workspace_path' '')))
         source_bytes = [int64](Get-Value $prior 'source_bytes' 0)
+        source_file_bytes = [int64](Get-Value $prior 'source_file_bytes' (Get-Value $prior 'source_bytes' 0))
         source_last_write_utc = [string](Get-Value $prior 'source_last_write_utc' '')
         cache_file = [string](Get-Value $prior 'cache_file' '')
         source_order = [int64](Get-Value $prior 'source_order' 0)
@@ -484,17 +566,43 @@ function Invoke-PromptSubmit($Config, $Event) {
     $receipt = Read-JsonFile $receiptPath
     $needsInjection = $null -eq $receipt -or [string](Get-Value $receipt 'status' '') -ne 'success'
     $injectionSatisfied = -not $needsInjection
+    $bootstrapRefreshed = $false
     $parts = New-Object Collections.Generic.List[object]
     $warnings = New-Object Collections.Generic.List[string]
+    # Authenticate once before any business request. A failed preflight must
+    # not be retried through each optional call or expose old context blocks.
     try {
+        $status = Get-RemoteRevisionStatus $Config
         if (-not $needsInjection) {
-            $status = Invoke-McpTool $Config 'memory_status' @{}
             $remoteRevision = Get-Value $status 'memory_revision'
             $localRevision = Get-Value $receipt 'memory_revision'
             if ($null -ne $remoteRevision -and [string]$remoteRevision -cne [string]$localRevision) {
                 $needsInjection = $true
             }
         }
+    }
+    catch {
+        $strict = [bool](Get-Value $Config 'strict_injection' $false)
+        if ($strict -and -not $injectionSatisfied) {
+            Write-OutputJson @{ decision = 'block'; reason = 'EvolvMem memory injection is unavailable for this session start. Retry the prompt after connectivity is restored.' }
+        }
+        else {
+            Write-OutputJson @{ systemMessage = 'EvolvMem memory refresh is unavailable for this turn; continuing with the last available context.' }
+        }
+        return
+    }
+    # Preserve independently retrieved project context even when a subsequent
+    # full bootstrap runs out of time. Empty memory IDs do not erase its block.
+    if ($prompt) {
+        try {
+            $projectRecallArgs = [ordered]@{ query = $prompt; max_chars = $script:ProjectRecallMaxChars }
+            $projectRecall = Invoke-McpTool $Config 'context_project_recall' $projectRecallArgs
+            $projectContext = Format-ProjectRecallContext $projectRecall
+            if ($projectContext) { $parts.Add($projectContext) }
+        }
+        catch { $warnings.Add('EvolvMem project mention recall is unavailable for this turn.') }
+    }
+    try {
         if ($needsInjection) {
             $projectReserve = if ($prompt) { $script:ProjectRecallMaxChars + 160 } else { 0 }
             $injection = Invoke-Injection $Config $Event ($(if ($prompt) { $prompt } else { 'Refresh memory for this Codex turn.' })) $projectReserve
@@ -518,6 +626,7 @@ function Invoke-PromptSubmit($Config, $Event) {
                 delivery_status = 'retrieved_for_hook'
             }
             $injectionSatisfied = $true
+            $bootstrapRefreshed = $true
         }
     }
     catch {
@@ -529,36 +638,28 @@ function Invoke-PromptSubmit($Config, $Event) {
         }
     }
     if ($prompt -and $injectionSatisfied) {
-        # Explicit project mentions are recalled first. A dedicated call and a
-        # dedicated catch keep this path isolated: an unavailable project tool
-        # only adds a short warning and never removes the memory or experience
-        # context already collected for this turn.
-        try {
-            $projectRecallArgs = [ordered]@{
-                query = $prompt
-                max_chars = $script:ProjectRecallMaxChars
+        if ((Get-HookRemainingMilliseconds) -lt 2000) {
+            $warnings.Add('EvolvMem related experience lookup was skipped because this hook time budget is nearly exhausted.')
+        }
+        else {
+            try {
+                $experienceArgs = [ordered]@{
+                    query = $prompt
+                    project = Resolve-Project $Config ([string](Get-Value $Event 'cwd' ''))
+                    mode = 'hook'
+                }
+                $experience = Invoke-McpTool $Config 'experience_recall' $experienceArgs
+                $experienceContext = Format-ExperienceContext $experience
+                if ($experienceContext) { $parts.Add($experienceContext) }
             }
-            $projectRecall = Invoke-McpTool $Config 'context_project_recall' $projectRecallArgs
-            $projectContext = Format-ProjectRecallContext $projectRecall
-            if ($projectContext) { $parts.Add($projectContext) }
-        }
-        catch {
-            $warnings.Add('EvolvMem project mention recall is unavailable for this turn.')
-        }
-        try {
-            $experienceArgs = [ordered]@{
-                query = $prompt
-                project = Resolve-Project $Config ([string](Get-Value $Event 'cwd' ''))
+            catch {
+                $warnings.Add('EvolvMem related experience lookup is unavailable for this turn.')
             }
-            $experience = Invoke-McpTool $Config 'experience_recall' $experienceArgs
-            $experienceContext = Format-ExperienceContext $experience
-            if ($experienceContext) { $parts.Add($experienceContext) }
-        }
-        catch {
-            $warnings.Add('EvolvMem related experience lookup is unavailable for this turn.')
         }
     }
-    if ($injectionSatisfied -and $null -ne $receipt) {
+    # A failed refresh must not advance the revision or mutate the prior
+    # successful receipt. A lifecycle start still records its own failed attempt.
+    if ($injectionSatisfied -and $null -ne $receipt -and (-not $needsInjection -or $bootstrapRefreshed)) {
         try {
             if ($receipt -isnot [Collections.IDictionary]) {
                 $copy = [ordered]@{}
@@ -605,7 +706,7 @@ function Unprotect-Bytes([byte[]]$Bytes) {
 }
 
 function Read-CompleteTail([string]$Path, [int64]$Offset) {
-    $stream = New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    $stream = Open-TranscriptStream $Path
     try {
         if ($Offset -lt 0 -or $Offset -gt $stream.Length) { $Offset = 0 }
         [void]$stream.Seek($Offset, [IO.SeekOrigin]::Begin)
@@ -633,7 +734,7 @@ function Read-CompleteTail([string]$Path, [int64]$Offset) {
 
 function Test-FilePrefix([string]$Path, [byte[]]$Expected) {
     if ($Expected.Length -eq 0) { return $true }
-    $stream = New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    $stream = Open-TranscriptStream $Path
     try {
         if ($stream.Length -lt $Expected.Length) { return $false }
         $buffer = New-Object byte[] 65536
@@ -688,7 +789,7 @@ function Capture-Transcript($Config, $Event) {
     $cacheName = (Get-TextSha256 $sessionId) + '.bin'
     $cachePath = [IO.Path]::Combine($script:ClientHome, 'session-cache', $cacheName)
     $file = New-Object IO.FileInfo($transcriptPath)
-    if ($sourceBytes -gt 0 -and $file.Length -eq $sourceBytes -and [IO.File]::Exists($cachePath) -and
+    if ($sourceBytes -gt 0 -and $file.Length -eq [int64](Get-RecordValue $session 'source_file_bytes' $sourceBytes) -and [IO.File]::Exists($cachePath) -and
         $file.LastWriteTimeUtc.ToString('o') -ceq [string](Get-RecordValue $session 'source_last_write_utc' '')) {
         return $false
     }
@@ -698,7 +799,7 @@ function Capture-Transcript($Config, $Event) {
         if ($prior.Length -ne $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@() }
     }
     elseif ($sourceBytes -gt 0) { $sourceBytes = 0 }
-    if ($file.Length -lt $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@() }
+    if ($transcriptPath -notmatch '\.jsonl\.zs(td|t)$' -and $file.Length -lt $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@() }
     elseif ($sourceBytes -gt 0 -and -not (Test-FilePrefix $transcriptPath $prior)) {
         # A rewritten or divergent transcript begins a new immutable content
         # version. Older unacknowledged queue entries remain untouched.
@@ -749,6 +850,7 @@ function Capture-Transcript($Config, $Event) {
     Save-ProtectedBytes $cachePath $combined
     $updated = ConvertTo-OrderedRecord $session
     $updated['source_bytes'] = [int64]$tail.EndOffset
+    $updated['source_file_bytes'] = $file.Length
     $updated['source_last_write_utc'] = $file.LastWriteTimeUtc.ToString('o')
     $updated['cache_file'] = $cacheName
     $updated['last_seen_utc'] = [DateTime]::UtcNow.ToString('o')
@@ -1290,28 +1392,25 @@ function Get-CodexRoot($Config) {
     return ''
 }
 
-function Find-LocalSessions($Config) {
+function Find-LocalSessions($Config, [switch]$Historical) {
+    $sources = New-Object Collections.Generic.List[object]
+    $errorCodes = New-Object Collections.Generic.List[string]
+    $truncated = $false
     $found = 0; $errors = 0
     $root = Get-CodexRoot $Config
     $sinceText = [string](Get-Value $Config 'capture_since_utc' '')
     # Upgrades set the cutoff explicitly. Older clients still capture their
     # registered sessions without silently importing unrelated history.
-    if (-not $root -or -not $sinceText) { return @{ Found = 0; Errors = 0 } }
-    $since = [DateTimeOffset]::Parse($sinceText).UtcDateTime
+    if (-not $root -or (-not $sinceText -and -not $Historical)) { return @{ Found = 0; Errors = 0 } }
+    $since = if ($sinceText) { [DateTimeOffset]::Parse($sinceText).UtcDateTime } else { [DateTime]::MinValue }
     foreach ($folder in @('sessions', 'archived_sessions')) {
         $directory = [IO.Path]::Combine($root, $folder)
         if (-not [IO.Directory]::Exists($directory)) { continue }
-        try { $paths = [IO.Directory]::GetFiles($directory, '*.jsonl', [IO.SearchOption]::AllDirectories) }
-        catch { $errors += 1; continue }
+        try { $paths = @([IO.Directory]::EnumerateFiles($directory, '*.jsonl*', [IO.SearchOption]::AllDirectories) | Where-Object { $_ -match '\.jsonl(\.zst|\.zstd)?$' }) }
+        catch { $errors += 1; if ('discovery_failed' -notin $errorCodes) { $errorCodes.Add('discovery_failed') }; continue }
         foreach ($path in $paths) {
             try {
-                $stream = New-Object IO.FileStream($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-                try {
-                    $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8, $true)
-                    try { $line = $reader.ReadLine() }
-                    finally { $reader.Dispose() }
-                }
-                finally { $stream.Dispose() }
+                $line = Read-TranscriptHeader $path
                 if (-not $line) { continue }
                 $header = $line | ConvertFrom-Json
                 if ([string](Get-Value $header 'type' '') -ne 'session_meta') { continue }
@@ -1320,15 +1419,32 @@ function Find-LocalSessions($Config) {
                 $cwd = [string](Get-Value $payload 'cwd' '')
                 if (-not $sessionId -or -not $cwd) { continue }
                 $registered = [IO.File]::Exists((Get-SessionPath $sessionId))
+                if ($Historical) {
+                    if ($sources.Count -ge $HistoricalLimit) { $truncated = $true; break }
+                    $sources.Add([ordered]@{ session_id=$sessionId; transcript_path=$path; workspace_path=$cwd; registered=$registered; source_last_write_utc=[IO.File]::GetLastWriteTimeUtc($path).ToString('o') })
+                    continue
+                }
                 if (-not $registered -and [IO.File]::GetLastWriteTimeUtc($path) -lt $since) { continue }
+                if (-not $registered -and $path -match '\.jsonl\.zs(td|t)$') {
+                    # Compression/migration can give July history an October
+                    # mtime. New compressed sources need a reliable source date;
+                    # older/undated history remains explicit inventory only.
+                    $sourceDate = [string](Get-Value $payload 'timestamp' (Get-Value $header 'timestamp' ''))
+                    $parsedDate = [DateTimeOffset]::MinValue
+                    if ($sourceDate -notmatch '(Z|[+-]\d{2}:\d{2})$' -or -not [DateTimeOffset]::TryParse($sourceDate, [ref]$parsedDate) -or $parsedDate.UtcDateTime -lt $since) { continue }
+                }
                 $event = [pscustomobject]@{ session_id = $sessionId; transcript_path = $path; cwd = $cwd }
                 [void](Invoke-WithClientLock { Save-SessionRegistration $Config $event } 1000 (Get-SessionLockScope $sessionId))
                 if (-not $registered) { $found += 1 }
             }
-            catch { $errors += 1 }
+            catch {
+                $errors += 1
+                $code = Get-ClientErrorCode $_ 'discovery_failed'
+                if ($code -notin $errorCodes) { $errorCodes.Add($code) }
+            }
         }
     }
-    return @{ Found = $found; Errors = $errors }
+    return @{ Found = $found; Errors = $errors; ErrorCodes = $errorCodes.ToArray(); Sources = $sources.ToArray(); Truncated = $truncated; ReadOnly = [bool]$Historical }
 }
 
 function Invoke-Worker($Config) {
@@ -1375,6 +1491,7 @@ function Invoke-Worker($Config) {
         worker_status = if ($pending -gt 0 -or $captureErrors -gt 0 -or $discovery.Errors -gt 0) { 'retry_pending' } else { 'idle' }
         last_started_utc = $started; last_finished_utc = [DateTime]::UtcNow.ToString('o')
         discovered_sessions = $discovery.Found; discovery_errors = $discovery.Errors; capture_errors = $captureErrors
+        discovery_error_codes = @($discovery.ErrorCodes)
         capture_failures = $captureFailures.ToArray()
         captured_versions = $scanned; acknowledged_versions = $acknowledged; pending_versions = $pending
         pending_failed_versions = $queueFailures.pending_failed_versions
@@ -1776,6 +1893,7 @@ try {
         'prompt-submit' { Invoke-PromptSubmit $config (Get-EventInput) }
         'snapshot' { Invoke-Snapshot $config (Get-EventInput) }
         'worker' { Invoke-Worker $config }
+        'discover-history' { Write-OutputJson (Find-LocalSessions $config -Historical) }
         'upload' { Write-OutputJson @{ acknowledged_versions = (Invoke-WithClientLock { Invoke-UploadQueue $config } 100 'upload') } }
         'status' { Invoke-Status $config }
         'self-test' { Invoke-SelfTest $config }

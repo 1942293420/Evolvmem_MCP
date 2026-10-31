@@ -6,27 +6,32 @@ window.EvolvPrinciples={render(mount){
  const e=(id,from,to,label='',d='',x=0,y=0)=>({id,from,to,label,d,x,y});
  const r=(id,label,nodes,edges)=>({id,label,nodes:nodes.split(' '),edges:edges.split(' ')});
  const facts=(owner,input,output,rule='',tool='',link='')=>({owner,input,output,rule,tool,link});
- const modules=[['home','总览','先显示概览与运行状态，展开后读取效果统计','#home'],['organization','自动整理','自动归档、纠正与提炼','#knowledge/organization'],['history','项目知识','目录、来源与历史变化','#knowledge/projects'],['capabilities','开发能力','分类检索、来源追溯与待分类','#knowledge/capabilities'],['archives','项目存档','当前摘要、开发周期与历史事件','#knowledge/archives'],['qa','经验知识','明确问答与适用范围','#knowledge/qa'],['checkpoint','任务断点','当前进度与下一步','#progress'],['cleaning','数据清洗','核对来源、修改与删除','#knowledge/cleaning'],['intake','存量资料','按项目集中归档与纠正','#knowledge/intake'],['rules','整理规则','处理规则与样例预览','#knowledge/skill']];
+ const modules=[['home','总览','先显示概览与运行状态，展开后读取效果统计','#home'],['organization','自动整理','自动归档、纠正与提炼','#knowledge/organization'],['history','旧版项目资料','历史资料、来源与版本变化','#knowledge/projects'],['capabilities','经验与能力库','按技术分类检索、来源追溯与待分类分页','#knowledge/capabilities'],['archives','项目库','默认项目目录、状态筛选、当前摘要与完整历史分页','#knowledge/archives'],['qa','旧版经验问答','历史问答与适用范围','#knowledge/qa'],['checkpoint','任务断点','当前进度与下一步','#progress'],['cleaning','数据清洗','核对来源、修改与删除','#knowledge/cleaning'],['intake','存量资料','按项目集中归档与纠正','#knowledge/intake'],['rules','整理规则','处理规则与样例预览','#knowledge/skill']];
+ const moduleCaptions={home:'概览、状态与效果统计',organization:'自动归属、纠正与提炼',history:'历史资料、来源与版本',capabilities:'技术分类、来源与待分类',archives:'目录、当前摘要与完整历史',qa:'历史问答与适用范围',checkpoint:'当前进度与下一步',cleaning:'核对来源、修改与删除',intake:'按项目集中归档与纠正',rules:'处理规则与样例预览'};
  const diagrams={
- capabilities:{title:'查找开发经验与确认分类',type:'业务流程图',goal:'先筛选需要的经验，再查看正文与来源；待分类资料在确认后进入正式记忆。',height:810,nodes:[
- n('open','打开开发能力',350,20,'start',facts('你','当前开发问题','正式记忆与待分类入口','','','#knowledge/capabilities')),
+ capabilities:{title:'查找开发经验与确认分类',type:'业务流程图',goal:'先筛选经验和待核对资料，再查看来源、业务归属与价值依据；技术分类确认不替代价值核查。',height:810,nodes:[
+ n('open','打开经验与能力库',350,20,'start',facts('你','当前开发问题','技术分类与独立待分类入口','','','#knowledge/capabilities')),
  n('filter','按关键词、分类|和来源项目筛选',30,180,'action',facts('你','需要查找的问题与来源范围','符合条件的记忆列表','来源选项覆盖全部有效记忆，不因当前页或筛选结果而消失。')),
  n('page','分页查看匹配的记忆',30,350,'action',facts('能力记忆','已生效的筛选条件与页码','当前页正文、结果总数与分类数量','每次只读取当前页的正文；更改筛选后从第一页查看。')),
- n('source','展开正文与原始来源',30,520,'action',facts('你','已加载的记忆条目','完整内容、来源项目和来源引用','在当前卡片展开已加载内容，不为展开重复读取列表。')),
+ n('source','展开正文与原始来源',30,520,'action',facts('你','已加载的记忆条目','完整内容、来源项目和来源引用','在当前卡片展开已加载内容，不为展开重复读取列表。项目归属、参考价值和方法结果分别显示；业务模块按当前有效来源管理，前端和后端等仍是技术分类。')),
  n('intake','查看待分类资料',690,180,'action',facts('你','尚未确定分类的资料','正文、来源与可选分类','待分类总数按全部未处理资料计数；本次列表最多展示 200 条。')),
  n('confirm','选择分类并确认',690,350,'action',facts('你','资料内容与选定分类','已确认的分类决定','确认时检查资料版本；保存失败不能显示已归类。')),
- n('saved','保存为正式能力记忆',690,520,'store',facts('能力记忆','确认归类的资料','带来源的正式记忆','保存成功后更新列表与待分类数量；只查看资料不会修改分类。')),
+ n('saved','保存分类与核查状态',690,520,'store',facts('能力记忆','确认归类的资料','分类决定、原文依据和待核对状态','分类确认只改变技术分类；来源或价值依据不足时仍待核对，可切换全部资料查看。只查看资料不会修改分类。')),
  n('end','继续查找与使用经验',350,690,'end',facts('你与助手','正式记忆及其来源','按当前任务判断适用性','归入正式记忆不等于方法已经验证成功。'))],edges:[
  e('cb1','open','filter'),e('cb2','filter','page'),e('cb3','page','source'),e('cb4','source','end'),e('cb5','open','intake'),e('cb6','intake','confirm'),e('cb7','confirm','saved'),e('cb8','saved','end')],routes:[
  r('browse','筛选并追溯来源','open filter page source end','cb1 cb2 cb3 cb4'),r('classify','确认待分类资料','open intake confirm saved end','cb5 cb6 cb7 cb8')]},
- restructure:{title:'开发记录分成能力记忆与项目存档',type:'业务流程图',goal:'能力记忆回答以后怎么做，项目存档回答这个项目以前做了什么；两条链路独立保存和查询。',height:850,nodes:[
- n('source','接收开发过程记录',350,20,'start',facts('开发整理','完整开发记录','待分流的原始内容')),
- n('filter','过滤无用内容|保留原始记录',350,150,'action',facts('开发整理','闲聊、重复日志和有效内容','有用候选；原文仍可追溯','过滤不删除原始会话。')),
- n('capability','按分类保存能力记忆',30,300,'store',facts('能力知识链路','有用开发记忆','一个主分类、来源项目和原始来源','无法确定分类时进入待分类；新增大类由你确认。','capability_search','#knowledge/capabilities')),
- n('archive','保存项目事件|重建当前摘要',690,300,'store',facts('项目存档链路','重大改动、功能更新、问题解决和里程碑','项目事件和当前摘要','项目摘要根据全部有效事件重建，失败保留旧摘要。','project_archive_get','#knowledge/archives')),
- n('recall','新开发任务|按能力检索候选',30,570,'action',facts('AI 与你','当前开发需求','相关历史能力记忆','不在入库时判断跨项目通用性，由 AI 在当前任务中判断适用性。')),
- n('query','查询项目|返回摘要和周期',690,570,'action',facts('你','项目名称或别名','当前摘要、开发周期和历史事件','项目查询不展开能力记忆列表。'))],edges:[
- e('rs1','source','filter'),e('rs2','filter','capability'),e('rs3','filter','archive'),e('rs4','capability','recall'),e('rs5','archive','query')],routes:[]},
+ restructure:{title:'从原文到项目归属与可用知识',type:'业务流程图',goal:'保留原文和每份来源，把业务归属、技术分类、知识价值与实际验证分开判断。',height:1170,nodes:[
+ n('source','保存完整原文与版本',350,20,'start',facts('会话接入','原始会话与来源标识','加密原文、清洗正文和来源版本','压缩与去重不改变原文；清洗层、任务单元、派生知识和向量索引分别保存。')),
+ n('filter','清洗噪声|按完整任务整理',350,150,'action',facts('任务整理','需求、过程、修改和结果','带原文范围的完整任务','过滤不删除原始会话；带项目标签的旧档案也核对内容，标签不直接当成归属。缺失正文从原档案恢复；确认没有业务对话则明确记录。')),
+ n('scope','项目与业务模块归类',350,300,'action',facts('业务归类','已登记项目与模块、词面和向量候选','原话支持的归属或待核对','相似度只缩小候选，最终核对本条需求和修改对象。原文已明确归属且范围不交叉时，其他项目正向规则的不确定结果不阻断归类；同范围冲突、反例和全局规则仍须核对。人工归属与撤回优先；未知模块不自动激活。技术分类不当作子项目。')),
+ n('capability','提取技术知识与价值依据',30,480,'store',facts('能力知识链路','任务原文、适用条件、步骤与结果','技术分类、知识正文和多份来源','检查具体信息、可执行步骤和逐字依据。忠实概括需另行核对支持范围；助手自称完成不证明实际成功。','capability_search','#knowledge/capabilities')),
+ n('archive','保留项目事件|重建当前摘要',690,480,'store',facts('项目存档链路','项目改动与来源','当前摘要及完整历史','只用当前有效来源重建摘要；移出项目或撤回的事件保留历史。未知发生日期不以入库时间替代。','project_archive_get','#knowledge/archives')),
+ n('gate','同一来源仍有效|且支持知识价值？',30,650,'decision',facts('召回核查','来源版本、当前归属与价值判断','可召回或待核对','一个来源的价值判断不能借用另一来源的项目归属。旧资料单独标明尚未评估，不能伪称已验证。')),
+ n('pending','保留正文|等待核对依据',350,820,'exception',facts('资料审核','来源失效或价值依据不足','可浏览的历史与待核对条目','不删除原文，不伪造项目或成功记录。模型引文或格式不合要求时只纠正一次，仍不合格标明技术核对原因，不撤回已有有效模块归属；确认技术分类不能绕过检查。')),
+ n('query','查看项目与业务模块',690,820,'action',facts('你','项目名称或别名','当前摘要、模块与历史事件','当前事件和历史事件分别计数；模块调整使用版本检查，冲突时保留草稿。')),
+ n('recall','关键词与向量快速召回',30,1010,'end',facts('AI 与你','当前任务与可用知识','相关能力、有效项目与模块、来源引用','向量分批恢复，待更新与已完成覆盖分别核对。能力编号与旧记忆编号分开，不把检索成功写成方法验证成功。'))],edges:[
+ e('rs1','source','filter'),e('rs2','filter','scope'),e('rs3','scope','capability'),e('rs4','scope','archive'),e('rs5','capability','gate'),e('rs6','gate','recall','有效','M30 690H10V1050H30',15,830),e('rs7','gate','pending','需核对'),e('rs8','archive','query')],routes:[
+ r('knowledge','知识提取与召回','source filter scope capability gate recall','rs1 rs2 rs3 rs5 rs6'),r('review','保留资料并核对','source filter scope capability gate pending','rs1 rs2 rs3 rs5 rs7'),r('history','项目历史与模块','source filter scope archive query','rs1 rs2 rs4 rs8')]},
  storage:{title:'保留原文，让重复内容只存一份',type:'存储维护流程图',goal:'各版会话仍能完整读取，知识来源不变；自动回收不再使用的副本。',height:1080,nodes:[
  n('start','收到新的会话内容',350,20,'start',facts('会话接入','新增或修改的会话','待保存的完整内容')),
  n('space','剩余空间足够？',350,150,'decision',facts('存储维护','当前磁盘余量与本次写入量','保存或稍后重试','默认保留至少 1 GB 空间，并预留本次写入所需空间。')),
@@ -38,7 +43,7 @@ window.EvolvPrinciples={render(mount){
  n('end','资料可追溯，空间可复用',350,950,'end',facts('Evo','维护结果','完整原文、有效知识和来源'))],edges:[
  e('s1','start','space'),e('s2','space','share','足够'),e('s3','space','wait','不足'),e('s4','share','verify'),e('s5','verify','keep'),e('s6','keep','collect'),e('s7','collect','end')],routes:[
  r('save','正常保存与回收','start space share verify keep collect end','s1 s2 s4 s5 s6 s7'),r('wait','空间不足时保留资料','start space wait','s1 s3')]},
- modules:{title:'从业务目标找到负责的页面',type:'职责图',goal:'知道资料在哪里、疑问在哪里处理、任务从哪里继续。',height:600,nodes:modules.map((m,i)=>n(m[0],m[1]+'|'+m[2],40+(i%3)*310,60+Math.floor(i/3)*165,'action',facts('你与 Evo','当前业务资料和处理状态',m[2],'','',m[3]))),edges:[],routes:[]},
+ modules:{title:'从业务目标找到负责的页面',type:'职责图',goal:'知道资料在哪里、疑问在哪里处理、任务从哪里继续。',height:Math.ceil(modules.length/3)*165+60,nodes:modules.map((m,i)=>n(m[0],m[1]+'|'+moduleCaptions[m[0]],40+(i%3)*310,60+Math.floor(i/3)*165,'action',facts('你与 Evo','当前业务资料和处理状态',m[2],'','',m[3]))),edges:[],routes:[]},
  flow:{title:'新会话怎样成为以后可用的资料',type:'业务流程图',goal:'从需求起点理解过程与结果，保留原话；有疑问时直接核查完整上下文。',height:1550,nodes:[
  n('start','新会话或旧待整理资料',350,20,'start',facts('客户端','用户与助手的可见对话','新增会话与已有待审原文')),
  n('archive','复用重复内容，保存来源',350,130,'action',facts('会话接入','会话批次、客户端与会话标识','可还原的各版会话、来源引用','相同内容共享保存；系统工具输出不作为用户要求。')),
@@ -78,14 +83,14 @@ window.EvolvPrinciples={render(mount){
  n('excluded','暂不归档',690,830,'exception',facts('你','明确保存的暂不归档选择','原文保留，退出待归档列表','同一来源重跑或拆合后仍沿用这个决定，不再次催审。可返回待归档，再选择项目保存。')),
  n('save','保存历史与可用知识',360,830,'action',facts('Evo','通过核验的自动归属或人工决定','当前有效资料、来源和待更新索引','清洗、归类和审核成功后移除已处理条目。列表刷新失败只重试读取，无需重复保存。规则编辑留在原处并显示已保存。')),
  n('request','当前任务需要历史',43,980,'action',facts('助手','当前项目与问题','召回请求')),
- n('recall','从项目目录统一召回',360,980,'action',facts('Evo','问题、项目与资料类型','当前内容、变化、条件、分歧和来源','','knowledge_recall / experience_recall')),
+ n('recall','从项目目录统一召回',360,980,'action',facts('Evo','问题、项目与资料类型','当前内容、变化、条件、分歧和来源','','context_project_recall / capability_search / experience_recall')),
  n('use','结合当前要求继续任务',43,1150,'action',facts('助手','召回结果或没有匹配内容','当前任务的下一步','历史只能作为参考，当前用户要求优先。'))],edges:[
  e('o1','submit','process','会话与来源'),e('of1','process','factview','版本与关系','M620 290H650V150H690',655,215),e('of2','factview','conflict','需要处理时'),e('o2','process','clear'),e('o3','clear','save','已归入项目','M360 430H335V870H360',338,510),e('o4','clear','review','需要判断'),e('o13','clear','excluded','已暂不归档','M620 430H970V870H950',900,430),e('o12','review','guidance','直接保存'),e('o5','review','judge','可选 AI 建议'),e('o10','judge','guidance','理由、原文与数量'),e('o6','guidance','save','归入项目'),e('o11','guidance','excluded','暂不归档'),e('o7','request','recall','问题与项目'),e('o8','save','recall','有效资料'),e('o9','recall','use','摘要、条件与来源')],routes:[
  r('facts','查看事实并处理分歧','submit process factview conflict','o1 of1 of2'),r('auto','明确内容自动归档','submit process clear save recall use','o1 o2 o3 o8 o9'),r('deferred','沿用暂不归档的决定','submit process clear excluded','o1 o2 o13'),r('direct','选项目直接归档','submit process clear review guidance save recall use','o1 o2 o4 o12 o6 o8 o9'),r('review','AI 建议后由你保存','submit process clear review judge guidance save recall use','o1 o2 o4 o5 o10 o6 o8 o9'),r('excluded','暂不归档，原文仍在','submit process clear review guidance excluded','o1 o2 o4 o12 o11')]},
  recall:{title:'当前任务怎样找回历史、知识与经验',type:'召回流程图',goal:'先选业务入口，再核对资格、查找和重新排序，最后返回可读结果。',height:1560,nodes:[
  n('task','当前任务与项目',350,20,'start',facts('助手','当前问题、项目与已知条件','需要的历史信息类型')),
  n('intent','要找回什么？',350,140,'decision',facts('助手','当前任务需要的背景','历史或问答、已验证案例、精确任务断点')),
- n('knowledge','项目知识 / 历史 / 问答',30,300,'action',facts('项目知识目录与统一召回','项目、问题、业务日期、适用条件与阅读预算','与项目目录一致的内容、版本、分歧和原文','用户归档决定正式归属；未归档的冲突资料单独提示。关系建议不扩展归属；入库不代表验证成功。','knowledge_recall','#knowledge/projects')),
+ n('knowledge','项目存档与开发能力',30,300,'action',facts('项目历史与能力检索','项目名称、已登记别名、当前问题与阅读预算','项目历史摘要，或按相关性查找的开发能力','项目名称明确时读取项目存档；开发问题按能力检索。旧资料和历史版本仍保留，未归类资料不能冒充正式结论。','context_project_recall / project_archive_get / capability_search','#knowledge/archives')),
  n('experience','已验证的方法案例',350,300,'action',facts('经验召回','问题、项目与已直接观察到的条件','方法、适用条件、验证证据和来源','新场景仍须比较条件，不把查到方法当执行成功。','experience_recall','#experiences')),
  n('checkpoint','接着原任务做',690,300,'action',facts('任务续接','当前工作区与原任务指针','已保存进度、下一步与版本','按精确任务指针读取，跳过语义检索和重排序。','continuity_resume','#progress')),
  n('eligible','核对来源与当前适用资格',190,480,'action',facts('召回检查','原始资料、派生摘要与来源版本','当前项目可用的候选','来源撤回、改动或换项目后，旧汇总只留历史；自动约定需有用户原话，人工确认保留。经验另核对验证与适用条件。')),
@@ -96,8 +101,8 @@ window.EvolvPrinciples={render(mount){
  n('dedup','重复内容只占一个位置|保留各自的来源与适用范围',190,1130,'action',facts('结果整理','已排序的当前可用资料','保留各自的来源与适用范围','短摘要相同不等于完整正文重复；公开条目的独立引用和撤回关系保留。')),
  n('return','按阅读预算返回结果',190,1290,'action',facts('召回结果','相关摘要、问答、方法或精确断点','可供助手阅读的内容和来源','历史结果可按引用继续读取整理后的原对话。','conversation_read')),
  n('continue','结合当前要求继续任务',350,1440,'end',facts('助手','召回结果；必要时读取原文','当前任务的下一步行动'))],edges:[
- e('r1','task','intent'),e('r2','intent','knowledge','讨论 / 规则'),e('r3','intent','experience','验证过的方法'),e('r4','intent','checkpoint','任务进度'),e('r5','knowledge','eligible','已归档知识与来源'),e('r6','experience','eligible','案例与验证条件'),e('r7','eligible','lexical'),e('r8','eligible','vector'),e('r9','lexical','rerank','词面候选'),e('r10','vector','rerank','语义候选'),e('r11','rerank','related'),e('r12','related','empty','没有'),e('r13','related','dedup','有'),e('r14','dedup','return'),e('r15','checkpoint','return','精确读取，跳过检索与排序','M820 380H970V1330H450',795,1270),e('r16','return','continue'),e('r17','empty','continue','空结果也继续任务','M820 1200V1480H610',812,1410)],routes:[
- r('knowledge','找回项目知识与历史','task intent knowledge eligible vector rerank related dedup return continue','r1 r2 r5 r8 r10 r11 r13 r14 r16'),r('case','查找已验证案例','task intent experience eligible lexical rerank related dedup return continue','r1 r3 r6 r7 r9 r11 r13 r14 r16'),r('none','没有相关内容','task intent knowledge eligible vector rerank related empty continue','r1 r2 r5 r8 r10 r11 r12 r17'),r('resume','精确恢复任务断点','task intent checkpoint return continue','r1 r4 r15 r16')]},
+ e('r1','task','intent'),e('r2','intent','knowledge','讨论 / 规则'),e('r3','intent','experience','验证过的方法'),e('r4','intent','checkpoint','任务进度'),e('r5','knowledge','eligible','能力候选与来源'),e('r6','experience','eligible','案例与验证条件'),e('r7','eligible','lexical'),e('r8','eligible','vector'),e('r9','lexical','rerank','词面候选'),e('r10','vector','rerank','语义候选'),e('r11','rerank','related'),e('r12','related','empty','没有'),e('r13','related','dedup','有'),e('r14','dedup','return'),e('r15','checkpoint','return','精确读取，跳过检索与排序','M820 380H970V1330H450',795,1270),e('r16','return','continue'),e('r18','knowledge','return','按项目名称精确读取','M30 340H10V1330H190',103,1030),e('r17','empty','continue','空结果也继续任务','M820 1200V1480H610',812,1410)],routes:[
+ r('knowledge','按名称读取项目历史','task intent knowledge return continue','r1 r2 r18 r16'),r('capability','按开发问题找能力','task intent knowledge eligible vector rerank related dedup return continue','r1 r2 r5 r8 r10 r11 r13 r14 r16'),r('case','查找已验证案例','task intent experience eligible lexical rerank related dedup return continue','r1 r3 r6 r7 r9 r11 r13 r14 r16'),r('none','没有相关内容','task intent knowledge eligible vector rerank related empty continue','r1 r2 r5 r8 r10 r11 r12 r17'),r('resume','精确恢复任务断点','task intent checkpoint return continue','r1 r4 r15 r16')]},
  dataflow:{title:'业务资料怎样流向当前任务',type:'数据流图',goal:'区分会话原文、整理成果、检索候选和返回结果，追踪各自的来源。',height:1170,nodes:[
  n('dialogue','客户端提交的会话',350,20,'actor',facts('客户端','用户与助手可见对话','会话批次及来源标识')),
  n('archive','会话档案与原文',30,210,'store',facts('来源保存','原始会话与来源','可复核对话与来源引用')),
@@ -108,7 +113,7 @@ window.EvolvPrinciples={render(mount){
  n('cases','案例与验证证据',690,430,'store',facts('经验验证','方法候选、执行结果与证据','已验证案例与场景条件')),
  n('prepare','维护检索索引',350,650,'process',facts('检索准备','当前可检索内容及变化条目','关键词索引与语义索引','索引是查找手段；来源和当前资格仍由正式资料决定。')),
  n('question','助手的当前问题与项目',30,840,'actor',facts('助手','当前用户要求与业务任务','问题、资料类型和阅读预算')),
- n('recall','召回与重新排序',350,840,'process',facts('Evo','问题、索引、有效资料与来源','相关内容、条件和来源引用','','knowledge_recall / experience_recall')),
+ n('recall','召回与重新排序',350,840,'process',facts('Evo','问题、索引、有效资料与来源','相关内容、条件和来源引用','','context_project_recall / capability_search / experience_recall')),
  n('answer','当前任务可读的结果',350,1040,'actor',facts('助手','历史、知识、适用条件和来源','继续任务；按引用读取原文','数据流向不代表所有资料必须串行经过每个节点。'))],edges:[
  e('d1','dialogue','archive','会话与来源'),e('d2','dialogue','organize','新增对话'),e('d3','archive','organize','原文'),e('d4','rules','organize','指导'),e('d5','organize','history','对话与摘要'),e('d6','organize','qa','有效问答'),e('d7','organize','cases','方法与来源'),e('d8','history','prepare','摘要'),e('d9','qa','prepare','问答'),e('d10','cases','prepare','案例'),e('d11','prepare','recall','检索候选'),e('d12','question','recall','问题'),e('d13','recall','answer','相关内容与来源'),e('d14','archive','answer','按引用读取原文','M160 290H20V1140H480V1120',179,1125)],routes:[
  r('qa','新对话成为可用知识','dialogue organize qa prepare recall answer','d2 d6 d9 d11 d13'),r('history','新对话成为项目历史','dialogue organize history prepare recall answer','d2 d5 d8 d11 d13'),r('read','找到来源后读取原文','dialogue archive answer','d1 d14')]}

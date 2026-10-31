@@ -342,3 +342,56 @@ def test_recall_skips_oversized_preview_and_keeps_scanning(experiences):
         constraints={'data_size': 'large', 'freshness': 'realtime'})
     assert [hit['id'] for hit in hits['results']] == expected
     assert hits['used_chars'] <= 1900
+
+
+@pytest.mark.parametrize('first_mode', ['full', 'hook'])
+@pytest.mark.parametrize('distance', [.3, .714])
+def test_hook_skips_optional_rerank_keeps_strict_gate_and_separate_cache(experiences, first_mode, distance):
+    from tests.test_context_retriever import FakeVectorIndex
+    from tests.test_retrieval_regressions import RankedEngine
+    saved = experiences.record(case(), evidence=proof(experiences))
+    store = experiences.core.store
+    engine = RankedEngine({store.get_item(saved['id']).layers.l0:.9})
+    calls = []
+    rank = engine.rerank
+    def counted(*args):
+        calls.append(args)
+        return rank(*args)
+    engine.rerank = counted
+    experiences.core.embedding_engine = engine
+    experiences.core.retriever.embedding_engine = engine
+    index = FakeVectorIndex(experiences.config, [{'id':saved['id'],'distance':distance}])
+    index.document_ids = [d.item_id for d in store.list_vector_documents()]
+    experiences.core.retriever.vector_index = index
+    args = dict(project='demo', query='How can we make the order screen faster?',
+                constraints={'data_size':'large'}, workstream_id='same-task')
+    modes = (first_mode, 'hook' if first_mode == 'full' else 'full')
+    for mode in modes:
+        result = experiences.recall(**args, mode=mode)
+        assert [r['id'] for r in result['results']] == ([saved['id']] if mode == 'full' else [])
+    assert len(calls) == 1
+    # Default interactive recall still uses the full-mode cache and ranking.
+    assert experiences.recall(**args)['results'][0]['id'] == saved['id']
+    assert len(calls) == 1
+
+
+def test_hook_preserves_positive_evidence_conditions_and_transferability(experiences):
+    saved = experiences.record(case(transferable=False), evidence=proof(experiences))
+    recall = lambda **changes: experiences.recall(**dict(
+        {'project':'demo', 'query':'列表打开缓慢', 'mode':'hook'}, **changes))
+    assert recall()['results'][0]['id'] == saved['id']
+    assert recall(project='other')['results'] == []
+    assert recall(constraints={'data_size':'small'})['results'] == []
+    experiences.outcome(saved['id'], proof(experiences, 'new-task', 'not-applicable',
+        outcome='inapplicable', conditions={'region':'remote'}))
+    assert recall(constraints={'region':'remote'})['results'] == []
+    experiences.outcome(saved['id'], proof(experiences, outcome='contradicted', revision=2))
+    assert recall()['results'] == []
+    experiences.record(case(problem='列表打开缓慢未经验证', transferable=True))
+    assert recall()['results'] == []
+
+
+@pytest.mark.parametrize('mode', ['other', None, False, []])
+def test_experience_recall_rejects_unknown_mode(experiences, mode):
+    with pytest.raises((TypeError, ValueError)):
+        experiences.recall(project='demo', query='列表打开缓慢', mode=mode)

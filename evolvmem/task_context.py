@@ -43,7 +43,8 @@ def _session_background(service, focus_source, records, notices):
     info=ctx.archive_info(service,focus_source)
     if not info:return
     from evolvmem.history_organization import _unassigned_archives
-    visible={r['id'] for r in _unassigned_archives(service)}
+    from evolvmem.governance_sources import visible_ids
+    visible=visible_ids(service)
     policy=service.knowledge().rules.read()
     existing={r['source_key'] for r in records}
     spans=[(r['start_line'],r['end_line']) for r in records if r.get('start_line')]

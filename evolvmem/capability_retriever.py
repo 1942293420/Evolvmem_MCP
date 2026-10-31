@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from evolvmem.capability_index import CapabilityIndex
 from evolvmem.capability_store import CapabilityStore
+from evolvmem.capability_recall_eligibility import recall_facts, eligible_ids
 
 
 CATEGORY_QUERY_TERMS = {
@@ -43,18 +44,66 @@ class CapabilityRetriever:
         if config is None:
             return None
         return CapabilityIndex(
-            self.service.store, config, getattr(self.service, "embedding_engine", None)
+            self.service.store, config, getattr(self.service, "embedding_engine", None),
+            eligible_ids=lambda ids: eligible_ids(self.service.store, ids)
         )
 
-    def search(self, query: str, categories=(), top_k: int = 10) -> list[dict]:
+    def search(self, query: str, categories=(), top_k: int = 10, *, project=None, module_id=None) -> list[dict]:
         query = str(query).strip()
         if not query:
             raise ValueError("invalid_query")
+        from evolvmem.project_modules import ProjectModuleStore
+        modules = ProjectModuleStore(self.service.store)
+        if project is not None:
+            if not isinstance(project, str):
+                raise ValueError("invalid_project")
+            modules._project(project)
+        if module_id is not None:
+            if not isinstance(module_id, str):
+                raise ValueError("invalid_module")
+            module = modules.get(module_id)
+            if module["status"] != "active" or (project is not None and module["project"] != project):
+                raise ValueError("invalid_module")
         top_k = max(1, min(int(top_k), 20))
-        lexical = CapabilityStore(self.service.store).search(query, categories, top_k * 3)
+        store = CapabilityStore(self.service.store)
         index = self._index()
-        vector = index.search(query, categories, top_k * 3) if index is not None else []
-        return merge_ranked(lexical, vector, top_k=top_k)
+        # Encode the vector query once. Backfill only the lexical window when
+        # current-source or explicit project/module filters remove early hits.
+        budget = 500
+        page_size = min(100, max(20, top_k * 3))
+        vector = index.search(query, categories, min(200, max(60, top_k * 6))) if index is not None else []
+        lexical, facts, module_facts = [], {}, {}
+        for offset in range(0, budget, page_size):
+            page = store.search(query, categories, min(page_size, budget - offset), offset=offset)
+            lexical.extend(page)
+            candidates = merge_ranked(lexical, vector, top_k=len(lexical) + len(vector))
+            missing = [r["memory_id"] for r in candidates if r["memory_id"] not in facts]
+            if missing:
+                facts.update(recall_facts(self.service.store, missing))
+            result = []
+            for row in candidates:
+                ident = row["memory_id"]
+                fact = facts[ident]
+                if not fact["recall_eligible"]:
+                    continue
+                projects = fact["source_projects"]
+                if project is not None and project not in projects:
+                    continue
+                if ident not in module_facts:
+                    module_facts[ident] = modules.modules_for_memory(ident, allowed_sources=fact["eligible_sources"])
+                current_modules = module_facts[ident]
+                if module_id is not None and not any(m["module_id"] == module_id for m in current_modules):
+                    continue
+                row["modules"] = [{k: m[k] for k in ("module_id", "project", "name")} for m in current_modules]
+                row.update(source_projects=projects, source_project=projects[0] if len(projects) == 1 else "",
+                           ownership_confirmed=fact["ownership_confirmed"],
+                           provenance=fact, verification_status="unverified")
+                result.append(row)
+                if len(result) >= top_k:
+                    break
+            if len(result) >= top_k or len(page) < page_size:
+                return result
+        return result
 
     def infer_categories(self, query: str) -> tuple[str, ...]:
         text = str(query).casefold()
@@ -71,8 +120,10 @@ class CapabilityRetriever:
         selected = []
         used = 0
         for hit in hits:
-            source = f"\n来源项目：{hit['source_project']}" if hit["source_project"] else ""
-            block = f"〔{hit['category']} · 记忆 #{hit['memory_id']}〕\n{hit['title']}\n{hit['content']}{source}"
+            source = "\n来源项目：" + "、".join(hit["source_projects"]) if hit["source_projects"] else "\n项目归属：待确认"
+            if hit.get("modules"):
+                source += "\n业务模块：" + "、".join(m["project"] + "/" + m["name"] for m in hit["modules"])
+            block = f"〔{hit['category']} · 开发知识 capability:{hit['memory_id']} · 方法结果未独立验证〕\n{hit['title']}\n{hit['content']}{source}"
             if blocks and used + len(block) + 2 > max_chars:
                 continue
             if len(block) > max_chars:

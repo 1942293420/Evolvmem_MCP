@@ -30,6 +30,16 @@ from evolvmem import organization_guidance as guidance_store
 from evolvmem import topic_segmentation
 
 MAX_ATTEMPTS = 3
+
+import logging
+
+_LOG = logging.getLogger(__name__)
+
+# A task that has been 'running' longer than this is treated as abandoned. The
+# worker only claims pending rows, so without this a row left behind by a dead
+# worker stays invisible until the next successful startup restore.
+_STALE_RUNNING_MINUTES = 30
+_STALE_SWEEP_SECONDS = 600
 POLL_SECONDS = 2
 PAGE_SIZE = 20
 # Bounded per-index work for one background discovery/reconcile tick.
@@ -110,7 +120,7 @@ def source_snapshot(service, source_key, *, visible=None, policy=None):
     the existing ``cleaning_source_unavailable`` error.
     """
     from evolvmem.knowledge_cleaning import _clean_input, record, source_readable
-    row = record(service, source_key, visible=visible)
+    row = record(service, source_key, visible=visible, owner_governance=True)
     if not row.get('dialogue_available', True):
         raise SourceNoDialogue(NO_DIALOGUE_CODE)
     policy = policy if policy is not None else service.knowledge().rules.read()
@@ -126,7 +136,7 @@ def _source_title(service, source_key, text):
     from evolvmem.history_organization import _source_record
     label = ''
     try:
-        label = str(_source_record(service, source_key).get('source') or '')
+        label = str(_source_record(service, source_key, owner_governance=True).get('source') or '')
     except (ValueError, KeyError):
         label = ''
     first = text.strip().split('\n', 1)[0][:80]
@@ -140,7 +150,7 @@ def source_messages(service, source_key):
     unstructured item), never from parsing role-like prefixes inside content.
     """
     from evolvmem.knowledge_cleaning import cleaned_messages, record
-    row = record(service, source_key)
+    row = record(service, source_key, owner_governance=True)
     return cleaned_messages(service, row, service.knowledge().rules.read())
 
 
@@ -244,7 +254,7 @@ def coalesce_units(service, task, units, text, policy):
 def _assert_current(service, task, *, conn=None):
     """Re-read source and rule revisions; a stale task must not write."""
     from evolvmem.knowledge_cleaning import record
-    row = record(service, task['source_key'])
+    row = record(service, task['source_key'], owner_governance=True)
     if row['expected_revision'] != task['source_revision']:
         raise ValueError('revision_conflict')
     if service.knowledge().rules.read()['revision'] != task['rule_revision']:
@@ -270,7 +280,7 @@ def enqueue(service, source_keys, *, snapshot=True, deferred_sync=None):
     for source_key in source_keys:
         if source_excluded(service, source_key):
             continue
-        row = record(service, source_key)
+        row = record(service, source_key, owner_governance=True)
         revision = row['expected_revision']
         existing = service.store._connection().execute(
             'SELECT * FROM organization_tasks WHERE source_key=? AND source_revision=? AND rule_revision=?',
@@ -497,7 +507,7 @@ def _source_current(service, task, *, visible=None, excluded=None):
         from evolvmem import conversation_tasks
         if conversation_tasks.is_conversation(task['source_key']):
             return conversation_tasks.revision(service,task['source_key'],visible=visible,excluded=excluded)==task['source_revision']
-        return record(service, task['source_key'], visible=visible,excluded=excluded)['expected_revision'] == task['source_revision']
+        return record(service, task['source_key'], visible=visible,excluded=excluded,owner_governance=True)['expected_revision'] == task['source_revision']
     except (ValueError, KeyError, OSError):
         return False
 
@@ -520,14 +530,16 @@ def list_tasks(service, options=None):
         where.append(current_only)
         args.append(NO_DIALOGUE_CODE)
     page = max(1, int(options.get('page', 1) or 1))
-    rows = conn.execute('SELECT id FROM organization_tasks WHERE ' + ' AND '.join(where) +
-                        ' ORDER BY id DESC', args).fetchall()
-    ids = [r['id'] for r in rows[(page - 1) * PAGE_SIZE:page * PAGE_SIZE]]
+    total = conn.execute('SELECT count(*) c FROM organization_tasks WHERE ' + ' AND '.join(where),
+                         args).fetchone()['c']
+    ids = [r['id'] for r in conn.execute(
+        'SELECT id FROM organization_tasks WHERE ' + ' AND '.join(where) +
+        ' ORDER BY id DESC LIMIT ? OFFSET ?', args + [PAGE_SIZE, (page - 1) * PAGE_SIZE]).fetchall()]
     counts = {name: conn.execute(
         'SELECT count(*) c FROM organization_tasks WHERE status=?', (name,)).fetchone()['c']
         for name in ('pending', 'running', 'completed', 'review', 'failed', 'superseded')}
     views = [task_view(service, i) for i in ids]
-    return {'items': views, 'total': len(rows), 'page': page,
+    return {'items': views, 'total': total, 'page': page,
             'page_size': PAGE_SIZE, 'counts': counts, 'complete_tasks': upgrade_status(service),
             'current_task_ids': [r['id'] for r in views if r['source_current']]}
 
@@ -675,7 +687,7 @@ def _head_absent_sql(archive_id_sql):
             f"WHERE lu2.archive_id={archive_id_sql})")
 
 
-def _legacy_sibling_sql(archive_id_sql, joins='', projection='1'):
+def _legacy_sibling_sql(archive_id_sql, joins='', projection='1', *, precomputed=False):
     """SQL: a newer archive of the same logical family exists.
 
     Identity equality happens in SQL before any bound, so unrelated archives
@@ -683,9 +695,10 @@ def _legacy_sibling_sql(archive_id_sql, joins='', projection='1'):
     batches never match each other.
     """
     from evolvmem.session_identity import SQL_LOGICAL_IDENTITY
-    left = SQL_LOGICAL_IDENTITY.format(alias='sa')
-    right = SQL_LOGICAL_IDENTITY.format(alias='sb')
-    return (f"EXISTS (SELECT {projection} FROM session_archives sa JOIN session_archives sb "
+    archives = 'reconcile_archive_identities' if precomputed else 'session_archives'
+    left = 'sa.logical_identity' if precomputed else SQL_LOGICAL_IDENTITY.format(alias='sa')
+    right = 'sb.logical_identity' if precomputed else SQL_LOGICAL_IDENTITY.format(alias='sb')
+    return (f"EXISTS (SELECT {projection} FROM {archives} sa JOIN {archives} sb "
             f"ON sb.adapter=sa.adapter AND sb.id>sa.id AND {right}={left} {joins} "
             f"WHERE sa.id={archive_id_sql})")
 
@@ -862,9 +875,15 @@ def _reconcile_candidates(service, *, limit):
     # oracle uses. Identity equality in SQL keeps independent incremental batches
     # out of this branch entirely.
     branches.append(
-        f"({head_absent} AND {_legacy_sibling_sql(archive_id_sql)} "
+        f"({head_absent} AND {_legacy_sibling_sql(archive_id_sql, precomputed=True)} "
         f"AND ({unsettled} OR {own_active}))")
-    sql = ("SELECT t.id,t.source_key FROM (SELECT ot.*,CASE WHEN ot.source_key LIKE 'archive:%' THEN ot.source_key "
+    # Referenced twice by the sibling join: materialize each logical identity
+    # once, allowing an automatic index on (adapter, logical_identity).
+    from evolvmem.session_identity import SQL_LOGICAL_IDENTITY
+    identity = SQL_LOGICAL_IDENTITY.format(alias='sa')
+    sql = ("WITH reconcile_archive_identities AS MATERIALIZED (SELECT sa.id,sa.adapter," + identity +
+           " AS logical_identity FROM session_archives sa) "
+           "SELECT t.id,t.source_key FROM (SELECT ot.*,CASE WHEN ot.source_key LIKE 'archive:%' THEN ot.source_key "
            "WHEN json_array_length(oc.members)=1 THEN json_extract(oc.members,'$[0]') END retirement_source "
            "FROM organization_tasks ot LEFT JOIN organization_conversations oc ON oc.source_key=ot.source_key) t "
            "WHERE t.retirement_source LIKE 'archive:%' "
@@ -1216,13 +1235,20 @@ class OrganizationWorker:
             try:
                 self._restore()
             except Exception:
-                pass
+                # Never silent: interrupted work stays queued in 'running' when
+                # this fails, and nothing else would report it.
+                _LOG.exception(
+                    'organization restore failed; interrupted work may stay in running')
             next_discovery = 0
+            next_stale_sweep = 0
             while not self._stop.is_set():
                 worked = False
                 try:
                     if self._stop.is_set():
                         break
+                    if time.monotonic() >= next_stale_sweep:
+                        next_stale_sweep = time.monotonic() + _STALE_SWEEP_SECONDS
+                        self._restore_stale()
                     if time.monotonic() >= next_discovery:
                         next_discovery = time.monotonic() + 30
                         try:
@@ -1233,12 +1259,11 @@ class OrganizationWorker:
                     worked = self.tick()
                     if self.capture_once():
                         worked = True
-                    if not worked and not self._stop.is_set():
-                        try:
-                            from evolvmem.organization_arrival import discover_new
-                            worked = bool(discover_new(self._connect())['created'])
-                        except Exception:
-                            worked = False
+                    # Arrival discovery stays on the rate-limited branch above.
+                    # Calling it again here (as this loop used to) ran a 15 s
+                    # no-op scan on every 2 s idle poll, which is why the worker
+                    # held the CPU at ~85% for days. New arrivals are still
+                    # picked up within the same 30 s window.
                 except Exception:
                     worked = False
                 if worked:
@@ -1274,6 +1299,28 @@ class OrganizationWorker:
             service.store._connection().execute(
                 "UPDATE organization_tasks SET status='pending',updated_at=? WHERE status='running'",
                 (_now_iso(),))
+
+    def _restore_stale(self):
+        """Return abandoned 'running' tasks to the queue.
+
+        Recovery used to depend on a restart: the worker only claims 'pending'
+        rows, so a task left in 'running' by a dead worker was never retried.
+        Sweeping on a timer bounds that to _STALE_RUNNING_MINUTES.
+        """
+        service = self._connect()
+        with service.store.transaction():
+            cursor = service.store._connection().execute(
+                "UPDATE organization_tasks SET status='pending',updated_at=? "
+                "WHERE status='running' AND updated_at < datetime('now',?)",
+                (_now_iso(), '-%d minutes' % _STALE_RUNNING_MINUTES),
+            )
+            released = cursor.rowcount
+        if released:
+            _LOG.warning(
+                'organization returned %d stale running task(s) to the queue',
+                released,
+            )
+        return released
 
     # -- one unit of work --
 
@@ -1381,12 +1428,50 @@ class OrganizationWorker:
                 else:
                     from evolvmem.capability_pipeline import CapabilityPipeline
                     from evolvmem.project_archive_pipeline import ProjectArchivePipeline
+                    # Both new pipelines consume the same source-bound unit
+                    # decisions. Reusing ownership must not activate legacy writes.
+                    self._assign(service, task, materialize=False, sync_relations=mode == 'dual')
+                    task = _task_row(service, task_id)
+                    _assert_current(service, task)
                     CapabilityPipeline(service).process_task(task)
+                    _assert_current(service, task)
                     ProjectArchivePipeline(service).process_task(task)
+                    _assert_current(service, task)
+                    from evolvmem.project_module_pipeline import ProjectModulePipeline
+                    module_result = ProjectModulePipeline(service).process_task(task)
+                    module_review = module_result.get('technical_review', 0)
+                    _assert_current(service, task)
                     if mode == 'dual':
-                        self._assign(service, task)
+                        # Preserve legacy projections without a second ownership
+                        # pass (or a second model call).
+                        self._ingest(service, task)
+                        _refresh_task_state(service, task_id, retry_transient=True)
+                        if module_review:
+                            with service.store.transaction():
+                                _assert_current(service, task)
+                                service.store._connection().execute(
+                                    'UPDATE organization_tasks SET review_count=review_count+? WHERE id=?',
+                                    (module_review, task_id))
+                                self._finish(service, task_id, 'review', 'done', 'module_response_invalid',
+                                             '业务模块响应未通过原文证据校验，请核对；已有有效绑定已保留。')
                     else:
-                        self._finish(service, task_id, 'completed', 'done')
+                        with service.store.transaction():
+                            _assert_current(service, task)
+                            units = self._reload_units(service, task_id)
+                            active_projects = set(project_names(service))
+                            review = sum(1 for unit in units
+                                         if unit['disposition'] != 'set_aside'
+                                         and (unit['disposition'] == 'review'
+                                              or unit['decision'] not in ('auto', 'manual')
+                                              or not ks.assigned(unit)
+                                              or not set(ks.projects(unit)) <= active_projects))
+                            review += module_review
+                            service.store._connection().execute(
+                                'UPDATE organization_tasks SET review_count=? WHERE id=?',
+                                (review, task_id))
+                            self._finish(service, task_id, 'review' if review else 'completed',
+                                         'done', 'module_response_invalid' if module_review else 'units_need_review' if review else '',
+                                         '业务模块响应未通过原文证据校验，请核对；已有有效绑定已保留。' if module_review else '')
             elif task['stage'] == 'extraction':
                 self._extract_units(service, task)
             else:
@@ -1669,7 +1754,14 @@ class OrganizationWorker:
 
     # -- stage 2: project assignment --
 
-    def _assign(self, service, task):
+    def _assign(self, service, task, *, materialize=True, sync_relations=None):
+        """Resolve ownership and return current units; legacy writes are optional.
+
+        Dual mode retains fact relations inside each CAS-protected unit update,
+        while delaying legacy ingestion until both new pipelines have run.
+        """
+        if sync_relations is None:
+            sync_relations = materialize
         _assert_current(service, task)
         policy = service.knowledge().rules.read()
         units = [dict(r) for r in service.store._connection().execute(
@@ -1713,7 +1805,10 @@ class OrganizationWorker:
                 review += 1
                 continue
             from evolvmem.organization_semantic_review import classify_guidance
-            guidance = classify_guidance(service, unit)
+            direct_analysis = analyzed.get(f"{unit['task_id']}:{unit['digest']}", {})
+            guidance = classify_guidance(service, unit, direct_analysis)
+            diagnostic_analysis = (reasoning.current_direct_analysis(service, unit, direct_analysis)
+                                   if guidance['status'] == 'review' else {})
             if unit['disposition'] == 'history_only' and guidance['status'] == 'review':
                 with service.store.transaction():
                     service.store._connection().execute(
@@ -1723,7 +1818,9 @@ class OrganizationWorker:
             if guidance['status'] == 'review':
                 self._update_unit(service, task['id'], unit['digest'], project='', decision='review',
                                   expected_revision=unit, context_basis='',
-                                  reason=guidance['reason'], evidence_quote=resolved_quote)
+                                  reason=guidance['reason'], evidence_quote=resolved_quote,
+                                  ownership_analysis=diagnostic_analysis or None,
+                                  sync_relations=sync_relations)
                 review += 1
                 continue
             if guidance['status'] == 'apply':
@@ -1733,7 +1830,8 @@ class OrganizationWorker:
                                   decision='auto', expected_revision=unit, context_basis=organization_context.unit_context(guidance_basis) if guidance_basis else '',
                                   guidance_id=guidance['id'],
                                   reason=guidance['reason'], evidence_quote=guidance.get('evidence_quote', resolved_quote),
-                                  knowledge_target=guidance,ownership_analysis=guidance.get('ownership_analysis'))
+                                  knowledge_target=guidance,ownership_analysis=guidance.get('ownership_analysis'),
+                                  sync_relations=sync_relations)
                 if guidance_basis:
                     self._record_dependency(service,task['id'],unit['digest'],guidance_basis)
                 auto_projects.append(guidance['project'])
@@ -1759,12 +1857,28 @@ class OrganizationWorker:
             hint = unit['project_hint'] if unit['project_hint'] in names else ''
             used = {}
             project, reason, decision = self._decide(service, unit, hint, policy, names, basis, used)
+            if decision == 'review':
+                # The model-backed pass declined, so apply the operator's written
+                # project standards before giving up. Only 'review' means declined:
+                # 'manual' is a human attribution and must never be overwritten by
+                # a machine guess, and 'auto' is already decided. This is the only path by
+                # which a unit with clear vocabulary but no ownership analysis
+                # reaches a project; the standards pass answers only on
+                # high-confidence evidence, so an uncertain unit still waits.
+                try:
+                    from evolvmem.project_classifier import decide as _standards_decide
+                    _std_project, _std_evidence = _standards_decide(service.config, unit['text'])
+                except Exception:
+                    _std_project, _std_evidence = '', []
+                if _std_project and _std_project in names:
+                    project, decision = _std_project, 'auto'
+                    reason = '按项目标准归类：命中 ' + '、'.join(_std_evidence[:5])
             inherited = decision == 'auto' and used.get('context') is True
             self._update_unit(service, task['id'], unit['digest'], project=project, decision=decision,
                               expected_revision=unit, reason=reason, evidence_quote=resolved_quote,
                               context_basis=organization_context.unit_context(basis) if inherited else '',
                               knowledge_target={'projects':used.get('projects',[]),'knowledge_scope':used.get('knowledge_scope','project')},
-                              ownership_analysis=analysis)
+                              ownership_analysis=analysis, sync_relations=sync_relations)
             if inherited:
                 self._record_dependency(service, task['id'], unit['digest'], basis)
             if decision == 'auto':
@@ -1778,8 +1892,10 @@ class OrganizationWorker:
         # units are attributed independently and the archive stays unbound.
         # Unit ownership is authoritative; leave the immutable whole archive
         # unbound so later corrections cannot leak the original mixed source.
-        self._ingest(service, task)
-        _refresh_task_state(service, task['id'], retry_transient=True)
+        if materialize:
+            self._ingest(service, task)
+            _refresh_task_state(service, task['id'], retry_transient=True)
+        return self._reload_units(service, task['id'])
 
     def _reload_units(self, service, task_id):
         return [dict(r) for r in service.store._connection().execute(
@@ -1838,7 +1954,8 @@ class OrganizationWorker:
         return (selected[0] if selected else ''), analysis['reason'], 'auto'
 
     def _update_unit(self, service, task_id, digest, *, project, decision, expected_revision=None,
-                     reason='', evidence_quote=None, context_basis=None, guidance_id=0, knowledge_target=None, ownership_analysis=None):
+                     reason='', evidence_quote=None, context_basis=None, guidance_id=0, knowledge_target=None, ownership_analysis=None,
+                     sync_relations=True):
         """CAS inside the transaction; a manual decision is never overwritten."""
         with service.store.transaction():
             conn = service.store._connection()
@@ -1874,8 +1991,9 @@ class OrganizationWorker:
             if ownership_analysis is not None:
                 conn.execute('UPDATE organization_units SET ownership_analysis=? WHERE task_id=? AND digest=?',
                              (json.dumps(ownership_analysis,ensure_ascii=False),task_id,digest))
-                from evolvmem.knowledge_facts import sync_ownership_relations
-                sync_ownership_relations(service,_task_row(service,task_id),find_unit(service,task_id,digest))
+                if sync_relations:
+                    from evolvmem.knowledge_facts import sync_ownership_relations
+                    sync_ownership_relations(service,_task_row(service,task_id),find_unit(service,task_id,digest))
             if context_basis == '':
                 # The unit no longer rests on a predecessor: drop the dependency
                 # so the reconciliation pass cannot report it as live.

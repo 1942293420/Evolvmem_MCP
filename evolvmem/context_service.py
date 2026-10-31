@@ -35,11 +35,17 @@ content — its only logging is stable-code lines: whitelisted
 health-transition warnings plus debug detail.
 """
 
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
-from evolvmem.request_trace import stage
+from evolvmem.request_trace import stage, health_event
+
+_health_observations = ContextVar("context_health_observations", default=None)
 import logging
+import os
+import time
+import threading
 import sqlite3
 from pathlib import PurePosixPath
 
@@ -328,6 +334,12 @@ class ContextService:
         self._reason_codes: tuple[str, ...] = ()
         self._diagnostics: tuple[str, ...] = ()
         self._health_transition_codes: tuple[str, ...] | None = None
+        self._integrity_snapshot = None
+        self._integrity_lock = threading.RLock()
+        self._integrity_worker = None
+        self._integrity_timer = None
+        self._integrity_closed = False
+        self._integrity_generation = 0
 
     # ---- lifecycle ----
 
@@ -353,6 +365,7 @@ class ContextService:
             )
         self._ensure_dependencies()
         self.store.initialize()
+        self._integrity_closed = False
         self._mode = mode
         self._adapter = adapter
         self._refresh_health()
@@ -360,6 +373,11 @@ class ContextService:
 
     def close(self, *, close_embedding_engine: bool = True) -> None:
         """Close every dependency the lifecycle coordinates; safe to repeat."""
+        with self._integrity_lock:
+            self._integrity_closed = True
+            if self._integrity_timer is not None:
+                self._integrity_timer.cancel()
+                self._integrity_timer = None
         try:
             resources = (
                 self.store,
@@ -387,6 +405,40 @@ class ContextService:
             self._reason_codes = ()
             self._diagnostics = ()
             self._health_transition_codes = None
+            with self._integrity_lock:
+                self._integrity_snapshot = None
+                self._integrity_generation += 1
+
+    def evaluated_status(self) -> ContextServiceStatus:
+        """One complete observation shared by diagnostics and the status view."""
+        token = _health_observations.set((self, {}))
+        try:
+            if self._mode is ContextMode.PRIMARY:
+                self._refresh_health()
+            return self.status()
+        finally:
+            _health_observations.reset(token)
+
+    def _health_observe(self, name, evaluate):
+        scope = _health_observations.get()
+        if scope is None or scope[0] is not self:
+            with stage('health_' + name):
+                return evaluate()
+        values = scope[1]
+        if name not in values:
+            with stage('health_' + name):
+                values[name] = evaluate()
+        return values[name]
+
+    def _health_projection(self):
+        return self._health_observe(
+            "projection", lambda: check_projection_lag(self.config, self.store))
+
+    def _health_vector(self, documents=None):
+        from evolvmem.context_vector_health import inspect_context_vector
+        return self._health_observe(
+            "vector", lambda: inspect_context_vector(
+                self.config, self.store, self.vector_index, documents))
 
     def status(self) -> ContextServiceStatus:
         """Content-free snapshot: modes, counts, flags, reason codes, diagnostics."""
@@ -395,21 +447,20 @@ class ContextService:
                 "not_initialized", "service is not initialized"
             )
         try:
-            status_counts = self.store.count_by_status()
+            status_counts = self._health_observe("counts", self.store.count_by_status)
         except Exception:
             status_counts = {}  # a broken schema must not block diagnostics
         try:
             # The full design-defined lag evaluator: every mismatch class,
             # not just missing mappings. A broken schema must not block
             # diagnostics, so failures degrade to zeros.
-            lag = check_projection_lag(self.config, self.store)
+            lag = self._health_projection()
             mapping_count = lag.legacy_rows - lag.missing_mapping
             projection_lag = lag.projection_lag
         except Exception:
             mapping_count = 0
             projection_lag = 0
-        from evolvmem.context_vector_health import inspect_context_vector
-        context_state = inspect_context_vector(self.config, self.store, self.vector_index)
+        context_state = self._health_vector()
         context_ready = context_state.available(self.embedding_engine)
         context_dirty = context_state.dirty
         reason_codes = self._reason_codes
@@ -491,17 +542,16 @@ class ContextService:
         the gate and can never be supplied by the caller.
         """
         diagnostics: list[str] = list(self.config.validate_runtime())
-        diagnostics.extend(self._quick_check_diagnostics())
+        diagnostics.extend(self._integrity_diagnostics())
         try:
-            self.store.count_by_status()
+            self._health_observe("counts", self.store.count_by_status)
         except Exception:
             diagnostics.append("schema_invariant_failed")
         documents: list[ContextVectorDocument] | None = None
         try:
-            documents = self.store.list_vector_documents()
-            for document in documents:
-                # Raises unless the serving item has exactly L0/L1/L2.
-                self.store.get_item(document.item_id)
+            with stage('health_documents'):
+                documents = self.store.list_vector_documents()
+                self.store.validate_item_structure([document.item_id for document in documents])
         except Exception:
             diagnostics.append("layer_invariant_failed")
             documents = None
@@ -515,6 +565,143 @@ class ContextService:
             for message in deduped[:_MAX_DIAGNOSTICS]
         )
 
+    @staticmethod
+    def _integrity_ttl():
+        try:
+            return min(300.0, max(0.0, float(os.environ.get(
+                "EVOLVMEM_INTEGRITY_CACHE_SECONDS", "300"))))
+        except ValueError:
+            return 0.0
+
+    def _integrity_cache_state(self):
+        """Cheap freshness boundaries also invalidate complete status snapshots."""
+        previous = self._integrity_snapshot
+        ttl = self._integrity_ttl()
+        age = time.monotonic() - previous[1] if previous else 0.0
+        return (self._integrity_generation, ttl,
+                age >= ttl * 0.6, age >= ttl, age < 0)
+
+    @staticmethod
+    def _scan_integrity_readonly(path, expected) -> tuple[str, ...]:
+        """A worker owns only its read-only SQLite connection, never the store."""
+        probe = None
+        try:
+            probe = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+            probe.execute("PRAGMA query_only=ON")
+            def identity():
+                stat = path.stat()
+                return (str(path.resolve()), stat.st_dev, stat.st_ino,
+                        probe.execute("PRAGMA schema_version").fetchone()[0])
+            if identity() != expected:
+                return ("quick_check_failed",)
+            rows = probe.execute("PRAGMA quick_check").fetchall()
+            if identity() != expected:
+                return ("quick_check_failed",)
+            return (() if rows and all(str(row[0]).lower() == "ok" for row in rows)
+                    else ("quick_check_failed",))
+        except Exception:
+            return ("quick_check_failed",)
+        finally:
+            if probe is not None:
+                probe.close()
+
+    def _schedule_integrity_refresh(self):
+        # Only timer metadata is resident. The callback never touches store,
+        # identity, model or vector state, including when the service is idle.
+        if self._integrity_timer is not None:
+            self._integrity_timer.cancel()
+        previous = self._integrity_snapshot
+        ttl = self._integrity_ttl()
+        if self._integrity_closed or previous is None or not ttl:
+            self._integrity_timer = None
+            return
+        key, generation = previous[0], self._integrity_generation
+        delay = min(ttl, 5.0) if previous[2] else ttl * 0.6
+        def refresh():
+            with self._integrity_lock:
+                if (not self._integrity_closed
+                        and self._integrity_generation == generation
+                        and self._integrity_snapshot is not None
+                        and self._integrity_snapshot[0] == key):
+                    self._start_integrity_refresh(key)
+        self._integrity_timer = threading.Timer(delay, refresh)
+        self._integrity_timer.daemon = True
+        self._integrity_timer.start()
+
+    def _start_integrity_refresh(self, key):
+        # Caller owns _integrity_lock. One worker per service, no resident I/O.
+        if self._integrity_closed or (
+                self._integrity_worker is not None and self._integrity_worker.is_alive()):
+            return
+        path = self.config.db_path
+        generation = self._integrity_generation
+        def run():
+            try:
+                result = self._scan_integrity_readonly(path, key[1:])
+            except Exception:
+                result = ("quick_check_failed",)
+            with self._integrity_lock:
+                previous = self._integrity_snapshot
+                if (not self._integrity_closed
+                        and self._integrity_generation == generation
+                        and previous is not None and previous[0] == key):
+                    self._integrity_snapshot = (key, time.monotonic(), result)
+                    self._integrity_generation += 1
+                    self._schedule_integrity_refresh()
+        self._integrity_worker = threading.Thread(
+            target=run, name="evolvmem-integrity-check", daemon=True)
+        self._integrity_worker.start()
+
+    def _integrity_diagnostics(self) -> tuple[str, ...]:
+        """First baseline is mandatory; refresh at 60%, expire at five minutes.
+
+        Content/access writes still revalidate semantic invariants. Physical
+        checks use a separate read-only connection; stale or failed integrity
+        cannot authorize service while a refresh is running.
+        """
+        ttl = self._integrity_ttl()
+        conn = self.store._connection()
+        if conn.in_transaction or not ttl:
+            health_event('physical_uncached_transaction' if conn.in_transaction else 'physical_cache_disabled')
+            return self._quick_check_diagnostics()
+
+        def identity():
+            stat = self.config.db_path.stat()
+            return (id(conn), str(self.config.db_path.resolve()),
+                    stat.st_dev, stat.st_ino,
+                    conn.execute("PRAGMA schema_version").fetchone()[0])
+        with self._integrity_lock:
+            try:
+                key = identity()
+                previous = self._integrity_snapshot
+                if previous is not None and previous[0] == key:
+                    age = time.monotonic() - previous[1]
+                    if age >= (min(ttl, 5.0) if previous[2] else ttl * 0.6):
+                        self._start_integrity_refresh(key)
+                    if previous[2]:
+                        health_event('physical_failed_cached')
+                        return previous[2]
+                    if 0 <= age < ttl:
+                        return ()
+                    health_event('physical_pending')
+                    return ("quick_check_pending",)
+                # Initial/changed database must establish its own baseline.
+                health_event('physical_baseline_initial' if previous is None else
+                             'physical_baseline_schema' if previous[0][-1] != key[-1] else
+                             'physical_baseline_identity')
+                self._integrity_snapshot = None
+                result = self._quick_check_diagnostics()
+                if key != identity():
+                    return ("quick_check_failed",)
+                self._integrity_snapshot = (key, time.monotonic(), result)
+                self._schedule_integrity_refresh()
+                return result
+            except Exception:
+                self._integrity_snapshot = None
+                self._integrity_generation += 1
+                return ("quick_check_failed",)
+
+    @stage('health_physical')
     def _quick_check_diagnostics(self) -> tuple[str, ...]:
         try:
             conn = self.store._connection()
@@ -547,7 +734,7 @@ class ContextService:
     def _projection_invariant_diagnostics(self) -> tuple[str, ...]:
         """Map the full lag report onto startup diagnostics, one code per cause."""
         try:
-            report = check_projection_lag(self.config, self.store)
+            report = self._health_projection()
         except Exception:
             return ("projection_evaluation_failed",)
         diagnostics: list[str] = []
@@ -569,8 +756,7 @@ class ContextService:
     ) -> list[str]:
         if documents is None:
             return []  # schema/layer failures already cover the count baseline
-        from evolvmem.context_vector_health import inspect_context_vector
-        state = inspect_context_vector(self.config, self.store, self.vector_index, documents)
+        state = self._health_vector(documents)
         return [state.reason] if state.reason else []
 
     def _legacy_vector_index(self) -> VectorIndex:
@@ -766,7 +952,8 @@ class ContextService:
             )
             return ContextSessionStartResult(
                 block=block,
-                selected_ids=selected_ids,
+                selected_ids=(),
+                capability_ids=selected_ids,
                 used_chars=len(block),
                 excluded_counts=(),
                 continuation_code=continuation_code,
@@ -2853,8 +3040,10 @@ class ContextService:
     def capability_index(self):
         if getattr(self, '_capability_index', None) is None:
             from evolvmem.capability_index import CapabilityIndex
+            from evolvmem.capability_recall_eligibility import eligible_ids as eligible_memory_ids
             self._capability_index = CapabilityIndex(
-                self.store, self.config, self.embedding_engine
+                self.store, self.config, self.embedding_engine,
+                eligible_ids=lambda ids: eligible_memory_ids(self.store, ids)
             )
         return self._capability_index
 

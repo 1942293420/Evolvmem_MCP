@@ -70,7 +70,8 @@ def _groups(service, *, selection=None):
         return []
     # Request-local policy snapshot: no cache survives into the next request.
     excluded = _excluded_archive_ids(service)
-    visible = {r['id'] for r in _unassigned_archives(service, excluded=excluded)}
+    from evolvmem.governance_sources import visible_ids
+    visible = visible_ids(service, excluded=excluded)
     current, result = {}, []
     for group in candidates:
         kept = []

@@ -20,9 +20,9 @@ def _hash(value):
     return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 
 
-def _identity(service,key):
+def _identity(service,key,*,excluded=None,cache=None):
     from evolvmem.organization_context import archive_info
-    info=archive_info(service,key)
+    info=archive_info(service,key,excluded=excluded,cache=cache)
     if info:
         return 'codex:'+info['head'],info
     # Unrecognised/imported sources remain independent. Never guess a native
@@ -38,26 +38,29 @@ def members(service,key):
 
 
 def register(service,source_keys,*,expand=False):
-    from evolvmem.history_organization import source_excluded,_unassigned_archives
+    from evolvmem.history_organization import source_excluded,_unassigned_archives,_excluded_archive_ids
     from evolvmem.knowledge_cleaning import record
     from evolvmem import organization_context as ctx
-    visible={r['id'] for r in _unassigned_archives(service)}
-    groups={}
+    excluded=_excluded_archive_ids(service)
+    from evolvmem.governance_sources import visible_ids
+    visible=visible_ids(service,excluded=excluded)
+    groups={};expanded=set();facts={}
     for key in dict.fromkeys(source_keys):
-        if source_excluded(service,key):continue
+        if source_excluded(service,key,excluded=excluded):continue
         if is_conversation(key):
             row=service.store._connection().execute('SELECT identity FROM organization_conversations WHERE source_key=?',(key,)).fetchone()
             if row is None:raise ValueError('conversation_not_found')
             groups.setdefault(row['identity'],set()).update(members(service,key));continue
-        if source_excluded(service,key):continue
-        record(service,key,visible=visible)
-        identity,info=_identity(service,key)
+        if source_excluded(service,key,excluded=excluded):continue
+        record(service,key,visible=visible,excluded=excluded,owner_governance=True)
+        identity,info=_identity(service,key,excluded=excluded,cache=facts)
         group=groups.setdefault(identity,set());group.add(key)
-        if expand and info:
+        if expand and info and identity not in expanded:
+            expanded.add(identity)
             for sibling in service.store._connection().execute(ctx._sibling_sql(),ctx._sibling_params(info)):
                 candidate=f'archive:{sibling["id"]}'
                 if sibling['id'] not in visible:continue
-                other=ctx.archive_info(service,candidate)
+                other=ctx.archive_info(service,candidate,excluded=excluded,cache=facts)
                 if other and other['head']==info['head']:group.add(candidate)
     prepared=[]
     for identity,keys in groups.items():
@@ -66,15 +69,21 @@ def register(service,source_keys,*,expand=False):
         if exists:keys.update(json.loads(exists['members']))
         ordered=[]
         for member in keys:
-            actual,info=_identity(service,member)
+            actual,info=_identity(service,member,excluded=excluded,cache=facts)
             if actual!=identity:raise ValueError('conversation_source_changed')
-            record(service,member,visible=visible)
+            record(service,member,visible=visible,excluded=excluded,owner_governance=True)
             ordered.append((info['start_line'] if info else 0,info['end_line'] if info else 0,member))
         ordered.sort()
         for previous,current in zip(ordered,ordered[1:]):
             if current[0] and current[0]<=previous[1]:raise ValueError('conversation_overlap')
         prepared.append((key,identity,[row[2] for row in ordered]))
     with service.store.transaction():
+        # An exclusion may have arrived while native identities were checked.
+        # Revalidate inside the write transaction before saving any manifest.
+        current_excluded=_excluded_archive_ids(service)
+        if any(source_excluded(service,member,excluded=current_excluded)
+               for _,_,keys in prepared for member in keys):
+            raise ValueError('classification_source_changed')
         for key,identity,keys in prepared:
             service.store._connection().execute(
                 'INSERT INTO organization_conversations(source_key,identity,members,updated_at) VALUES(?,?,?,?) '
@@ -89,10 +98,11 @@ def revision(service,key,*,visible=None,excluded=None):
     if excluded is None:excluded=_excluded_archive_ids(service)
     if source_excluded(service,key,excluded=excluded):raise ValueError('classification_source_changed')
     from evolvmem.knowledge_cleaning import record,review
-    if visible is None:visible={r['id'] for r in _unassigned_archives(service,excluded=excluded)}
+    from evolvmem.governance_sources import visible_ids
+    if visible is None:visible=visible_ids(service,excluded=excluded)
     values=[]
     for member in members(service,key):
-        row=record(service,member,visible=visible,excluded=excluded)
+        row=record(service,member,visible=visible,excluded=excluded,owner_governance=True)
         if member.startswith('archive:'):
             archive=service.store.get_session_archive(int(member.split(':')[1]))
             if not archive or archive['state']!='available':raise ValueError('cleaning_source_unavailable')
@@ -109,11 +119,12 @@ def snapshot(service,key,*,visible=None,excluded=None):
     # One local policy view for all members; rebuild it on the next read so
     # later exclusions still invalidate the conversation immediately.
     if excluded is None:excluded=_excluded_archive_ids(service)
-    if visible is None:visible={r['id'] for r in _unassigned_archives(service,excluded=excluded)}
+    from evolvmem.governance_sources import visible_ids
+    if visible is None:visible=visible_ids(service,excluded=excluded)
     policy=service.knowledge().rules.read()
     messages=[];records=[];revisions=[];cursor=0
     for member in members(service,key):
-        row=record(service,member,visible=visible,excluded=excluded)
+        row=record(service,member,visible=visible,excluded=excluded,owner_governance=True)
         revisions.append([member,row['expected_revision']])
         archive=None
         if member.startswith('archive:'):

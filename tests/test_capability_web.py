@@ -1,4 +1,5 @@
 """Web-facing capability management and project archive read models."""
+from tests.test_project_archive_store import save_manual_event
 from types import SimpleNamespace
 
 import pytest
@@ -64,7 +65,7 @@ def test_capabilities_read_model_separates_active_intake_and_suggestions(test_co
         intake(store, fingerprint="fp2")
         create_category_suggestion(svc, {"label":"移动端", "reason":"独立移动开发记忆"})
 
-        result = capabilities(svc, {})
+        result = capabilities(svc, {"status": "pending"})
 
         assert len(result["items"]) == 1
         assert len(result["intake"]) == 1
@@ -81,7 +82,7 @@ def test_project_archive_read_model_excludes_capability_memories(test_config):
                 "INSERT INTO context_project_registry(project,display_name,created_at,updated_at) "
                 "VALUES('bluewhale','蓝鲸',?,?)", (now, now))
         archives = ProjectArchiveStore(store)
-        archives.record_event(ProjectEventDraft(
+        save_manual_event(archives, ProjectEventDraft(
             project="bluewhale", event_type="feature", title="新增权限管理",
             content="完成统一权限管理。", source_ref="archive:2"))
         archives.rebuild("bluewhale")
@@ -106,7 +107,7 @@ def test_capabilities_filters_source_and_paginates(test_config):
         for index in range(25):
             add_capability(svc, f"记忆{index}", "bluewhale" if index % 2 else "integration")
 
-        result = capabilities(svc, {"source_project":"bluewhale", "page":"2", "page_size":"20"})
+        result = capabilities(svc, {"source_project":"bluewhale", "source_scope":"historical", "page":"2", "page_size":"20"})
 
         assert result["total"] == 12
         assert result["pages"] == 1
@@ -227,7 +228,7 @@ def test_capability_paging_preserves_category_counts_and_status_filters(test_con
         add_capability(svc, "Match other project", "elsewhere")
 
         result = capabilities(svc, {
-            "q": "Match ", "category": "frontend", "source_project": "project",
+            "q": "Match ", "category": "frontend", "source_project": "project", "source_scope": "historical",
             "page": "999", "page_size": "1",
         })
 

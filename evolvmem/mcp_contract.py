@@ -122,11 +122,12 @@ _EXPERIENCE_INSTRUCTIONS = (
 _PRIMARY_INSTRUCTIONS += _EXPERIENCE_INSTRUCTIONS
 _PRIMARY_INSTRUCTIONS_KIMI += _EXPERIENCE_INSTRUCTIONS
 _DUAL_MEMORY_INSTRUCTIONS = (
-    ' Use knowledge_recall kind=history for previous dialogue, decisions or project progress; '
-    'read the referenced cleaned dialogue with conversation_read. Use kind=experience for concise '
-    'categorized Q&A about habits, conventions, environment or similar work. Use kind=knowledge for the project directory, fact versions, conditions, relations and source-backed conflicts; both includes all three. '
-    'Explicit kind overrides the simple automatic routing. Q&A admission is not proof of successful '
-    'execution; use experience_recall for independently verified cases and compare conditions.'
+    ' Use context_project_recall or project_archive_get for project history and progress, '
+    'and capability_search for reusable capabilities. Read referenced cleaned dialogue '
+    'with conversation_read. knowledge_recall supports its kind routes only in legacy '
+    'knowledge mode; primary returns legacy_read_only with alternatives. The alternatives '
+    'do not preserve all legacy kind semantics. Use experience_recall for independently '
+    'verified cases and compare conditions.'
 )
 _PRIMARY_INSTRUCTIONS += _DUAL_MEMORY_INSTRUCTIONS
 _PRIMARY_INSTRUCTIONS_KIMI += _DUAL_MEMORY_INSTRUCTIONS
@@ -177,10 +178,11 @@ _LEGACY_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     ),
     McpToolSpec(
         name="memory_status",
-        description="View memory system status: active count, total records, vector index status.",
+        description="View full memory diagnostics by default. On authenticated LAN, detail=revision returns only the authenticated identity and namespace revision for change detection; it does not assert health or authorize business operations.",
         input_schema={
             "type": "object",
-            "properties": {},
+            "properties": {"detail": {"type": "string", "enum": ["full", "revision"],
+                                      "default": "full"}},
         },
         annotations=_READ_ONLY,
     ),
@@ -314,6 +316,8 @@ _CAPABILITY_SEARCH_SPEC = McpToolSpec(
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Current development need"},
+            "project": {"type": "string", "description": "Optional explicit current source-project filter; omit for cross-project reuse"},
+            "module_id": {"type": "string", "description": "Optional registered business-module ID; technical categories remain independent"},
             "categories": {
                 "type": "array",
                 "items": {"type": "string", "enum": [
@@ -381,7 +385,7 @@ _CONTEXT_SEARCH_SPEC = McpToolSpec(
 
 _CONTEXT_PROJECT_RECALL_SPEC = McpToolSpec(
     name="context_project_recall",
-    description="Read-only recall of bounded project history and recent current-workstream progress for projects explicitly mentioned in the query text. Matches only this user's registered active names and aliases (whole-word ASCII; case-insensitive mixed-script names with optional ASCII/Chinese boundary whitespace), ignores short, generic, and ambiguous surfaces, and returns at most two projects in first-mention order. Ownership-trust diagnostics are returned in diagnostics plus excluded/unverified_ids: items whose project resolution is pending, conflicting, rejected, or missing (project_ownership_unverified) are held out of the default surface with a stable reason. Progress dates are UTC record times, not verified Git/deployment times. Returns an empty block when nothing is mentioned; never changes workspace bindings or continuity focus.",
+    description="Read-only recall of bounded history for explicitly mentioned registered projects; never changes workspace bindings or continuity focus. In primary knowledge mode, resolves one project and returns its archive plus event_ids (project_events IDs, not Context IDs); selected_ids is empty. Use matched_projects and project_archive_get to inspect those events. Unknown or ambiguous projects return explicit errors. In legacy knowledge mode, returns up to two mentioned projects with recent workstream progress, selected Context IDs and ownership-trust diagnostics; unverified ownership is excluded. Legacy progress dates are UTC record times, not verified Git/deployment times.",
     input_schema={
         "type": "object",
         "properties": {
@@ -561,6 +565,8 @@ _EXPERIENCE_RECALL_SPEC = McpToolSpec(
         "constraints":{"type":"object","additionalProperties":{"type":"string"},
                        "description":"Only directly observed facts comparable with stored case conditions. Do not encode requested actions or limits; keep uncertain causes in query and omit guessed canonical keys."},
         "workstream_id":{"type":"string","description":"Stable task ID for reuse within unchanged tasks"},
+        "mode":{"type":"string","enum":["full","hook"],
+                "description":"Default full uses optional online reranking. Automatic hook skips reranking, retaining strict relevance, eligibility, conditions and evidence checks."},
     }, "required":["query"]}, annotations=_READ_ONLY)
 _EXPERIENCE_RECORD_SPEC = McpToolSpec(
     name="experience_record",
@@ -580,7 +586,7 @@ _EXPERIENCE_RECORD_SPEC = McpToolSpec(
 
 _CONTEXT_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     McpToolSpec(name='knowledge_recall',
-        description='Read the same project knowledge directory as the UI with kind=knowledge: current claims, applicable conditions, business dates, other versions, relations, conflict warnings and source quotes. Unarchived alternatives are labeled separately, never project conclusions. Use kind=history for prior discussions, decisions or progress; use kind=experience for concise categorized Q&A about habits, conventions, environment or similar work. Use both for all three kinds, or auto to include project knowledge with inferred history/Q&A intent. Explicit kind wins. Only applicable active Q&A is returned; current user requirements take priority. History results link to conversation_read for cleaned dialogue. No raw tools or reasoning and no writes.',
+        description='Legacy knowledge-mode route; primary knowledge returns legacy_read_only with context_project_recall/project_archive_get for history and capability_search for reusable capabilities. These do not preserve every legacy kind. Read the same project knowledge directory as the UI with kind=knowledge: current claims, applicable conditions, business dates, other versions, relations, conflict warnings and source quotes. Unarchived alternatives are labeled separately, never project conclusions. Use kind=history for prior discussions, decisions or progress; use kind=experience for concise categorized Q&A about habits, conventions, environment or similar work. Use both for all three kinds, or auto to include project knowledge with inferred history/Q&A intent. Explicit kind wins. Only applicable active Q&A is returned; current user requirements take priority. History results link to conversation_read for cleaned dialogue. No raw tools or reasoning and no writes.',
         input_schema={'type':'object','properties':{
             'project':{'type':'string','description':'Registered project or alias; empty selects global Q&A only'},
             'query':{'type':'string','maxLength':4000},
@@ -895,22 +901,25 @@ _CONTINUITY_TOOL_SPECS: tuple[McpToolSpec, ...] = (
 
 
 def tool_specs(
-    *, adapter: str, mode: ContextMode | None, health: ContextServiceStatus | None
+    *, adapter: str, mode: ContextMode | None, health: ContextServiceStatus | None,
+    catalog: bool = False,
 ) -> tuple[McpToolSpec, ...]:
-    """Resolve the exposed tool set for one adapter/mode/health triple.
+    """Resolve serving tools, or supported schemas for stable LAN discovery.
 
-    ``mode=None`` means the configured mode failed enum validation; the
-    server then fails closed to ``context_status`` plus the legacy tools.
+    Invalid mode configuration exposes context_status plus the legacy tools.
+    catalog=True lists supported schemas independent of current readiness; it
+    never authorizes serving. Calls must still use the default live-health gate.
     """
     return (
         _LEGACY_TOOL_SPECS
-        + _context_specs(adapter=adapter, mode=mode, health=health)
+        + _context_specs(adapter=adapter, mode=mode, health=health, catalog=catalog)
         + _continuity_specs(adapter=adapter, mode=mode)
     )
 
 
 def _context_specs(
-    *, adapter: str, mode: ContextMode | None, health: ContextServiceStatus | None
+    *, adapter: str, mode: ContextMode | None, health: ContextServiceStatus | None,
+    catalog: bool = False,
 ) -> tuple[McpToolSpec, ...]:
     if mode is None:
         # 非法配置：fail-closed，只留诊断入口
@@ -919,7 +928,7 @@ def _context_specs(
         ContextMode.SHADOW, ContextMode.PRIMARY
     ):
         return ()
-    if health is None or not health.ready:
+    if not catalog and (health is None or not health.ready):
         # degraded primary（或健康未知）：只留 context_status
         return (_CONTEXT_STATUS_SPEC,)
     return _CONTEXT_TOOL_SPECS

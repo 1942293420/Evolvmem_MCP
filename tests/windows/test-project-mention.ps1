@@ -103,10 +103,13 @@ try {
                 $matched = if ($script:ProjectMode -eq 'empty') { @() } else { @('other-project') }
                 return [pscustomobject]@{
                     authenticated_user = 'synthetic-user'; block = $block
-                    selected_ids = @(11, 12); matched_projects = $matched
+                    selected_ids = if ($script:ProjectMode -eq 'archive') { @() } else { @(11, 12) }
+                    selected_refs = @(); event_ids = if ($script:ProjectMode -eq 'archive') { @(101, 102) } else { @() }
+                    matched_projects = $matched
                 }
             }
             'experience_recall' {
+                Assert-Equal 'hook' ([string]$Arguments.mode) 'Automatic related-experience injection must request bounded hook mode.'
                 if ($script:ExperienceMode -eq 'fail') { throw 'synthetic experience transport failure' }
                 return [pscustomobject]@{
                     authenticated_user = 'synthetic-user'; results = @($script:ExperienceResults)
@@ -154,9 +157,9 @@ try {
         return [string](Get-Value (Get-Value $Output 'hookSpecificOutput') 'additionalContext' '')
     }
 
-    Invoke-Case 'empty experience still injects the project block' {
+    Invoke-Case 'archive events with no memory IDs still inject the project block' {
         $script:Calls.Clear()
-        $script:ProjectMode = 'ok'
+        $script:ProjectMode = 'archive'
         $script:ProjectBlock = 'PROJECT-ALPHA: synthetic decisions and constraints.'
         $script:ExperienceMode = 'ok'
         $script:ExperienceResults = @()

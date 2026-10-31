@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EvolvMem · 前端改版副本</title>
+<style>
+/* ============ 设计变量 ============ */
+:root{
+  --bg:#F5F6F8;
+  --surface:#FFFFFF;
+  --surface-2:#FAFBFC;
+  --ink:#12141A;
+  --dim:#565D6B;
+  --faint:#5F6673;
+  --line:#E5E7ED;
+  --line-strong:#D3D7E0;
+  --accent:#3D5AFE;
+  --accent-ink:#FFFFFF;
+  --accent-soft:#EEF1FF;
+  --ok:#0E7A63;
+  --ok-soft:#E8F5F1;
+  --warn:#A85B0A;
+  --warn-soft:#FDF3E7;
+  --danger:#C0392B;
+  --radius:12px;
+  --radius-sm:8px;
+  --shadow:0 1px 2px rgba(18,20,26,.04), 0 8px 24px rgba(18,20,26,.05);
+  --shadow-sm:0 1px 2px rgba(18,20,26,.05);
+  --sans:"Noto Sans SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+  --mono:"JetBrains Mono",Consolas,"Noto Sans SC",monospace;
+  --ease:cubic-bezier(.2,.7,.3,1);
+  --t:150ms;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{font-size:16px}
+body{
+  background:var(--bg);color:var(--ink);font-family:var(--sans);
+  font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer}
+input,select,textarea{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius-sm);padding:9px 12px;transition:border-color var(--t) var(--ease),box-shadow var(--t) var(--ease)}
+input:hover,select:hover,textarea:hover{border-color:var(--line-strong)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(61,90,254,.14)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+::selection{background:var(--accent);color:#fff}
+a{color:inherit;text-decoration:none}
+
+/* ============ 顶栏 ============ */
+.topbar{
+  position:sticky;top:0;z-index:50;background:rgba(255,255,255,.92);
+  backdrop-filter:saturate(140%) blur(12px);border-bottom:1px solid var(--line);
+}
+.topbar-in{
+  max-width:1440px;margin:0 auto;height:60px;display:flex;align-items:center;gap:22px;padding:0 24px;
+}
+.brand{display:flex;align-items:center;gap:10px;flex:0 0 auto;cursor:pointer}
+.brand-mark{
+  width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--accent),#6C8BFF);
+  display:grid;place-items:center;box-shadow:0 2px 6px rgba(61,90,254,.35);
+}
+.brand-mark svg{width:15px;height:15px;color:#fff}
+.brand b{font-size:14.5px;font-weight:650;letter-spacing:.01em}
+.brand small{font-family:var(--mono);font-size:9.5px;color:var(--faint);letter-spacing:.12em;margin-left:2px}
+
+nav.main{display:flex;align-items:center;gap:2px;flex:1 1 auto;min-width:0;overflow-x:auto;scrollbar-width:none}
+nav.main::-webkit-scrollbar{display:none}
+.navitem{
+  display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:9px;
+  font-size:13px;font-weight:450;color:var(--dim);white-space:nowrap;
+  transition:background var(--t) var(--ease),color var(--t) var(--ease);
+  position:relative;
+}
+.navitem svg{width:16px;height:16px;flex:0 0 16px;opacity:.75;transition:opacity var(--t) var(--ease)}
+.navitem:hover{background:var(--surface-2);color:var(--ink)}
+.navitem:hover svg{opacity:1}
+.navitem.on{background:var(--accent-soft);color:var(--accent);font-weight:550}
+.navitem.on svg{opacity:1}
+.navitem .dot{width:6px;height:6px;border-radius:50%;background:var(--warn)}
+.navsep{width:1px;height:20px;background:var(--line);margin:0 8px;flex:0 0 1px}
+
+.top-right{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.icon-btn{
+  width:34px;height:34px;border-radius:9px;display:grid;place-items:center;color:var(--dim);
+  transition:background var(--t) var(--ease),color var(--t) var(--ease);
+}
+.icon-btn:hover{background:var(--surface-2);color:var(--ink)}
+.icon-btn svg{width:17px;height:17px}
+.user{display:flex;align-items:center;gap:8px;padding:4px 10px 4px 4px;border:1px solid var(--line);border-radius:999px;font-size:12.5px;color:var(--dim);transition:border-color var(--t),background var(--t)}
+.user:hover{border-color:var(--line-strong);background:var(--surface-2)}
+.avatar{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,#8CA3FF,#C6D2FF);display:grid;place-items:center;font-size:10.5px;color:#26317A;font-weight:600}
+
+/* ============ 布局 ============ */
+main{max-width:1440px;margin:0 auto;padding:26px 24px 80px}
+.view{display:none;animation:in 180ms var(--ease)}
+.view.on{display:block}
+@keyframes in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:18px;flex-wrap:wrap}
+.crumb{font-size:11px;letter-spacing:.14em;color:var(--faint);text-transform:uppercase;font-family:var(--mono)}
+h1{font-size:26px;line-height:1.25;font-weight:650;letter-spacing:-.015em;margin-top:6px}
+h1 em{font-style:normal;color:var(--accent);margin-left:.4em}
+.lede{font-size:13px;color:var(--dim);margin-top:6px;max-width:70ch;line-height:1.8}
+.head-meta{display:flex;gap:26px;font-size:12px;color:var(--faint)}
+.head-meta b{display:block;font-family:var(--mono);font-size:15px;color:var(--ink);font-weight:600;letter-spacing:-.01em;margin-top:2px}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm)}
+.section{margin-top:18px}
+.section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.section-title h2{font-size:15px;font-weight:600;letter-spacing:-.005em}
+.section-title .hint{font-size:12px;color:var(--faint)}
+
+/* ============ 按钮 ============ */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9px;font-size:13px;
+  border:1px solid var(--line);background:var(--surface);color:var(--ink);
+  transition:background var(--t) var(--ease),border-color var(--t) var(--ease),transform 80ms var(--ease),box-shadow var(--t);
+}
+.btn:hover{background:var(--surface-2);border-color:var(--line-strong)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 1px 2px rgba(61,90,254,.3)}
+.btn.primary:hover{background:#2F49E0;border-color:#2F49E0}
+.btn.ghost{border-color:transparent;color:var(--dim)}
+.btn.ghost:hover{background:var(--surface-2);color:var(--ink)}
+.btn.sm{padding:6px 10px;font-size:12.5px;border-radius:8px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn svg{width:15px;height:15px}
+
+/* ============ 折叠条（原图的 ▶ 行） ============ */
+.disclose{
+  border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden;
+  transition:border-color var(--t) var(--ease),box-shadow var(--t) var(--ease);
+}
+.disclose + .disclose{margin-top:10px}
+.disclose:hover{border-color:var(--line-strong);box-shadow:var(--shadow-sm)}
+.disclose summary{
+  list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;
+  padding:12px 14px;font-size:13.5px;color:var(--ink);
+  transition:background var(--t) var(--ease);
+}
+.disclose summary::-webkit-details-marker{display:none}
+.disclose summary:hover{background:var(--surface-2)}
+.disclose .chev{width:16px;height:16px;color:var(--faint);transition:transform 180ms var(--ease),color var(--t)}
+.disclose[open] .chev{transform:rotate(90deg);color:var(--accent)}
+.disclose .tagline{margin-left:auto;font-size:11.5px;color:var(--faint);font-family:var(--mono)}
+.disclose .body{padding:2px 14px 14px 40px;font-size:13px;color:var(--dim);line-height:1.85;border-top:1px solid var(--line);background:var(--surface-2)}
+.disclose .body p + p{margin-top:8px}
+
+/* ============ 表格（任务概况，修正行距） ============ */
+.table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+.table th{
+  text-align:left;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--faint);font-weight:500;padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap;
+}
+.table td{padding:14px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.75}
+.table tr:last-child td{border-bottom:0}
+.table tbody tr{transition:background var(--t) var(--ease);cursor:pointer}
+.table tbody tr:hover{background:var(--surface-2)}
+.task-title{font-size:13.5px;font-weight:500;line-height:1.7}
+.task-sub{margin-top:6px;font-size:12px;color:var(--faint);display:flex;gap:8px;align-items:center}
+.task-sub .step{color:var(--dim);background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:11.5px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.chip.ok{color:var(--ok);border-color:#BFE3D9;background:var(--ok-soft)}
+.chip.run{color:var(--warn);border-color:#F0D9BC;background:var(--warn-soft)}
+.num{font-family:var(--mono);font-size:12px;color:var(--dim)}
+
+/* ============ 总览仪表盘 ============ */
+.banner{display:flex;align-items:center;gap:10px;padding:13px 18px;background:var(--surface);border:1px solid var(--line);border-radius:12px;margin-bottom:14px}
+.dot-live{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(14,122,99,.12);flex:0 0 8px}
+.banner-t{font-size:13.5px;font-weight:550}
+.banner-s{font-size:12px;color:var(--faint)}
+.banner-a{margin-left:auto;font-size:12.5px;color:var(--accent);cursor:pointer;padding:6px 10px;border-radius:8px;white-space:nowrap;transition:background var(--t) var(--ease)}
+.banner-a:hover{background:var(--accent-soft)}
+
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.kpi-card{
+  background:var(--surface);border:1px solid var(--line);border-top:3px solid var(--line-strong);
+  border-radius:12px;padding:16px 18px 14px;display:flex;flex-direction:column;
+  transition:border-color var(--t) var(--ease),box-shadow var(--t) var(--ease),transform 120ms var(--ease);
+}
+.kpi-card:hover{box-shadow:var(--shadow);transform:translateY(-1px)}
+.kpi-card.warn{border-top-color:#D99A2B}
+.kpi-card.bad{border-top-color:#D2534E}
+.kpi-card .k{font-size:12px;color:var(--dim)}
+.kpi-card .n{font-size:34px;font-weight:650;letter-spacing:-.025em;line-height:1.1;margin-top:8px}
+.kpi-card .n small{font-size:12px;font-weight:400;color:var(--faint);letter-spacing:0;margin-left:6px}
+.kpi-card .s{font-size:12px;line-height:1.75;color:var(--faint);margin-top:8px}
+.kpi-a{margin-top:auto;padding-top:14px;font-size:12.5px;color:var(--accent);cursor:pointer;align-self:flex-start;white-space:nowrap;transition:color var(--t)}
+.kpi-a:hover{color:#2F49E0;text-decoration:underline;text-underline-offset:3px}
+
+.pipeline{display:grid;grid-template-columns:repeat(4,1fr)}
+.step{padding:16px 18px 16px 0;border-top:1px solid var(--line);position:relative}
+.step:first-child{padding-left:0}
+.step + .step{padding-left:18px}
+.step + .step:before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:1px;background:var(--line)}
+.step .no{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--faint)}
+.step .nm{font-size:13.5px;font-weight:500;margin-top:6px}
+.step .sd{font-size:11.5px;color:var(--faint);margin-top:4px}
+
+.group2{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:start}
+.taglist{display:flex;gap:8px;flex-wrap:wrap}
+.tagpill{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 11px;font-size:12.5px;color:var(--dim);transition:all var(--t) var(--ease);cursor:default}
+.tagpill:hover{border-color:var(--line-strong);color:var(--ink)}
+.tagpill.warn{border-color:#EFDDBE;background:var(--warn-soft);color:#8A5A16}
+.hint-link{font-size:12.5px;color:var(--accent);cursor:pointer}
+.hint-link:hover{text-decoration:underline;text-underline-offset:3px}
+
+.proj-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.proj-card{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:12px 14px;font-size:13px;cursor:pointer;transition:all var(--t) var(--ease)}
+.proj-card:hover{border-color:var(--accent);box-shadow:var(--shadow-sm);transform:translateY(-1px)}
+.proj-card .pc-link{font-size:11.5px;color:var(--faint);white-space:nowrap}
+.proj-card:hover .pc-link{color:var(--accent)}
+
+.task-card{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:16px 18px;transition:border-color var(--t) var(--ease),box-shadow var(--t) var(--ease)}
+.task-card:hover{box-shadow:var(--shadow)}
+.tc-head{display:flex;align-items:center;gap:10px}
+.tc-date{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.tc-body{font-size:13px;line-height:1.85;color:var(--dim);margin-top:10px}
+.tc-next{color:var(--ink)}
+.tc-meta{display:flex;gap:12px;align-items:center;margin-top:12px;font-size:11.5px;color:var(--faint)}
+.tc-saved{padding:2px 8px;border:1px solid var(--line);border-radius:6px;font-family:var(--mono);font-size:10px}
+.tc-link{display:inline-block;margin-top:12px;font-size:12.5px;color:var(--accent);cursor:pointer}
+.tc-link:hover{text-decoration:underline;text-underline-offset:3px}
+
+@media (max-width:1200px){
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .pipeline{grid-template-columns:repeat(2,1fr)}
+  .group2{grid-template-columns:1fr}
+  .proj-cards{grid-template-columns:1fr}
+}
+/* ============ 勾选网格（原图的 4 列复选框） ============ */.checkgrid{border:1px solid var(--line);border-radius:10px;background:var(--surface);max-height:260px;overflow:auto;padding:6px}
+.checkgrid-head{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:1}
+.checkrow{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;cursor:pointer;transition:background var(--t) var(--ease)}
+.checkrow:hover{background:var(--accent-soft)}
+.checkrow input{position:absolute;opacity:0;pointer-events:none}
+.cbox{width:16px;height:16px;border:1.5px solid var(--line-strong);border-radius:5px;background:#fff;flex:0 0 16px;display:grid;place-items:center;transition:all var(--t) var(--ease)}
+.cbox svg{width:11px;height:11px;color:#fff;opacity:0;transform:scale(.6);transition:all var(--t) var(--ease)}
+.checkrow input:checked + .cbox,.checkgrid-head input:checked + .cbox{background:var(--accent);border-color:var(--accent)}
+.checkrow input:checked + .cbox svg,.checkgrid-head input:checked + .cbox svg{opacity:1;transform:none}
+.checkrow input:focus-visible + .cbox{box-shadow:0 0 0 3px rgba(61,90,254,.18)}
+.checkrow .nm{font-size:12.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:0 8px}
+
+/* ============ 表单（AI 批量建议） ============ */
+.form{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+.field select,.field textarea,.field input{width:100%}
+.field select[data-pretty]{display:none}
+
+/* ============ 自绘下拉（替换原生 select） ============ */
+.picker{position:relative}
+.picker-btn{
+  display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;text-align:left;
+  border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);
+  font-size:13px;color:var(--ink);line-height:1.5;
+  transition:border-color var(--t) var(--ease),box-shadow var(--t) var(--ease),background var(--t) var(--ease);
+}
+.picker-btn:hover{border-color:var(--line-strong);background:var(--surface-2)}
+.picker-btn[aria-expanded="true"]{border-color:var(--accent);box-shadow:0 0 0 3px rgba(61,90,254,.14);background:var(--surface)}
+.picker-btn .lbl{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.picker-btn .chev{width:16px;height:16px;flex:0 0 16px;color:var(--faint);transition:transform 180ms var(--ease),color var(--t)}
+.picker-btn[aria-expanded="true"] .chev{transform:rotate(180deg);color:var(--accent)}
+.picker-menu{
+  position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:70;
+  background:var(--surface);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 14px 34px rgba(18,20,26,.14),0 2px 6px rgba(18,20,26,.06);
+  padding:5px;max-height:268px;overflow:auto;display:none;
+}
+.picker.open .picker-menu{display:block;animation:pop 130ms var(--ease)}
+@keyframes pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.picker-opt{
+  display:flex;align-items:flex-start;gap:9px;padding:8px 10px;border-radius:7px;
+  font-size:13px;line-height:1.55;color:var(--ink);cursor:pointer;
+  transition:background var(--t) var(--ease);
+}
+.picker-opt + .picker-opt{margin-top:1px}
+.picker-opt:hover,.picker-opt.active{background:var(--accent-soft)}
+.picker-opt .tick{width:15px;height:15px;flex:0 0 15px;margin-top:1px;color:var(--accent);opacity:0;transform:scale(.7);transition:all var(--t) var(--ease)}
+.picker-opt[aria-selected="true"]{font-weight:550;background:var(--accent-soft)}
+.picker-opt[aria-selected="true"] .tick{opacity:1;transform:none}
+.picker-opt .sub{display:block;font-size:11.5px;color:var(--faint);margin-top:2px;font-weight:400}
+.field textarea{min-height:76px;resize:vertical}
+.field .help{font-size:11.5px;color:var(--faint)}
+.form-actions{display:flex;align-items:center;gap:10px;margin-top:14px}
+.preview{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px;font-size:12.5px;color:var(--dim);line-height:1.9}
+.preview b{color:var(--ink)}
+
+/* ============ 清洗区 ============ */
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--line)}
+.toolbar .sp{margin-left:auto;display:flex;gap:8px}
+.doc{border-top:1px solid var(--line);padding:16px 18px}
+.doc:first-of-type{border-top:0}
+.doc-head{display:flex;align-items:center;gap:10px}
+.doc-head .t{font-size:14px;font-weight:550}
+.doc-head .meta{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.doc .quote{
+  max-width:72ch;margin-top:12px;padding:12px 14px;border-left:2px solid var(--line-strong);background:var(--surface-2);
+  border-radius:0 8px 8px 0;font-size:12.5px;line-height:1.9;color:var(--dim);
+}
+.doc .quote b{color:var(--ink);font-weight:550}
+
+/* ============ 流程图 ============ */
+.canvas-wrap{position:relative;border:1px solid var(--line);border-radius:12px;background:#fff;overflow:hidden;height:520px}
+.canvas-wrap svg{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+.canvas-wrap svg.dragging{cursor:grabbing}
+.zoom-bar{
+  position:absolute;right:12px;top:12px;display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.94);
+  border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:var(--shadow-sm);
+}
+.zoom-bar button{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--dim)}
+.zoom-bar button:hover{background:var(--surface-2);color:var(--ink)}
+.zoom-bar .level{font-family:var(--mono);font-size:11px;color:var(--dim);padding:0 6px;min-width:44px;text-align:center}
+.seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px}
+.seg button{padding:6px 12px;border-radius:7px;font-size:12.5px;color:var(--dim);transition:all var(--t) var(--ease)}
+.seg button:hover{color:var(--ink)}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-sm);font-weight:550}
+
+/* ============ 提示 ============ */
+.toast{
+  position:fixed;left:50%;bottom:24px;transform:translate(-50%,8px);z-index:90;
+  background:var(--ink);color:#fff;font-size:12.5px;padding:9px 16px;border-radius:10px;
+  opacity:0;pointer-events:none;transition:opacity 160ms var(--ease),transform 160ms var(--ease);
+}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+.hintbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(255,255,255,.94);backdrop-filter:blur(10px);
+  border-top:1px solid var(--line);font-size:11.5px;color:var(--faint);
+}
+.hintbar .in{max-width:1440px;margin:0 auto;padding:8px 24px;display:flex;gap:18px;align-items:center}
+.hintbar kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--line);border-radius:4px;padding:1px 6px;color:var(--dim);background:var(--surface)}
+.hintbar .right{margin-left:auto}
+
+/* ============ 总览 v2：少字、多看 ============ */
+.runline{display:flex;align-items:center;gap:10px;padding:10px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font-size:12.5px;color:var(--dim);margin-bottom:14px}
+.runline b{color:var(--ink);font-weight:550;font-size:13px}
+.runline-time{color:var(--faint)}
+.runline-link{margin-left:auto;color:var(--accent);cursor:pointer;white-space:nowrap}
+.runline-link:hover{text-decoration:underline;text-underline-offset:3px}
+
+.dash2{display:grid;grid-template-columns:1.3fr 1fr;gap:14px}
+.dash2.bottom{margin-top:22px;align-items:start}
+.donut-card{display:flex;align-items:center;gap:30px;padding:22px 24px}
+.donut{
+  width:188px;height:188px;border-radius:50%;position:relative;flex:0 0 188px;cursor:pointer;
+  background:conic-gradient(var(--ok) 0 17.8%, #D99A2B 17.8% 95.4%, #D2534E 95.4% 100%);
+  transition:transform 180ms var(--ease),box-shadow 180ms var(--ease);
+}
+.donut:hover{transform:scale(1.02);box-shadow:0 10px 30px rgba(18,20,26,.10)}
+.donut:after{content:"";position:absolute;inset:26px;border-radius:50%;background:var(--surface)}
+.donut-c{position:absolute;inset:0;display:grid;place-content:center;text-align:center;z-index:1}
+.donut-c b{font-size:36px;font-weight:650;letter-spacing:-.03em;line-height:1.1}
+.donut-c span{font-family:var(--mono);font-size:9px;letter-spacing:.24em;color:var(--faint)}
+.legend{display:flex;flex-direction:column;flex:1;min-width:0}
+.lg-row{display:grid;grid-template-columns:10px 66px 1fr;gap:12px;align-items:center;padding:11px 10px;border-radius:9px;cursor:pointer;transition:background var(--t) var(--ease)}
+.lg-row:hover{background:var(--surface-2)}
+.lg-row i{width:10px;height:10px;border-radius:3px}
+.lg-row b{font-size:26px;font-weight:650;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+.lg-row span{font-size:13px;color:var(--dim)}
+
+.bars-card{display:flex;flex-direction:column;padding:20px 22px 16px}
+.bars-head{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:550}
+.bars{flex:1;display:flex;align-items:flex-end;gap:10px;margin-top:16px;min-height:132px}
+.bar{flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:7px}
+.bar i{display:block;width:100%;height:var(--h);border-radius:6px 6px 2px 2px;background:#E3E8F8;transition:background var(--t) var(--ease),transform var(--t) var(--ease)}
+.bar:hover i{background:#C9D3F5;transform:translateY(-2px)}
+.bar.today i{background:var(--accent)}
+.bar span{font-size:10.5px;color:var(--faint)}
+
+.flow-card{margin-top:14px;padding:6px 14px}
+.flow{display:grid;grid-template-columns:repeat(4,1fr)}
+.flow-node{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:16px 14px;border-radius:10px;position:relative;cursor:pointer;transition:background var(--t) var(--ease)}
+.flow-node:hover{background:var(--surface-2)}
+.flow-node + .flow-node:before{content:"";position:absolute;left:-5px;top:20px;bottom:20px;width:1px;background:var(--line)}
+.fn-no{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.fn-nm{font-size:13px;color:var(--dim)}
+.fn-n{font-family:var(--mono);font-size:17px;font-weight:600;color:var(--ink)}
+.flow-node.now .fn-nm,.flow-node.now .fn-n{color:var(--accent)}
+.flow-node.now:after{content:"";position:absolute;left:14px;top:10px;width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1.7s infinite}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+.proj-card .pc-n{font-family:var(--mono);font-size:12px;color:var(--faint)}
+.proj-card:hover .pc-n{color:var(--accent)}
+
+@media (max-width:1200px){
+  .dash2{grid-template-columns:1fr}
+  .donut-card{flex-wrap:wrap}
+  .flow{grid-template-columns:repeat(2,1fr)}
+  .flow-node + .flow-node:before{display:none}
+}
+/* ============ 响应式 ============ */
+@media (max-width:1200px){
+  .grid4{grid-template-columns:repeat(2,1fr)}
+  .form{grid-template-columns:1fr}
+}
+@media (max-width:960px){
+  .topbar-in{height:auto;flex-wrap:wrap;padding:10px 16px;gap:10px}
+  nav.main{order:3;width:100%;padding-bottom:4px}
+  main{padding:18px 16px 90px}
+  h1{font-size:22px}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="brand" data-go="overview">
+      <span class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 4v10l-7 4-7-4V7z"/><path d="M12 12l7-4M12 12v9M12 12L5 8"/></svg>
+      </span>
+      <b>EvolvMem</b><small>KNOWLEDGE</small>
+    </div>
+
+    <nav class="main" id="nav"></nav>
+
+    <div class="top-right">
+      <button class="icon-btn" title="搜索（/）" data-go="stock">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+      </button>
+      <button class="icon-btn" title="通知">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9a6 6 0 1112 0v4l1.5 3h-15L6 13z"/><path d="M10 19a2 2 0 004 0"/></svg>
+      </button>
+      <button class="user" title="账号">
+        <span class="avatar">江</span>jiangli
+      </button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- 总览 -->
+    <section class="view on" id="view-overview">
+    <div class="page-head">
+      <div><div class="crumb">Workbench / 工作台</div><h1>总览</h1></div>
+      <div class="head-meta"><div>资料<b>14,126</b></div><div>项目<b>33</b></div></div>
+    </div>
+
+    <div class="runline">
+      <span class="dot-live"></span><b>自动处理运行中</b><span class="runline-time">3 分钟前同步</span>
+      <a class="runline-link" data-action="runLog">运行记录 →</a>
+    </div>
+
+    <div class="dash2">
+      <div class="card donut-card">
+        <div class="donut" data-action="toOrganize" title="今日 242 条：43 自动完成 / 188 待判断 / 11 系统问题">
+          <div class="donut-c"><b>242</b><span>TODAY</span></div>
+        </div>
+        <div class="legend">
+          <a class="lg-row" data-action="toExperience"><i style="background:var(--ok)"></i><b>43</b><span>自动完成</span></a>
+          <a class="lg-row" data-action="toOrganize"><i style="background:#D99A2B"></i><b>188</b><span>待你判断</span></a>
+          <a class="lg-row" data-action="toCheckpoint"><i style="background:#D2534E"></i><b>11</b><span>系统问题</span></a>
+        </div>
+      </div>
+
+      <div class="card bars-card">
+        <div class="bars-head"><b>近 7 天自动完成</b><span class="chip ok">↑ 18%</span></div>
+        <div class="bars">
+          <div class="bar" style="--h:52%"><i></i><span>四</span></div>
+          <div class="bar" style="--h:66%"><i></i><span>五</span></div>
+          <div class="bar" style="--h:41%"><i></i><span>六</span></div>
+          <div class="bar" style="--h:74%"><i></i><span>日</span></div>
+          <div class="bar" style="--h:61%"><i></i><span>一</span></div>
+          <div class="bar" style="--h:83%"><i></i><span>二</span></div>
+          <div class="bar today" style="--h:100%"><i></i><span>三</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card flow-card">
+      <div class="flow">
+        <a class="flow-node done" data-action="toOrganize"><span class="fn-no">01</span><span class="fn-nm">采集</span><span class="fn-n">214</span></a>
+        <a class="flow-node now" data-action="toOrganize"><span class="fn-no">02</span><span class="fn-nm">归类</span><span class="fn-n">198</span></a>
+        <a class="flow-node" data-action="toCleaning"><span class="fn-no">03</span><span class="fn-nm">入库</span><span class="fn-n">30</span></a>
+        <a class="flow-node" data-action="toExperience"><span class="fn-no">04</span><span class="fn-nm">召回</span><span class="fn-n">2,148</span></a>
+      </div>
+    </div>
+
+    <div class="dash2 bottom">
+      <div>
+        <div class="section-title"><h2>项目知识</h2><a class="hint-link" data-action="toProjects">全部项目 →</a></div>
+        <div class="proj-cards">
+          <a class="proj-card" data-action="toProjects"><span>进化记忆系统</span><span class="pc-n">12</span></a>
+          <a class="proj-card" data-action="toProjects"><span>蓝鲸</span><span class="pc-n">6</span></a>
+          <a class="proj-card" data-action="toProjects"><span>自动化控制</span><span class="pc-n">4</span></a>
+          <a class="proj-card" data-action="toProjects"><span>Eva 智能客服</span><span class="pc-n">3</span></a>
+          <a class="proj-card" data-action="toProjects"><span>AI采购</span><span class="pc-n">2</span></a>
+        </div>
+      </div>
+      <div>
+        <div class="section-title"><h2>继续上次的任务</h2><a class="hint-link" data-action="toCheckpoint">全部断点 →</a></div>
+        <div class="task-card">
+          <div class="tc-head"><span class="chip run">进行中</span><span class="tc-date">2026/10/21</span></div>
+          <p class="tc-body">修复蓝鲸采集阻塞，补齐 10 月 13 至 17 日数据。</p>
+          <div class="tc-meta"><span>蓝鲸</span><span class="tc-saved">断点 v18</span></div>
+          <a class="tc-link" data-action="toCheckpoint">查看详情 ↗</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+    <!-- 数据清洗 -->
+  <section class="view" id="view-cleaning">
+    <div class="page-head">
+      <div>
+        <div class="crumb">Maintenance / 管理与调整</div>
+        <h1>数据清洗</h1>
+        <p class="lede">清洗只改写正文与来源线索，不改项目归属。规则默认收起，点整行展开。</p>
+      </div>
+      <div class="head-meta"><div>待清洗<b>123</b></div><div>已选<b id="selCount">0</b></div></div>
+    </div>
+
+    <div class="section">
+      <details class="disclose">
+        <summary><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+          清洗规则<span class="tagline">3 / 4 启用 · 影响 123 份</span></summary>
+        <div class="body">
+          <p><b>去重</b>：标题与正文相似度 &gt; 0.92 视为重复，保留最早一条。</p>
+          <p><b>合并</b>：同一 session 的碎片合并为一条，保留来源线索。</p>
+          <p><b>规整</b>：去掉「以上」「完成」这类收尾语与重复前缀。</p>
+        </div>
+      </details>
+      <details class="disclose">
+        <summary><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+          关联已有知识，沿用归属<span class="tagline">命中 18 份</span></summary>
+        <div class="body">
+          <p>系统会在已有知识里找同一主题的条目，沿用它的项目归属，避免同一件事被拆到两个项目。</p>
+          <p>找不到高置信匹配时保持未归属，进入人工队列——<b>不猜</b>。</p>
+        </div>
+      </details>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><h2>待清洗资料</h2><span class="hint">勾选后可批量处理</span></div>
+      <div class="card">
+        <div class="toolbar">
+          <button class="btn sm" id="aiPreview">AI 预览所选</button>
+          <button class="btn sm primary" id="handoff">交给系统整理</button>
+          <button class="btn sm">批量保存 / 删除所选</button>
+          <div class="sp"><span class="chip" id="selChip">未选择</span></div>
+        </div>
+        <div class="doc">
+          <div class="doc-head">
+            <label class="checkrow" style="padding:0"><input type="checkbox" data-doc><span class="cbox"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7"/></svg></span></label>
+            <span class="t">session summary: 用户需求</span><span class="meta">session 1892 · 1,008 字</span>
+          </div>
+          <div class="quote"><b>用户需求</b><br>按 TK 脚本计算 TK 日发货利润，先更新 10 月 17、18 日数据；仓储费补齐 10 月 16–19 日数据，缺少数据需要告知；仓储费从 NAS 已有数据补齐。<br><br><b>原因与分析</b><br>原脚本按当月佣金、税费估算口径计算；仓储费需通过 MSKU 核对。缺口为部分 SKU 头程运费单价和 TK-2 店铺登录状态刷新。</div>
+          <div style="margin-top:10px;display:flex;gap:8px">
+            <button class="btn sm ghost">查看完整上下文</button><button class="btn sm ghost">查看来源会话</button>
+          </div>
+        </div>
+        <div class="doc">
+          <div class="doc-head">
+            <label class="checkrow" style="padding:0"><input type="checkbox" data-doc><span class="cbox"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7"/></svg></span></label>
+            <span class="t">session summary: 蓝鲸补采缺口</span><span class="meta">session 1893 · 764 字</span>
+          </div>
+          <div class="quote"><b>用户需求</b><br>修复蓝鲸采集阻塞，补齐 10 月 13–17 日数据。正常数据先入库、异常跳过后补采，并提前发现卡住情况通知飞书。<br><br><b>原因与分析</b><br>会话句柄在页面改版后失效，直接续采会在同一处反复失败；应重建会话后再续采。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><h2>AI 批量建议</h2><span class="hint">可选 · 预览后再决定是否落库</span></div>
+      <div class="card" style="padding:18px">
+        <div class="form">
+          <div class="field">
+            <label for="model">判断模型</label>
+            <select id="model" data-pretty>
+              <option>自动选择（失败时切换备用模型）</option>
+              <option>快速模型 · 便宜，适合大量资料</option>
+              <option>精确模型 · 慢，用于拿不准的条目</option>
+            </select>
+            <span class="help">自动选择会先用快速模型，置信度低于 0.6 的条目再交给精确模型。</span>
+          </div>
+          <div class="field">
+            <label for="scope">本次处理哪些资料</label>
+            <select id="scope" data-pretty>
+              <option>只处理正在看的这一条</option>
+              <option>处理已勾选的资料</option>
+              <option>处理当前页全部资料</option>
+            </select>
+            <span class="help">建议先小范围预览，确认判断口径一致后再扩大范围。</span>
+          </div>
+          <div class="field" style="grid-column:1/-1">
+            <label for="note">补充说明（选填）</label>
+            <textarea id="note" placeholder="例如：这批资料都属于 TK 日发货，遇到 MSKU 相关的内容优先归到「美客多广告&销量下载+利润计算」。"></textarea>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn primary" id="runAI">预览建议</button>
+          <span style="color:var(--faint);font-size:12px">生成建议不会写入数据库</span>
+        </div>
+        <div class="preview" id="aiResult" hidden></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 存量资料 -->
+  <section class="view" id="view-stock">
+    <div class="page-head">
+      <div>
+        <div class="crumb">Maintenance / 管理与调整</div>
+        <h1>存量资料</h1>
+        <p class="lede">按项目筛选后再批量归属。项目名很长时用省略号，不换行。</p>
+      </div>
+      <div class="head-meta"><div>资料<b>14,126</b></div><div>筛选后<b id="stockCount">12</b></div></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><h2>选择项目</h2><span class="hint">支持搜索 · 已选 2 个</span></div>
+      <div class="checkgrid">
+        <div class="checkgrid-head">
+          <label class="checkrow" style="padding:0;gap:9px">
+            <input type="checkbox" id="allProj"><span class="cbox"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7"/></svg></span>
+            <span class="nm" style="font-weight:550">全选</span>
+          </label>
+          <span style="margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--faint)">33 个项目</span>
+        </div>
+        <div class="grid4" id="projgrid"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><h2>资料列表</h2><span class="hint">行可直接进入详情</span></div>
+      <div class="card">
+        <table class="table">
+          <thead><tr><th style="width:28px"></th><th style="width:42%">资料</th><th>项目</th><th>类型</th><th>状态</th><th>更新</th></tr></thead>
+          <tbody id="stockbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 工作原理 -->
+  <section class="view" id="view-how">
+    <div class="page-head">
+      <div>
+        <div class="crumb">Maintenance / 管理与调整</div>
+        <h1>工作原理</h1>
+        <p class="lede">新会话怎样成为以后可用的资料。图支持滚轮缩放、拖拽平移，右上角可一键复位。</p>
+      </div>
+      <div class="head-meta"><div>节点<b>9</b></div><div>当前缩放<b id="zoomLabel">100%</b></div></div>
+    </div>
+
+    <div class="section">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <div class="seg" id="howtabs"><button class="on">完整流程</button><button>页面职责</button><button>入库活动</button><button>知识召回</button></div>
+        <span style="color:var(--faint);font-size:12px">滚轮缩放 · 按住拖拽 · 双击复位</span>
+        <button class="btn sm ghost" style="margin-left:auto" id="expand">放大查看</button>
+      </div>
+      <div class="canvas-wrap" id="canvasWrap">
+        <div class="zoom-bar">
+          <button id="zoomOut" title="缩小">−</button>
+          <span class="level" id="level">100%</span>
+          <button id="zoomIn" title="放大">＋</button>
+          <button id="zoomReset" title="复位"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10a8 8 0 1114 5"/><path d="M4 5v5h5"/></svg></button>
+        </div>
+        <svg id="diagram" viewBox="0 0 1000 520" xmlns="http://www.w3.org/2000/svg">
+          <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B9BFCC"/></marker></defs>
+          <g id="panGroup">
+            <rect x="0" y="0" width="1000" height="520" fill="#fff"/>
+            <g font-family="Noto Sans SC, sans-serif" font-size="13">
+              <rect x="380" y="24" width="240" height="46" rx="10" fill="#F2F4F8" stroke="#DDE1E9"/>
+              <text x="500" y="52" text-anchor="middle" fill="#12141A">新会话 / 旧待整理资料</text>
+              <rect x="380" y="110" width="240" height="52" rx="10" fill="#fff" stroke="#DDE1E9"/>
+              <text x="500" y="132" text-anchor="middle" fill="#12141A">复用重复内容，保存来源</text>
+              <text x="500" y="150" text-anchor="middle" fill="#8A91A0" font-size="11">来源线索不丢</text>
+              <path d="M500 162 L500 200" fill="none" stroke="#B9BFCC" marker-end="url(#arrow)"/>
+              <text x="512" y="185" fill="#8A91A0" font-size="11">核对来源</text>
+              <path d="M500 200 L640 250 L500 300 L360 250 Z" fill="#FFF7E8" stroke="#E4C98B"/>
+              <text x="500" y="256" text-anchor="middle" fill="#12141A">业务会话？</text>
+              <path d="M500 300 L500 344" fill="none" stroke="#B9BFCC" marker-end="url(#arrow)"/>
+              <text x="512" y="326" fill="#8A91A0" font-size="11">是</text>
+              <rect x="380" y="344" width="240" height="52" rx="10" fill="#fff" stroke="#DDE1E9"/>
+              <text x="500" y="366" text-anchor="middle" fill="#12141A">按需求识别完整任务</text>
+              <text x="500" y="384" text-anchor="middle" fill="#8A91A0" font-size="11">拆成可入库的资料</text>
+              <path d="M360 250 L230 250 L230 344" fill="none" stroke="#B9BFCC" marker-end="url(#arrow)"/>
+              <text x="242" y="238" fill="#8A91A0" font-size="11">否 · 系统子会话</text>
+              <rect x="110" y="344" width="240" height="76" rx="10" fill="#FFF7E8" stroke="#E4C98B"/>
+              <text x="230" y="374" text-anchor="middle" fill="#12141A">只留原文</text>
+              <text x="230" y="394" text-anchor="middle" fill="#8A91A0" font-size="11">不进入业务召回</text>
+              <path d="M500 396 L500 440" fill="none" stroke="#B9BFCC" marker-end="url(#arrow)"/>
+              <rect x="380" y="440" width="240" height="52" rx="10" fill="#EEF1FF" stroke="#C7D2FF"/>
+              <text x="500" y="462" text-anchor="middle" fill="#3D5AFE">等待归类 → 入库 → 可召回</text>
+              <text x="500" y="480" text-anchor="middle" fill="#7B87B0" font-size="11">项目归属缺失时停在人工队列</text>
+            </g>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- 自动整理 -->
+  <section class="view" id="view-organize">
+    <div class="page-head">
+      <div>
+        <div class="crumb">Workbench / 工作台</div>
+        <h1>自动整理</h1>
+        <p class="lede">系统按词表和来源给出归属建议，人只做采纳或忽略。建议先挂起，采纳才写回。</p>
+        <p class="lede" style="margin-top:4px;color:var(--faint)">这里的每一条都是<b style="color:var(--dim)">已归属会话</b>里抽出的知识条目，卡在条目级判断——和「项目历史 → 待入库项目」（会话还没归属）不是同一个队列。</p>
+      </div>
+      <div class="head-meta"><div>待采纳<b id="rgPending">3</b></div><div>覆盖资料<b id="rgDocs">46</b></div></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <div class="seg" id="orgTabs">
+        <button class="on" data-otab="review">审查分组</button>
+        <button data-otab="principles">原则</button>
+        <button data-otab="pipeline">流水线</button>
+      </div>
+      <button class="btn sm ghost" style="margin-left:auto" data-action="rgNew">＋ 新建议</button>
+    </div>
+    <div id="org-review">
+      <div class="card">
+        <table class="table">
+          <thead><tr><th style="width:40%">指导</th><th style="width:14%">项目</th><th style="width:24%">范围与条件</th><th style="width:9%">状态</th><th>操作</th></tr></thead>
+          <tbody id="rgBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="org-principles" hidden><div id="prBody" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px"></div></div>
+    <div id="org-pipeline" hidden>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:18px;align-items:start">
+        <div class="card" style="padding:4px 18px"><div id="pipeBody"></div>
+          <div style="padding:14px 0;display:flex;gap:8px">
+            <button class="btn primary sm" data-action="pipeRun">运行预检</button>
+            <button class="btn sm ghost" data-action="pipeReset">重置</button>
+          </div>
+        </div>
+        <div class="card" style="padding:18px">
+          <div class="section-title" style="margin-bottom:8px"><h2>模型对比</h2><span class="hint">300 条样本</span></div>
+          <div style="font-size:12.5px;line-height:2.1;color:var(--dim)">抽取准确率 <b style="color:var(--ink)">92%</b><br>归类自动率 <b style="color:var(--ink)">88.5%</b><br>人工返工率 <b style="color:var(--ink)">6.2%</b><br>平均入库耗时 <b style="color:var(--ink)">3.4s</b></div>
+          <p style="font-size:12px;line-height:1.9;color:var(--faint);margin-top:12px;border-top:1px solid var(--line);padding-top:10px">同一批样本上对比两个抽取 prompt，决定是否切换默认版本。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 项目知识 -->
+  <section class="view" id="view-projects">
+    <div class="page-head">
+      <div>
+        <div class="crumb">Results / 整理成果</div>
+        <h1>项目知识</h1>
+        <p class="lede">每个项目一份记忆。点「打开」看这个项目的资料与待整理数量，再决定资料归到哪。</p>
+      </div>
+      <div class="head-meta"><div>项目<b id="pjCount">8</b></div><div>资料<b id="docCount">30</b></div></div>
+    </div>
+    <div class="section"><div class="card">
+      <table class="table">
+        <thead><tr><th style="width:30%">项目</th><th>资料</th><th>待整理</th><th>最近更新</th><th>操作</th></tr></thead>
+        <tbody id="projBody"></tbody>
+      </table>
+    </div></div>
+    <div class="section">
+      <div class="section-title"><h2>项目历史 · 待入库项目</h2><span class="hint">0 条</span></div>
+      <div class="card" style="padding:30px 24px;text-align:center">
+        <div style="font-size:15px;font-weight:600">没有待归类资料</div>
+        <p style="font-size:12.5px;color:var(--dim);line-height:1.95;max-width:66ch;margin:8px auto 0">
+          所有会话都已经归属到项目，所以这里是 0。<br>
+          自动整理里还有 <b style="color:var(--ink)">188 条待判断</b>，那是从这些会话里抽出来的<b style="color:var(--ink)">知识条目</b>，卡在条目级（归属有歧义 / 内容待确认），不是会话没归类。
+        </p>
+        <div style="margin-top:16px;display:flex;gap:8px;justify-content:center">
+          <button class="btn sm primary" data-action="toOrganize">去自动整理处理 188 条</button>
+          <button class="btn sm ghost" data-action="toCleaning">看数据清洗</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" id="projDetail" hidden>
+      <div class="section-title"><h2 id="pdTitle">项目</h2><button class="btn sm ghost" data-action="pdClose">收起</button></div>
+      <div class="card" style="padding:0">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line)" id="pdStats"></div>
+        <div id="pdBody" style="padding:4px 0"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 经验知识 -->
+  <section class="view" id="view-experience">
+    <div class="page-head">
+      <div>
+        <div class="crumb">Results / 整理成果</div>
+        <h1>经验知识</h1>
+        <p class="lede">把经验、方法、决策整理成可检索的问答，来源仍指向原始资料。同一问题出现不同答案时先挂起。</p>
+      </div>
+      <div class="head-meta"><div>已验证<b>4</b></div><div>有冲突<b>1</b></div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 400px;gap:18px;align-items:start">
+      <div class="card" style="padding:0">
+        <div class="toolbar"><input id="qaSearch" placeholder="搜索问题或答案…" style="flex:1"><button class="btn sm" data-action="qaNew">＋ 新增问答</button></div>
+        <div id="qaList"></div>
+      </div>
+      <div class="card" id="qaDetail" style="padding:18px;position:sticky;top:80px"></div>
+    </div>
+  </section>
+
+  <!-- 任务断点 -->
+  <section class="view" id="view-checkpoint">
+    <div class="page-head">
+      <div>
+        <div class="crumb">Results / 整理成果</div>
+        <h1>任务断点</h1>
+        <p class="lede">每个断点记着「下一步做什么」，接着做的时候不用重新读一遍上下文。</p>
+      </div>
+      <div class="head-meta"><div>进行中<b id="cpRun">3</b></div><div>已完成<b id="cpDone">2</b></div></div>
+    </div>
+    <div class="section"><div class="card" id="cpBody" style="padding:6px 0"></div></div>
+    <div class="section">
+      <div class="section-title"><h2>任务概况</h2><span class="hint">点击一行查看任务详情 · 行距 14px</span></div>
+      <div class="card">
+        <table class="table">
+          <thead><tr><th style="width:46%">任务概况</th><th>项目</th><th>状态</th><th>断点版本</th><th>更新日期</th></tr></thead>
+          <tbody id="taskbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 整理规则 -->
+  <section class="view" id="view-rules">
+    <div class="page-head">
+      <div>
+        <div class="crumb">Maintenance / 管理与调整</div>
+        <h1>整理规则</h1>
+        <p class="lede">入库条件是机器读的 JSON，整理规则是给 AI 的 SKILL.md。改完先预览影响，再保存。</p>
+      </div>
+      <div class="head-meta"><div>版本<b>d4c1a9f8</b></div><div>规则<b>4</b></div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:18px;align-items:start">
+      <div class="card" style="padding:18px">
+        <div class="section-title" style="margin-bottom:8px"><h2>入库条件</h2><span class="hint">settings.json</span></div>
+        <textarea id="rulesJson" style="width:100%;min-height:260px;font-family:var(--mono);font-size:12px;line-height:1.8">{
+  "max_body_chars": 100000,
+  "auto_publish_confidence": 0.85,
+  "review_confidence": 0.6,
+  "archive_after_days": 90,
+  "require_project": true,
+  "blocked_types": []
+}</textarea>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn primary sm" data-action="rulesSave">保存规则</button>
+          <button class="btn sm ghost" data-action="rulesPreview">预览影响</button>
+        </div>
+        <div class="preview" id="rulesResult" hidden></div>
+      </div>
+      <div class="card" style="padding:18px">
+        <div class="section-title" style="margin-bottom:8px"><h2>SKILL.md</h2><span class="hint">整理规则</span></div>
+        <textarea id="skillMd" style="width:100%;min-height:260px;font-family:var(--mono);font-size:12px;line-height:1.8"># EvolvMem 知识库管理 Skill
+
+## 入库条件
+- 置信度 ≥ 0.85 自动入库
+- 0.6 – 0.85 进入人工队列
+- < 0.6 只保留候选
+
+## 资料类型
+reference / fact / decision / experience / playbook...</textarea>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn primary sm" data-action="skillSave">保存 Skill</button>
+          <button class="btn sm ghost" data-action="skillDownload">下载文件</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+<div class="hintbar">
+  <div class="in">
+    <span><kbd>/</kbd> 搜索</span><span><kbd>g</kbd> 切换视图</span><span><kbd>esc</kbd> 关闭</span>
+    <span class="right">改版副本 · 数据为演示数据，不影响线上</span>
+  </div>
+</div>
+
+<script>
+const ICONS = {
+  overview:'<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
+  organize:'<path d="M4 7h9M4 12h6M4 17h11"/><path d="M17 5l3 3-3 3"/>',
+  projects:'<path d="M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  experience:'<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 00-3.5 10.9c.3.3.5.7.5 1.1V16h6v-1c0-.4.2-.8.5-1.1A6 6 0 0012 3z"/>',
+  checkpoint:'<path d="M6 3v18"/><path d="M6 4h11l-1.5 4L17 12H6"/>',
+  cleaning:'<path d="M4 5h16M7 5l1 15h8l1-15"/><path d="M10 9v7M14 9v7"/>',
+  stock:'<rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 002 2h10a2 2 0 002-2V9"/><path d="M10 13h4"/>',
+  rules:'<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  how:'<circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M8.4 6h7.2M7 8l4 8M17 8l-4 8"/>'
+};
+const NAV = [
+  ['overview','总览'],['organize','自动整理'],['projects','项目知识'],['experience','经验知识'],['checkpoint','任务断点'],
+  ['sep'],['cleaning','数据清洗'],['stock','存量资料'],['rules','整理规则'],['how','工作原理']
+];
+const nav = document.getElementById('nav');
+nav.innerHTML = NAV.map(n => n[0] === 'sep'
+  ? '<span class="navsep"></span>'
+  : `<a class="navitem" href="#${n[0]}" data-view="${n[0]}">
+       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICONS[n[0]]}</svg>${n[1]}
+     </a>`).join('');
+
+/* ---------- 路由 ---------- */
+function route(){
+  const id = (location.hash || '#overview').slice(1);
+  const ok = ['overview','organize','projects','experience','checkpoint','cleaning','stock','rules','how'].includes(id) ? id : 'overview';
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'view-' + ok));
+  document.querySelectorAll('.navitem').forEach(a => a.classList.toggle('on', a.dataset.view === ok));
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+window.addEventListener('hashchange', route);
+document.querySelectorAll('[data-go]').forEach(el => el.addEventListener('click', () => location.hash = el.dataset.go));
+
+/* ---------- 任务表 ---------- */
+const TASKS = [
+  ['核对 NAS 每日美客多平台仓库存快照的缺失日期，并从真实历史库存来源补齐对应日期。', '下一步：切换至缺失日期并核对日结余库存是否随所选日期变化，确认与原库存快照的差异。', '平台仓', 'run', 3],
+  ['修复蓝鲸采集阻塞，补齐 10 月 13 至 17 日数据。正常数据先入库、异常跳过后补采，并提前发现卡住情况通知飞书。', '下一步：用户确认重新登录后，先核对当前源站状态，再恢复 fcap-20261021070003-d89fc8 的 5 个异常后补跑。', '蓝鲸', 'run', 18],
+  ['核对产品管理表 IT 视图的抛光机识别逻辑，一致后将 10 月 19 日起三个月仓储费减免加入现有 skill。', '下一步：实现 2026-10-19 至 2027-01-18 的逐业务日仓储费减免，保留换标费和既有 NAS 成果。', '海外仓 仓储费', 'run', 2],
+  ['按 MSKU 库存和当期销售资格规则重算并更新截至 2026-10-19 的美客多日发货数据。', '下一步：后续核算沿用新资格规则，并取得对应 MSKU 库存证据及记录快照时点。', '美客多广告&销量下载', 'ok', 3],
+  ['让管理员登录后自助查看和复制自己的店铺授权 API Key，并按账户状态验明个人调用凭据。', '下一步：管理员登录后打开我的 API Key，首次点击生成我的密钥并复制到调用程序。', '自动化控制', 'ok', 3]
+];
+document.getElementById('taskbody').innerHTML = TASKS.map(([t, next, proj, st, ver]) => `
+  <tr data-edit>
+    <td><div class="task-title">${t}</div><div class="task-sub"><span class="step">${next}</span></div></td>
+    <td>${proj}</td>
+    <td><span class="chip ${st === 'ok' ? 'ok' : 'run'}">${st === 'ok' ? '已完成' : '进行中'}</span></td>
+    <td class="num">${ver}</td>
+    <td class="num">2026/10/21</td>
+  </tr>`).join('');
+
+/* ---------- 勾选与计数 ---------- */
+const toastEl = document.getElementById('toast');
+let toastT;
+function toast(msg){ toastEl.textContent = msg; toastEl.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove('on'), 1900); }
+
+function syncSel(){
+  const n = document.querySelectorAll('[data-doc]:checked').length;
+  const chip = document.getElementById('selChip');
+  document.getElementById('selCount').textContent = n;
+  chip.textContent = n ? `已选 ${n} 份` : '未选择';
+  chip.classList.toggle('ok', n > 0);
+  document.querySelectorAll('[data-doc]').forEach(cb => {
+    const row = cb.closest('.doc');
+    if (row) row.style.background = cb.checked ? 'var(--accent-soft)' : '';
+  });
+}
+document.querySelectorAll('[data-doc]').forEach(cb => cb.addEventListener('change', syncSel));
+syncSel();
+
+/* ---------- AI 建议 ---------- */
+document.getElementById('runAI').addEventListener('click', () => {
+  const box = document.getElementById('aiResult');
+  box.hidden = false;
+  box.innerHTML = `
+    <b>预览结果</b>（未写入数据库）<br>
+    · session summary: 用户需求 → <b>美客多广告&销量下载+利润计算</b> · 置信 0.91 · 依据：TK 日发货、仓储费、MSKU<br>
+    · session summary: 蓝鲸补采缺口 → <b>蓝鲸</b> · 置信 0.88 · 依据：补采、会话重建、页面切换<br>
+    <span style="color:var(--faint)">3 份因归属冲突保持未归属，会进入人工队列。</span>`;
+  toast('已生成建议 · 预览未落库');
+});
+document.getElementById('aiPreview').addEventListener('click', () => {
+  const n = document.querySelectorAll('[data-doc]:checked').length;
+  if (!n) { toast('先勾选要预览的资料'); return; }
+  document.getElementById('runAI').click();
+  document.getElementById('aiResult').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+document.getElementById('handoff').addEventListener('click', () => {
+  const n = document.querySelectorAll('[data-doc]:checked').length;
+  if (!n) { toast('先勾选资料'); return; }
+  toast(`已把 ${n} 份交给系统整理`);
+});
+
+/* ---------- 项目勾选网格 ---------- */
+const PROJ = ['Codex CLI','DeepSeek Monitor','TK每日发货同步','agent-dsh-collab','AgentOS','AI采购','架构化','自动化控制','蓝鲸','bluewhale-atlas-release','claude-mem','codex','codex-cli','codex-feishu','codex-global-config','DSH'];
+const grid = document.getElementById('projgrid');
+grid.innerHTML = PROJ.map((p, i) => `
+  <label class="checkrow">
+    <input type="checkbox" data-proj ${i === 8 || i === 11 ? 'checked' : ''}>
+    <span class="cbox"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7"/></svg></span>
+    <span class="nm" title="${p}">${p}</span>
+  </label>`).join('');
+document.getElementById('allProj').addEventListener('change', e => {
+  document.querySelectorAll('[data-proj]').forEach(cb => cb.checked = e.target.checked);
+  syncStock();
+});
+grid.addEventListener('change', syncStock);
+function syncStock(){
+  const n = document.querySelectorAll('[data-proj]:checked').length;
+  document.getElementById('stockCount').textContent = n ? n * 6 : 12;
+}
+
+/* ---------- 存量资料表 ---------- */
+const DOCS = [
+  ['执行器打包与更新脚本的边界', 'windows_executor', '操作方法', 'ok', '10-20'],
+  ['约束传空的三种写法', 'evolvmem', '事实 / 业务规则', 'ok', '10-19'],
+  ['页面切换探针脚本', 'dsh', '技术经验', 'candidate', '10-18'],
+  ['批次页移动端宽度修复', '采购', '项目约定', 'ok', '10-17'],
+  ['证书链中间证书缺失', '未归属', '事实 / 业务规则', 'candidate', '10-15']
+];
+document.getElementById('stockbody').innerHTML = DOCS.map(([t, p, ty, st, d]) => `
+  <tr data-edit>
+    <td><label class="checkrow" style="padding:0"><input type="checkbox"><span class="cbox"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7"/></svg></span></label></td>
+    <td><div class="task-title">${t}</div><div class="task-sub">2 个单元 · ${d}</div></td>
+    <td>${p}</td><td>${ty}</td>
+    <td><span class="chip ${st === 'ok' ? 'ok' : ''}">${st === 'ok' ? '已入库' : '待确认'}</span></td>
+    <td class="num">${d}</td></tr>`).join('');
+
+/* ---------- 流程图缩放 / 平移 ---------- */
+(function(){
+  const svg = document.getElementById('diagram');
+  const g = document.getElementById('panGroup');
+  const level = document.getElementById('level');
+  const zoomLabel = document.getElementById('zoomLabel');
+  let scale = 1, tx = 0, ty = 0, dragging = false, sx = 0, sy = 0;
+
+  function render(){
+    g.setAttribute('transform', `translate(${tx} ${ty}) scale(${scale})`);
+    const pct = Math.round(scale * 100) + '%';
+    level.textContent = pct; zoomLabel.textContent = pct;
+  }
+  function zoomAt(cx, cy, factor){
+    const next = Math.min(3, Math.max(.4, scale * factor));
+    const k = next / scale;
+    tx = cx - (cx - tx) * k;
+    ty = cy - (cy - ty) * k;
+    scale = next; render();
+  }
+  svg.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = svg.getBoundingClientRect();
+    zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+  }, { passive: false });
+  svg.addEventListener('pointerdown', e => {
+    dragging = true; sx = e.clientX - tx; sy = e.clientY - ty;
+    svg.classList.add('dragging'); svg.setPointerCapture(e.pointerId);
+  });
+  svg.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    tx = e.clientX - sx; ty = e.clientY - sy; render();
+  });
+  svg.addEventListener('pointerup', e => { dragging = false; svg.classList.remove('dragging'); });
+  svg.addEventListener('dblclick', () => { scale = 1; tx = 0; ty = 0; render(); });
+  document.getElementById('zoomIn').addEventListener('click', () => zoomAt(500, 260, 1.2));
+  document.getElementById('zoomOut').addEventListener('click', () => zoomAt(500, 260, 1 / 1.2));
+  document.getElementById('zoomReset').addEventListener('click', () => { scale = 1; tx = 0; ty = 0; render(); });
+  document.getElementById('expand').addEventListener('click', () => {
+    const wrap = document.getElementById('canvasWrap');
+    wrap.style.height = wrap.style.height === '520px' ? '760px' : '520px';
+    toast(wrap.style.height === '760px' ? '已放大画布' : '已还原画布');
+  });
+  render();
+})();
+
+/* ---------- 表格行、提示 ---------- */
+document.addEventListener('click', e => {
+  const row = e.target.closest('tr[data-edit]');
+  if (row) toast('打开详情（演示）');
+});
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && !/input|textarea/i.test(e.target.tagName)) {
+    e.preventDefault(); location.hash = 'stock';
+    setTimeout(() => document.querySelector('.checkgrid')?.scrollIntoView({ behavior: 'smooth' }), 60);
+  }
+  if (e.key === 'Escape') { location.hash = 'overview'; }
+});
+route();
+</script>
+<script>
+/* ---------- 补上的五个视图：全部本地数据，不请求任何接口 ---------- */
+(function () {
+  const RG = [
+    ['归类到 evolvmem：词表命中 experience_recall / 召回', '进化记忆系统', '类型 = 经验，来源 = session 18xx', 'pending', 26],
+    ['归类到 bluewhale：命中 补采 / 续采 / 页面切换', '蓝鲸数据平台', '类型 = 经验，项目为空', 'pending', 14],
+    ['归类到 codex：命中 模型可见性 / 26.928', 'Codex 客户端', '正文包含版本号', 'accepted', 9],
+    ['留在未归属：同时命中 2 个以上项目的词表', '保持未归属', '词表冲突', 'pending', 6],
+    ['归档：90 天未召回的 reference 类资料', '保持未归属', '类型 = 参考资料，命中 = 0', 'rejected', 31],
+    ['归类到 windows_executor：命中 EXE / WPF / 托盘', 'Windows 执行器', '类型 = 操作方法与经验', 'accepted', 11]
+  ];
+  const PR = [
+    ['项目解析绝不猜测', '归属缺失的资料不进召回池，先经人工确认再入库。宁可少归，不可错归。', '全局', true, 412],
+    ['一条资料只讲一件事', '一次会话混了三个主题就拆成三条；拆不开的留在来源资料，不进知识库。', '全局', true, 268],
+    ['结论必须带依据', '经验类资料要写清复现条件与判断依据，只写结论的进人工队列。', '进化记忆系统', true, 190],
+    ['过时不删，归档', '被新版本取代的资料标记为历史版本或归档，召回时排除。', '全局', true, 155],
+    ['同题不同答先挂起', '同一问题出现不同答案时先保存为待确认，核对来源后再替换。', '进化记忆系统', false, 37]
+  ];
+  const PIPE = [
+    ['采集', 'Codex / DSH / Kimi hook 写入会话', 'ok', '今日 214 条'],
+    ['抽取', 'organization_units 抽出候选资料', 'ok', '今日 198 条'],
+    ['归类', 'project_resolver 给项目归属，绝不猜测', 'warn', '43 条进人工队列'],
+    ['入库', 'context_items 落库 + 04:00 重建向量索引', 'ok', '待入库 30 条'],
+    ['召回', 'MCP experience_recall 返回约束与经验', 'idle', '本周 2,148 次']
+  ];
+  const PROJ = [
+    ['进化记忆系统', 'evolvmem', 12, 4, '10-21', '只跑一次召回是错的：任务开始时召回，结束时只写回。'],
+    ['蓝鲸数据平台', 'bluewhale', 6, 2, '10-20', '补采前先重建 RPA 会话，确认页面切换成功再续采。'],
+    ['Codex 客户端', 'codex', 5, 1, '10-19', '模型列表按 profile 下发，切换后要清缓存再核对。'],
+    ['自动化控制平台', 'automation_control', 4, 1, '10-18', '审批人解析顺序：直属负责人 → 部门负责人 → 上溯两级。'],
+    ['Windows 执行器', 'windows_executor', 3, 1, '10-17', '升级后首启白屏要同时重建托盘资源。'],
+    ['DeepSeek Harness', 'dsh', 3, 0, '10-16', '协同回放保留原始 JSONL 字节，不做行级重排。'],
+    ['采购', 'paid', 2, 1, '10-15', '供应商价格每日 06:10 落 NAS，失败保留上一份快照。'],
+    ['TK 达人建联', 'tk', 2, 0, '10-14', '店铺验证走紫鸟 CLI，账号状态变化后再跑。']
+  ];
+  const QA = [
+    ['召回为空时先查什么？', '先查 constraints 是否传了空串。空串让过滤条件变成 constraints = \'\'，命中直接归零；不传或传 null 才是「无约束」。', '002 · constraints 传空串会让召回归零', 'verified', 128],
+    ['补采失败为什么要重建会话？', '页面改版后旧会话的 DOM 句柄全部失效，直接续采会在同一处反复失败。先重建会话、确认页面切换成功，再按批次续采。', '003 · 补采前先重建 RPA 会话', 'verified', 96],
+    ['升级后首启白屏怎么修？', '同时重建 IconCache 与托盘图标资源。只清 IconCache 或只重启进程都无效。', '004 · 升级后首启白屏', 'conflict', 74],
+    ['向量索引重建期间召回会断吗？', '不会。重建窗口内召回走 FTS5 关键词兜底，命中率下降到约 82%，采集不中断。', '013 · 向量索引 04:00 重建', 'verified', 61],
+    ['一条资料包含多个项目的内容怎么归档？', '按「排除项优先」消歧；仍冲突的留在未归属，进归属待确认队列，不要强行选一个。', '沉淀自审查分组 g4', 'draft', 33],
+    ['为什么归档不是删除？', '归档只退出召回池，记录与来源都保留，随时可以恢复；删除不可逆，只在误入库时用。', '016 · 归档不删除', 'verified', 22]
+  ];
+  const CP = [
+    ['分类器阈值调优', '进化记忆系统', 'run', '按项目分别拟合 0.6 / 0.85 两档阈值，先看中位数分布。', 'v3', '10-21'],
+    ['项目归并 18 个临时工作区', '进化记忆系统', 'run', '已确认 6 个，剩 12 个等 owner 确认；dsh-logistics-* 归 logistics。', 'v2', '10-20'],
+    ['蓝鲸补采 10-13 至 10-17', '蓝鲸数据平台', 'run', '恢复 fcap-20261021070003-d89fc8 的 5 个异常后补跑。', 'v18', '10-21'],
+    ['TK 日发货利润口径', '采购', 'done', '按结算日汇率折算，销量按订单创建日聚合。', 'v3', '10-19'],
+    ['MSKU 库存储备核对', 'TK 达人建联', 'done', '取得对应 MSKU 库存证据与记录快照时点。', 'v2', '10-18']
+  ];
+
+  const STATUS = { pending: ['待采纳', ''], accepted: ['已采纳', 'ok'], rejected: ['已忽略', ''] };
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  function renderRG() {
+    $('#rgBody').innerHTML = RG.map((r, i) => `
+      <tr>
+        <td><div class="task-title">${esc(r[0])}</div><div class="task-sub">覆盖 ${r[4]} 份资料</div></td>
+        <td>${esc(r[1])}</td>
+        <td class="num" style="font-family:var(--sans);color:var(--dim)">${esc(r[2])}</td>
+        <td><span class="chip ${STATUS[r[3]][1]}">${STATUS[r[3]][0]}</span></td>
+        <td><div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${r[3] === 'pending'
+            ? `<button class="btn sm primary" data-action="rgAccept:${i}">采纳</button><button class="btn sm ghost" data-action="rgReject:${i}">忽略</button>`
+            : `<button class="btn sm ghost" data-action="rgReset:${i}">改回待采纳</button>`}
+        </div></td>
+      </tr>`).join('');
+    const pending = RG.filter(r => r[3] === 'pending');
+    $('#rgPending').textContent = pending.length;
+    $('#rgDocs').textContent = pending.reduce((a, r) => a + r[4], 0);
+  }
+  function renderPR() {
+    $('#prBody').innerHTML = PR.map((p, i) => `
+      <div class="card" style="padding:16px">
+        <div style="display:flex;align-items:baseline;gap:10px">
+          <div style="font-size:14px;font-weight:550">${esc(p[0])}</div>
+          <span class="chip ${p[3] ? 'ok' : ''}" style="margin-left:auto">${p[3] ? '启用中' : '已停用'}</span>
+        </div>
+        <p style="font-size:12.5px;line-height:1.85;color:var(--dim);margin-top:8px">${esc(p[1])}</p>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:12px;font-family:var(--mono);font-size:10.5px;color:var(--faint)">
+          <span>${esc(p[2])}</span><span>命中 ${p[4]} 次</span>
+          <button class="btn sm ghost" style="margin-left:auto" data-action="prToggle:${i}">${p[3] ? '停用' : '启用'}</button>
+        </div>
+      </div>`).join('');
+  }
+  function renderPIPE() {
+    $('#pipeBody').innerHTML = PIPE.map((s, i) => `
+      <div style="display:grid;grid-template-columns:28px 1fr auto;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);${i === PIPE.length - 1 ? 'border-bottom:0' : ''}">
+        <div class="num">${String(i + 1).padStart(2, '0')}</div>
+        <div><div style="font-size:13.5px;font-weight:500">${esc(s[0])}</div>
+          <div style="font-size:12px;color:var(--dim);margin-top:3px">${esc(s[1])}</div></div>
+        <div style="font-family:var(--mono);font-size:10.5px;color:${s[2] === 'warn' ? 'var(--warn)' : s[2] === 'ok' ? 'var(--ok)' : 'var(--faint)'}">
+          ${s[2] === 'warn' ? '有人工积压' : s[2] === 'ok' ? '正常' : '待运行'} · ${esc(s[3])}</div>
+      </div>`).join('');
+  }
+  function renderPROJ() {
+    $('#projBody').innerHTML = PROJ.map((p, i) => `
+      <tr data-proj="${i}">
+        <td><div class="task-title">${esc(p[0])}</div><div class="task-sub">${esc(p[1])}</div></td>
+        <td class="num">${p[2]} 份</td><td class="num">${p[3]} 份</td>
+        <td class="num">${p[4]}</td>
+        <td><button class="btn sm" data-action="pdOpen:${i}">打开</button></td>
+      </tr>`).join('');
+  }
+  function renderQA(filter) {
+    const q = (filter || '').toLowerCase();
+    const list = QA.map((x, i) => ({ x, i })).filter(({ x }) => !q || (x[0] + x[1]).toLowerCase().includes(q));
+    $('#qaList').innerHTML = list.map(({ x, i }) => `
+      <div class="doc" data-action="qaOpen:${i}" style="cursor:pointer">
+        <div class="doc-head">
+          <span class="t" style="font-weight:500">${esc(x[0])}</span>
+          <span class="meta">${esc(x[2])} · 被问 ${x[4]} 次</span>
+          <span class="chip ${x[3] === 'verified' ? 'ok' : x[3] === 'conflict' ? 'run' : ''}">${x[3] === 'verified' ? '已验证' : x[3] === 'conflict' ? '有冲突' : '草稿'}</span>
+        </div>
+      </div>`).join('') || '<div class="doc"><div class="doc-head"><span class="t">没有匹配的问答</span></div></div>';
+  }
+  function qaDetail(i) {
+    const x = QA[i];
+    $('#qaDetail').innerHTML = `
+      <div style="font-size:15px;font-weight:600;line-height:1.6">${esc(x[0])}</div>
+      <p style="font-size:13px;line-height:1.9;color:var(--dim);margin-top:10px">${esc(x[1])}</p>
+      <div style="display:grid;grid-template-columns:76px 1fr;gap:8px 10px;font-size:12.5px;color:var(--dim);margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+        <b style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)">来源</b><span>${esc(x[2])}</span>
+        <b style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)">状态</b><span>${x[3] === 'verified' ? '已验证' : x[3] === 'conflict' ? '有冲突' : '草稿'}</span>
+        <b style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)">被问</b><span>${x[4]} 次</span>
+      </div>
+      ${x[3] === 'conflict' ? `<div style="margin-top:14px;padding:10px 12px;border:1px solid #F0D9BC;background:var(--warn-soft);border-radius:8px;font-size:12px;color:var(--warn)">同一问题已有不同答案，核对来源后选择。</div>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn sm primary" data-action="qaReplace:${i}">替换旧答案</button><button class="btn sm ghost" data-action="qaPending:${i}">保存待确认</button></div>` : ''}
+      <div style="display:flex;gap:8px;margin-top:14px"><button class="btn sm ghost" data-action="qaCopy:${i}">复制问答</button></div>`;
+  }
+  function renderCP() {
+    $('#cpBody').innerHTML = CP.map((c, i) => `
+      <div class="doc" style="padding:16px 18px">
+        <div class="doc-head">
+          <span class="t">${esc(c[0])}</span>
+          <span class="chip ${c[2] === 'run' ? 'run' : 'ok'}">${c[2] === 'run' ? '进行中' : '已完成'}</span>
+          <span class="meta">${esc(c[1])} · ${c[4]} · ${c[5]}</span>
+        </div>
+        <div style="margin-top:8px;font-size:12.5px;color:var(--dim);line-height:1.8">下一步：${esc(c[3])}</div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn sm" data-action="cpGo:${i}">${c[2] === 'run' ? '继续这个任务' : '查看结果'}</button>
+          <button class="btn sm ghost" data-action="cpView:${i}">看断点原文</button>
+        </div>
+      </div>`).join('');
+    $('#cpRun').textContent = CP.filter(c => c[2] === 'run').length;
+    $('#cpDone').textContent = CP.filter(c => c[2] === 'done').length;
+  }
+
+  /* 事件 */
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    const [act, arg] = el.dataset.action.split(':');
+    const i = arg !== undefined ? Number(arg) : -1;
+    if (act === 'runLog') { toast('打开运行记录（演示）'); return; }
+    if (act === 'toCheckpoint') { location.hash = 'checkpoint'; return; }
+    if (act === 'toOrganize') { location.hash = 'organize'; return; }
+    if (act === 'toProjects') { location.hash = 'projects'; return; }
+    if (act === 'toExperience') { location.hash = 'experience'; return; }
+    if (act === 'toCleaning') { location.hash = 'cleaning'; return; }
+
+    if (act === 'rgAccept') { RG[i][3] = 'accepted'; renderRG(); toast('已采纳：' + RG[i][1]); }
+    else if (act === 'rgReject') { RG[i][3] = 'rejected'; renderRG(); toast('已忽略该建议'); }
+    else if (act === 'rgReset') { RG[i][3] = 'pending'; renderRG(); toast('已改回待采纳'); }
+    else if (act === 'rgNew') { RG.unshift(['新建议：归类到 采购（演示）', '采购', '类型 = 流程，项目为空', 'pending', 3]); renderRG(); toast('已新建一条建议'); }
+    else if (act === 'prToggle') { PR[i][3] = !PR[i][3]; renderPR(); toast(PR[i][3] ? '已启用原则' : '已停用原则'); }
+    else if (act === 'pipeRun') { PIPE[2][3] = '41 条进人工队列'; renderPIPE(); toast('预检完成：归类环节仍有积压'); }
+    else if (act === 'pipeReset') { PIPE[2][3] = '43 条进人工队列'; renderPIPE(); toast('已重置预检结果'); }
+    else if (act === 'pdOpen') {
+      const p = PROJ[i];
+      $('#pdTitle').textContent = p[0];
+      $('#pdStats').innerHTML = [['项目标识', p[1]], ['资料', p[2] + ' 份'], ['待整理', p[3] + ' 份'], ['最近更新', p[4]]]
+        .map(([k, v]) => `<div style="padding:14px 16px;border-right:1px solid var(--line)"><div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)">${k}</div><div style="font-size:18px;font-weight:600;margin-top:4px">${v}</div></div>`).join('');
+      $('#pdBody').innerHTML = `<div class="doc"><div class="doc-head"><span class="t">最相关的一条</span><span class="meta">演示数据</span></div><p style="margin-top:8px;font-size:13px;line-height:1.85;color:var(--dim)">${esc(p[5])}</p>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn sm" data-action="pdToStock">去这个项目的资料</button><button class="btn sm ghost" data-action="pdClose">收起</button></div></div>`;
+      $('#projDetail').hidden = false;
+      $('#projDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    else if (act === 'pdClose') { $('#projDetail').hidden = true; }
+    else if (act === 'pdToStock') { location.hash = 'stock'; toast('演示：跳转到该项目的存量资料'); }
+    else if (act === 'qaOpen') { qaDetail(i); }
+    else if (act === 'qaReplace') { QA[i][3] = 'verified'; renderQA($('#qaSearch').value); qaDetail(i); toast('已替换旧答案'); }
+    else if (act === 'qaPending') { QA[i][3] = 'draft'; renderQA($('#qaSearch').value); qaDetail(i); toast('已保存为待确认'); }
+    else if (act === 'qaCopy') { if (navigator.clipboard) navigator.clipboard.writeText('Q: ' + QA[i][0] + '\nA: ' + QA[i][1]).catch(() => {}); toast('已复制问答'); }
+    else if (act === 'qaNew') { QA.unshift(['新问题：升级后首启白屏要重建哪些资源？', '同时重建 IconCache 与托盘图标资源。', '手动新增', 'draft', 0]); renderQA($('#qaSearch').value); qaDetail(0); toast('已新增问答草稿'); }
+    else if (act === 'cpGo') { toast(CP[i][2] === 'run' ? '继续任务（演示）' : '查看结果（演示）'); }
+    else if (act === 'cpView') { toast('打开断点原文（演示）'); }
+    else if (act === 'rulesPreview') {
+      const box = $('#rulesResult'); box.hidden = false;
+      let obj = null; try { obj = JSON.parse($('#rulesJson').value); } catch (err) {}
+      box.innerHTML = obj
+        ? `JSON 合法 · 自动入库下限 <b>${obj.auto_publish_confidence}</b>，人工队列下限 <b>${obj.review_confidence}</b>；要求归属 <b>${obj.require_project ? '是' : '否'}</b>；归档阈值 <b>${obj.archive_after_days}</b> 天。<br>按当前规则，7 份待确认里约 4 份会直接入库。`
+        : '<span style="color:var(--danger)">JSON 不合法，先修好再保存</span>';
+    }
+    else if (act === 'rulesSave') {
+      try { JSON.parse($('#rulesJson').value); toast('已保存入库条件'); }
+      catch (err) { toast('JSON 不合法，未保存'); }
+    }
+    else if (act === 'skillSave') { toast('已保存整理规则'); }
+    else if (act === 'skillDownload') {
+      const blob = new Blob([$('#skillMd').value], { type: 'text/markdown' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'SKILL.md'; a.click();
+      toast('已导出 SKILL.md');
+    }
+  });
+
+  /* 自动整理子页签 */
+  document.querySelectorAll('#orgTabs button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('#orgTabs button').forEach(x => x.classList.toggle('on', x === b));
+    const k = b.dataset.otab;
+    $('#org-review').hidden = k !== 'review';
+    $('#org-principles').hidden = k !== 'principles';
+    $('#org-pipeline').hidden = k !== 'pipeline';
+  }));
+
+  /* 问答搜索 */
+  const qs = document.getElementById('qaSearch');
+  if (qs) qs.addEventListener('input', () => renderQA(qs.value));
+
+  renderRG(); renderPR(); renderPIPE(); renderPROJ(); renderQA(''); qaDetail(0); renderCP();
+})();
+</script>
+<script>
+/* 自绘下拉：原生 select 的弹层是系统的，样式不可控，这里换成按钮 + listbox */
+(function () {
+  let done = false;
+  function initPickers() {
+    if (done) return; done = true;
+    document.querySelectorAll('select[data-pretty]').forEach(function (sel) {
+      const wrap = document.createElement('div'); wrap.className = 'picker';
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'picker-btn';
+      btn.setAttribute('aria-haspopup', 'listbox'); btn.setAttribute('aria-expanded', 'false');
+      btn.innerHTML = '<span class="lbl"></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
+      const menu = document.createElement('div');
+      menu.className = 'picker-menu'; menu.setAttribute('role', 'listbox');
+      Array.prototype.forEach.call(sel.options, function (o) {
+        const opt = document.createElement('div');
+        opt.className = 'picker-opt'; opt.setAttribute('role', 'option');
+        opt.dataset.value = o.value;
+        opt.innerHTML = '<svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12l5 5L20 7"/></svg><span>' + o.textContent + '</span>';
+        menu.appendChild(opt);
+      });
+      sel.parentNode.insertBefore(wrap, sel);
+      wrap.appendChild(btn); wrap.appendChild(menu); wrap.appendChild(sel);
+      let active = 0;
+
+      function sync() {
+        const idx = sel.selectedIndex < 0 ? 0 : sel.selectedIndex;
+        btn.querySelector('.lbl').textContent = sel.options[idx].textContent;
+        Array.prototype.forEach.call(menu.children, function (el, i) {
+          el.setAttribute('aria-selected', String(i === idx));
+          el.classList.toggle('active', i === idx);
+        });
+        active = idx;
+      }
+      function open() { wrap.classList.add('open'); btn.setAttribute('aria-expanded', 'true'); sync(); }
+      function close() { wrap.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }
+
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        wrap.classList.contains('open') ? close() : open();
+      });
+      menu.addEventListener('click', function (e) {
+        const opt = e.target.closest('.picker-opt');
+        if (!opt) return;
+        sel.selectedIndex = Array.prototype.indexOf.call(menu.children, opt);
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        sync(); close(); btn.focus();
+      });
+      btn.addEventListener('keydown', function (e) {
+        const keys = ['ArrowDown', 'ArrowUp', 'Enter', ' '];
+        if (keys.indexOf(e.key) >= 0) {
+          e.preventDefault();
+          if (!wrap.classList.contains('open')) { open(); return; }
+          if (e.key === 'ArrowDown') active = Math.min(menu.children.length - 1, active + 1);
+          if (e.key === 'ArrowUp') active = Math.max(0, active - 1);
+          if (e.key === 'Enter' || e.key === ' ') {
+            sel.selectedIndex = active;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            sync(); close(); return;
+          }
+          Array.prototype.forEach.call(menu.children, function (el, i) { el.classList.toggle('active', i === active); });
+          menu.children[active].scrollIntoView({ block: 'nearest' });
+        }
+        if (e.key === 'Escape') close();
+      });
+      document.addEventListener('click', function (e) { if (!wrap.contains(e.target)) close(); });
+      sync();
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initPickers);
+  else initPickers();
+  initPickers();
+})();
+</script>
+</body>
+</html>

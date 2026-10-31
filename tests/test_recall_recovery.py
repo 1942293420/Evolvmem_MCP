@@ -1110,15 +1110,11 @@ def test_recovery_keeps_dirty_when_the_atomic_swap_fails(test_config, monkeypatc
         index.close()
 
 
-def test_recovery_thread_uses_the_shared_connection_without_blocking_requests(
-        tmp_path):
-    """The real worker thread, the real shared connection, concurrent readers.
+def test_recovery_thread_keeps_requests_readable_during_rebuild(tmp_path):
+    """The real worker owns its handles while resident request readers continue.
 
-    The reviewer's boundary: recovery runs on the very connection the request
-    path uses, the runtime's own thread performs it, and the status stays
-    readable while a large library is encoded. SQLite is opened with
-    ``check_same_thread=False`` and the store documents a bounded background
-    worker sharing it, so this test proves the real path, not a mock.
+    The runtime's own thread performs the rebuild, and status stays readable
+    throughout encoding and the final atomic publication.
     """
     import threading
     import time
@@ -1181,13 +1177,19 @@ def test_recovery_thread_uses_the_shared_connection_without_blocking_requests(
         # request thread does, for the whole recovery round.
         observed: list[str] = []
         stop = threading.Event()
+        published = threading.Event()
+        settled = threading.Event()
 
         def reader():
             while not stop.is_set():
                 try:
+                    after_publication = published.is_set()
                     status = server.handle_tool_call('context_status', {})
                     observed.append(str(status.get('context_vector_dirty')))
                     service.store.search_fts('bulk')
+                    if after_publication and status.get('context_vector_dirty') is False:
+                        settled.set()
+                        break
                 except Exception as exc:  # pragma: no cover - failure detail
                     observed.append(f'error:{exc.__class__.__name__}')
 
@@ -1203,11 +1205,18 @@ def test_recovery_thread_uses_the_shared_connection_without_blocking_requests(
             if recovery:
                 break
             time.sleep(0.05)
+        # Publication and a reader's in-flight health snapshot are separate
+        # events. Require a stable read started after publication before ending
+        # the reader, rather than racing its last observation during the swap.
+        if recovery:
+            published.set()
+            settled.wait(timeout=5)
         elapsed = time.monotonic() - started
         stop.set()
         reader_thread.join(timeout=5)
 
         assert recovery, 'the runtime recovery thread must run one round'
+        assert settled.is_set(), 'post-recovery requests must observe a clean index'
         assert [r.status for r in recovery] == ['recovered']
         assert index_handle.is_dirty() is False
         assert index_handle.ids() == [item.item_id
@@ -1692,7 +1701,7 @@ def test_the_confirmed_auto_organization_retraction_summary_is_repaired(
         "(SELECT COUNT(*) FROM organization_units u WHERE u.item_id=i.id) AS units, "
         "(SELECT COUNT(*) FROM context_sources s WHERE s.item_id=i.id "
         " AND s.source_kind='organization' "
-        " AND s.extraction_version='auto-organization.v1') AS org_sources "
+        " AND s.extraction_version='complete-task.v1') AS org_sources "
         'FROM context_items i JOIN context_project_resolutions r ON r.item_id=i.id '
         'WHERE i.id=?', (item_id,)).fetchone()
     assert shape['content_type'] == 'session_summary'
@@ -1820,3 +1829,83 @@ def test_eligible_items_are_always_a_subset_of_the_official_mismatch_set(
     assert unrelated not in eligible
     assert set(item_ids) <= eligible
     assert classification.eligible_count == len(item_ids)
+
+
+@pytest.mark.parametrize('version', ['auto-organization.v1', 'complete-task.v1'])
+def test_retraction_recovery_accepts_both_recorded_organization_origins(service, monkeypatch, version):
+    _, item_id = make_retracted_projection(service, monkeypatch, session='origin-version')
+    with service.store.transaction():
+        service.store._connection().execute(
+            "UPDATE context_sources SET extraction_version=? WHERE item_id=? AND source_kind='organization'",
+            (version, item_id))
+    report = apply_projection_status_recovery(service.config, service.store)
+    assert report.updated_item_ids == (item_id,)
+    assert report.retracted_count == 1
+    assert _legacy_status(service, item_id) == 'candidate'
+    assert service.store.get_item(item_id).project == ''
+
+
+@pytest.mark.parametrize('change', ['wrong_task', 'wrong_digest', 'wrong_ranges', 'wrong_archive',
+                                     'absent_member', 'absent_unit', 'unknown_version', 'human'])
+def test_complete_task_retraction_requires_its_exact_unit_origin(service, monkeypatch, change):
+    task_id, item_id = make_retracted_projection(service, monkeypatch, session='origin-boundary')
+    conn = service.store._connection()
+    source = dict(conn.execute("SELECT * FROM context_sources WHERE item_id=? AND source_kind='organization'",
+                               (item_id,)).fetchone())
+    assert source['extraction_version'] == 'complete-task.v1'
+    with service.store.transaction():
+        if change == 'wrong_task':
+            ref = source['source_ref'].replace(_source_key(service, task_id), 'conversation:unrelated')
+        elif change == 'wrong_digest':
+            ref = source['source_ref'].replace('#', '#unrelated')
+        elif change == 'wrong_ranges':
+            ref = source['source_ref'].split('@')[0] + '@0-0/archive:' + str(source['archive_id'])
+        elif change == 'wrong_archive':
+            ref = source['source_ref'].rsplit('/archive:', 1)[0] + '/archive:999999'
+        elif change == 'absent_member':
+            conn.execute("UPDATE organization_conversations SET members='[]' WHERE source_key=?",
+                         (_source_key(service, task_id),))
+        elif change == 'absent_unit':
+            conn.execute('UPDATE organization_units SET item_id=NULL WHERE task_id=? AND item_id=?',
+                         (task_id, item_id))
+        elif change == 'unknown_version':
+            conn.execute("UPDATE context_sources SET extraction_version='untrusted.v1' WHERE item_id=?",
+                         (item_id,))
+        elif change == 'human':
+            conn.execute("UPDATE context_project_resolutions SET decision_source='human' WHERE item_id=?",
+                         (item_id,))
+        if change.startswith('wrong_'):
+            conn.execute("UPDATE context_sources SET source_ref=? WHERE item_id=? AND source_kind='organization'",
+                         (ref, item_id))
+    assert classify_projection_status_drift(service.store).eligible_item_ids == ()
+    assert apply_projection_status_recovery(service.config, service.store).legacy_updated == 0
+    assert _legacy_status(service, item_id) == 'active'
+
+
+@pytest.mark.parametrize('change', ['source_ref', 'member', 'human'])
+def test_complete_task_origin_is_rechecked_after_scan(service, monkeypatch, change):
+    import evolvmem.recall_recovery as recovery
+    task_id, item_id = make_retracted_projection(service, monkeypatch, session='origin-race')
+    classify = recovery.classify_projection_status_drift
+
+    def classify_then_change(store):
+        scan = classify(store)
+        assert scan.eligible_item_ids == (item_id,)
+        with store.transaction():
+            conn = store._connection()
+            if change == 'source_ref':
+                conn.execute("UPDATE context_sources SET source_ref='unrelated' WHERE item_id=? AND source_kind='organization'",
+                             (item_id,))
+            elif change == 'member':
+                conn.execute("UPDATE organization_conversations SET members='[]' WHERE source_key=?",
+                             (_source_key(service, task_id),))
+            else:
+                conn.execute("UPDATE context_project_resolutions SET decision_source='human' WHERE item_id=?",
+                             (item_id,))
+        return scan
+
+    monkeypatch.setattr(recovery, 'classify_projection_status_drift', classify_then_change)
+    report = recovery.apply_projection_status_recovery(service.config, service.store)
+    assert report.updated_item_ids == ()
+    assert report.legacy_updated == 0
+    assert _legacy_status(service, item_id) == 'active'

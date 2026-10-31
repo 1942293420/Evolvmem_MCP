@@ -20,11 +20,11 @@ def test_capability_search_is_exposed_with_ready_context_tools():
 
 def test_capability_search_handler_returns_memory_and_source(test_config):
     with ContextStore(test_config) as store:
-        memory_id = CapabilityStore(store).upsert(CapabilityMemoryDraft(
-            category="frontend", title="Vue表单校验", content="提交前校验。",
-            source_project="bluewhale", source_ref="archive:1"))
+        from tests.test_capability_retriever import add_capability
+        service = SimpleNamespace(store=store, config=test_config)
+        memory_id = add_capability(service)
         server = MemoryMCPServer.__new__(MemoryMCPServer)
-        server.context_service = SimpleNamespace(store=store)
+        server.context_service = service
 
         result = server._capability_search({"query":"Vue", "categories":["frontend"], "top_k":5})
 

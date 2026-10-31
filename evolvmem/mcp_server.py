@@ -518,6 +518,10 @@ class MemoryMCPServer:
         return similarity < self.config.context_vector_min_similarity
 
     def _memory_status(self, args: dict) -> dict:
+        if args.get("detail") == "revision":
+            # Only LAN can bind a revision to an authenticated namespace. Its
+            # wrapper handles this diagnostic before entering business dispatch.
+            return {"error": "revision_requires_authenticated_lan"}
         status = self._live_status()
         embedding_diagnostics = self._embedding_diagnostics()
         if status is None:
@@ -773,6 +777,8 @@ class MemoryMCPServer:
             # L2 原文或绝对路径
             "continuation_code": result.continuation_code or "",
         }
+        if getattr(result, "capability_ids", ()):
+            payload["capability_ids"] = list(result.capability_ids)
         if result.continuation is not None:
             payload["continuation"] = result.continuation
         return payload
@@ -788,7 +794,15 @@ class MemoryMCPServer:
 
     def _knowledge_recall(self, args: dict) -> dict:
         if self.context_service.config.knowledge_structure_mode == 'primary':
-            return {'error': 'legacy_read_only'}
+            return {
+                'error': 'legacy_read_only',
+                'message': 'Primary knowledge uses context_project_recall or '
+                           'project_archive_get for project history and '
+                           'capability_search for reusable capabilities. These '
+                           'do not preserve every legacy knowledge_recall kind.',
+                'alternatives': ['context_project_recall', 'project_archive_get',
+                                 'capability_search'],
+            }
         error = self._context_gate_error()
         if error is not None:
             return error
@@ -867,7 +881,7 @@ class MemoryMCPServer:
         }
 
     def _capability_search(self, args: dict) -> dict:
-        if not isinstance(args, dict) or set(args) - {"query", "categories", "top_k"}:
+        if not isinstance(args, dict) or set(args) - {"query", "categories", "top_k", "project", "module_id"}:
             return self._context_error("invalid_arguments")
         query = args.get("query")
         categories = args.get("categories") or ()
@@ -876,7 +890,8 @@ class MemoryMCPServer:
         try:
             from evolvmem.capability_retriever import CapabilityRetriever
             results = CapabilityRetriever(self.context_service).search(
-                query, categories=tuple(categories), top_k=args.get("top_k", 10)
+                query, categories=tuple(categories), top_k=args.get("top_k", 10),
+                project=args.get("project"), module_id=args.get("module_id")
             )
         except (ValueError, TypeError):
             return self._context_error("invalid_arguments")
@@ -917,14 +932,20 @@ class MemoryMCPServer:
         try:
             if self.context_service.config.knowledge_structure_mode == 'primary':
                 from evolvmem.project_archive_pipeline import recall_project_archive
-                result = recall_project_archive(
+                return recall_project_archive(
                     self.context_service, query=query, max_chars=max_chars,
                 )
             else:
                 result = recall_mentioned_projects(
                     self.context_service, query=query, max_chars=max_chars,
                 )
-        except (ContextValidationError, ValueError, TypeError):
+        except ValueError as exc:
+            code = str(exc)
+            return self._context_error(
+                code if code in {"project_not_registered", "project_ambiguous"}
+                else "invalid_arguments"
+            )
+        except TypeError:
             return self._context_error("invalid_arguments")
         except ContextServiceError as exc:
             return self._context_error(exc.code)
@@ -1059,7 +1080,7 @@ class MemoryMCPServer:
         }
 
     def _experience_recall(self, args: dict) -> dict:
-        if not isinstance(args, dict) or set(args) - {"project", "query", "constraints", "workstream_id"}:
+        if not isinstance(args, dict) or set(args) - {"project", "query", "constraints", "workstream_id", "mode"}:
             return self._context_error("invalid_arguments")
         error = self._context_gate_error()
         if error is not None:
@@ -1067,7 +1088,8 @@ class MemoryMCPServer:
         try:
             return self.context_service.experiences().recall(
                 project=args.get("project", ""), query=args.get("query"),
-                constraints=args.get("constraints"), workstream_id=args.get("workstream_id"))
+                constraints=args.get("constraints"), workstream_id=args.get("workstream_id"),
+                mode=args.get("mode", "full"))
         except (ValueError, TypeError, ContextValidationError):
             return self._context_error("invalid_arguments")
         except ContextServiceError as exc:
@@ -1632,25 +1654,14 @@ class MemoryMCPServer:
         return current_status(self, self._evaluate_live_status)
 
     def _evaluate_live_status(self):
-        """已初始化服务的健康快照；不可用返回 None。
-
-        PRIMARY 每次调用都用与设计门禁相同的评估器重新复查，服务在
-        早前 tools/list 之后降级也不能凭旧健康结论继续服务。
-        """
+        """Evaluate one complete snapshot; reuse is guarded by request_health."""
         service = getattr(self, "context_service", None)
         if service is None:
             return None
         try:
-            status = service.status()
+            return service.evaluated_status()
         except Exception:
             return None
-        if status.mode is ContextMode.PRIMARY:
-            try:
-                service._refresh_health()  # 与正式门禁同一评估器，按次复查
-                status = service.status()
-            except Exception:
-                return None
-        return status
 
     def _contract_view(self):
         """(adapter, mode, health) 三元组，喂给单一工具注册表。"""

@@ -212,3 +212,117 @@ def test_background_worker_extracts_encrypted_upload_without_blocking_reads(
     })
     assert not error
     assert '橙园' in loaded['block']
+
+
+@pytest.mark.parametrize("method", ["initialize", "ping", "tools/list"])
+def test_protocol_requests_do_not_wait_for_busy_business_lock(http_lan, method):
+    from concurrent.futures import ThreadPoolExecutor
+    from evolvmem.lan_tools import LanTools
+    server, runtime = http_lan
+    adapter = LanTools(runtime)
+    held, release = threading.Event(), threading.Event()
+    def hold():
+        with adapter.lock:
+            held.set()
+            assert release.wait(4)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        blocked = pool.submit(hold)
+        assert held.wait(1)
+        fast = pool.submit(rpc, server, method)
+        try:
+            assert "result" in fast.result(timeout=1)
+        finally:
+            release.set()
+            blocked.result(2)
+
+
+@pytest.mark.parametrize("user,owner", [
+    ("jiangli", False), ("kane", False), ("jiangli", True),
+])
+def test_busy_catalog_preserves_complete_namespace_schemas(http_lan, user, owner):
+    from concurrent.futures import ThreadPoolExecutor
+    from evolvmem.lan_tools import LanTools
+    _, runtime = http_lan
+    adapter = LanTools(runtime)
+    message = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    ready = adapter.handle_request(user, message, owner=owner)["result"]["tools"]
+    required = {"context_project_recall", "capability_search", "project_archive_get",
+                "context_search", "experience_record"}
+    assert required <= {spec["name"] for spec in ready}
+    held, release = threading.Event(), threading.Event()
+    def hold():
+        with adapter.lock:
+            held.set()
+            assert release.wait(4)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        blocked = pool.submit(hold)
+        assert held.wait(1)
+        response = pool.submit(adapter.handle_request, user, message, owner=owner)
+        try:
+            busy = response.result(timeout=1)["result"]["tools"]
+            assert {s["name"]: s for s in busy} == {s["name"]: s for s in ready}
+        finally:
+            release.set()
+            blocked.result(2)
+
+
+def test_catalog_remains_complete_but_degraded_calls_are_rejected(http_lan):
+    from evolvmem.lan_tools import LanTools
+    from tests.test_lan_sharing import add
+    server, runtime = http_lan
+    adapter = LanTools(runtime)
+    item = add(adapter, "jiangli")
+    ready = rpc(server, "tools/list")["result"]["tools"]
+    store = runtime.server_for("jiangli").context_service.store
+    with store.transaction():
+        store._connection().execute(
+            "DELETE FROM context_layers WHERE item_id=? AND layer='l1'",
+            (item["context_id"],))
+
+    degraded = rpc(server, "tools/list")["result"]["tools"]
+    assert {s["name"]: s for s in degraded} == {s["name"]: s for s in ready}
+    result, is_error = call(server, "context_project_recall", {"query": "lan"})
+    assert is_error
+    assert result["error"] in {"degraded_legacy", "unknown_tool"}
+    assert not result.get("block")
+
+
+def test_primary_project_event_ids_never_become_context_refs(http_lan):
+    from evolvmem.context_store import _now_iso
+    from evolvmem.lan_tools import LanTools
+    from evolvmem.project_archive_store import ProjectArchiveStore, ProjectEventDraft
+    from tests.test_lan_sharing import add
+    _, runtime = http_lan
+    adapter = LanTools(runtime)
+    unrelated = add(adapter, "kane", value="unrelated context collision marker")
+    source = add(adapter, "kane", value="archive source context marker",
+                 key="project:bluewhale:fact:source", rid="source-add")
+    service = runtime.server_for("kane").context_service
+    with service.store.transaction():
+        now = _now_iso()
+        service.store._connection().execute(
+            "INSERT OR IGNORE INTO context_project_registry"
+            "(project,display_name,created_at,updated_at) VALUES('bluewhale','Bluewhale',?,?)",
+            (now, now))
+    archives = ProjectArchiveStore(service.store)
+    event_id = archives.record_event(ProjectEventDraft(
+        project="bluewhale", event_type="feature", title="Archive event fixture",
+        content="Archive event references its own event table.",
+        source_ref=f"context:{source['context_id']}"))
+    archives.rebuild("bluewhale")
+    assert event_id != source["context_id"]
+    assert event_id == unrelated["context_id"]
+    service.config.knowledge_structure_mode = "primary"
+
+    wrong = adapter.call_tool("kane", "context_read",
+                              {"ref": f"personal:context:{event_id}"})
+    assert wrong["content"] == "unrelated context collision marker"
+    result = adapter.call_tool("kane", "context_project_recall", {"query": "bluewhale"})
+    assert "error" not in result
+    assert result["selected_ids"] == []
+    assert result["selected_refs"] == []
+    assert result["event_ids"] == [event_id]
+    assert "event_refs" not in result
+    assert result["matched_projects"] == ["bluewhale"]
+    archive = adapter.call_tool("kane", "project_archive_get", {"project": "bluewhale"})
+    assert any(event["event_id"] == event_id for event in archive["events"])

@@ -72,3 +72,18 @@ def test_structured_feedback_missing_event_returns_actionable_requirements(serve
     assert result['error'] == 'invalid_arguments'
     assert 'event_id' in result['requirements']
     assert 'native session' in result['requirements']
+
+
+
+def test_experience_hook_mode_is_explicit_and_validated_at_mcp_boundary(server):
+    spec = next(s for s in tool_specs(
+        adapter='codex', mode=ContextMode.SHADOW,
+        health=server.context_service.status()) if s.name == 'experience_recall')
+    assert spec.input_schema['properties']['mode']['enum'] == ['full', 'hook']
+    exp = server.context_service.experiences()
+    saved = exp.record(case(), evidence=proof(exp))
+    args = {'project':'demo', 'query':'列表打开缓慢'}
+    result = server.handle_tool_call('experience_recall', dict(args, mode='hook'))
+    assert result['results'][0]['id'] == saved['id']
+    for mode in ('other', None, False, []):
+        assert server.handle_tool_call('experience_recall', dict(args, mode=mode))['error'] == 'invalid_arguments'
