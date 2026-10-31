@@ -35,6 +35,7 @@ try{
  await click('[data-principle="health"]');
  assert.match(await page.locator('.diagram-goal').innerText(),/其他 Context 操作仍沿用原检查/);
  await click('[data-node="candidate"]');assert.match(await page.locator('[data-node-detail]').innerText(),/返回前重新检查必要证明.*旧诊断不能认可已撤回或损坏的条目/);
+ assert.match(await page.locator('[data-node-detail]').innerText(),/同一只读快照内复用相同来源.*批量核对模块/);assert.match(await page.locator('[data-node-detail]').innerText(),/最终检查另开快照，不跨请求沿用旧判断/);await screenshot(page,'evo-product-health-candidate-detail.png');
  await click('[data-node="status"]');assert.match(await page.locator('[data-node-detail]').innerText(),/revision 与 health 不等待业务锁.*旧诊断不是当前全库正常的证明/);
  await screenshot(page,'evo-product-health-status-detail.png');
  await click('[data-node="result"]');assert.match(await page.locator('[data-node-detail]').innerText(),/能力查询仍共用业务锁.*不宣称所有业务并发/);

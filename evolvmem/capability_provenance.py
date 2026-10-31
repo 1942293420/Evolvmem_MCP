@@ -5,6 +5,9 @@ capability_memories.source_project or capability_sources.projects is authority.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 import hashlib
 import json
 import re
@@ -62,7 +65,12 @@ class ProvenanceRead:
         # let an uncommitted body's hash poison the next read.
         token = (id(self.conn), self.conn.execute('PRAGMA data_version').fetchone()[0], self.conn.total_changes)
         cached = getattr(store, '_capability_provenance_cache', None)
-        if self.conn.in_transaction or not cached or cached['token'] != token or len(cached['revisions']) > 4096:
+        scoped = scoped_provenance_reader(store)
+        if scoped is not None:
+            # Nested original/role readers keep their own gates, while exact
+            # source revisions share this checked connection's read snapshot.
+            cached = scoped.cache
+        elif self.conn.in_transaction or not cached or cached['token'] != token or len(cached['revisions']) > 4096:
             cached = {'token': token, 'revisions': {}, 'visible': None}
             if not self.conn.in_transaction:
                 store._capability_provenance_cache = cached
@@ -70,6 +78,8 @@ class ProvenanceRead:
         self.revisions = cached['revisions']
         self.contexts = {}
         self.units = {}
+        self.unit_proofs = {}
+        self.unit_proof_bytes = 0
         self.legacy_units = {}
         self.bound_sources = None
         self.visible = cached['visible']
@@ -107,6 +117,8 @@ class ProvenanceRead:
             if not archive or archive['state'] != 'available':
                 result = ('', 'archive_unavailable')
             else:
+                if self.visible is None:
+                    self.visible = self.cache['visible']
                 if self.visible is None:
                     # Existing metadata-only current-version/system-exclusion
                     # oracle. It never decrypts or changes an archive.
@@ -157,8 +169,11 @@ class ProvenanceRead:
                 'FROM organization_units WHERE task_id=? AND digest=?', key)]
             from evolvmem.auto_organization import unit_digest
             for unit in units:
-                from evolvmem.capability_source_proof import prove_unit_row
-                unit['source_text_proven'] = bool(task and prove_unit_row(self.conn, task, unit)['valid'])
+                from evolvmem.capability_source_proof import prove_unit_row, unit_source_proof
+                proof = (unit_source_proof(self.store, task_id, digest)
+                         if len(units) == 1 and scoped_provenance_reader(self.store) is not None
+                         else prove_unit_row(self.conn, task, unit) if task else {'valid': False})
+                unit['source_text_proven'] = proof['valid']
                 # Never retain or export historical prose in the repair plan.
                 text = unit.pop('text')
                 unit['computed_digest'] = unit_digest(task['source_key'], unit['source_start'], unit['source_end'], text) if task else ''
@@ -226,9 +241,9 @@ class ProvenanceRead:
             if (row['expires_at'] and row['expires_at'] <= now) or not window_contains(row['effective_from'], row['effective_until'], now):
                 return invalid('context_expired')
             from evolvmem.memory_eligibility import eligible
-            if identity not in self.contexts:
-                self.contexts[identity] = eligible(self.store, identity)
-            if not self.contexts[identity]:
+            # A stable SQL snapshot does not freeze time. Derived summaries
+            # may depend on another item's expiry/effective window.
+            if not eligible(self.store, identity):
                 return invalid('context_not_eligible')
             resolution = _row(self.conn, 'SELECT * FROM context_project_resolutions WHERE item_id=?', (identity,))
             projects = []
@@ -330,21 +345,91 @@ class ProvenanceRead:
                 'legacy_fallback': legacy, 'sources': facts}, sources
 
 
+_read_scope = ContextVar('capability_provenance_read_scope', default=None)
+
+
+def _read_stamp(conn):
+    return (id(conn), conn.in_transaction, conn.total_changes,
+            conn.execute('PRAGMA data_version').fetchone()[0],
+            conn.execute('PRAGMA schema_version').fetchone()[0],
+            conn.execute('PRAGMA query_only').fetchone()[0])
+
+
+def scoped_provenance_reader(store):
+    """Return the checked snapshot reader, without creating an implicit scope."""
+    scope = _read_scope.get()
+    conn = store._connection()
+    if scope is not None and scope[0] is conn:
+        if _read_stamp(conn) != scope[2]:
+            raise RuntimeError('capability_read_snapshot_changed')
+        return scope[1]
+    return None
+
+
+def provenance_reader(store):
+    """Reuse proof work only inside an explicitly owned read snapshot."""
+    return scoped_provenance_reader(store) or ProvenanceRead(store)
+
+
+@contextmanager
+def provenance_snapshot(store):
+    """Query-only, transaction-local proofs; never a cross-request cache.
+
+    Only this scope's own transaction may be nested. Caller transactions are
+    never borrowed, committed or rolled back, even if query_only is now on.
+    Nested internal reads of this same connection share one proof reader.
+    """
+    conn = store._connection()
+    parent = _read_scope.get()
+    if parent is not None and parent[0] is conn:
+        yield provenance_reader(store)
+        provenance_reader(store)
+        return
+    previous = conn.execute('PRAGMA query_only').fetchone()[0]
+    owns = not conn.in_transaction
+    if not owns:
+        raise RuntimeError('capability_read_requires_readonly_transaction')
+    token = None
+    try:
+        if owns:
+            conn.execute('PRAGMA query_only=ON')
+            conn.execute('BEGIN')
+        read = ProvenanceRead(store)
+        stamp = _read_stamp(conn)
+        token = _read_scope.set((conn, read, stamp))
+        yield read
+        if _read_stamp(conn) != stamp:
+            raise RuntimeError('capability_read_snapshot_changed')
+    finally:
+        if token is not None:
+            _read_scope.reset(token)
+        if owns:
+            if conn.in_transaction:
+                conn.rollback()
+            conn.execute('PRAGMA query_only=' + str(int(previous)))
+
+
 def annotate(context_store, ids=None):
     """Return content/ownership facts keyed by capability IDs (never Context IDs)."""
-    read = ProvenanceRead(context_store)
+    read = provenance_reader(context_store)
     conn = context_store._connection()
     selected = None if ids is None else sorted({int(i) for i in ids})
     rows = []
+    # This is the current call's batch, not a complete library source catalog.
+    # Restore it before another consumer resolves memories outside this batch.
+    previous_bound = read.bound_sources
     read.bound_sources = {}
     batches = [None] if selected is None else [selected[i:i+400] for i in range(0, len(selected), 400)]
-    for batch in batches:
-        where = '' if batch is None else ' WHERE memory_id IN (' + ','.join('?' for _ in batch) + ')'
-        rows.extend(conn.execute('SELECT memory_id,status,source_ref FROM capability_memories' + where + ' ORDER BY memory_id', batch or ()))
-        if read.sources_exist:
-            for source in conn.execute('SELECT * FROM capability_sources' + where + ' ORDER BY source_id', batch or ()):
-                read.bound_sources.setdefault(source['memory_id'], []).append(dict(source))
-    return {row['memory_id']: read.memory(dict(row))[0] for row in rows}
+    try:
+        for batch in batches:
+            where = '' if batch is None else ' WHERE memory_id IN (' + ','.join('?' for _ in batch) + ')'
+            rows.extend(conn.execute('SELECT memory_id,status,source_ref FROM capability_memories' + where + ' ORDER BY memory_id', batch or ()))
+            if read.sources_exist:
+                for source in conn.execute('SELECT * FROM capability_sources' + where + ' ORDER BY source_id', batch or ()):
+                    read.bound_sources.setdefault(source['memory_id'], []).append(dict(source))
+        return {row['memory_id']: read.memory(dict(row))[0] for row in rows}
+    finally:
+        read.bound_sources = previous_bound
 
 
 def eligible_memory_ids(context_store, ids=None):

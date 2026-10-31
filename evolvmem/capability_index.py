@@ -186,15 +186,9 @@ class CapabilityIndex:
         if conn.in_transaction or self.context_store._transaction_depth:
             raise RuntimeError('capability_audit_requires_idle_connection')
         fence = self._audit_fence() if certify else None
-        query_only = conn.execute('PRAGMA query_only').fetchone()[0]
-        try:
-            conn.execute('PRAGMA query_only=ON')
-            conn.execute('BEGIN')
+        from evolvmem.capability_provenance import provenance_snapshot
+        with provenance_snapshot(self.context_store):
             yield fence
-        finally:
-            if conn.in_transaction:
-                conn.rollback()
-            conn.execute('PRAGMA query_only=' + str(int(query_only)))
         if certify and self._audit_fence() != fence:
             raise _StaleAudit('eligibility_snapshot_changed')
 

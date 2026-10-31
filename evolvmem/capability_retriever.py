@@ -4,6 +4,7 @@ from __future__ import annotations
 from evolvmem.capability_index import CapabilityIndex
 from evolvmem.capability_store import CapabilityStore
 from evolvmem.capability_recall_eligibility import recall_facts, eligible_ids
+from evolvmem.capability_provenance import provenance_snapshot
 from evolvmem.request_trace import stage
 
 
@@ -74,41 +75,53 @@ class CapabilityRetriever:
         budget = 500
         page_size = min(100, max(20, top_k * 3))
         vector = index.search(query, categories, min(200, max(60, top_k * 6))) if index is not None else []
-        lexical, facts, module_facts = [], {}, {}
-        for offset in range(0, budget, page_size):
-            with stage('capability_lexical'):
-                page = store.search(query, categories, min(page_size, budget - offset), offset=offset)
-            lexical.extend(page)
-            candidates = merge_ranked(lexical, vector, top_k=len(lexical) + len(vector))
-            missing = [r["memory_id"] for r in candidates if r["memory_id"] not in facts]
-            if missing:
-                with stage('capability_facts'):
-                    facts.update(recall_facts(self.service.store, missing))
-            result = []
-            for row in candidates:
-                ident = row["memory_id"]
-                fact = facts[ident]
-                if not fact["recall_eligible"]:
-                    continue
-                projects = fact["source_projects"]
-                if project is not None and project not in projects:
-                    continue
-                if ident not in module_facts:
-                    with stage('capability_modules'):
-                        module_facts[ident] = modules.modules_for_memory(ident, allowed_sources=fact["eligible_sources"])
-                current_modules = module_facts[ident]
-                if module_id is not None and not any(m["module_id"] == module_id for m in current_modules):
-                    continue
-                row["modules"] = [{k: m[k] for k in ("module_id", "project", "name")} for m in current_modules]
-                row.update(source_projects=projects, source_project=projects[0] if len(projects) == 1 else "",
-                           ownership_confirmed=fact["ownership_confirmed"],
-                           provenance=fact, verification_status="unverified")
-                result.append(row)
-                if len(result) >= top_k:
-                    break
-            if len(result) >= top_k or len(page) < page_size:
-                return result
-        return result
+        with provenance_snapshot(self.service.store):
+            lexical, facts, module_facts = [], {}, {}
+            for offset in range(0, budget, page_size):
+                with stage('capability_lexical'):
+                    page = store.search(query, categories, min(page_size, budget - offset), offset=offset)
+                lexical.extend(page)
+                candidates = merge_ranked(lexical, vector, top_k=len(lexical) + len(vector))
+                result = []
+                for position, row in enumerate(candidates):
+                    ident = row["memory_id"]
+                    if ident not in facts:
+                        # Prove a small ranked window, then backfill if current
+                        # eligibility removes hits. Unused lower-ranked rows
+                        # need not load every original before returning top K.
+                        pending = [candidate['memory_id'] for candidate in candidates[position:]
+                                   if candidate['memory_id'] not in facts][:max(10, top_k * 2)]
+                        with stage('capability_facts'):
+                            facts.update(recall_facts(self.service.store, pending))
+                    fact = facts[ident]
+                    if not fact["recall_eligible"]:
+                        continue
+                    projects = fact["source_projects"]
+                    if project is not None and project not in projects:
+                        continue
+                    if ident not in module_facts:
+                        pending = [candidate['memory_id'] for candidate in candidates
+                                   if candidate['memory_id'] not in module_facts
+                                   and candidate['memory_id'] in facts
+                                   and facts[candidate['memory_id']]['recall_eligible']
+                                   and (project is None or project in facts[candidate['memory_id']]['source_projects'])]
+                        pending = pending[:max(1, top_k-len(result))]
+                        with stage('capability_modules'):
+                            module_facts.update(modules.modules_for_memories(pending,
+                                allowed_sources={identity: facts[identity]['eligible_sources'] for identity in pending}))
+                    current_modules = module_facts[ident]
+                    if module_id is not None and not any(m["module_id"] == module_id for m in current_modules):
+                        continue
+                    row["modules"] = [{k: m[k] for k in ("module_id", "project", "name")} for m in current_modules]
+                    row.update(source_projects=projects, source_project=projects[0] if len(projects) == 1 else "",
+                               ownership_confirmed=fact["ownership_confirmed"],
+                               provenance=fact, verification_status="unverified")
+                    result.append(row)
+                    if len(result) >= top_k:
+                        break
+                if len(result) >= top_k or len(page) < page_size:
+                    return result
+            return result
 
     @stage('capability_selected_validation')
     def validate_current_results(self, results, *, project=None, module_id=None):
@@ -127,8 +140,7 @@ class CapabilityRetriever:
         conn = store._connection()
         if conn.in_transaction:
             raise RuntimeError('candidate_transaction_unavailable')
-        conn.execute('BEGIN')
-        try:
+        with provenance_snapshot(store):
             with stage('capability_selected_facts'):
                 facts = recall_facts(store, [r['memory_id'] for r in results])
             modules = ProjectModuleStore(store)
@@ -136,6 +148,9 @@ class CapabilityRetriever:
                 module = modules.get(module_id)
                 if module['status'] != 'active' or (project is not None and module['project'] != project):
                     return []
+            with stage('capability_selected_modules'):
+                module_facts = modules.modules_for_memories([row['memory_id'] for row in results],
+                    allowed_sources={identity: fact['eligible_sources'] for identity, fact in facts.items()})
             checked, context_ids = [], set()
             for row in results:
                 current = CapabilityStore(store).get(row['memory_id'])
@@ -146,8 +161,7 @@ class CapabilityRetriever:
                 projects = fact['source_projects']
                 if project is not None and project not in projects:
                     continue
-                with stage('capability_selected_modules'):
-                    current_modules = modules.modules_for_memory(row['memory_id'], allowed_sources=fact['eligible_sources'])
+                current_modules = module_facts[row['memory_id']]
                 if module_id is not None and not any(m['module_id'] == module_id for m in current_modules):
                     continue
                 context_ids.update(s['context_item_id'] for s in fact['eligible_sources']
@@ -160,8 +174,6 @@ class CapabilityRetriever:
             store.validate_item_structure(sorted(context_ids))
             self._validate_current_context_sources(sorted(context_ids))
             return checked
-        finally:
-            conn.rollback()  # Owned read snapshot only; never a resident write.
 
     def _validate_current_context_sources(self, ids):
         """Selected bytes and projection truth, within the final read snapshot.

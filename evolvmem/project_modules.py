@@ -14,7 +14,7 @@ import sqlite3
 import unicodedata
 import uuid
 
-from evolvmem.capability_provenance import ProvenanceRead, _hash, _row
+from evolvmem.capability_provenance import provenance_reader, _hash, _row
 
 
 SCHEMA = (
@@ -209,7 +209,7 @@ class ProjectModuleStore:
         return sorted(result, key=lambda r: (-r['score'], r['module_id']))[:max(1, min(50, int(limit)))]
 
     def _origin(self, source_kind, source_key, read=None):
-        read = read or ProvenanceRead(self.store)
+        read = read or provenance_reader(self.store)
         not_recalled = False
         if source_kind == 'unit':
             _, task_id, digest = source_key.split(':', 2)
@@ -334,7 +334,9 @@ class ProjectModuleStore:
         row = _row(self.conn, 'SELECT * FROM project_module_bindings WHERE binding_id=?', (binding_id,))
         if row is None:
             raise ValueError('module_binding_not_found')
-        module = self.get(row['module_id'])
+        return self._binding_status(row, self.get(row['module_id']), _read)
+
+    def _binding_status(self, row, module, read):
         reason = ''
         not_recalled = False
         if module['status'] != 'active':
@@ -348,7 +350,7 @@ class ProjectModuleStore:
                 (row['module_id'], row['origin_anchor'])).fetchone():
             reason = 'manual_module_binding_protected'
         else:
-            origin = self._origin(row['source_kind'], row['source_key'], _read)
+            origin = self._origin(row['source_kind'], row['source_key'], read)
             not_recalled = origin.get('not_recalled', False)
             if not origin['valid']:
                 reason = 'source_invalid'
@@ -364,18 +366,34 @@ class ProjectModuleStore:
         return {**row, 'valid': not reason, 'reason': reason, 'not_recalled': bool(reason) or not_recalled}
 
     def _for_keys(self, keys, *, read=None):
-        if not keys:
-            return []
-        read = read or ProvenanceRead(self.store)
-        merged = {}
-        for row in self.conn.execute('SELECT binding_id FROM project_module_bindings WHERE source_key IN (' + ','.join('?' for _ in keys) + ') ORDER BY binding_id', sorted(keys)):
-            status = self.binding_status(row[0], _read=read)
+        return self._for_key_groups({0: keys}, read=read)[0]
+
+    def _for_key_groups(self, groups, *, read=None):
+        read = read or provenance_reader(self.store)
+        targets = {}
+        for identity, keys in groups.items():
+            for key in keys:
+                targets.setdefault(key, []).append(identity)
+        keys, bindings = sorted(targets), []
+        for offset in range(0, len(keys), 400):
+            batch = keys[offset:offset+400]
+            bindings.extend(dict(row) for row in self.conn.execute(
+                'SELECT * FROM project_module_bindings WHERE source_key IN (' + ','.join('?' for _ in batch) + ') ORDER BY binding_id', batch))
+        merged = {identity: {} for identity in groups}
+        modules = {}
+        for row in sorted(bindings, key=lambda value: value['binding_id']):
+            module_id = row['module_id']
+            if module_id not in modules:
+                modules[module_id] = self.get(module_id)
+            status = self._binding_status(row, modules[module_id], read)
             if not status['valid']:
                 continue
-            target = merged.setdefault(status['module_id'], {**self.get(status['module_id']), 'binding_ids': [], 'source_keys': []})
-            target['binding_ids'].append(status['binding_id'])
-            target['source_keys'].append(status['source_key'])
-        return sorted(merged.values(), key=lambda row: (row['name_key'], row['module_id']))
+            for identity in targets[status['source_key']]:
+                target = merged[identity].setdefault(module_id, {**modules[module_id], 'binding_ids': [], 'source_keys': []})
+                target['binding_ids'].append(status['binding_id'])
+                target['source_keys'].append(status['source_key'])
+        return {identity: sorted(rows.values(), key=lambda row: (row['name_key'], row['module_id']))
+                for identity, rows in merged.items()}
 
     def modules_for_unit(self, task_id, digest):
         return self._for_keys({f'unit:{task_id}:{digest}'})
@@ -384,7 +402,11 @@ class ProjectModuleStore:
         memory = _row(self.conn, 'SELECT memory_id,status,source_ref FROM capability_memories WHERE memory_id=?', (memory_id,))
         if memory is None or memory['status'] not in {'active', 'pending'}:
             return []
-        read = ProvenanceRead(self.store)
+        read = provenance_reader(self.store)
+        keys = self._memory_keys(memory, read, allowed_source_ids, allowed_sources)
+        return [{**row, 'not_recalled': memory['status'] != 'active'} for row in self._for_keys(keys, read=read)]
+
+    def _memory_keys(self, memory, read, allowed_source_ids=None, allowed_sources=None):
         fact, sources = read.memory(memory)
         keys = set()
         allowed = None if allowed_source_ids is None else set(allowed_source_ids)
@@ -404,4 +426,31 @@ class ProjectModuleStore:
                 keys.add(f"unit:{source['task_id']}:{source['unit_digest']}")
             if source.get('source_id'):
                 keys.add(f"capability_source:{source['source_id']}")
-        return [{**row, 'not_recalled': memory['status'] != 'active'} for row in self._for_keys(keys, read=read)]
+        return keys
+
+    def modules_for_memories(self, memory_ids, *, allowed_sources=None):
+        """Batch the current bindings; keep each memory's exact allowed origins."""
+        identities = sorted({int(value) for value in memory_ids})
+        read = provenance_reader(self.store)
+        previous = read.bound_sources
+        read.bound_sources = {}
+        memories, groups = {}, {}
+        try:
+            for offset in range(0, len(identities), 400):
+                batch = identities[offset:offset+400]
+                where = ' WHERE memory_id IN (' + ','.join('?' for _ in batch) + ')'
+                memories.update((row['memory_id'], dict(row)) for row in self.conn.execute(
+                    'SELECT memory_id,status,source_ref FROM capability_memories' + where, batch))
+                if read.sources_exist:
+                    for source in self.conn.execute('SELECT * FROM capability_sources' + where + ' ORDER BY source_id', batch):
+                        read.bound_sources.setdefault(source['memory_id'], []).append(dict(source))
+            for identity in identities:
+                memory = memories.get(identity)
+                groups[identity] = (self._memory_keys(memory, read, allowed_sources=(
+                    None if allowed_sources is None else allowed_sources.get(identity, ())))
+                    if memory and memory['status'] in {'active', 'pending'} else set())
+        finally:
+            read.bound_sources = previous
+        result = self._for_key_groups(groups, read=read)
+        return {identity: [{**row, 'not_recalled': memories[identity]['status'] != 'active'} for row in rows]
+                for identity, rows in result.items()}

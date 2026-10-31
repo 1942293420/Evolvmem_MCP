@@ -18,7 +18,7 @@ PUBLIC_DIRECTORIES = (
 )
 PUBLIC_DOCS = (
     "context-core.md", "codex-context-core-runbook.md", "github-sharing.md",
-    "windows-codex.md", "lan-revision-read.md", "lan-background-health.md",
+    "windows-codex.md", "lan-revision-read.md", "lan-background-health.md", "recall-read-scope.md",
     "evolvmem-workflow.json", "feishu-login.md",
     "evolvmem-atlas.json", "evolvmem-atlas-template.html", "evolvmem-atlas-receipt.json",
     # The single public design/plan file for the 2026-10-02 memory-trust update.

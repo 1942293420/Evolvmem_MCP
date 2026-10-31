@@ -8,6 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
+
+
+MAX_PROOF_CACHE_ENTRIES = 1024
+MAX_PROOF_CACHE_BYTES = 8 * 1024 * 1024
 
 
 def _hash(value):
@@ -85,7 +90,24 @@ def unit_source_proof(store, task_id, digest, *, messages=None):
     model role labels. If their rendered snapshot differs, roles stay unknown.
     The proof hash excludes ownership-only revisions and includes every range.
     """
-    conn = store._connection()
+    # Roles supplied by a caller have a different proof identity; they never
+    # read or populate the role-free cache. Outside an explicit read snapshot
+    # there is no memoization, including during organization writes.
+    from evolvmem.capability_provenance import scoped_provenance_reader
+    read = scoped_provenance_reader(store) if messages is None else None
+    key = (task_id, digest)
+    if read is not None and key in read.unit_proofs:
+        return deepcopy(read.unit_proofs[key])
+    proof = _unit_source_proof(store._connection(), task_id, digest, messages=messages)
+    if read is not None and len(read.unit_proofs) < MAX_PROOF_CACHE_ENTRIES:
+        size = len(json.dumps(proof, ensure_ascii=False, separators=(',', ':')).encode())
+        if read.unit_proof_bytes + size <= MAX_PROOF_CACHE_BYTES:
+            read.unit_proofs[key] = deepcopy(proof)
+            read.unit_proof_bytes += size
+    return proof
+
+
+def _unit_source_proof(conn, task_id, digest, *, messages=None):
     task = conn.execute("SELECT id,source_key,source_revision,status,superseded_by FROM organization_tasks WHERE id=?",
                         (task_id,)).fetchone()
     units = conn.execute("SELECT digest,revision,text,source_start,source_end,source_ranges FROM organization_units WHERE task_id=? AND digest=?",
