@@ -10,6 +10,7 @@ import threading
 import uuid
 from contextlib import nullcontext
 
+from evolvmem.lan_revision import RevisionReader
 from evolvmem.lan_sharing import LanError, LanSharing, validate_request_id
 from evolvmem.mcp_contract import tool_specs
 from evolvmem.lan_context import remote_context, validate_snapshot, prepare_bindings, bind_workspace, prepare_memory_revision
@@ -138,9 +139,18 @@ class LanTools:
             for user, space in (('jiangli', 'personal'), ('kane', 'personal'), ('jiangli', 'public')):
                 prepare_health_generation(runtime.server_for(user, space).context_service.store)
 
+        self._revision_reader = RevisionReader(runtime.settings)
+        if not hasattr(runtime, '_background_health'):
+            from evolvmem.background_health import BackgroundHealth
+            runtime._background_health = BackgroundHealth({
+                'jiangli': runtime.server_for('jiangli'),
+                'kane': runtime.server_for('kane'),
+                'public': runtime.server_for('jiangli', 'public'),
+            }, start=False)
+
         # Clients may cache tools/list for the entire session. Discovery must
         # describe supported schemas, never fluctuate with lock/readiness state.
-        # Every call still resolves _specs with live health under the business lock.
+        # Business calls retain live gates; capability uses its explicit hard baseline and current candidate proofs.
         self._catalog_specs = {
             (user, owner): self._specs(user, owner=owner, catalog=True)
             for user in ('jiangli', 'kane') for owner in (False, True)
@@ -239,6 +249,8 @@ class LanTools:
         for spec in core_specs:
             schema = deepcopy(spec.input_schema)
             props = schema.setdefault('properties', {})
+            if spec.name == 'memory_status':
+                props['detail']['enum'].append('health')
             if 'workspace_path' in props and not owner:
                 props['device_id'] = {'type': 'string', 'minLength': 1, 'maxLength': 64}
                 props['repo_snapshot'] = {'type': 'object'}
@@ -276,12 +288,22 @@ class LanTools:
 
     @traced_tool
     def call_tool(self, user, name, arguments, *, owner=False):
-        with timed_lock(self.lock), request_health_scope():
+        revision_only = (name == 'memory_status' and isinstance(arguments, dict)
+                         and arguments.get('detail') == 'revision')
+        health_only = (name == 'memory_status' and isinstance(arguments, dict)
+                       and arguments.get('detail') == 'health')
+        # These fixed reads use owned connections and never enter mutable
+        # request identity or resident SQLite transactions.
+        with (nullcontext() if revision_only or health_only else timed_lock(self.lock)), request_health_scope():
             try:
                 with stage('dispatch'):
                     result = self._call_tool(user, name, arguments, owner=owner)
+                    if revision_only:
+                        if self.runtime._closed:
+                            raise RuntimeError('LAN runtime is closed')
+                        result['memory_revision'] = self._revision_reader.read(user)
                 result['authenticated_user'] = user
-                if name in ('memory_status', 'context_status', 'context_session_start'):
+                if not revision_only and not health_only and name in ('memory_status', 'context_status', 'context_session_start'):
                     result['memory_revision'] = self._memory_revision(user)
                 return result
             except LanError as exc:
@@ -325,8 +347,11 @@ class LanTools:
         if space == 'public' and name not in SEARCH | PUBLIC_TOOLS | {'context_read', 'memory_status', 'context_status'}:
             raise LanError('public_write_forbidden')
         revision_only = name == 'memory_status' and args.get('detail') == 'revision'
-        specs = self._specs(user, owner=owner, capture_only=name in CAPTURE_TOOLS,
-                            continuity_only=name in CONTINUITY_TOOLS, catalog=revision_only)
+        health_only = name == 'memory_status' and args.get('detail') == 'health'
+        background_capability = name == 'capability_search' and self.runtime._background_health.active
+        specs = (self._catalog_specs[(user, owner)] if revision_only or health_only or background_capability else
+                 self._specs(user, owner=owner, capture_only=name in CAPTURE_TOOLS,
+                             continuity_only=name in CONTINUITY_TOOLS))
         if name not in specs:
             raise LanError('unknown_tool')
         spec = specs[name]
@@ -350,9 +375,15 @@ class LanTools:
                     proof = None
             if proof:
                 self._remote_evidence(user, proof)
+        if health_only:
+            status = self.runtime._background_health.status('public' if space == 'public' else user)
+            # A successful diagnostic query can describe a failed scan. Keep
+            # that state distinct from the existing top-level tool error key.
+            status['diagnostic_error'] = status.pop('error')
+            return {'detail': 'health', **status}
         if revision_only:
             # The authenticated wrapper adds this user's personal/public revision.
-            # Keep schema/identity validation and the dispatch lock, but do not
+            # Keep schema/identity validation, but do not
             # touch health, bodies, remote workspace state or business handlers.
             return {'detail': 'revision'}
         if name in CAPTURE_TOOLS:
@@ -371,6 +402,8 @@ class LanTools:
             server = self.runtime.server_for(user)
             if name in CONTINUITY_TOOLS:
                 core_specs = _continuity_tool_specs(server)
+            elif background_capability:
+                core_specs = tool_specs(adapter=server.adapter, mode=server.context_mode, health=None, catalog=True)
             else:
                 adapter, mode, health = server._contract_view()
                 core_specs = tool_specs(adapter=adapter, mode=mode, health=health)
@@ -379,12 +412,30 @@ class LanTools:
                 raise LanError('invalid_arguments')
         def dispatch():
             server = self.runtime.server_for(user)
+            if background_capability:
+                diagnostic = self.runtime._background_health.status(user)
+                if diagnostic['hard_gate'] != 'allowed':
+                    return {'error': diagnostic['hard_gate'], 'health': diagnostic}
             with (nullcontext(None) if owner else remote_context(server, device_id, snapshot)) as provider:
                 if not owner and args.get('workspace_path'):
                     provider.private_key(args['workspace_path'])
                 if name == 'continuity_bind':
                     return bind_workspace(server, provider, args)
                 result = self._dispatch(user, name, args, space)
+                if background_capability:
+                    if 'error' not in result:
+                        from evolvmem.capability_retriever import CapabilityRetriever
+                        try:
+                            result['results'] = CapabilityRetriever(server.context_service).validate_current_results(
+                                result.get('results', []), project=args.get('project'), module_id=args.get('module_id'))
+                            result['count'] = len(result['results'])
+                            result = self._qualify(self._sanitize(result), 'personal', name)
+                        except Exception:
+                            result = {'error': 'context_unavailable'}
+                    current_health = self.runtime._background_health.status(user)
+                    if current_health['hard_gate'] != 'allowed':
+                        result = {'error': current_health['hard_gate']}
+                    result['health'] = current_health
                 if not owner and args.get('workspace_path'):
                     result['repo_source'] = 'client_reported' if canonical_args.get('repo_snapshot') else 'unknown'
                 return result

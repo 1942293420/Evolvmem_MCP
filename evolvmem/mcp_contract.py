@@ -178,7 +178,7 @@ _LEGACY_TOOL_SPECS: tuple[McpToolSpec, ...] = (
     ),
     McpToolSpec(
         name="memory_status",
-        description="View full memory diagnostics by default. On authenticated LAN, detail=revision returns only the authenticated identity and namespace revision for change detection; it does not assert health or authorize business operations.",
+        description="View full memory diagnostics by default. On authenticated LAN, detail=revision returns only the authenticated identity and namespace revision for change detection; it does not assert health or authorize business operations. Authenticated LAN also supports detail=health for last-checked background diagnostics with explicit freshness.",
         input_schema={
             "type": "object",
             "properties": {"detail": {"type": "string", "enum": ["full", "revision"],
@@ -908,7 +908,7 @@ def tool_specs(
 
     Invalid mode configuration exposes context_status plus the legacy tools.
     catalog=True lists supported schemas independent of current readiness; it
-    never authorizes serving. Calls must still use the default live-health gate.
+    never authorizes serving. Calls must use the default live-health gate, except explicitly admitted LAN capability search with current candidate proofs.
     """
     return (
         _LEGACY_TOOL_SPECS

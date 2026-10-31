@@ -9,6 +9,16 @@ window.EvolvPrinciples={render(mount){
  const modules=[['home','总览','先显示概览与运行状态，展开后读取效果统计','#home'],['organization','自动整理','自动归档、纠正与提炼','#knowledge/organization'],['history','旧版项目资料','历史资料、来源与版本变化','#knowledge/projects'],['capabilities','经验与能力库','按技术分类检索、来源追溯与待分类分页','#knowledge/capabilities'],['archives','项目库','默认项目目录、状态筛选、当前摘要与完整历史分页','#knowledge/archives'],['qa','旧版经验问答','历史问答与适用范围','#knowledge/qa'],['checkpoint','任务断点','当前进度与下一步','#progress'],['cleaning','数据清洗','核对来源、修改与删除','#knowledge/cleaning'],['intake','存量资料','按项目集中归档与纠正','#knowledge/intake'],['rules','整理规则','处理规则与样例预览','#knowledge/skill']];
  const moduleCaptions={home:'概览、状态与效果统计',organization:'自动归属、纠正与提炼',history:'历史资料、来源与版本',capabilities:'技术分类、来源与待分类',archives:'目录、当前摘要与完整历史',qa:'历史问答与适用范围',checkpoint:'当前进度与下一步',cleaning:'核对来源、修改与删除',intake:'按项目集中归档与纠正',rules:'处理规则与样例预览'};
  const diagrams={
+ health:{title:'后台诊断与能力召回',type:'业务流程图',goal:'全库检查在后台进行；能力召回核对当前命中，轻量状态独立返回。其他 Context 操作仍沿用原检查。',height:870,nodes:[
+ n('request','收到能力查询',30,20,'start',facts('助手','当前问题','经过身份与参数校验的请求')),
+ n('baseline','检查必要安全基线',30,190,'decision',facts('请求准入','数据库、配置与完整性基线','允许继续或暂不可用','身份、配置或完整性异常时拒绝；普通内容变更排队刷新。')),
+ n('candidate','核对当前命中及来源',30,360,'action',facts('能力检索','有界候选与当前来源','来源、价值依据、项目、模块、有效期与完整层均通过的结果','返回前重新检查必要证明；旧诊断不能认可已撤回或损坏的条目。选中来源还核对当前正文、内容摘要与映射一致性。')),
+ n('result','返回结果与诊断新鲜度',30,550,'process',facts('助手','当前有效命中','能力内容与最后检查状态','能力查询仍共用业务锁；本阶段不宣称所有业务并发。')),
+ n('queue','合并后台刷新请求',690,190,'action',facts('后台诊断','内容版本变化或定期检查','每个资料空间一个待检查目标')),
+ n('scan','独立读取并完成全库检查',690,360,'action',facts('单个后台工作线程','只读数据库与独立索引','最后完整检查的结果与版本','不使用请求连接，不编码或重建索引；失败明确记录。')),
+ n('status','独立返回轻量状态',690,550,'process',facts('状态查询','最后检查结果与当前版本','新鲜度、等待状态和错误代码','revision 与 health 不等待业务锁；旧诊断不是当前全库正常的证明。'))],edges:[
+ e('h1','request','baseline'),e('h2','baseline','candidate','基线有效'),e('h3','candidate','result'),e('h4','baseline','queue','需要刷新'),e('h5','queue','scan'),e('h6','scan','status')],routes:[
+ r('read','能力查询','request baseline candidate result','h1 h2 h3'),r('refresh','后台检查与轻量状态','request baseline queue scan status','h1 h4 h5 h6')]},
  capabilities:{title:'查找开发经验与确认分类',type:'业务流程图',goal:'先筛选经验和待核对资料，再查看来源、业务归属与价值依据；技术分类确认不替代价值核查。',height:810,nodes:[
  n('open','打开经验与能力库',350,20,'start',facts('你','当前开发问题','技术分类与独立待分类入口','','','#knowledge/capabilities')),
  n('filter','按关键词、分类|和来源项目筛选',30,180,'action',facts('你','需要查找的问题与来源范围','符合条件的记忆列表','来源选项覆盖全部有效记忆，不因当前页或筛选结果而消失。')),
@@ -118,7 +128,7 @@ window.EvolvPrinciples={render(mount){
  e('d1','dialogue','archive','会话与来源'),e('d2','dialogue','organize','新增对话'),e('d3','archive','organize','原文'),e('d4','rules','organize','指导'),e('d5','organize','history','对话与摘要'),e('d6','organize','qa','有效问答'),e('d7','organize','cases','方法与来源'),e('d8','history','prepare','摘要'),e('d9','qa','prepare','问答'),e('d10','cases','prepare','案例'),e('d11','prepare','recall','检索候选'),e('d12','question','recall','问题'),e('d13','recall','answer','相关内容与来源'),e('d14','archive','answer','按引用读取原文','M160 290H20V1140H480V1120',179,1125)],routes:[
  r('qa','新对话成为可用知识','dialogue organize qa prepare recall answer','d2 d6 d9 d11 d13'),r('history','新对话成为项目历史','dialogue organize history prepare recall answer','d2 d5 d8 d11 d13'),r('read','找到来源后读取原文','dialogue archive answer','d1 d14')]}
  };
- const tabs=[['modules','页面职责'],['restructure','能力记忆与项目存档'],['capabilities','能力浏览'],['flow','完整流程'],['activity','入库活动'],['organization','角色泳道'],['recall','知识召回'],['dataflow','资料数据流'],['storage','存储与回收']];
+ const tabs=[['modules','页面职责'],['restructure','能力记忆与项目存档'],['capabilities','能力浏览'],['flow','完整流程'],['activity','入库活动'],['organization','角色泳道'],['recall','知识召回'],['health','诊断与准入'],['dataflow','资料数据流'],['storage','存储与回收']];
  let saved={};try{saved=JSON.parse(sessionStorage.getItem('evolvmem-business-diagrams')||'{}');}catch(_){}
  let kind=diagrams[saved.kind]?saved.kind:'flow',routeId=saved.route||'',step=-1,timer=null,zoom=saved.zoom===1.3?1.3:1;
  const reduced=matchMedia('(prefers-reduced-motion: reduce)');

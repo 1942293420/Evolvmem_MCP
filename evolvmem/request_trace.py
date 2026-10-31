@@ -14,7 +14,12 @@ SLOW_MS = 1000
 _current = ContextVar('recall_trace', default=None)
 _STAGES = frozenset({'queue', 'dispatch', 'health', 'retrieval', 'lexical', 'vector', 'embedding', 'rerank',
                      'health_state', 'health_physical', 'health_projection', 'health_vector',
-                     'health_documents', 'health_counts'})
+                     'health_documents', 'health_counts',
+                     'capability_search', 'capability_vector', 'capability_embedding',
+                     'capability_lock_wait', 'capability_lock_held', 'capability_vector_eligibility',
+                     'capability_lexical', 'capability_facts', 'capability_modules',
+                     'capability_selected_validation', 'capability_selected_facts',
+                     'capability_selected_modules'})
 HEALTH_STATE_FIELDS = (
     'service', 'connection', 'database_changes', 'data_version', 'schema_version',
     'transaction', 'config', 'configured_mode', 'configured_adapter', 'service_mode',

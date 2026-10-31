@@ -1,7 +1,7 @@
 """Independent capability vectors with bounded, resumable proof-based recovery."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import json
 import os
 import tempfile
@@ -10,6 +10,7 @@ import numpy as np
 
 from evolvmem.capability_store import CapabilityStore
 from evolvmem.vector_index import VectorIndex
+from evolvmem.request_trace import stage
 from evolvmem.vector_provenance import contract, entry, text_digest, vector_digest
 
 
@@ -334,31 +335,39 @@ class CapabilityIndex:
         result["dirty"] = self.vector_index.is_dirty()
         return result
 
+    @stage('capability_vector')
     def search(self, query: str, categories=(), top_k: int = 10) -> list[dict]:
         if self.embedding_engine is None or not getattr(self.embedding_engine, "is_loaded", False):
             return []
         try:
-            embedding = np.asarray(self.embedding_engine.encode_query(query), dtype=np.float32)
-            with self._locked():
-                self._ensure_index()
-                proof = self._load_proofs()
-                matches = self.vector_index.search(embedding, k=max(1, int(top_k)) * 4)
-                store = CapabilityStore(self.context_store)
-                allowed = (set(self.eligible_ids([int(match["id"]) for match in matches]))
-                           if self.eligible_ids is not None else None)
-                categories = set(categories)
-                results = []
-                for match in matches:
-                    ident = int(match["id"])
-                    memory = store.get(ident)
-                    if not self._eligible(memory, allowed=allowed) or (categories and memory["category"] not in categories):
-                        continue
-                    # Legacy IDs without proofs remain searchable during the bounded
-                    # backfill, but cannot count as complete recovery coverage.
-                    if str(ident) in proof["items"] and not self._proof_matches(ident, memory, proof["items"]):
-                        continue
-                    memory["vector_score"] = 1.0 - float(match["distance"]) / 2.0
-                    results.append(memory)
-                return results[:max(1, int(top_k))]
+            with stage('capability_embedding'):
+                embedding = np.asarray(self.embedding_engine.encode_query(query), dtype=np.float32)
+            # Separate lock acquisition from the protected work. ExitStack
+            # preserves the existing lock context's exit/exception behavior.
+            with ExitStack() as scope:
+                with stage('capability_lock_wait'):
+                    scope.enter_context(self._locked())
+                with stage('capability_lock_held'):
+                    self._ensure_index()
+                    proof = self._load_proofs()
+                    matches = self.vector_index.search(embedding, k=max(1, int(top_k)) * 4)
+                    store = CapabilityStore(self.context_store)
+                    with stage('capability_vector_eligibility'):
+                        allowed = (set(self.eligible_ids([int(match["id"]) for match in matches]))
+                                   if self.eligible_ids is not None else None)
+                    categories = set(categories)
+                    results = []
+                    for match in matches:
+                        ident = int(match["id"])
+                        memory = store.get(ident)
+                        if not self._eligible(memory, allowed=allowed) or (categories and memory["category"] not in categories):
+                            continue
+                        # Legacy IDs without proofs remain searchable during the bounded
+                        # backfill, but cannot count as complete recovery coverage.
+                        if str(ident) in proof["items"] and not self._proof_matches(ident, memory, proof["items"]):
+                            continue
+                        memory["vector_score"] = 1.0 - float(match["distance"]) / 2.0
+                        results.append(memory)
+                    return results[:max(1, int(top_k))]
         except Exception:
             return []

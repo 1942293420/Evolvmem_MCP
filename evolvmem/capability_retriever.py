@@ -4,6 +4,7 @@ from __future__ import annotations
 from evolvmem.capability_index import CapabilityIndex
 from evolvmem.capability_store import CapabilityStore
 from evolvmem.capability_recall_eligibility import recall_facts, eligible_ids
+from evolvmem.request_trace import stage
 
 
 CATEGORY_QUERY_TERMS = {
@@ -48,6 +49,7 @@ class CapabilityRetriever:
             eligible_ids=lambda ids: eligible_ids(self.service.store, ids)
         )
 
+    @stage('capability_search')
     def search(self, query: str, categories=(), top_k: int = 10, *, project=None, module_id=None) -> list[dict]:
         query = str(query).strip()
         if not query:
@@ -74,12 +76,14 @@ class CapabilityRetriever:
         vector = index.search(query, categories, min(200, max(60, top_k * 6))) if index is not None else []
         lexical, facts, module_facts = [], {}, {}
         for offset in range(0, budget, page_size):
-            page = store.search(query, categories, min(page_size, budget - offset), offset=offset)
+            with stage('capability_lexical'):
+                page = store.search(query, categories, min(page_size, budget - offset), offset=offset)
             lexical.extend(page)
             candidates = merge_ranked(lexical, vector, top_k=len(lexical) + len(vector))
             missing = [r["memory_id"] for r in candidates if r["memory_id"] not in facts]
             if missing:
-                facts.update(recall_facts(self.service.store, missing))
+                with stage('capability_facts'):
+                    facts.update(recall_facts(self.service.store, missing))
             result = []
             for row in candidates:
                 ident = row["memory_id"]
@@ -90,7 +94,8 @@ class CapabilityRetriever:
                 if project is not None and project not in projects:
                     continue
                 if ident not in module_facts:
-                    module_facts[ident] = modules.modules_for_memory(ident, allowed_sources=fact["eligible_sources"])
+                    with stage('capability_modules'):
+                        module_facts[ident] = modules.modules_for_memory(ident, allowed_sources=fact["eligible_sources"])
                 current_modules = module_facts[ident]
                 if module_id is not None and not any(m["module_id"] == module_id for m in current_modules):
                     continue
@@ -104,6 +109,135 @@ class CapabilityRetriever:
             if len(result) >= top_k or len(page) < page_size:
                 return result
         return result
+
+    @stage('capability_selected_validation')
+    def validate_current_results(self, results, *, project=None, module_id=None):
+        """LAN admission supplement: current bounded proofs in one read snapshot.
+
+        This does not change standalone recall semantics. At most 20 selected
+        candidates are rechecked; malformed required Context layers reject the
+        response instead of borrowing authority from an older full diagnosis.
+        """
+        if not results:
+            return []
+        if len(results) > 20:
+            raise ValueError('candidate_limit')
+        from evolvmem.project_modules import ProjectModuleStore
+        store = self.service.store
+        conn = store._connection()
+        if conn.in_transaction:
+            raise RuntimeError('candidate_transaction_unavailable')
+        conn.execute('BEGIN')
+        try:
+            with stage('capability_selected_facts'):
+                facts = recall_facts(store, [r['memory_id'] for r in results])
+            modules = ProjectModuleStore(store)
+            if module_id is not None:
+                module = modules.get(module_id)
+                if module['status'] != 'active' or (project is not None and module['project'] != project):
+                    return []
+            checked, context_ids = [], set()
+            for row in results:
+                current = CapabilityStore(store).get(row['memory_id'])
+                fact = facts.get(row['memory_id'])
+                if (not current or current['status'] != 'active' or not fact or not fact['recall_eligible']
+                        or any(current[k] != row[k] for k in ('category', 'title', 'content', 'fingerprint'))):
+                    continue
+                projects = fact['source_projects']
+                if project is not None and project not in projects:
+                    continue
+                with stage('capability_selected_modules'):
+                    current_modules = modules.modules_for_memory(row['memory_id'], allowed_sources=fact['eligible_sources'])
+                if module_id is not None and not any(m['module_id'] == module_id for m in current_modules):
+                    continue
+                context_ids.update(s['context_item_id'] for s in fact['eligible_sources']
+                                   if s.get('source_kind') == 'context' and s.get('context_item_id'))
+                row = dict(row, provenance=fact, source_projects=projects,
+                           source_project=projects[0] if len(projects) == 1 else '',
+                           ownership_confirmed=fact['ownership_confirmed'],
+                           modules=[{k: m[k] for k in ('module_id', 'project', 'name')} for m in current_modules])
+                checked.append(row)
+            store.validate_item_structure(sorted(context_ids))
+            self._validate_current_context_sources(sorted(context_ids))
+            return checked
+        finally:
+            conn.rollback()  # Owned read snapshot only; never a resident write.
+
+    def _validate_current_context_sources(self, ids):
+        """Selected bytes and projection truth, within the final read snapshot.
+
+        Never call the all-library projection evaluator. Native Context items
+        need no legacy projection; migrated items must retain a unique mapping.
+        Limit dependency expansion rather than accepting an unaudited source.
+        """
+        if not ids:
+            return
+        if len(ids) > 500:
+            raise RuntimeError('source_dependency_limit')
+        import hashlib
+        from evolvmem.context_migration import LegacyMemoryMigrator
+        from evolvmem.cutover_checks import duplicate_active_legacy_ids
+        conn = self.service.store._connection()
+        marks = ','.join('?' for _ in ids)
+        layers = {}
+        for row in conn.execute(f'SELECT item_id,layer,content,content_hash FROM context_layers WHERE item_id IN ({marks})', ids):
+            if hashlib.sha256(row['content'].encode('utf-8')).hexdigest() != row['content_hash']:
+                raise RuntimeError('source_body_hash_mismatch')
+            layers.setdefault(row['item_id'], {})[row['layer']] = row['content']
+        items = {row['id']: dict(row) for row in conn.execute(
+            f'SELECT id,identity_key,status,supersedes,superseded_by FROM context_items WHERE id IN ({marks})', ids)}
+        if set(items) != set(ids):
+            raise RuntimeError('source_item_missing')
+        mappings = {}
+        for row in conn.execute(f'SELECT legacy_memory_id,context_item_id FROM legacy_memory_migrations WHERE context_item_id IN ({marks})', ids):
+            mappings.setdefault(row['context_item_id'], []).append(row['legacy_memory_id'])
+        migrated = {row[0] for row in conn.execute(
+            f"SELECT DISTINCT item_id FROM context_sources WHERE source_kind='migration' AND item_id IN ({marks})", ids)}
+        migrator = LegacyMemoryMigrator(self.service.store, self.service.config)
+        for ident in ids:
+            mapped = mappings.get(ident, [])
+            if not mapped and ident not in migrated:
+                # Native Context is independent; a surviving same-key legacy
+                # projection proves that a mapping cannot silently disappear.
+                if conn.execute('SELECT 1 FROM memories WHERE key=? LIMIT 1', (items[ident]['identity_key'],)).fetchone():
+                    raise RuntimeError('source_mapping_missing')
+                continue
+            if len(mapped) != 1:
+                raise RuntimeError('source_mapping_invalid')
+            raw = conn.execute('SELECT * FROM memories WHERE id=?', (mapped[0],)).fetchone()
+            if raw is None:
+                raise RuntimeError('source_mapping_orphan')
+            legacy, item = dict(raw), items[ident]
+            if migrator.identity_key_for(legacy['key'], legacy['id']) != item['identity_key']:
+                raise RuntimeError('source_mapping_identity_mismatch')
+            original = migrator.source_text(legacy.get('value')).replace('\r\n', '\n')
+            expected = migrator.layers_for(original, migrator.content_type_for(legacy))
+            actual = layers[ident]
+            # The migrated L2 retains the full original, unlike clipped layers.
+            if actual != {'l0': expected.l0, 'l1': expected.l1, 'l2': original}:
+                raise RuntimeError('source_projection_content_mismatch')
+            # Same-key peers and already mapped normalized identities are the
+            # relevant duplicate-active scope; never load unrelated bodies.
+            peers = [dict(row) for row in conn.execute(
+                'SELECT id,key,attribute,status,updated_at FROM memories WHERE key=? OR id IN ('
+                'SELECT m.legacy_memory_id FROM legacy_memory_migrations m JOIN context_items i '
+                'ON i.id=m.context_item_id WHERE i.identity_key=?) LIMIT 501',
+                (legacy['key'], item['identity_key']))]
+            if len(peers) > 500:
+                raise RuntimeError('source_dependency_limit')
+            expected_status = ('candidate' if legacy['id'] in duplicate_active_legacy_ids(peers)
+                               else migrator.status_for(legacy.get('status')).value)
+            if item['status'] != expected_status:
+                raise RuntimeError('source_projection_status_mismatch')
+            for field in ('supersedes', 'superseded_by'):
+                value = legacy.get(field)
+                target = None
+                if value is not None and value != '':
+                    target = self.service.store.resolve_legacy_mapping(migrator.legacy_id_for(value))
+                    if target is None:
+                        raise RuntimeError('source_projection_link_missing')
+                if item[field] != target:
+                    raise RuntimeError('source_projection_link_mismatch')
 
     def infer_categories(self, query: str) -> tuple[str, ...]:
         text = str(query).casefold()

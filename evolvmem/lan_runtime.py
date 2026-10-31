@@ -171,6 +171,9 @@ class LanRuntime:
         if self._closed:
             return
         self._closed = True
+        health = getattr(self, '_background_health', None)
+        if health is not None:
+            health.close()
         self._capture_stop.set()
         self._recovery_stop.set()
         if self._capture_worker is not None:
@@ -206,6 +209,11 @@ class LanRuntime:
                 self._close_resources()
 
     def start_capture_worker(self, adapter):
+        # HTTP production hosting starts owned background resources explicitly.
+        # Standalone test adapters do not implicitly create a diagnostic thread.
+        health = getattr(self, '_background_health', None)
+        if health is not None:
+            health.start()
         if self._capture_worker is not None:
             return
         daily = LanDailyRollup(adapter)
