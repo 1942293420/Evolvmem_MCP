@@ -19,7 +19,9 @@ _STAGES = frozenset({'queue', 'dispatch', 'health', 'retrieval', 'lexical', 'vec
                      'capability_lock_wait', 'capability_lock_held', 'capability_vector_eligibility',
                      'capability_lexical', 'capability_facts', 'capability_modules',
                      'capability_selected_validation', 'capability_selected_facts',
-                     'capability_selected_modules'})
+                     'capability_selected_modules', 'capability_recovery_initial_audit',
+                     'capability_recovery_final_audit', 'capability_sync_initial_proof',
+                     'capability_sync_final_proof'})
 HEALTH_STATE_FIELDS = (
     'service', 'connection', 'database_changes', 'data_version', 'schema_version',
     'transaction', 'config', 'configured_mode', 'configured_adapter', 'service_mode',

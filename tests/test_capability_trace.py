@@ -63,8 +63,8 @@ def test_search_and_selected_proofs_report_distinct_nested_stages_without_conten
     assert all(value >= 0 for value in durations.values())
     for parent, children in (
         ('capability_search', ('capability_vector', 'capability_lexical', 'capability_facts', 'capability_modules')),
-        ('capability_vector', ('capability_embedding', 'capability_lock_wait', 'capability_lock_held')),
-        ('capability_lock_held', ('capability_vector_eligibility',)),
+        ('capability_vector', ('capability_embedding', 'capability_lock_wait', 'capability_lock_held',
+                               'capability_vector_eligibility')),
         ('capability_selected_validation', ('capability_selected_facts', 'capability_selected_modules')),
     ):
         assert sum(durations[child] for child in children) <= durations[parent] + .01
