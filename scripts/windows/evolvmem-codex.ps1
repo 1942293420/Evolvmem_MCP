@@ -923,7 +923,10 @@ function ConvertTo-OrderedRecord($Object) {
     # properties. Copy every existing value into an ordered dictionary before
     # adding source ordering or anchor fields.
     $data = [ordered]@{}
-    if ($null -ne $Object) {
+    if ($Object -is [Collections.IDictionary]) {
+        foreach ($key in $Object.get_Keys()) { $data[$key] = $Object[$key] }
+    }
+    elseif ($null -ne $Object) {
         foreach ($property in $Object.PSObject.Properties) { $data[$property.Name] = $property.Value }
     }
     return $data
@@ -1116,6 +1119,17 @@ function Initialize-SessionSourceState($Config, [string]$SessionId) {
                     $state.Dirty = $true
                 }
             }
+            # Preparing a migration/rebuilt anchor may raise its order. Keep
+            # the registration in the same locked transaction so uploads can
+            # require both the current SHA and its exact order to agree.
+            if ($state.AnchorOrder -gt $state.SourceOrder -and $state.AnchorPath) {
+                $prepared = Read-JsonFile ([string]$state.AnchorPath)
+                if ([string](Get-Value $prepared 'sha256' '') -ceq $state.CurrentSha256) {
+                    $state.SourceOrder = [int64]$state.AnchorOrder
+                    if ($state.SourceOrder -gt $state.MaxOrder) { $state.MaxOrder = $state.SourceOrder }
+                    $state.Dirty = $true
+                }
+            }
         }
     }
     else {
@@ -1200,8 +1214,8 @@ function Invoke-UploadQueue($Config) {
     Ensure-Directory $statusDir
     $uploaded = 0
     # Prepare every queued session's local source ordering and migration anchor
-    # before the first upload, so an old fork can never reach the server ahead
-    # of the local current snapshot.
+    # before the first upload, so every version retains its explicit order and
+    # the local current snapshot is registered even when history uploads first.
     $sessionIds = New-Object Collections.Generic.List[string]
     foreach ($manifestPath in @([IO.Directory]::GetFiles($queueDir, '*.json'))) {
         try {
@@ -1218,8 +1232,7 @@ function Invoke-UploadQueue($Config) {
         }
         catch { }
     }
-    # Reload the prepared queue. A session's anchor uploads before its older
-    # versions; an unacknowledged anchor defers those older versions.
+    # Reload the prepared queue before selecting one version per session.
     $entries = New-Object Collections.Generic.List[object]
     foreach ($manifestPath in @([IO.Directory]::GetFiles($queueDir, '*.json'))) {
         try {
@@ -1237,6 +1250,8 @@ function Invoke-UploadQueue($Config) {
                 Path = $manifestPath; Manifest = $manifest; DataPath = $dataPath
                 SessionId = $sessionId; SessionScope = (Get-SessionLockScope $sessionId)
                 TotalBytes = [int64](Get-RecordValue $manifest 'total_bytes' 0)
+                InFlight = [bool](Get-RecordValue $manifest 'upload_inflight' $false)
+                HadError = [bool](Get-Value (Read-JsonFile $manifestPath) 'last_error' '')
                 IsAnchor = ($order -gt 0 -and $currentSha -and
                     ($currentSha -ceq [string](Get-RecordValue $manifest 'sha256' '')) -and
                     ($confirmed -cne $currentSha))
@@ -1244,9 +1259,26 @@ function Invoke-UploadQueue($Config) {
         }
         catch { }
     }
+    # One durable selection per session keeps a growing transcript from
+    # replacing its partially uploaded snapshot every tick. A failed historical
+    # flight yields to healthy work, while the unchanged current version still
+    # retries idempotently. Failure metadata changes priority, not eligibility.
+    # This is full-snapshot scheduling, not a delta-upload protocol.
+    $seenSessions = @{}
     $ordered = @($entries.ToArray() | Sort-Object `
-        @{ Expression = { if ($_.IsAnchor) { 0 } else { 1 } } }, `
-        @{ Expression = { [int64]$_.TotalBytes } })
+        @{ Expression = {
+            if ($_.InFlight -and -not $_.HadError) { 0 }
+            elseif ($_.IsAnchor -and -not $_.HadError) { 1 }
+            elseif ($_.IsAnchor) { 2 }
+            elseif (-not $_.HadError) { 3 }
+            elseif ($_.InFlight) { 4 }
+            else { 5 }
+        } }, `
+        @{ Expression = { [int64](Get-RecordValue $_.Manifest 'source_order' 0) } }, `
+        @{ Expression = { [string]$_.Path } } | Where-Object {
+            if ($seenSessions.ContainsKey($_.SessionId)) { $false }
+            else { $seenSessions[$_.SessionId] = $true; $true }
+        } | Sort-Object @{ Expression = { $_.TotalBytes } }, @{ Expression = { $_.Path } })
     $blocked = @{}
     foreach ($entry in $ordered) {
         $sessionId = [string]$entry.SessionId
@@ -1258,17 +1290,32 @@ function Invoke-UploadQueue($Config) {
         $sessionScope = [string]$entry.SessionScope
         $isAnchor = [bool]$entry.IsAnchor
         $acknowledged = $false
-        $failureStage = 'decrypt'
+        $failureStage = 'selection'
+        $order = [int64](Get-RecordValue $manifest 'source_order' 0)
         try {
+            $selected = Invoke-WithClientLock {
+                $fresh = Read-JsonFile $manifestPath
+                if ($null -eq $fresh) { return $null }
+                if ([string](Get-Value $fresh 'sha256' '') -cne [string](Get-RecordValue $manifest 'sha256' '') -or
+                    [int64](Get-Value $fresh 'total_bytes' 0) -ne $entry.TotalBytes) { throw 'upload_selection_changed' }
+                # Retain the previous error until a chunk is acknowledged.
+                $record = ConvertTo-OrderedRecord $fresh
+                $record['upload_inflight'] = $true
+                Write-JsonAtomic $manifestPath $record
+                return $record
+            } 5000 $sessionScope
+            if ($null -eq $selected) { continue }
+            $manifest = $selected
+            $order = [int64](Get-RecordValue $manifest 'source_order' 0)
+            $failureStage = 'decrypt'
             $plain = Unprotect-Bytes ([IO.File]::ReadAllBytes($dataPath))
             $failureStage = 'checksum'
             $sha = [string](Get-RecordValue $manifest 'sha256' '')
             if ($plain.Length -ne [int64](Get-RecordValue $manifest 'total_bytes' 0) -or
                 (Get-Sha256Hex $plain) -cne $sha) {
-                # The local payload is unreadable: keep it queued and never let
-                # older versions of this session overtake it.
-                if ($isAnchor) { $blocked[$sessionId] = $true }
-                continue
+                # Retain the unreadable payload and diagnostic. On a later
+                # tick, healthy current work may proceed ahead of this entry.
+                throw 'upload_payload_checksum_mismatch'
             }
             # The current declaration comes from the locally persisted current
             # sha at upload time, never from the server or a queued version.
@@ -1281,6 +1328,20 @@ function Invoke-UploadQueue($Config) {
             # A large historical version must not monopolize the whole worker.
             # Its confirmed offset is durable; the next tick continues it.
             while ($offset -lt $plain.Length -and $sentChunks -lt 16) {
+                # Capture hooks may append or revisit the same immutable SHA
+                # between chunks. Read the current declaration and order again;
+                # an older selected snapshot is sent only as history.
+                $state = Invoke-WithClientLock {
+                    return [ordered]@{ Manifest = (Read-JsonFile $manifestPath); Session = (Read-JsonFile $sessionPath) }
+                } 5000 $sessionScope
+                if ($null -eq $state.Manifest -or
+                    [string](Get-Value $state.Manifest 'sha256' '') -cne $sha -or
+                    [int64](Get-Value $state.Manifest 'total_bytes' 0) -ne $plain.Length -or
+                    [int64](Get-Value $state.Manifest 'next_offset' 0) -ne $offset) { throw 'upload_progress_changed' }
+                $manifest = ConvertTo-QueueManifest $state.Manifest
+                $order = [int64](Get-RecordValue $manifest 'source_order' 0)
+                $claimsCurrent = $order -gt 0 -and [string](Get-Value $state.Session 'current_sha256' '') -ceq $sha -and
+                    [int64](Get-Value $state.Session 'source_order' 0) -eq $order
                 $length = [Math]::Min($script:ChunkBytes, $plain.Length - $offset)
                 $chunk = New-Object byte[] ([int]$length)
                 [Array]::Copy($plain, $offset, $chunk, 0, $length)
@@ -1336,13 +1397,20 @@ function Invoke-UploadQueue($Config) {
                         acknowledged_utc = [DateTime]::UtcNow.ToString('o')
                     }
                     $failureStage = 'local_commit'
-                    Invoke-WithClientLock {
+                    $committed = Invoke-WithClientLock {
+                        $latestManifest = Read-JsonFile $manifestPath
+                        # A -> B -> A may give the same SHA a newer order while
+                        # this RPC is in flight. Keep that newer queue entry;
+                        # its next tick must receive its own exact-order receipt.
+                        if ($null -eq $latestManifest -or [string](Get-Value $latestManifest 'sha256' '') -cne $sha -or
+                            [int64](Get-Value $latestManifest 'source_order' 0) -ne $order) { return $false }
                         Write-JsonAtomic ([IO.Path]::Combine($statusDir, ($sha + '.json'))) $receipt
                         if ($claimsCurrent) {
                             # The new protocol archived this version with its
                             # source order, so the one-time anchor is complete.
                             $latest = ConvertTo-OrderedRecord (Read-JsonFile $sessionPath)
-                            if ([string](Get-RecordValue $latest 'current_sha256' '') -ceq $sha) {
+                            if ([string](Get-RecordValue $latest 'current_sha256' '') -ceq $sha -and
+                                [int64](Get-RecordValue $latest 'source_order' 0) -eq $order) {
                                 $latest['anchor_confirmed_sha256'] = $sha
                                 $latest['anchor_confirmed_utc'] = [DateTime]::UtcNow.ToString('o')
                                 $latest['anchor_error'] = ''
@@ -1351,7 +1419,9 @@ function Invoke-UploadQueue($Config) {
                         }
                         [IO.File]::Delete($dataPath)
                         [IO.File]::Delete($manifestPath)
+                        return $true
                     } 5000 $sessionScope
+                    if (-not $committed) { break }
                     $uploaded += 1
                     $acknowledged = $true
                     break
@@ -1359,9 +1429,16 @@ function Invoke-UploadQueue($Config) {
                 if ($remoteStatus -ne 'receiving') { throw 'archive acknowledgement status is invalid' }
                 $next = [int64](Get-Value $response 'next_offset' -1)
                 if ($next -ne $offset + $length) { throw 'archive acknowledgement offset mismatch' }
+                Invoke-WithClientLock {
+                    $fresh = Read-JsonFile $manifestPath
+                    if ($null -eq $fresh -or [string](Get-Value $fresh 'sha256' '') -cne $sha -or
+                        [int64](Get-Value $fresh 'next_offset' 0) -ne $offset) { throw 'upload_progress_changed' }
+                    # Preserve capture-hook metadata, including a newer order.
+                    $progress = ConvertTo-QueueManifest $fresh
+                    $progress['next_offset'] = $next
+                    Write-JsonAtomic $manifestPath $progress
+                } 5000 $sessionScope
                 $offset = $next
-                $manifest['next_offset'] = $offset
-                Invoke-WithClientLock { Write-JsonAtomic $manifestPath $manifest } 5000 $sessionScope
             }
         }
         catch {
@@ -1374,7 +1451,15 @@ function Invoke-UploadQueue($Config) {
                     $manifest['last_error_utc'] = [DateTime]::UtcNow.ToString('o')
                     $manifest['last_error_stage'] = $failureStage
                     $manifest['last_error_type'] = $_.Exception.GetType().Name
-                    Invoke-WithClientLock { Write-JsonAtomic $manifestPath $manifest } 5000 $sessionScope
+                    Invoke-WithClientLock {
+                        $fresh = Read-JsonFile $manifestPath
+                        if ($null -ne $fresh -and [string](Get-Value $fresh 'sha256' '') -ceq [string](Get-RecordValue $manifest 'sha256' '') -and
+                            [int64](Get-Value $fresh 'source_order' 0) -eq $order) {
+                            $failure = ConvertTo-OrderedRecord $fresh
+                            foreach ($field in @('last_error','last_error_utc','last_error_stage','last_error_type')) { $failure[$field] = $manifest[$field] }
+                            Write-JsonAtomic $manifestPath $failure
+                        }
+                    } 5000 $sessionScope
                 }
             }
             catch { }
