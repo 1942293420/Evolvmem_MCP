@@ -880,7 +880,7 @@ class MemoryMCPServer:
             "as_of": request.as_of,
         }
 
-    def _capability_search(self, args: dict) -> dict:
+    def _capability_search(self, args: dict, *, service=None) -> dict:
         if not isinstance(args, dict) or set(args) - {"query", "categories", "top_k", "project", "module_id"}:
             return self._context_error("invalid_arguments")
         query = args.get("query")
@@ -889,7 +889,7 @@ class MemoryMCPServer:
             return self._context_error("invalid_arguments")
         try:
             from evolvmem.capability_retriever import CapabilityRetriever
-            results = CapabilityRetriever(self.context_service).search(
+            results = CapabilityRetriever(service if service is not None else self.context_service).search(
                 query, categories=tuple(categories), top_k=args.get("top_k", 10),
                 project=args.get("project"), module_id=args.get("module_id")
             )
@@ -1269,20 +1269,22 @@ class MemoryMCPServer:
             self._continuity_service = service
         return service
 
-    def _continuity_gate_error(self) -> dict | None:
+    def _continuity_gate_error(self, *, service=None) -> dict | None:
         """continuity 专用就绪检查：schema 表存在 + workspace key 可用。
 
         不复用 ``_context_gate_error``：续接不依赖 Core serving gate，
         compat/降级 primary 下续接仍可用，不得被 ``context_not_enabled``
         或 ``degraded_legacy`` 提前拒掉。
         """
-        service = self._continuity()
+        explicit = service is not None
+        service = service if explicit else self._continuity()
         if service is None:
             return self._context_error("continuity_not_ready")
         try:
             if not service._schema_ready():
                 return self._context_error("continuity_not_ready")
-            if self._workspace_identity().status().state != "ready":
+            identity = service._workspace_identity if explicit else self._workspace_identity()
+            if identity.status().state != "ready":
                 return self._context_error("continuity_not_ready")
         except Exception:
             return self._context_error("continuity_not_ready")
@@ -1359,7 +1361,7 @@ class MemoryMCPServer:
             "bound": result.bound,
         }
 
-    def _continuity_find(self, args: dict) -> dict:
+    def _continuity_find(self, args: dict, *, service=None) -> dict:
         if not isinstance(args, dict) or set(args) - self._FIND_FIELDS:
             return self._context_error("invalid_arguments")
         try:
@@ -1372,7 +1374,7 @@ class MemoryMCPServer:
             return self._context_error("invalid_arguments")
         # find 从通用目录也应可用：只要求 continuity schema，workspace key
         # 缺失时降级为“未核验工作区”，绝不因此隐藏 continuity 能力
-        service = self._continuity()
+        service = service if service is not None else self._continuity()
         if service is None:
             return self._context_error("continuity_not_ready")
         try:
@@ -1419,15 +1421,16 @@ class MemoryMCPServer:
             )
         return payload
 
-    def _continuity_resume(self, args: dict) -> dict:
+    def _continuity_resume(self, args: dict, *, service=None) -> dict:
         request = self._continuity_read_request(args)
         if isinstance(request, dict):
             return request
-        gate_error = self._continuity_gate_error()
+        service = service if service is not None else self._continuity()
+        gate_error = self._continuity_gate_error(service=service)
         if gate_error is not None:
             return gate_error
         try:
-            result = self._continuity().resume(request)
+            result = service.resume(request)
         except ContinuityError as exc:
             # resume 设计上对数据不抛错；边界处仍做稳定映射兜底
             return self._context_error(exc.code)
@@ -1458,15 +1461,16 @@ class MemoryMCPServer:
             )
         return payload
 
-    def _continuity_list(self, args: dict) -> dict:
+    def _continuity_list(self, args: dict, *, service=None) -> dict:
         request = self._continuity_read_request(args)
         if isinstance(request, dict):
             return request
-        gate_error = self._continuity_gate_error()
+        service = service if service is not None else self._continuity()
+        gate_error = self._continuity_gate_error(service=service)
         if gate_error is not None:
             return gate_error
         try:
-            summaries = self._continuity().list_open(request)
+            summaries = service.list_open(request)
         except ContinuityError as exc:
             return self._context_error(exc.code)
         except Exception:

@@ -11,6 +11,8 @@ import uuid
 from contextlib import nullcontext
 
 from evolvmem.lan_revision import RevisionReader
+from evolvmem.lan_continuity_reads import ContinuityReader, READ_TOOLS as CONTINUITY_READS
+from evolvmem.lan_capability_reads import CapabilityReader
 from evolvmem.lan_sharing import LanError, LanSharing, validate_request_id
 from evolvmem.mcp_contract import tool_specs
 from evolvmem.lan_context import remote_context, validate_snapshot, prepare_bindings, bind_workspace, prepare_memory_revision
@@ -140,6 +142,8 @@ class LanTools:
                 prepare_health_generation(runtime.server_for(user, space).context_service.store)
 
         self._revision_reader = RevisionReader(runtime.settings)
+        self._continuity_reader = ContinuityReader(runtime)
+        self._capability_reader = CapabilityReader(runtime)
         if not hasattr(runtime, '_background_health'):
             from evolvmem.background_health import BackgroundHealth
             runtime._background_health = BackgroundHealth({
@@ -292,12 +296,14 @@ class LanTools:
                          and arguments.get('detail') == 'revision')
         health_only = (name == 'memory_status' and isinstance(arguments, dict)
                        and arguments.get('detail') == 'health')
+        continuity_read = isinstance(name,str) and name in CONTINUITY_READS
+        capability_read = name == 'capability_search' and self.runtime._background_health.active
         # These fixed reads use owned connections and never enter mutable
         # request identity or resident SQLite transactions.
-        with (nullcontext() if revision_only or health_only else timed_lock(self.lock)), request_health_scope():
+        with (nullcontext() if revision_only or health_only or continuity_read or capability_read else timed_lock(self.lock)), request_health_scope():
             try:
                 with stage('dispatch'):
-                    result = self._call_tool(user, name, arguments, owner=owner)
+                    result = self._call_tool(user, name, arguments, owner=owner, independent_capability=capability_read)
                     if revision_only:
                         if self.runtime._closed:
                             raise RuntimeError('LAN runtime is closed')
@@ -318,7 +324,7 @@ class LanTools:
                 logging.getLogger(__name__).warning('tool_failure name=%s category=%s', safe_name, type(exc).__name__)
                 return {'error': 'request_indeterminate' if isinstance(arguments, dict) and arguments.get('request_id') else 'remote_tool_failed'}
 
-    def _call_tool(self, user, name, arguments, *, owner=False):
+    def _call_tool(self, user, name, arguments, *, owner=False, independent_capability=False):
         if owner and user != "jiangli":
             raise LanError("owner_forbidden")
         if user not in ('jiangli', 'kane'):
@@ -348,8 +354,8 @@ class LanTools:
             raise LanError('public_write_forbidden')
         revision_only = name == 'memory_status' and args.get('detail') == 'revision'
         health_only = name == 'memory_status' and args.get('detail') == 'health'
-        background_capability = name == 'capability_search' and self.runtime._background_health.active
-        specs = (self._catalog_specs[(user, owner)] if revision_only or health_only or background_capability else
+        background_capability = independent_capability or (name == 'capability_search' and self.runtime._background_health.active)
+        specs = (self._catalog_specs[(user, owner)] if revision_only or health_only or background_capability or name in CONTINUITY_READS else
                  self._specs(user, owner=owner, capture_only=name in CAPTURE_TOOLS,
                              continuity_only=name in CONTINUITY_TOOLS))
         if name not in specs:
@@ -398,6 +404,23 @@ class LanTools:
         canonical_args = deepcopy(args)
         device_id = args.pop('device_id', None)
         args.pop('repo_snapshot', None)
+        if independent_capability:
+            diagnostic = self.runtime._background_health.status(user)
+            if diagnostic['hard_gate'] != 'allowed':
+                return {'error':diagnostic['hard_gate'],'health':diagnostic}
+            result = self._capability_reader.read(user,args)
+            current_health = self.runtime._background_health.status(user)
+            if current_health['hard_gate'] != 'allowed':
+                result = {'error':current_health['hard_gate']}
+            result = self._qualify(self._sanitize(result),'personal',name)
+            result['health'] = current_health
+            return result
+        if name in CONTINUITY_READS:
+            result = self._continuity_reader.read(user,name,args,owner=owner,device_id=device_id,snapshot=snapshot)
+            result = self._qualify(self._sanitize(result),'personal',name)
+            if not owner and args.get('workspace_path'):
+                result['repo_source'] = 'client_reported' if canonical_args.get('repo_snapshot') else 'unknown'
+            return result
         if name not in PUBLIC_TOOLS | {'continuity_bind'}:
             server = self.runtime.server_for(user)
             if name in CONTINUITY_TOOLS:

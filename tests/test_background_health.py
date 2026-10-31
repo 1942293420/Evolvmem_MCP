@@ -150,18 +150,17 @@ def test_capability_old_good_snapshot_never_authorizes_bad_source(lan, sql):
 
 
 def test_capability_withdrawal_after_candidate_scan_is_checked(lan, monkeypatch):
+    from evolvmem.capability_retriever import CapabilityRetriever
     runtime, adapter = lan
     store, ident = capability_setup(runtime, adapter)
-    server = runtime.server_for('kane')
-    original = server.handle_tool_call
-    def withdrawn(name, args):
-        result = original(name, args)
-        if name == 'capability_search':
-            assert result['count'] == 1
-            with store.transaction():
-                store._connection().execute("UPDATE context_items SET status='archived' WHERE id=?", (ident,))
+    original = CapabilityRetriever.search
+    def withdrawn(retriever, *args, **kwargs):
+        result = original(retriever, *args, **kwargs)
+        assert len(result) == 1
+        with store.transaction():
+            store._connection().execute("UPDATE context_items SET status='archived' WHERE id=?", (ident,))
         return result
-    monkeypatch.setattr(server, 'handle_tool_call', withdrawn)
+    monkeypatch.setattr(CapabilityRetriever, 'search', withdrawn)
     result = adapter.call_tool('kane', 'capability_search', {'query': 'orchard'})
     assert result.get('error') or result['count'] == 0, result
 

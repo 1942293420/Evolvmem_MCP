@@ -38,7 +38,7 @@ try{
  assert.match(await page.locator('[data-node-detail]').innerText(),/同一只读快照内复用相同来源.*批量核对模块/);assert.match(await page.locator('[data-node-detail]').innerText(),/最终检查另开快照，不跨请求沿用旧判断/);await screenshot(page,'evo-product-health-candidate-detail.png');
  await click('[data-node="status"]');assert.match(await page.locator('[data-node-detail]').innerText(),/revision 与 health 不等待业务锁.*旧诊断不是当前全库正常的证明/);
  await screenshot(page,'evo-product-health-status-detail.png');
- await click('[data-node="result"]');assert.match(await page.locator('[data-node-detail]').innerText(),/能力查询仍共用业务锁.*不宣称所有业务并发/);
+ await click('[data-node="result"]');assert.match(await page.locator('[data-node-detail]').innerText(),/LAN 能力查询独立读取.*重查询最多同时运行2个.*尚未完成多人并发验收/);await screenshot(page,'evo-product-health-result-detail.png');
  await click('[data-principle="modules"]');await click('[data-node="rules"]');
  assert.match(await page.locator('[data-node-detail]').innerText(),/处理规则与样例预览/);await screenshot(page,'evo-product-modules-last-row-detail.png');
  await click('[data-principle="restructure"]');await click('[data-node="scope"]');
@@ -56,6 +56,7 @@ try{
  assert.match(await page.locator('[data-node-detail]').innerText(),/context_project_recall.*project_archive_get.*capability_search/);
  assert.match(await page.locator('[data-node-detail]').innerText(),/输入/);
  assert.match(await page.locator('[data-node-detail]').innerText(),/输出/);
+ await click('[data-node="checkpoint"]');assert.match(await page.locator('[data-node-detail]').innerText(),/任务续接、任务列表和任务查找独立读取已保存进度.*保存仍核对版本/);await screenshot(page,'evo-product-continuity-read-detail.png');
  await click('[data-principle="dataflow"]');
  assert.match(await page.locator('.product-diagram').innerText(),/项目知识目录与历史/);
  assert.match(await page.locator('.product-diagram').innerText(),/可用问答/);

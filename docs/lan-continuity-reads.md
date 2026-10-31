@@ -1,0 +1,13 @@
+# Independent LAN continuation reads
+
+`continuity_resume`, `continuity_list`, and `continuity_find` now use request-owned read-only SQLite connections and domain services. A slow capability recall or another operation holding the resident business lock no longer queues these three reads. Mutations, checkpoint CAS, binding and focus changes still use the existing business lock.
+
+Authentication, personal namespace selection, argument validation, opaque device/workspace identity, project bindings, output sanitization and reference qualification retain their existing contracts. Each request gets its own workspace provider and repo observation. Remote paths never reach local Git/filesystem discovery. Owner requests keep local workspace behavior. The existing typed MCP handlers accept the explicit service; they do not replace shared identity fields or initialize another MCP server.
+
+Connections use `mode=ro`, query-only mode and one pinned read transaction covering readiness, bindings, focus, revisions and the bounded checkpoint body. They never initialize schema, bootstrap a workspace key, update access counters or commit. Committed concurrent changes become visible on the next request. Database file identity and namespace separation are checked before and after the read; replacement requires runtime reinitialization.
+
+All adapters of one runtime share eight read permits. Saturation returns `continuity_read_busy` after a bounded permit wait. SQLite uses a 100 ms busy timeout and a one-second SQL execution deadline. This is not a total request deadline: owner workspace/Git checks have their own bounded operations. Connections close and permits return on success, timeout, shutdown and exceptions. Missing workspace keys retain the existing find-without-workspace discovery behavior; resume still requires a usable identity.
+
+Validation covers held business locks, independent identities, two adapters sharing limits, committed snapshot consistency, concurrent updates during a read, read-only enforcement, cleanup, runtime shutdown, SQL deadlines, missing keys, replaced database files and unchanged mutation serialization. The targeted LAN, continuity, revision, background health, stdio and sharing suite passed 187 cases. Desktop workflow diagrams passed at 1280 and 1440 widths; the continuation detail explains independent reads and retained version checks.
+
+The accompanying capability reader has a separate limit and resource lifecycle, described in `lan-capability-reads.md`. This release does not migrate to PostgreSQL or change the serial stdio HTTP client. A server-side improvement does not remove client-side request queueing.

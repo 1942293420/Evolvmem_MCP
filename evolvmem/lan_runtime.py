@@ -60,6 +60,7 @@ class _SerializedEmbeddingEngine:
 
     def rerank(self, query, documents):
         with self._lock:
+            if self._closed:raise RuntimeError('embedding engine is closed')
             return self._engine.rerank(query, documents)
 
     @property
@@ -68,6 +69,7 @@ class _SerializedEmbeddingEngine:
 
     def encode(self, text):
         with self._lock:
+            if self._closed:raise RuntimeError('embedding engine is closed')
             return self._engine.encode(text)
 
     def initialize(self) -> None:
@@ -88,10 +90,12 @@ class _SerializedEmbeddingEngine:
 
     def encode_document(self, text):
         with self._lock:
+            if self._closed:raise RuntimeError('embedding engine is closed')
             return self._engine.encode_document(text)
 
     def encode_query(self, text):
         with self._lock:
+            if self._closed:raise RuntimeError('embedding engine is closed')
             return self._engine.encode_query(text)
 
 
