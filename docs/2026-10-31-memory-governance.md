@@ -101,7 +101,17 @@ namespace, separate from Context item IDs and outcome feedback targets.
 Lexical backfill is bounded and deterministic when early candidates fail
 current-source filters. Vectors use the existing embedding model and a
 proof manifest; bounded background reconciliation resumes missing or stale
-entries without declaring a partial rebuild complete.
+entries without declaring a partial rebuild complete. Full source/value coverage
+is checked in a read-only database snapshot. A short final write transaction
+checks database changes, the embedding contract and each validity-time boundary
+before clearing the pending marker; changes retain that marker instead of
+certifying a stale result. Per-record publication still checks current sources.
+
+In an isolated-copy comparison using the real source/value checks and no model
+or embedding calls, the final writer hold fell from 14.234 seconds to 16.617
+milliseconds. Complete reconciliation still took 22.619 seconds; the change
+reduces writer blocking rather than eliminating the cost of the full audit.
+This is an isolated test result, not production throughput or migration coverage.
 
 ## Historical repair and deployment
 
@@ -110,7 +120,11 @@ transport snapshot. Separate repairs cover typed ownership, legacy source
 bindings, missing cleaned bodies and current task retries. Plans are hashed
 and verify source, rule, registry, unit and manual-state preconditions before
 each bounded write. Unstarted unchanged queue changes can be rolled back;
-processed results and subsequent human edits are retained.
+processed results and subsequent human edits are retained. Refreshing a
+conversation manifest without changing its identity or members does not by
+itself invalidate a queue plan: only the manifest's refresh timestamp is
+excluded. Original members, cleaning decisions, task/unit state, human
+protection, rules and registry state remain bound to the plan.
 
 Existing knowledge is assessed in place using its original ID, title and body.
 Plans distinguish exact task-unit originals, directly supported archive dialogue,
@@ -128,7 +142,19 @@ safe reason code. The invalid response cannot create accepted knowledge or
 withdraw independently valid module bindings. Transport failures, changed
 sources and expired write leases are handled as operational failures, not as
 negative judgments about knowledge value. Technical review and actual lack of
-useful evidence are distinct outcomes.
+useful evidence are distinct outcomes. Independent support prompts state the
+existing boolean, hash, reason-length and exact-quote limits explicitly. Rejected
+responses expose only controlled field/error codes and numeric lengths, counts
+or positions, without retaining rejected text. These diagnostics are persisted
+for existing-memory assessment; the acceptance thresholds and policy are unchanged.
+
+A wholly empty extraction template from a nonempty proven original shares the
+same single correction opportunity. If it is still empty, the source remains
+review material with an explicit incomplete-extraction explanation. An honest
+explanation that the original cannot support the old knowledge may keep an
+empty evidence array. A valid independent judgment of unsupported claims is
+not retried to seek approval. Neither an incomplete extraction nor a technical
+response failure means the retained knowledge has been proven low value.
 
 Run repair on a writable backup first. Back up the live database, authenticated
 archives, configuration and keys privately before production changes. Source

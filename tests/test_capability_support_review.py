@@ -73,3 +73,59 @@ def test_title_policy_never_reuses_a_v1_success_receipt(test_config):
         pipelines = {row[0] for row in store._connection().execute("SELECT pipeline FROM extraction_receipts")}
         assert old_key in pipelines
         assert "capability-support:" + POLICY_VERSION + ":" + request["input_hash"] + ":" + request["candidate_hash"] in pipelines
+
+
+@pytest.mark.parametrize("changed,field,code", [
+    ({"supported": "true"}, "supported", "boolean_required"),
+    ({"input_hash": "PRIVATE rejected hash"}, "input_hash", "hash_mismatch"),
+    ({"candidate_hash": "PRIVATE rejected hash"}, "candidate_hash", "hash_mismatch"),
+    ({"reason": []}, "reason", "string_required"),
+    ({"reason": " "}, "reason", "length_out_of_range"),
+    ({"reason": "PRIVATE" * 150}, "reason", "length_out_of_range"),
+    ({"evidence_quotes": "PRIVATE rejected quote"}, "evidence_quotes", "array_required"),
+    ({"evidence_quotes": ["PRIVATE"] * 21}, "evidence_quotes", "too_many_items"),
+    ({"evidence_quotes": [None]}, "evidence_quotes", "string_required"),
+    ({"evidence_quotes": [" "]}, "evidence_quotes", "empty_quote"),
+    ({"evidence_quotes": ["PRIVATE rejected quote"]}, "evidence_quotes", "quote_not_in_source"),
+    ({"supported": True, "evidence_quotes": []}, "evidence_quotes", "support_requires_quotes"),
+])
+def test_rejected_support_has_field_diagnostics_without_rejected_values(changed, field, code):
+    from evolvmem.capability_support_review import _validate
+    request = {"input_hash": "input", "candidate_hash": "candidate"}
+    response = {**request, "supported": False, "reason": "依据不足", "evidence_quotes": []}
+    with pytest.raises(ValueError) as caught:
+        _validate({**response, **changed}, request, "真实原文")
+    assert str(caught.value) == "invalid_support_review"
+    diagnostics = caught.value.diagnostics
+    assert any(d["field"] == field and d["code"] == code for d in diagnostics)
+    assert "PRIVATE" not in json.dumps(diagnostics, ensure_ascii=False)
+
+
+def test_support_prompt_contract_matches_validated_bounds_and_false_is_not_retried():
+    text = "原文"
+    roles = ()
+    request = {"input_hash": _hash([text, roles]), "candidate_hash": "fixed-candidate",
+               "source_text": text, "source_roles": roles, "claims": ["不能证明的效果"]}
+    calls = []
+    def provider(prompt):
+        calls.append(prompt)
+        contract = json.loads(prompt.split("输出约束：", 1)[1].split("\n待审阅：", 1)[0])
+        assert contract["reason"] == {"type": "string", "trimmed_min_length": 1, "trimmed_max_length": 1000}
+        assert contract["supported"] == {"type": "boolean"}
+        assert contract["input_hash"] == {"equals": request["input_hash"]}
+        assert contract["candidate_hash"] == {"equals": request["candidate_hash"]}
+        assert contract["evidence_quotes"]["max_items"] == 20
+        assert contract["evidence_quotes"]["supported_true_min_items"] == 1
+        return {"input_hash": request["input_hash"], "candidate_hash": request["candidate_hash"],
+                "supported": False, "reason": "x" * 1000, "evidence_quotes": [text] * 20}
+    reviewer = configured_reviewer(None, source_text=text, source_roles=roles,
+                                   check_current=lambda: None, provider=provider)
+    result = reviewer(request)
+    assert result["supported"] is False and len(calls) == 1
+
+
+def test_non_object_support_response_diagnostic_has_no_payload():
+    from evolvmem.capability_support_review import _validate
+    with pytest.raises(ValueError) as caught:
+        _validate(["PRIVATE"], {"input_hash": "input", "candidate_hash": "candidate"}, "text")
+    assert caught.value.diagnostics == [{"field": "response", "code": "object_required"}]

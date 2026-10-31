@@ -467,7 +467,8 @@ def test_second_invalid_response_records_technical_review_and_continues_other_so
     assert details["original_proof"]["ready"] and details["original_proof"]["input_hash"]
     assert details["model_response"] == {"stage": "extraction", "attempts": 2,
         "errors": ["capability_quote_not_in_source", "capability_quote_not_in_source"],
-        "error_code": "capability_quote_not_in_source"}
+        "error_code": "capability_quote_not_in_source",
+        "diagnostics": [[{"field": "evidence_quotes", "code": "quote_not_in_source", "index": 0}]] * 2}
     assert [row["state"] for row in migration._audit(service.store._connection(), prepared)] == ["done", "done"]
     assert migration.apply_plan(service, prepared, provider=lambda _: pytest.fail("done sources must not re-call"))["applied"] == 0
 
@@ -597,3 +598,115 @@ def test_expired_lease_aborts_without_model_correction(service, monkeypatch):
     with pytest.raises(ValueError, match="assessment_migration_lease_conflict"):
         migration.apply_plan(service, plan(service), provider=provider)
     assert len(calls) == 1 and not assessment.assessments(service.store, ident)
+
+
+
+def empty_fields():
+    return {"kind": "fact", "trigger": "", "conditions": [], "action_steps": [],
+            "result": "", "evidence_quotes": [], "value_reason": ""}
+
+
+def test_empty_example_gets_one_correction_without_changing_old_memory(service, monkeypatch):
+    ident, _, _ = old_unit_memory(service, monkeypatch)
+    before = memory_row(service, ident)
+    calls = []
+    def provider(prompt):
+        calls.append(prompt)
+        return empty_fields() if len(calls) == 1 else fields()
+    migration.apply_plan(service, plan(service), provider=provider)
+    saved = assessment.assessments(service.store, ident)[0]
+    assert len(calls) == 2 and saved["value"] == "reference"
+    assert saved["details"]["model_response"]["errors"] == ["incomplete_capability_extraction"]
+    assert saved["verification_status"] == "unverified" and memory_row(service, ident) == before
+
+
+def test_repeated_empty_example_is_explicit_incomplete_review_and_resume_is_idempotent(service, monkeypatch):
+    ident, _, _ = old_unit_memory(service, monkeypatch)
+    before = memory_row(service, ident)
+    prepared = plan(service)
+    calls = []
+    result = migration.apply_plan(service, prepared, provider=lambda prompt: calls.append(prompt) or empty_fields())
+    saved = assessment.assessments(service.store, ident)[0]
+    assert len(calls) == 2 and result["values"] == {"review": 1}
+    assert saved["details"]["reasons"] == ["extraction_incomplete"]
+    assert saved["details"]["model_response"]["error_code"] == "incomplete_capability_extraction"
+    assert saved["details"]["model_response"]["attempts"] == 2
+    assert saved["details"]["evidence"] == [] and saved["details"]["original_proof"]["ready"]
+    assert saved["verification_status"] == "unverified" and memory_row(service, ident) == before
+    assert not recall_facts(service.store, [ident])[ident]["recall_eligible"]
+    assert migration.apply_plan(service, prepared, provider=lambda _: pytest.fail("already done"))["applied"] == 0
+
+
+def test_explained_missing_evidence_is_not_forced_into_inventing_quotes(service, monkeypatch):
+    ident, _, _ = old_unit_memory(service, monkeypatch)
+    calls = []
+    response = {**empty_fields(), "value_reason": "原文没有支持该旧知识的引文。"}
+    migration.apply_plan(service, plan(service), provider=lambda prompt: calls.append(prompt) or response)
+    saved = assessment.assessments(service.store, ident)[0]
+    assert len(calls) == 1 and saved["details"]["reasons"] == ["missing_evidence"]
+    assert saved["value"] == "review" and saved["verification_status"] == "unverified"
+
+
+def test_semantically_unsupported_review_is_not_retried(service, monkeypatch):
+    ident, _, _ = old_unit_memory(service, monkeypatch, content="Transactions prevent every failure.")
+    calls = []
+    def provider(prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return fields()
+        request = json.loads(prompt.split("待审阅：", 1)[1])
+        return {"input_hash": request["input_hash"], "candidate_hash": request["candidate_hash"],
+                "supported": False, "reason": "原文未证明所有失败都被预防。", "evidence_quotes": [TEXT]}
+    migration.apply_plan(service, plan(service), provider=provider)
+    saved = assessment.assessments(service.store, ident)[0]
+    assert len(calls) == 2 and saved["details"]["reasons"] == ["unsupported_claim"]
+    assert saved["value"] == "review" and saved["verification_status"] == "unverified"
+
+
+@pytest.mark.parametrize("changed_attempt", [1, 2])
+def test_empty_example_correction_cannot_bypass_source_cas(service, monkeypatch, changed_attempt):
+    ident, task, _ = old_unit_memory(service, monkeypatch)
+    calls = []
+    def provider(prompt):
+        calls.append(prompt)
+        if len(calls) == changed_attempt:
+            with service.store.transaction():
+                service.store._connection().execute("UPDATE organization_units SET revision=revision+1 WHERE task_id=?", (task["id"],))
+        return empty_fields()
+    with pytest.raises(ValueError, match="revision_conflict"):
+        migration.apply_plan(service, plan(service), provider=provider)
+    assert len(calls) == changed_attempt and not assessment.assessments(service.store, ident)
+
+
+def test_support_field_diagnostic_persists_without_rejected_text(service, monkeypatch):
+    ident, _, _ = old_unit_memory(service, monkeypatch, content="Transactions prevent every failure.")
+    calls = []
+    def provider(prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return fields()
+        request = json.loads(prompt.split("待审阅：", 1)[1])
+        return {"input_hash": request["input_hash"], "candidate_hash": request["candidate_hash"],
+                "supported": False, "reason": "PRIVATE_RESPONSE" * 80, "evidence_quotes": []}
+    migration.apply_plan(service, plan(service), provider=provider)
+    details = assessment.assessments(service.store, ident)[0]["details"]
+    assert details["reasons"] == ["model_response_invalid"]
+    assert details["model_response"]["diagnostics"] == [[{"field": "reason", "code": "length_out_of_range", "length": 1280}]]
+    assert "PRIVATE_RESPONSE" not in json.dumps(details, ensure_ascii=False)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("quotes,code,extra", [
+    (["PRIVATE_RESPONSE"] * 21, "too_many_items", {"count": 21}),
+    (["PRIVATE_RESPONSE" * 600], "item_too_long", {"index": 0, "length": 9600}),
+    ([None], "string_required", {"index": 0}),
+    ([" "], "empty_item", {"index": 0}),
+])
+def test_extraction_diagnostics_distinguish_quote_shape_without_retaining_values(service, monkeypatch, quotes, code, extra):
+    ident, _, _ = old_unit_memory(service, monkeypatch)
+    migration.apply_plan(service, plan(service), provider=lambda _: {**fields(), "evidence_quotes": quotes})
+    details = assessment.assessments(service.store, ident)[0]["details"]
+    expected = [{"field": "evidence_quotes", "code": code, **extra}]
+    assert details["model_response"]["diagnostics"] == [expected, expected]
+    assert "PRIVATE_RESPONSE" not in json.dumps(details, ensure_ascii=False)
+    assert details["reasons"] == ["model_response_invalid"]

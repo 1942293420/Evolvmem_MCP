@@ -17,6 +17,11 @@ class _Incompatible(ValueError):
     pass
 
 
+class _StaleAudit(RuntimeError):
+    """A committed database change invalidated the read-only eligibility audit."""
+
+
+
 class CapabilityIndex:
     def __init__(self, context_store, config, embedding_engine=None, *, eligible=None, eligible_ids=None):
         self.context_store = context_store
@@ -146,6 +151,53 @@ class CapabilityIndex:
                 "obsolete": len(removed), "remaining": len(missing | outdated | removed),
                 "pending_ids": sorted(missing | outdated | removed)}
 
+    def _audit_fence(self):
+        conn = self.context_store._connection()
+        # data_version observes commits by other connections; total_changes
+        # catches our own commits/rollbacks, which do not change data_version.
+        version = conn.execute("PRAGMA data_version").fetchone()[0]
+        from evolvmem.context_store import _now_iso
+        from evolvmem.context_temporal import window_contains
+        now = _now_iso()
+        # Source eligibility also changes at time boundaries without a DB write.
+        # Recheck only the small temporal metadata projection, not source bodies
+        # or the full provenance/value gate, inside the publication transaction.
+        windows = tuple((row[0], bool(row[1] and row[1] <= now),
+                         window_contains(row[2], None, now),
+                         window_contains(None, row[3], now)) for row in conn.execute(
+            "SELECT id,expires_at,effective_from,effective_until FROM context_items "
+            "WHERE status='active' AND (expires_at IS NOT NULL OR effective_from IS NOT NULL "
+            "OR effective_until IS NOT NULL) ORDER BY id"))
+        return (version, conn.total_changes, tuple(contract(self.config)), windows)
+
+    def _read_audit(self, proof, *, certify=True):
+        """Audit one WAL snapshot without reserving SQLite's only writer.
+
+        Eligibility callbacks must be SQLite reads. Current provenance, source
+        heads, manual decisions, value evidence and source bodies all live in
+        this database; no model or external rule file determines this gate.
+        For certification, any commit during or after the snapshot invalidates its publication,
+        even when the commit changes an unrelated row. False dirty is safe.
+        """
+        conn = self.context_store._connection()
+        if conn.in_transaction or self.context_store._transaction_depth:
+            raise RuntimeError("capability_audit_requires_idle_connection")
+        fence = self._audit_fence() if certify else None
+        query_only = conn.execute("PRAGMA query_only").fetchone()[0]
+        try:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            audit = self._audit(proof)
+        finally:
+            # Only this helper's read transaction exists; never commit a caller's
+            # transaction or an eligibility callback's accidental write.
+            if conn.in_transaction:
+                conn.rollback()
+            conn.execute("PRAGMA query_only=" + str(int(query_only)))
+        if certify and self._audit_fence() != fence:
+            raise _StaleAudit("eligibility_snapshot_changed")
+        return audit, fence
+
     def _sync_one(self, memory_id):
         store = CapabilityStore(self.context_store)
         with self._locked():
@@ -220,7 +272,9 @@ class CapabilityIndex:
             with self._locked():
                 self._ensure_index(reload=True)
                 proof = self._load_proofs()
-                audit = self._audit(proof)
+                # Selection is advisory: individual _sync_one calls recheck
+                # current sources. Concurrent uploads must not starve progress.
+                audit, _ = self._read_audit(proof, certify=False)
                 ids = audit.pop("pending_ids")
                 cursor = int(proof.get("cursor", 0))
                 ids = ([ident for ident in ids if ident > cursor]
@@ -240,27 +294,38 @@ class CapabilityIndex:
                     proof = self._load_proofs()
                     proof["cursor"] = ident
                     self._save_proofs(proof)
-            with self._locked(), self.context_store.transaction():
+            with self._locked():
                 self._ensure_index(reload=True)
                 proof = self._load_proofs()
-                # Save can merge another writer's pending IDs. Audit the final
-                # durable image afterwards, holding the existing cache file lock.
+                # Save can merge another writer's pending IDs. Freeze the final
+                # durable vector image with the existing file locks while the
+                # expensive eligibility scan uses only a SQLite read snapshot.
                 self.vector_index.preserve_dirty()
                 self.vector_index.save()
                 cache = self.vector_index._shared_cache
                 with cache._locked():
                     cache._reload()
-                    audit = self._audit(proof)
-                    audit.pop("pending_ids")
-                    result.update(audit)
-                    if audit["remaining"] == 0 and not result["failed"]:
-                        self._save_proofs(proof)
-                        self.vector_index.clear_dirty()
-                        result["status"] = "ready"
-                    else:
-                        self._pending()
-                        result["status"] = ("failed" if result["failed"] else
-                                            "unavailable" if result["unavailable"] else "partial")
+                    audit, fence = self._read_audit(proof)
+                    with self.context_store.transaction():
+                        # BEGIN IMMEDIATE fences later DB writers; no full-library
+                        # source/value scan or model call occurs in this section.
+                        if self._audit_fence() != fence:
+                            raise _StaleAudit("eligibility_snapshot_changed")
+                        audit.pop("pending_ids")
+                        result.update(audit)
+                        if audit["remaining"] == 0 and not result["failed"]:
+                            self._save_proofs(proof)
+                            self.vector_index.clear_dirty()
+                            result["status"] = "ready"
+                        else:
+                            self._pending()
+                            result["status"] = ("failed" if result["failed"] else
+                                                "unavailable" if result["unavailable"] else "partial")
+        except _StaleAudit as exc:
+            with self._locked():
+                self._pending()
+            result.update(status="partial", remaining=None, stale=result["stale"] + 1)
+            result["errors"].append({"reason": str(exc)})
         except Exception as exc:
             with self._locked():
                 self._pending()

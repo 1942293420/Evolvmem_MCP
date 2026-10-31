@@ -67,6 +67,36 @@ def test_old_completed_retry_reuses_task_and_preserves_manual(service, monkeypat
     assert migration.apply_plan(service, prepared)["applied"] == 0
 
 
+def test_manifest_refresh_timestamp_does_not_invalidate_current_queue_plan(service, monkeypatch):
+    task, _ = completed(service, monkeypatch)
+    conn = service.store._connection()
+    prepared = plan(service)
+    before = [dict(r) for r in conn.execute("SELECT * FROM organization_units")]
+    conn.execute("UPDATE organization_conversations SET updated_at='2099-01-01 00:00:00' WHERE source_key=?",
+                 (task["source_key"],))
+    conn.commit()
+    # register() refreshes this timestamp even if identity and members are the
+    # same. It does not change the original, policy, task or manual decision.
+    assert migration.apply_plan(service, prepared, limit=1)["applied"] == 1
+    assert task_row(service, task["id"])["status"] == "pending"
+    assert [dict(r) for r in conn.execute("SELECT * FROM organization_units")] == before
+
+
+@pytest.mark.parametrize("field,value", [("identity", "changed-family"), ("members", "[]")])
+def test_manifest_identity_and_members_still_invalidate_plan(service, monkeypatch, field, value):
+    task, _ = completed(service, monkeypatch)
+    conn = service.store._connection()
+    prepared = plan(service)
+    conn.execute("UPDATE organization_conversations SET " + field + "=?,updated_at='2099-01-01' WHERE source_key=?",
+                 (value, task["source_key"]))
+    conn.commit()
+    changes = conn.total_changes
+    with pytest.raises(ValueError, match="migration_revision_conflict"):
+        migration.apply_plan(service, prepared, limit=1)
+    assert conn.total_changes == changes
+    assert task_row(service, task["id"])["status"] == "completed"
+
+
 @pytest.mark.parametrize("change", ["manual", "body", "rule", "claim"])
 def test_stale_plan_rejected_before_any_queue_write(service, monkeypatch, change):
     task, archive = completed(service, monkeypatch)

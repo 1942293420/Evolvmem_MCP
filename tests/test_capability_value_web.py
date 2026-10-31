@@ -165,3 +165,18 @@ def test_technical_assessment_failure_explains_processing_error_without_discredi
     assert not item["recall_facts"]["recall_eligible"]
     assert "本次 AI 评估未返回有效结果，内容已保留，等待重新评估。" in item["governance"]["reasons"]
     assert "现有引用尚不能支持全部结论。" not in item["governance"]["reasons"]
+
+
+
+def test_empty_extraction_review_explains_incomplete_analysis_without_calling_it_low_value(base_service):
+    from tests.test_capability_assessment_migration import empty_fields, manual_source, plan, TEXT
+    from evolvmem import capability_assessment_migration as migration
+    ident = CapabilityStore(base_service.store).upsert(
+        CapabilityMemoryDraft(category="database", title="SQLite", content=TEXT), source=manual_source(base_service))
+    migration.apply_plan(base_service, plan(base_service), provider=lambda _: empty_fields())
+    item = capability_web.capabilities(base_service, {})["items"][0]
+    assert item["memory_id"] == ident
+    assert item["governance"]["value"] == "review"
+    assert "本次 AI 提取的信息不完整，内容已保留，等待重新评估。" in item["governance"]["reasons"]
+    assert "内容主要是口号或进度记录。" not in item["governance"]["reasons"]
+    assert not item["recall_facts"]["recall_eligible"]

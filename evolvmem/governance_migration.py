@@ -156,7 +156,11 @@ class Inventory:
         if key.startswith("conversation:"):
             manifest = self.manifests.get(key)
             members = json.loads(manifest["members"]) if manifest else []
-            return [manifest, self.reviews.get(key), [self.source_state(k, (*visiting, key)) for k in members]]
+            # register() refreshes updated_at even when the logical identity and
+            # membership are unchanged. Bind every semantic manifest field and
+            # each original, while excluding only that refresh timestamp.
+            state = {k: v for k, v in manifest.items() if k != "updated_at"} if manifest else None
+            return [state, self.reviews.get(key), [self.source_state(k, (*visiting, key)) for k in members]]
         revision, reason = self.reader.source_revision(key)
         return [revision, reason, self.reviews.get(key)]
 

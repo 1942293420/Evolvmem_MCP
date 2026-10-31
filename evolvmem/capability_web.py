@@ -84,6 +84,7 @@ _REASON_LABELS = {
     "untraceable_legacy_source": "历史来源尚未建立可核对的关联。", "unanchored_reference": "来源关联尚待核对。",
     "source_not_found": "尚未找到对应来源。", "unit_missing_or_ambiguous": "来源片段缺失或存在歧义。",
     "model_response_invalid": "本次 AI 评估未返回有效结果，内容已保留，等待重新评估。",
+    "extraction_incomplete": "本次 AI 提取的信息不完整，内容已保留，等待重新评估。",
     "missing_evidence": "缺少支持内容的原文引用。", "unsupported_claim": "现有引用尚不能支持全部结论。",
     "missing_action_context": "方法的触发条件或操作步骤尚不完整。", "generic_or_progress_only": "内容主要是口号或进度记录。",
     "supported_scoped_action": "原文支持具体条件和操作。", "supported_reference": "原文支持这条事实或决定。",
