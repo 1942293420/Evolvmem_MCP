@@ -190,6 +190,11 @@ class BackgroundHealth:
             expected = (*self._identities[name], hard[1])
             with stage('health_physical'):
                 physical, physical_checked = self._physical_result(name, config.db_path, expected)
+            # The physical checker owns a different connection and cannot be
+            # cancelled by this handler. Spending the semantic budget while
+            # it runs makes the first semantic SQL fail immediately afterward.
+            deadline = time.monotonic() + 60.0
+            conn.set_progress_handler(lambda: self._closed or time.monotonic() >= deadline, 1000)
             hard_codes = tuple(config.validate_runtime())
             store = ContextStore(config)
             store._conn = conn

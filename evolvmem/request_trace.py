@@ -72,6 +72,13 @@ def failure(exc, stage_name='dispatch'):
         trace['error']['frames'] = frames
 
 
+def revision_observation(observation):
+    """Attach fixed revision phases/codes; never replace the existing error."""
+    trace = _current.get()
+    if trace is not None:
+        trace.setdefault('revision', observation.snapshot())
+
+
 @contextmanager
 def stage(name):
     trace = _current.get()
