@@ -1,4 +1,6 @@
 """Knowledge value is auditable and never substitutes for verified experience."""
+import json
+
 import pytest
 
 from evolvmem import capability_assessment as assessment
@@ -165,10 +167,14 @@ def test_new_supported_source_can_promote_pending_but_not_manual_ignored_memory(
 def test_bad_structured_payload_is_not_cached(test_config, changes):
     with ContextStore(test_config) as store:
         service, task = service_with_task(test_config, store, TEXT)
-        with pytest.raises(ValueError):
-            CapabilityPipeline(service).process_task(task, provider=lambda _: candidate(**changes))
-        assert store._connection().execute("SELECT count(*) FROM extraction_receipts WHERE payload IS NOT NULL").fetchone()[0] == 0
+        calls = []
+        result = CapabilityPipeline(service).process_task(
+            task, provider=lambda p: (calls.append(p), candidate(**changes))[1])
+        assert len(calls) == 2 and result["technical_review"] == 1
+        payload = json.loads(store._connection().execute("SELECT payload FROM extraction_receipts").fetchone()[0])
+        assert set(payload) == {"action", "technical_review"} and payload["action"] == "technical_review"
         assert store._connection().execute("SELECT count(*) FROM capability_memories").fetchone()[0] == 0
+        assert store._connection().execute("SELECT count(*) FROM capability_assessments").fetchone()[0] == 0
 
 
 def test_assessment_transaction_failure_does_not_publish_active_memory(test_config, monkeypatch):

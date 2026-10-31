@@ -324,7 +324,7 @@ def test_module_technical_review_keeps_task_in_review_and_preserves_manual_owner
     module = modules.create("evo", "Record handling", explicit=True)
     conn = service.store._connection()
     with service.store.transaction():
-        conn.execute("UPDATE organization_units SET decision='manual',project='evo',projects='[\"evo\"]',revision=9 WHERE task_id=?", (task["id"],))
+        conn.execute("UPDATE organization_units SET decision='manual',project='evo',projects='[\"evo\"]',revision=9,extraction_stage='done' WHERE task_id=?", (task["id"],))
     before = dict(conn.execute("SELECT * FROM organization_units WHERE task_id=?", (task["id"],)).fetchone())
     calls = []
     def provider(prompt, *args, **kwargs):
@@ -336,8 +336,6 @@ def test_module_technical_review_keeps_task_in_review_and_preserves_manual_owner
     monkeypatch.setattr(org, "_load_llm", lambda: ({}, provider))
     if mode == "dual":
         monkeypatch.setattr(worker, "_ingest", lambda *a, **k: None)
-        monkeypatch.setattr(org, "_refresh_task_state",
-            lambda *a, **k: worker._finish(service, task["id"], "completed", "done"))
     worker._process(service, task)
     current = org.task_view(service, task["id"])
     assert (current["status"], current["stage"], current["review_count"]) == ("review", "done", 1)

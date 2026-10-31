@@ -14,7 +14,12 @@ flowchart TD
     D --> E[Registered business modules]
     D --> F[Project events and current summaries]
     C --> G[Technical knowledge candidates]
-    G --> H[Source support and value assessment]
+    G --> V{Extraction response passes validation?}
+    V -->|yes| H[Source support and value assessment]
+    V -->|known response error| W[Check source and lease; correct once]
+    W -->|valid response| H
+    W -->|still invalid| T[Technical receipt; preserve existing knowledge]
+    T --> J[Review with original text retained]
     H --> I[Eligible knowledge]
     H --> J[Review with original text retained]
     I --> K[Lexical and vector retrieval]
@@ -147,6 +152,26 @@ existing boolean, hash, reason-length and exact-quote limits explicitly. Rejecte
 responses expose only controlled field/error codes and numeric lengths, counts
 or positions, without retaining rejected text. These diagnostics are persisted
 for existing-memory assessment; the acceptance thresholds and policy are unchanged.
+
+Primary capability extraction uses the same bounded response-correction pattern:
+only known response-shape and evidence-validation errors permit a second attempt.
+A second invalid response produces a server-created technical receipt tied to the
+current source, rule and unit input. It creates no knowledge, assessment, intake,
+source binding or vector entry and removes no earlier valid result. Replaying the
+same input reuses that receipt without another model call; a model-supplied
+technical marker is rejected. Provider exceptions, storage failures and source,
+manual-state or lease conflicts still abort. Valid ignore and unsupported outcomes
+are not retried. This does not change assessment policy or existing valid cache keys.
+
+Primary and dual organization both count capability and module technical review.
+In dual mode, pending or failed legacy extraction retains priority over a terminal
+review state. When that extraction later completes, the status refresh reads only
+receipts matching the current capability input and module registry, inside the
+status transaction. A current technical receipt then keeps the task in review;
+changed inputs, registry entries or manual module exclusions cannot reuse an old
+receipt. No model runs during this status refresh. The organization page explains
+that extraction is incomplete and that original text and earlier valid results
+remain retained; technical failure is not presented as low knowledge value.
 
 A wholly empty extraction template from a nonempty proven original shares the
 same single correction opportunity. If it is still empty, the source remains

@@ -5,7 +5,7 @@ import hashlib
 import json
 
 from evolvmem.capability_recall_eligibility import recall_facts
-from evolvmem.pipeline_state import assert_unit_current, extraction_payload, unit_scope
+from evolvmem.pipeline_state import assert_unit_current, cached_payload, extraction_payload, unit_scope
 from evolvmem.project_modules import ProjectModuleStore
 
 
@@ -36,6 +36,67 @@ _MODEL_ERRORS = frozenset({"invalid_module_judgment", "module_role_evidence_requ
                            "quote_not_verifiable", "task_invalid_response"})
 
 
+def _registry(modules, task, unit, projects):
+    manual_modules = {r[0] for r in modules.conn.execute(
+        "SELECT module_id FROM project_module_bindings WHERE origin_anchor=? AND decision='manual'",
+        (f"unit:{task['id']}:{unit['digest']}",))}
+    return [r for project in projects for r in modules.list(project) if r['module_id'] not in manual_modules]
+
+
+def _contract(registry):
+    return [{k: r[k] for k in ('module_id', 'project', 'name', 'aliases', 'description', 'revision')} for r in registry]
+
+
+def _pipeline_key(registry):
+    stamp = hashlib.sha256(json.dumps(_contract(registry), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return 'project-module:v1:' + stamp
+
+
+def _validate_judgment(value, modules, unit, allowed, *, allow_technical=True):
+    if not isinstance(value, dict) or not isinstance(value.get('items'), list):
+        raise ValueError('invalid_module_judgment')
+    ids = [r.get('module_id') for r in value['items'] if isinstance(r, dict)]
+    if (len(ids) != len(value['items']) or any(not isinstance(identity, str) for identity in ids)
+            or len(ids) != len(set(ids)) or set(ids) != allowed):
+        raise ValueError('invalid_module_judgment')
+    for row in value['items']:
+        if not isinstance(row.get('decision'), str) or row['decision'] not in {'include', 'exclude', 'review'}:
+            raise ValueError('invalid_module_judgment')
+        if row['decision'] == 'include':
+            if not isinstance(row.get('role'), str):
+                raise ValueError('module_role_evidence_required')
+            modules._evidence(unit['text'], row.get('quote'), row.get('role'), 'auto', row.get('chain'))
+    if 'technical_review' in value:
+        note = value['technical_review']
+        if (not allow_technical or not isinstance(note, dict)
+                or set(note) != {'reason', 'attempts', 'errors', 'error_code'}
+                or note.get('reason') != 'model_response_invalid'
+                or type(note.get('attempts')) is not int or note['attempts'] != 2
+                or not isinstance(note.get('errors'), list) or len(note['errors']) != 2
+                or any(not isinstance(error, str) or error not in _MODEL_ERRORS for error in note['errors'])
+                or note.get('error_code') != note['errors'][-1]
+                or any(row['decision'] != 'review' for row in value['items'])):
+            raise ValueError('invalid_module_judgment')
+
+
+def current_technical_reviews(service, task):
+    """Use the current registry/manual exclusions and exact original cache key."""
+    modules = ProjectModuleStore(service.store)
+    count = 0
+    for row in modules.conn.execute(
+            "SELECT * FROM organization_units WHERE task_id=? AND disposition IN ('keep','history_only') ORDER BY ordinal",
+            (task['id'],)):
+        unit = dict(row)
+        registry = _registry(modules, task, unit, unit_scope(service, unit)['projects'])
+        if not registry:
+            continue
+        value = cached_payload(service, task, unit, _pipeline_key(registry))
+        if isinstance(value, dict) and value.get('technical_review'):
+            _validate_judgment(value, modules, unit, {r['module_id'] for r in registry})
+            count += 1
+    return count
+
+
 class ProjectModulePipeline:
     def __init__(self, service):
         self.service = service
@@ -51,22 +112,16 @@ class ProjectModulePipeline:
         result = {"bindings": 0, "review": 0, "technical_review": 0, "status": "processed"}
         for unit in units:
             projects = unit_scope(self.service, unit)["projects"]
-            registry = [r for project in projects for r in modules.list(project)]
+            registry = _registry(modules, task, unit, projects)
             if not registry:
                 continue
             source_key = f"unit:{task['id']}:{unit['digest']}"
             previous = {r['module_id']: dict(r) for r in modules.conn.execute(
                 "SELECT * FROM project_module_bindings WHERE origin_anchor=?", (source_key,))}
-            manual_modules = {r[0] for r in modules.conn.execute(
-                "SELECT module_id FROM project_module_bindings WHERE origin_anchor=? AND decision='manual'", (source_key,))}
-            registry = [r for r in registry if r['module_id'] not in manual_modules]
-            if not registry:
-                continue
             # Include every registered module: a weak/tied vector result cannot
             # remove the true module. Candidate order is only a retrieval hint.
             hints = [candidates(self.service, p, unit['text'], use_vectors=provider is None) for p in projects]
-            contract = [{k: r[k] for k in ('module_id', 'project', 'name', 'aliases', 'description', 'revision')} for r in registry]
-            stamp = hashlib.sha256(json.dumps(contract, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            contract = _contract(registry)
             prompt = (
                 '判断本条原文实际负责或可复用到哪个已登记业务模块。技术分类不是业务模块。'
                 '向量相似、模块被提及、历史关联均不能证明本条归属；必须核对本条需求、分析、修改、结果。'
@@ -81,30 +136,7 @@ class ProjectModulePipeline:
             allowed = {r['module_id'] for r in registry}
 
             def validate(value, *, allow_technical=True):
-                if not isinstance(value, dict) or not isinstance(value.get('items'), list):
-                    raise ValueError('invalid_module_judgment')
-                ids = [r.get('module_id') for r in value['items'] if isinstance(r, dict)]
-                if (len(ids) != len(value['items']) or any(not isinstance(identity, str) for identity in ids)
-                        or len(ids) != len(set(ids)) or set(ids) != allowed):
-                    raise ValueError('invalid_module_judgment')
-                for row in value['items']:
-                    if not isinstance(row.get('decision'), str) or row['decision'] not in {'include', 'exclude', 'review'}:
-                        raise ValueError('invalid_module_judgment')
-                    if row['decision'] == 'include':
-                        if not isinstance(row.get('role'), str):
-                            raise ValueError('module_role_evidence_required')
-                        modules._evidence(unit['text'], row.get('quote'), row.get('role'), 'auto', row.get('chain'))
-                if 'technical_review' in value:
-                    note = value['technical_review']
-                    if (not allow_technical or not isinstance(note, dict)
-                            or set(note) != {'reason', 'attempts', 'errors', 'error_code'}
-                            or note.get('reason') != 'model_response_invalid'
-                            or type(note.get('attempts')) is not int or note['attempts'] != 2
-                            or not isinstance(note.get('errors'), list) or len(note['errors']) != 2
-                            or any(not isinstance(error, str) or error not in _MODEL_ERRORS for error in note['errors'])
-                            or note.get('error_code') != note['errors'][-1]
-                            or any(row['decision'] != 'review' for row in value['items'])):
-                        raise ValueError('invalid_module_judgment')
+                _validate_judgment(value, modules, unit, allowed, allow_technical=allow_technical)
 
             from evolvmem.capability_pipeline import _call_provider
             def extract(lease_guard):
@@ -133,7 +165,7 @@ class ProjectModulePipeline:
                 return {'items': [{'module_id': identity, 'decision': 'review'} for identity in sorted(allowed)],
                         'technical_review': {'reason': 'model_response_invalid', 'attempts': 2,
                                              'errors': errors, 'error_code': errors[-1]}}
-            value = extraction_payload(self.service, task, unit, 'project-module:v1:' + stamp,
+            value = extraction_payload(self.service, task, unit, _pipeline_key(registry),
                                        None, validate, guarded_extract=extract)
             with self.service.store.transaction():
                 assert_unit_current(self.service, task, unit)

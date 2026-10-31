@@ -1433,27 +1433,24 @@ class OrganizationWorker:
                     self._assign(service, task, materialize=False, sync_relations=mode == 'dual')
                     task = _task_row(service, task_id)
                     _assert_current(service, task)
-                    CapabilityPipeline(service).process_task(task)
+                    capability_result = CapabilityPipeline(service).process_task(task)
+                    capability_review = capability_result.get('technical_review', 0)
                     _assert_current(service, task)
                     ProjectArchivePipeline(service).process_task(task)
                     _assert_current(service, task)
                     from evolvmem.project_module_pipeline import ProjectModulePipeline
                     module_result = ProjectModulePipeline(service).process_task(task)
                     module_review = module_result.get('technical_review', 0)
+                    technical_review = capability_review + module_review
+                    technical_code = ('capability_response_invalid' if capability_review else 'module_response_invalid')
+                    technical_detail = ('知识提取响应未通过原文证据校验，请核对；已有有效知识与来源已保留。'
+                                        if capability_review else '业务模块响应未通过原文证据校验，请核对；已有有效绑定已保留。')
                     _assert_current(service, task)
                     if mode == 'dual':
                         # Preserve legacy projections without a second ownership
                         # pass (or a second model call).
                         self._ingest(service, task)
                         _refresh_task_state(service, task_id, retry_transient=True)
-                        if module_review:
-                            with service.store.transaction():
-                                _assert_current(service, task)
-                                service.store._connection().execute(
-                                    'UPDATE organization_tasks SET review_count=review_count+? WHERE id=?',
-                                    (module_review, task_id))
-                                self._finish(service, task_id, 'review', 'done', 'module_response_invalid',
-                                             '业务模块响应未通过原文证据校验，请核对；已有有效绑定已保留。')
                     else:
                         with service.store.transaction():
                             _assert_current(service, task)
@@ -1465,13 +1462,13 @@ class OrganizationWorker:
                                               or unit['decision'] not in ('auto', 'manual')
                                               or not ks.assigned(unit)
                                               or not set(ks.projects(unit)) <= active_projects))
-                            review += module_review
+                            review += technical_review
                             service.store._connection().execute(
                                 'UPDATE organization_tasks SET review_count=? WHERE id=?',
                                 (review, task_id))
                             self._finish(service, task_id, 'review' if review else 'completed',
-                                         'done', 'module_response_invalid' if module_review else 'units_need_review' if review else '',
-                                         '业务模块响应未通过原文证据校验，请核对；已有有效绑定已保留。' if module_review else '')
+                                         'done', technical_code if technical_review else 'units_need_review' if review else '',
+                                         technical_detail if technical_review else '')
             elif task['stage'] == 'extraction':
                 self._extract_units(service, task)
             else:
@@ -2367,11 +2364,24 @@ def _refresh_task_state(service, task_id, *, retry_transient=False):
     failure_detail = next((describe(u.get('extraction_diagnostic', '')) for u in assigned
                            if u['extraction_stage'] == 'failed' and u.get('extraction_diagnostic')), '')
     unfinished = any(u['extraction_stage'] in ('pending', 'running') for u in assigned)
-    status, stage, error = ('pending', 'extraction', '') if unfinished else (
-        ('failed', 'extraction', 'extraction_failed') if failed else
-        ('review', 'done', 'units_need_review') if review else ('completed', 'done', ''))
     with service.store.transaction():
         conn = service.store._connection()
+        # Pure current-receipt accounting shares the final status transaction.
+        capability_review = module_review = 0
+        if getattr(service.config, 'knowledge_structure_mode', 'legacy') == 'dual':
+            from evolvmem.capability_pipeline import current_technical_reviews as capability_reviews
+            from evolvmem.project_module_pipeline import current_technical_reviews as module_reviews
+            current_task = service.store._connection().execute(
+                'SELECT id,source_key,source_revision,rule_revision FROM organization_tasks WHERE id=?',
+                (task_id,)).fetchone()
+            capability_review = capability_reviews(service, current_task)
+            module_review = module_reviews(service, current_task)
+            review += capability_review + module_review
+        status, stage, error = ('pending', 'extraction', '') if unfinished else (
+            ('failed', 'extraction', 'extraction_failed') if failed else
+            ('review', 'done', 'capability_response_invalid') if capability_review else
+            ('review', 'done', 'module_response_invalid') if module_review else
+            ('review', 'done', 'units_need_review') if review else ('completed', 'done', ''))
         if units:
             conn.execute('UPDATE organization_tasks SET review_count=?,status=?,stage=?,error_code=?,error_detail=?,'
                          'finished_at=?,updated_at=? WHERE id=? AND status!=?',

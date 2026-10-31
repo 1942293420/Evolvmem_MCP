@@ -75,11 +75,24 @@ def unit_scope(service, unit):
             "evidence_status": "confirmed" if confirmed else "unverified"}
 
 
-def extraction_payload(service, task, unit, pipeline, extract, validate=lambda p: None, *, guarded_extract=None):
-    assert_unit_current(service, task, unit)
+def extraction_key(task, unit, pipeline):
+    """One identity for extraction, replay and read-only terminal accounting."""
     stamp = [pipeline, task["source_key"], task["source_revision"], task["rule_revision"],
              unit["digest"], unit["text"], unit["source_start"], unit["source_end"]]
-    key = hashlib.sha256(json.dumps(stamp, ensure_ascii=False).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(stamp, ensure_ascii=False).encode()).hexdigest()
+
+
+def cached_payload(service, task, unit, pipeline):
+    """Read an exact current-input receipt without claiming or calling a model."""
+    row = service.store._connection().execute(
+        "SELECT payload FROM extraction_receipts WHERE input_key=?",
+        (extraction_key(task, unit, pipeline),)).fetchone()
+    return json.loads(row["payload"]) if row and row["payload"] is not None else None
+
+
+def extraction_payload(service, task, unit, pipeline, extract, validate=lambda p: None, *, guarded_extract=None):
+    assert_unit_current(service, task, unit)
+    key = extraction_key(task, unit, pipeline)
     conn = service.store._connection()
     token = uuid.uuid4().hex
     now = time.time()

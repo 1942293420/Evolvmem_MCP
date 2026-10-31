@@ -110,9 +110,12 @@ def test_failed_save_reuses_provider_payload(test_config, monkeypatch):
 def test_bad_model_action_does_not_create_active_knowledge(test_config):
     with ContextStore(test_config) as store:
         service, task = service_with_task(test_config, store)
-        with pytest.raises(ValueError, match="invalid_capability_action"):
-            CapabilityPipeline(service).process_task(task, provider=lambda _: {**candidate(""), "action": "whatever"})
+        result = CapabilityPipeline(service).process_task(task, provider=lambda _: {**candidate(""), "action": "whatever"})
+        assert result["technical_review"] == 1
+        assert result["unit_outcomes"][0]["errors"] == ["invalid_capability_action"] * 2
         assert store._connection().execute("SELECT count(*) FROM capability_memories").fetchone()[0] == 0
+        payload = json.loads(store._connection().execute("SELECT payload FROM extraction_receipts").fetchone()[0])
+        assert payload["action"] == "technical_review" and "whatever" not in json.dumps(payload)
 
 
 def test_concurrent_same_input_is_leased(test_config):
@@ -131,9 +134,16 @@ def test_concurrent_same_input_is_leased(test_config):
 def test_invalid_date_is_not_cached_and_can_be_retried(test_config, bad_date):
     with ContextStore(test_config) as store:
         service, task = service_with_task(test_config, store)
-        with pytest.raises(ValueError, match="invalid_occurred_at"):
-            CapabilityPipeline(service).process_task(task, provider=lambda _: {**candidate(""), "occurred_at": bad_date})
-        assert store._connection().execute("SELECT count(*) FROM extraction_receipts WHERE payload IS NOT NULL").fetchone()[0] == 0
-        result = CapabilityPipeline(service).process_task(task, provider=candidate)
-        assert len(result["memory_ids"]) == 1
+        calls = []
+        def provider(prompt):
+            calls.append(prompt)
+            if len(calls) == 2:
+                assert store._connection().execute("SELECT count(*) FROM capability_memories").fetchone()[0] == 0
+                assert store._connection().execute("SELECT count(*) FROM extraction_receipts WHERE payload IS NOT NULL").fetchone()[0] == 0
+            return {**candidate(prompt), "occurred_at": bad_date} if len(calls) == 1 else candidate(prompt)
+        result = CapabilityPipeline(service).process_task(task, provider=provider)
+        assert len(calls) == 2 and len(result["memory_ids"]) == 1
+        payload = json.loads(store._connection().execute("SELECT payload FROM extraction_receipts").fetchone()[0])
+        assert payload.get("occurred_at") is None and payload["action"] == "keep"
+        assert CapabilityPipeline(service).process_task(task, provider=lambda _: pytest.fail("valid cache repeated")) == result
 
