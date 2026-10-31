@@ -10,7 +10,6 @@ import threading
 import uuid
 from contextlib import nullcontext
 
-from evolvmem.lan_revision import RevisionReader
 from evolvmem.lan_continuity_reads import ContinuityReader, READ_TOOLS as CONTINUITY_READS
 from evolvmem.lan_capability_reads import CapabilityReader
 from evolvmem.lan_sharing import LanError, LanSharing, validate_request_id
@@ -141,7 +140,10 @@ class LanTools:
             for user, space in (('jiangli', 'personal'), ('kane', 'personal'), ('jiangli', 'public')):
                 prepare_health_generation(runtime.server_for(user, space).context_service.store)
 
-        self._revision_reader = RevisionReader(runtime.settings)
+        # Explicit startup preparation, after the revision schema exists and
+        # before this adapter is published to the HTTP server. No request calls
+        # this initializer; runtime's getter is fail-closed until preparation.
+        self._revision_reader = runtime.prepare_revision_reader()
         self._continuity_reader = ContinuityReader(runtime)
         self._capability_reader = CapabilityReader(runtime)
         if not hasattr(runtime, '_background_health'):

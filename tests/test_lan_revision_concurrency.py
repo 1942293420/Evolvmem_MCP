@@ -99,29 +99,70 @@ def test_revision_database_failure_is_safe_and_never_creates(lan, damage, tmp_pa
 
 
 @pytest.mark.parametrize('fail_query', [False, True])
-def test_revision_connections_are_readonly_and_closed_on_all_paths(lan, monkeypatch, fail_query):
+def test_revision_pool_is_readonly_reset_and_closed_at_runtime_shutdown(lan, fail_query):
     runtime, adapter = lan
-    import evolvmem.lan_revision as revision
-    real_connect = sqlite3.connect
-    handles = []
-    def connect(*args, **kwargs):
-        handle = real_connect(*args, **kwargs)
-        handles.append(handle)
+    pool = adapter._revision_reader
+    with pool._condition:
+        handles = [conn for values in pool._idle.values() for conn in values]
+    assert len(handles) == 4
+    for handle in handles:
         with pytest.raises(sqlite3.OperationalError, match='readonly'):
             handle.execute('UPDATE lan_memory_revision SET revision=99 WHERE id=1')
         handle.rollback()
-        return handle
     if fail_query:
         conn = runtime.server_for('jiangli', 'public').context_service.store._connection()
         conn.execute('DROP TABLE lan_memory_revision')
         conn.commit()
-    monkeypatch.setattr(revision.sqlite3, 'connect', connect)
     result = adapter.call_tool('kane', 'memory_status', {'detail': 'revision'})
     assert ('error' in result) == fail_query
-    assert len(handles) == 1
+    assert all(not handle.in_transaction for handle in handles)
+    runtime.close()
     for handle in handles:
         with pytest.raises(sqlite3.ProgrammingError, match='closed'):
             handle.execute('SELECT 1')
+
+
+def test_two_native_adapters_share_prepared_pool_without_online_warmup(lan, monkeypatch):
+    from evolvmem.lan_tools import LanTools
+    from evolvmem.lan_revision import RevisionPool
+    runtime, first = lan
+    def forbidden(*_args, **_kwargs):
+        pytest.fail('second adapter or request attempted cold prewarming')
+    monkeypatch.setattr(RevisionPool, '_warm', forbidden)
+    second = LanTools(runtime)
+    assert first._revision_reader is second._revision_reader is runtime.revision_reader()
+    with first.lock:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as workers:
+            results = list(workers.map(lambda adapter: adapter.call_tool(
+                'kane', 'memory_status', {'detail': 'revision'}), (first, second)))
+    assert results == [{'detail': 'revision', 'authenticated_user': 'kane', 'memory_revision': '0.0'}] * 2
+
+
+def test_native_startup_warmup_holds_neither_business_nor_resource_lock(tmp_path, monkeypatch):
+    from evolvmem.lan_runtime import LanRuntime
+    from evolvmem.lan_tools import LanTools
+    from evolvmem.lan_revision import RevisionPool
+    from tests.test_lan_sharing import settings_for
+    runtime = LanRuntime(settings_for(tmp_path))
+    runtime.initialize()
+    warm = RevisionPool._warm
+    def checked_warm(pool, user):
+        def probe(lock):
+            acquired = lock.acquire(timeout=.2)
+            if acquired:
+                lock.release()
+            return acquired
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as workers:
+            assert workers.submit(probe, runtime._lan_dispatch_lock).result(timeout=1)
+            assert workers.submit(probe, runtime._resources_lock).result(timeout=1)
+        return warm(pool, user)
+    monkeypatch.setattr(RevisionPool, '_warm', checked_warm)
+    try:
+        adapter = LanTools(runtime)
+        assert adapter._revision_reader is runtime.revision_reader()
+        assert adapter.call_tool('kane', 'memory_status', {'detail': 'revision'})['memory_revision'] == '0.0'
+    finally:
+        runtime.close()
 
 
 def test_revision_does_not_claim_business_queue_time(lan, monkeypatch, caplog):

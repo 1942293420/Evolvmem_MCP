@@ -8,7 +8,7 @@ async function diagramBounds(page,kind){
  assert.deepEqual(outside,[],kind+' nodes must fit the SVG viewBox');
  if(kind==='modules'){const overflow=await page.locator('[data-node]').evaluateAll(nodes=>nodes.filter(node=>{const box=node.querySelector('rect').getBBox();return [...node.querySelectorAll('text')].some(text=>{const b=text.getBBox();return b.x<box.x||b.x+b.width>box.x+box.width;});}).map(node=>node.dataset.node));assert.deepEqual(overflow,[],'module labels must fit their cards');}
 }
-(async()=>{const browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE,headless:true,args:['--no-sandbox']});const qaProject='qa-'+Date.now(),caseProject='case-'+Date.now();const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(10000);const base=process.env.EVOLVMEM_TEST_URL||'http://127.0.0.1:39478',errors=[],checks=[];page.on('pageerror',e=>errors.push(e.message));
+(async()=>{const browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE,headless:true,args:['--no-sandbox']});const qaProject='qa-'+Date.now(),caseProject='case-'+Date.now();const page=await browser.newPage({viewport:{width:1440,height:1000}});const testTimeout=Number(process.env.EVOLVMEM_TEST_TIMEOUT_MS||10000);if(!Number.isInteger(testTimeout)||testTimeout<1000||testTimeout>60000)throw new Error('invalid browser test timeout');page.setDefaultTimeout(testTimeout);const base=process.env.EVOLVMEM_TEST_URL||'http://127.0.0.1:39478',errors=[],checks=[];page.on('pageerror',e=>errors.push(e.message));
 const done=async()=>{await page.waitForLoadState('networkidle');await page.waitForFunction(()=>!document.querySelector('#content')?.inert&&document.querySelector('.knowledge-workspace')?.getAttribute('aria-busy')!=='true');};
 const go=async(hash,selector)=>{await page.goto(base+'/'+hash);if(['#clean-instructions','#history-instructions'].includes(selector))await revealRule(page,selector);else await page.waitForSelector(selector);await done();};const click=async s=>{await page.locator(s).first().click();await done();};
 try{
@@ -38,7 +38,7 @@ try{
  assert.match(await page.locator('[data-node-detail]').innerText(),/同一只读快照内复用相同来源.*批量核对模块/);assert.match(await page.locator('[data-node-detail]').innerText(),/最终检查另开快照，不跨请求沿用旧判断/);await screenshot(page,'evo-product-health-candidate-detail.png');
  assert.match(await page.locator('[data-node-detail]').innerText(),/语义候选够数就停止深查.*无效候选继续向后补足/);
  await click('[data-node="queue"]');assert.match(await page.locator('[data-node-detail]').innerText(),/至少间隔30秒.*必要安全基线失效时仍拒绝召回/);await screenshot(page,'evo-product-health-queue-detail.png');
- await click('[data-node="status"]');assert.match(await page.locator('[data-node-detail]').innerText(),/revision 与 health 不等待业务锁.*旧诊断不是当前全库正常的证明/);
+ await click('[data-node="status"]');assert.match(await page.locator('[data-node-detail]').innerText(),/版本查询与健康状态不等待慢召回.*每次独立读取最新提交.*不沿用上一次结果.*旧诊断不是当前全库正常的证明/);
  await screenshot(page,'evo-product-health-status-detail.png');
  await click('[data-node="result"]');assert.match(await page.locator('[data-node-detail]').innerText(),/LAN 能力查询独立读取.*重查询最多同时运行2个.*尚未完成多人并发验收/);await screenshot(page,'evo-product-health-result-detail.png');
  await click('[data-principle="modules"]');await click('[data-node="rules"]');
@@ -77,4 +77,4 @@ try{
  assert.equal(await page.locator('[data-principle="recall"]').getAttribute('aria-pressed'),'true');
  checks.push('业务节点输入输出、数据流、三泳道、活动起止、分支演示、减少动画与切页状态');
  assert.deepEqual(errors,[]);console.log(JSON.stringify({checks,errors},null,2));
-}catch(error){await screenshot(page,'evo-modules-failed.png');console.error('COMPLETED',checks,'ERRORS',errors);throw error;}finally{await browser.close();}})().catch(e=>{console.error(e);process.exit(1)});
+}catch(error){console.error('COMPLETED',checks,'ERRORS',errors,'PRIMARY',error);try{await screenshot(page,'evo-modules-failed.png');}catch(captureError){console.error('SCREENSHOT_FAILED',captureError.message);}throw error;}finally{await browser.close();}})().catch(e=>{console.error(e);process.exit(1)});

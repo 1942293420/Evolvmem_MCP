@@ -6,7 +6,8 @@ import time
 
 PHASES = frozenset({'identity_precheck', 'open_personal', 'trusted_schema',
                     'attach_public', 'query_only', 'begin_snapshot',
-                    'read_revision', 'identity_postcheck', 'validate_result', 'unknown'})
+                    'read_revision', 'identity_postcheck', 'validate_result',
+                    'pool_acquire', 'pool_cleanup', 'unknown'})
 SQLITE_CLASSES = {
     sqlite3.SQLITE_BUSY: 'sqlite_busy',
     sqlite3.SQLITE_LOCKED: 'sqlite_locked',

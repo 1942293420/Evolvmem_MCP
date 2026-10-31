@@ -123,6 +123,8 @@ class LanRuntime:
         self._recovery_worker = None
         self._recovery_stop = threading.Event()
         self._resources_lock = threading.RLock()
+        self._revision_pool_lock = threading.Lock()
+        self._revision_pool = None
         self._workers_running = {'capture': False, 'recovery': False}
         self._resources_closed = False
 
@@ -171,10 +173,44 @@ class LanRuntime:
             raise RuntimeError("LAN runtime is not initialized")
         return self._server_for(user, space)
 
+    def revision_reader(self):
+        """Retrieve an already prepared pool; never initialize on a request."""
+        with self._resources_lock:
+            if self._closed or self._revision_pool is None:
+                raise RuntimeError('revision reader unavailable')
+            return self._revision_pool
+
+    def prepare_revision_reader(self):
+        """Prepare once before serving, outside business/resource lifecycle locks."""
+        from evolvmem.lan_revision import RevisionPool
+        if not self._revision_pool_lock.acquire(timeout=5):
+            raise RuntimeError('revision initialization unavailable')
+        try:
+            with self._resources_lock:
+                if self._closed:
+                    raise RuntimeError('LAN runtime is closed')
+                if self._revision_pool is not None:
+                    return self._revision_pool
+            pool = RevisionPool(self.settings, closed=lambda: self._closed)
+            with self._resources_lock:
+                publish = not self._closed
+                if publish:
+                    self._revision_pool = pool
+            if not publish:
+                pool.close()
+                raise RuntimeError('LAN runtime is closed')
+            return pool
+        finally:
+            self._revision_pool_lock.release()
+
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+        with self._resources_lock:
+            if self._closed:
+                return
+            self._closed = True
+            revision = self._revision_pool
+        if revision is not None:
+            revision.close()
         health = getattr(self, '_background_health', None)
         if health is not None:
             health.close()
