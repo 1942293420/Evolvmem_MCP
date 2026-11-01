@@ -26,6 +26,7 @@ def _ttl():
 _entries = WeakKeyDictionary()
 _entries_lock = threading.Lock()
 _background_read = ContextVar('evolvmem_background_read', default=None)
+_request_read_services = ContextVar('evolvmem_request_read_services', default=None)
 
 
 class BackgroundReadDenied(RuntimeError):
@@ -69,8 +70,9 @@ def _check_read_health(health, bindings):
 def background_read_scope(health, tool, servers):
     """Admit only LAN experience recall using each actual namespace baseline.
 
-    This is not a ContextServiceStatus or a health cache. The dispatcher owns
-    the resident business lock throughout. All original candidate/evidence
+    This is not a ContextServiceStatus or a health cache. Resident dispatch
+    holds its business lock; independent dispatch binds owned read services.
+    All original candidate/evidence
     checks still run; the real hard gate is checked before and after dispatch.
     Semantic staleness schedules the existing worker, never foreground repair.
     """
@@ -102,7 +104,62 @@ def background_read_ready(service):
         if binding[2] is service:
             _check_read_binding(health, binding)
             return True
+    for alias in _request_read_services.get() or ():
+        if alias[0] is service:
+            _check_request_service(health, alias)
+            return True
     raise BackgroundReadDenied('health_boundary_changed')
+
+
+def _check_request_service(health, alias):
+    service, binding, connection, config_state = alias
+    _check_read_binding(health, binding)
+    resident = binding[2]
+    try:
+        if (service is resident or service.store is resident.store
+                or service.store._connection() is not connection
+                or connection is resident.store._connection()
+                or service._mode is not binding[3] or service._adapter != binding[4]
+                or service.embedding_engine is not resident.embedding_engine
+                or tuple(sorted((k,repr(v)) for k,v in vars(service.config).items())) != config_state
+                or tuple(sorted((k,repr(v)) for k,v in vars(resident.config).items())) != config_state
+                or connection.execute('PRAGMA query_only').fetchone()[0] != 1):
+            raise BackgroundReadDenied('health_boundary_changed')
+        files = connection.execute('PRAGMA database_list').fetchall()
+        main = next(row[2] for row in files if row[1] == 'main')
+        if Path(main).resolve() != Path(service.config.db_path).resolve():
+            raise BackgroundReadDenied('health_boundary_changed')
+    except BackgroundReadDenied:
+        raise
+    except Exception:
+        raise BackgroundReadDenied('health_boundary_unavailable') from None
+
+
+@contextmanager
+def background_read_services(pairs):
+    """Bind request-owned readonly services to exact already admitted residents."""
+    admission = _background_read.get()
+    if admission is None or _request_read_services.get() is not None:
+        raise BackgroundReadDenied('health_boundary_unavailable')
+    health, bindings = admission
+    if (not isinstance(pairs,tuple) or len(pairs) != len(bindings)
+            or len({id(service) for service,_ in pairs}) != len(pairs)):
+        raise BackgroundReadDenied('health_boundary_changed')
+    aliases=[]
+    for service,resident in pairs:
+        binding=next((b for b in bindings if b[2] is resident),None)
+        if binding is None or any(a[1] is binding for a in aliases):
+            raise BackgroundReadDenied('health_boundary_changed')
+        alias=(service,binding,service.store._connection(),
+               tuple(sorted((k,repr(v)) for k,v in vars(service.config).items())))
+        _check_request_service(health,alias)
+        aliases.append(alias)
+    token=_request_read_services.set(tuple(aliases))
+    try:
+        yield
+        for alias in aliases:_check_request_service(health,alias)
+    finally:
+        _request_read_services.reset(token)
 
 
 class _Entry:
@@ -122,9 +179,11 @@ def request_health_scope():
     # Complete health cache remains unchanged. Explicit read admission must
     # never be inherited by another adapter request, including nested calls.
     token = _background_read.set(None)
+    services_token = _request_read_services.set(None)
     try:
         yield
     finally:
+        _request_read_services.reset(services_token)
         _background_read.reset(token)
 
 

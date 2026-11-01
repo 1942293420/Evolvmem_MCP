@@ -19,6 +19,7 @@ from evolvmem.context_models import (
 from evolvmem.experience_sources import ExperienceSourceResolver
 from evolvmem.project_store import ProjectStore
 from evolvmem.extraction_policy import contains_sensitive_text
+from evolvmem.memory_eligibility import eligible as memory_eligible
 
 OUTCOMES = {'success', 'failure', 'confirmed', 'contradicted', 'inapplicable', 'unknown', 'used'}
 LEVELS = {'technical', 'business', 'user_confirmed'}
@@ -488,6 +489,10 @@ class ExperienceService:
         query_terms = _terms(query)
         scored = []
         for item_id in candidate_ids:
+            # The extra lexical lane must keep the semantic lane's current
+            # backing/role gate without changing its candidate budget or rank.
+            if item_id not in semantic and not memory_eligible(self.store, item_id):
+                continue
             case = self.read(item_id)
             if case['project'] != project and not case['transferable']:
                 continue

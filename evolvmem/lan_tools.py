@@ -12,6 +12,7 @@ from contextlib import nullcontext
 
 from evolvmem.lan_continuity_reads import ContinuityReader, READ_TOOLS as CONTINUITY_READS
 from evolvmem.lan_capability_reads import CapabilityReader
+from evolvmem.lan_experience_reads import ExperienceReader
 from evolvmem.lan_sharing import LanError, LanSharing, validate_request_id
 from evolvmem.mcp_contract import tool_specs
 from evolvmem.lan_context import remote_context, validate_snapshot, prepare_bindings, bind_workspace, prepare_memory_revision
@@ -146,6 +147,7 @@ class LanTools:
         self._revision_reader = runtime.prepare_revision_reader()
         self._continuity_reader = ContinuityReader(runtime)
         self._capability_reader = CapabilityReader(runtime)
+        self._experience_reader = ExperienceReader(runtime,self.sharing)
         if not hasattr(runtime, '_background_health'):
             from evolvmem.background_health import BackgroundHealth
             runtime._background_health = BackgroundHealth({
@@ -300,12 +302,14 @@ class LanTools:
                        and arguments.get('detail') == 'health')
         continuity_read = isinstance(name,str) and name in CONTINUITY_READS
         capability_read = name == 'capability_search' and self.runtime._background_health.active
+        experience_read = name == 'experience_recall' and self.runtime._background_health.active
         # These fixed reads use owned connections and never enter mutable
         # request identity or resident SQLite transactions.
-        with (nullcontext() if revision_only or health_only or continuity_read or capability_read else timed_lock(self.lock)), request_health_scope():
+        with (nullcontext() if revision_only or health_only or continuity_read or capability_read or experience_read else timed_lock(self.lock)), request_health_scope():
             try:
                 with stage('dispatch'):
-                    result = self._call_tool(user, name, arguments, owner=owner, independent_capability=capability_read)
+                    result = self._call_tool(user, name, arguments, owner=owner,
+                        independent_capability=capability_read,independent_experience=experience_read)
                     if revision_only:
                         if self.runtime._closed:
                             raise RuntimeError('LAN runtime is closed')
@@ -326,7 +330,7 @@ class LanTools:
                 logging.getLogger(__name__).warning('tool_failure name=%s category=%s', safe_name, type(exc).__name__)
                 return {'error': 'request_indeterminate' if isinstance(arguments, dict) and arguments.get('request_id') else 'remote_tool_failed'}
 
-    def _call_tool(self, user, name, arguments, *, owner=False, independent_capability=False):
+    def _call_tool(self, user, name, arguments, *, owner=False, independent_capability=False, independent_experience=False):
         if owner and user != "jiangli":
             raise LanError("owner_forbidden")
         if user not in ('jiangli', 'kane'):
@@ -357,7 +361,7 @@ class LanTools:
         revision_only = name == 'memory_status' and args.get('detail') == 'revision'
         health_only = name == 'memory_status' and args.get('detail') == 'health'
         background_capability = independent_capability or (name == 'capability_search' and self.runtime._background_health.active)
-        background_experience = name == 'experience_recall' and self.runtime._background_health.active
+        background_experience = independent_experience or (name == 'experience_recall' and self.runtime._background_health.active)
         specs = (self._catalog_specs[(user, owner)] if revision_only or health_only or background_capability or background_experience or name in CONTINUITY_READS else
                  self._specs(user, owner=owner, capture_only=name in CAPTURE_TOOLS,
                              continuity_only=name in CONTINUITY_TOOLS))
@@ -436,6 +440,12 @@ class LanTools:
             core = next(s for s in core_specs if s.name == name)
             if not _schema_valid(args, core.input_schema):
                 raise LanError('invalid_arguments')
+        if independent_experience:
+            result=self._experience_reader.read(user,args,space)
+            shared=result.pop('shared_knowledge')
+            result=self._qualify(self._sanitize(result),'personal',name)
+            result['shared_knowledge']=shared
+            return result
         def dispatch():
             server = self.runtime.server_for(user)
             # Keep the existing resident lock/remote identity. Bind only the

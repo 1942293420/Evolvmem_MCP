@@ -129,12 +129,12 @@ def test_last_checked_not_ready_rejects_without_foreground_repair(lan, monkeypat
 def test_exit_boundary_change_discards_already_computed_results(lan, monkeypatch):
     runtime, adapter = lan
     baseline(runtime, 'kane', 'public')
-    original = adapter._dispatch
-    def changed(*args):
-        result = original(*args)
+    original = adapter.sharing.search
+    def changed(*args, **kwargs):
+        result = original(*args, **kwargs)
         runtime.server_for('jiangli', 'public').config.context_vectors_required = True
         return result
-    monkeypatch.setattr(adapter, '_dispatch', changed)
+    monkeypatch.setattr(adapter.sharing, 'search', changed)
     result = recall(adapter, 'both')
     assert result['error'] == 'health_boundary_changed'
     assert 'results' not in result and 'shared_knowledge' not in result

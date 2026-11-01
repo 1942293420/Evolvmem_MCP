@@ -40,7 +40,7 @@ try{
  await click('[data-node="queue"]');assert.match(await page.locator('[data-node-detail]').innerText(),/至少间隔30秒.*必要安全基线失效时仍拒绝召回/);await screenshot(page,'evo-product-health-queue-detail.png');
  await click('[data-node="status"]');assert.match(await page.locator('[data-node-detail]').innerText(),/版本查询与健康状态不等待慢召回.*每次独立读取最新提交.*不沿用上一次结果.*旧诊断不是当前全库正常的证明/);
  await screenshot(page,'evo-product-health-status-detail.png');
- await click('[data-node="result"]');assert.match(await page.locator('[data-node-detail]').innerText(),/LAN 能力查询独立读取.*重查询最多同时运行2个.*尚未完成多人并发验收/);await screenshot(page,'evo-product-health-result-detail.png');
+ await click('[data-node="result"]');assert.match(await page.locator('[data-node-detail]').innerText(),/LAN 能力与经验查询各用独立只读连接.*不占用写入调度锁.*两类重查询共用最多2个名额.*尚未完成多人并发验收/);await screenshot(page,'evo-product-health-result-detail.png');
  await click('[data-principle="modules"]');await click('[data-node="rules"]');
  assert.match(await page.locator('[data-node-detail]').innerText(),/处理规则与样例预览/);await screenshot(page,'evo-product-modules-last-row-detail.png');
  await click('[data-principle="restructure"]');await click('[data-node="scope"]');

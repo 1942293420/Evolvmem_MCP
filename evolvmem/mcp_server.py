@@ -1082,14 +1082,14 @@ class MemoryMCPServer:
             "evidence_id": report.evidence_id,
         }
 
-    def _experience_recall(self, args: dict) -> dict:
+    def _experience_recall(self, args: dict, *, service=None) -> dict:
         if not isinstance(args, dict) or set(args) - {"project", "query", "constraints", "workstream_id", "mode"}:
             return self._context_error("invalid_arguments")
         error = self._context_gate_error()
         if error is not None:
             return error
         try:
-            return self.context_service.experiences().recall(
+            return (self.context_service if service is None else service).experiences().recall(
                 project=args.get("project", ""), query=args.get("query"),
                 constraints=args.get("constraints"), workstream_id=args.get("workstream_id"),
                 mode=args.get("mode", "full"))

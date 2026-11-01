@@ -139,6 +139,10 @@ class CapabilityIndex:
         return vector is not None and proof.get("vector") == vector_digest(vector)
 
     def _audit(self, proof, *, vectors=None):
+        if self.eligible is None:
+            return self._audit_stream(proof, vectors=vectors)
+        # Custom row callbacks retain their original phase order and shared
+        # row objects: later callbacks may mutate rows already examined.
         rows = self.context_store._connection().execute(
             "SELECT * FROM capability_memories WHERE status='active' ORDER BY memory_id"
         ).fetchall()
@@ -151,6 +155,32 @@ class CapabilityIndex:
         missing = expected - indexed
         outdated = {ident for ident in expected & indexed
                     if not self._proof_matches(ident, truth[ident], proof["items"], vectors=vectors)}
+        removed = (indexed | {int(ident) for ident in proof["items"]}) - expected
+        return {"eligible": len(expected), "indexed": len(indexed),
+                "missing": len(missing), "outdated": len(outdated),
+                "obsolete": len(removed), "remaining": len(missing | outdated | removed),
+                "pending_ids": sorted(missing | outdated | removed)}
+
+    def _audit_stream(self, proof, *, vectors=None):
+        """Keep full bodies only for the current proof; ID eligibility stays batched."""
+        conn = self.context_store._connection()
+        active_ids = [int(row["memory_id"]) for row in conn.execute(
+            "SELECT memory_id FROM capability_memories WHERE status='active' ORDER BY memory_id")]
+        allowed = set(self.eligible_ids(active_ids)) if self.eligible_ids is not None else None
+        del active_ids
+        vectors = vectors or self.vector_index
+        indexed = set(vectors.ids())
+        expected, outdated = set(), set()
+        for row in conn.execute(
+                "SELECT * FROM capability_memories WHERE status='active' ORDER BY memory_id"):
+            memory = CapabilityStore._public(row)
+            ident = int(memory["memory_id"])
+            if self._eligible(memory, allowed=allowed):
+                expected.add(ident)
+                if ident in indexed and not self._proof_matches(ident, memory, proof["items"], vectors=vectors):
+                    outdated.add(ident)
+            del memory, row
+        missing = expected - indexed
         removed = (indexed | {int(ident) for ident in proof["items"]}) - expected
         return {"eligible": len(expected), "indexed": len(indexed),
                 "missing": len(missing), "outdated": len(outdated),
