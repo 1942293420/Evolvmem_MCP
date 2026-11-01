@@ -149,7 +149,17 @@ class OriginalRead:
         return self.provenance.memory(memory)
 
     def _heads(self):
+        from evolvmem.capability_provenance import scoped_provenance_reader
+        snapshot = scoped_provenance_reader(self.store)
         if self.current_archives is not None:
+            return self.current_archives
+        shared = getattr(snapshot, '_original_archive_heads', None)
+        if shared is not None:
+            # Head identity is metadata in this exact checked read snapshot.
+            # It is distinct from governance's project/enrollment visibility
+            # set. Copy the immutable shared value so an instance cannot poison
+            # another reader. No role/original-body proof is borrowed here.
+            self.current_archives = set(shared)
             return self.current_archives
         from evolvmem.history_organization import _excluded_archive_ids
         from evolvmem.session_identity import identity_key
@@ -167,6 +177,8 @@ class OriginalRead:
             seen.add(identity)
             heads.add(row["id"])
         self.current_archives = heads
+        if snapshot is not None:
+            snapshot._original_archive_heads = frozenset(heads)
         return heads
 
     def read(self, source):

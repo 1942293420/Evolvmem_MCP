@@ -233,21 +233,21 @@ def persist(store, memory_id, source_id, result, *, existing_status=None):
         return assessment_id
 
 
-def _rows(store, ids=None):
+def _rows(store, ids=None, *, status_only=False):
     if not store._connection().execute("SELECT 1 FROM sqlite_master WHERE name='capability_assessments'").fetchone():
         return []
     from evolvmem.capability_assessment_migration import OriginalRead
     reader = OriginalRead(store)
     reader._begin_scope()
     try:
-        result = _rows_read(store, ids, reader)
+        result = _rows_read(store, ids, reader, status_only=status_only)
         reader._assert_scope()
         return result
     finally:
         reader._end_scope()
 
 
-def _rows_read(store, ids, original_read):
+def _rows_read(store, ids, original_read, *, status_only=False):
     conn = store._connection()
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='capability_assessments'").fetchone():
         return []
@@ -256,6 +256,7 @@ def _rows_read(store, ids, original_read):
     result = []
     original_cache = {}
     source_stamps = {}
+    latest_seen = set()
     for batch in batches:
         where = "" if batch is None else " WHERE a.memory_id IN (" + ",".join("?" for _ in batch) + ")"
         rows = conn.execute(
@@ -279,9 +280,30 @@ def _rows_read(store, ids, original_read):
             reasons = []
             if details.get("memory_content_hash") != _hash([row["current_category"], row["current_title"], row["current_content"]]):
                 reasons.append("derived_content_changed")
+            source_kind = details.get("source", {}).get("source_kind")
+            identity = (row["memory_id"], row["source_id"])
+            historical = status_only and identity in latest_seen
+            if status_only:
+                latest_seen.add(identity)
+            if historical:
+                # Skipping expensive current-source reads must not silently
+                # accept malformed stored proof metadata.
+                if source_kind == "unit" and details.get("unit_source_proof"):
+                    details["unit_source_proof"].get("ranges")
+                if details.get("original_proof"):
+                    _ = details["original_proof"]["proof_hash"]
+                # Status consumes old rows only for counts, legacy flags and
+                # preserved-origin metadata. Keep those rows and their derived
+                # content check. Current eligibility belongs to the newest row,
+                # even when it is stale/rejected; never fall back to an older
+                # passing assessment. History/detail reads still prove all rows.
+                public = {key: value for key, value in row.items() if not key.startswith("current_")
+                          and key not in {"task_source_revision", "task_status"}}
+                public.update(details=details, stale=bool(reasons), stale_reasons=reasons)
+                result.append(public)
+                continue
             # Ownership-only revisions do not change the source's knowledge value.
             # Bind content identity/ranges, not a mutable project label or decision.
-            source_kind = details.get("source", {}).get("source_kind")
             revision_pairs = [("source_revision", "current_source_revision")]
             if source_kind == "unit":
                 revision_pairs.append(("source_revision", "task_source_revision"))
@@ -353,7 +375,7 @@ def assessment_status(store, ids=None):
         ids = [row[0] for row in store._connection().execute("SELECT memory_id FROM capability_memories")]
     ids = sorted(set(int(i) for i in ids))
     grouped = {ident: [] for ident in ids}
-    for row in _rows(store, ids):
+    for row in _rows(store, ids, status_only=True):
         grouped[row["memory_id"]].append(row)
     result = {}
     for ident, rows in grouped.items():
@@ -373,8 +395,8 @@ def assessment_status(store, ids=None):
             frozen.extend(row["details"].get("legacy_preserved_sources", ()))
         preserved, preserved_origins = [], []
         if frozen:
-            from evolvmem.capability_provenance import ProvenanceRead
-            read = ProvenanceRead(store)
+            from evolvmem.capability_provenance import provenance_reader
+            read = provenance_reader(store)
             memory = dict(store._connection().execute(
                 "SELECT memory_id,status,source_ref FROM capability_memories WHERE memory_id=?", (ident,)).fetchone())
             _, current_sources = read.memory(memory)
