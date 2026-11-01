@@ -4,6 +4,7 @@ from functools import wraps
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import threading
@@ -15,6 +16,76 @@ PROTOCOL = 'sqlite-quick-check-v1'
 
 def config_fingerprint(config):
     return hashlib.sha256(repr(sorted(vars(config).items())).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class InitialPhysicalBoundary:
+    identity: tuple
+    contract: str
+    schema_digest: str
+    config_file: tuple
+
+
+def _initial_config_file(path):
+    path = Path(path).absolute()
+    try:
+        before = path.stat()
+    except FileNotFoundError:
+        return ('missing', str(path.resolve()))
+    if not path.is_file() or before.st_size > 1024 * 1024:
+        raise RuntimeError('initial_config_unavailable')
+    with path.open('rb') as stream:
+        raw = stream.read(1024 * 1024 + 1)
+        opened = os.fstat(stream.fileno())
+    after = path.stat()
+    def stamp(value):
+        return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns,
+                value.st_ctime_ns, value.st_mode, value.st_uid, value.st_gid)
+    if len(raw) != before.st_size or stamp(before) != stamp(opened) or stamp(opened) != stamp(after):
+        raise RuntimeError('initial_config_changed')
+    return (str(path.resolve()), stamp(after), hashlib.sha256(raw).hexdigest())
+
+
+def initial_physical_boundary(service, config_path):
+    """Metadata only; never certify an uncommitted resident transaction."""
+    conn = service.store._connection()
+    if conn.in_transaction:
+        raise RuntimeError('initial_physical_transaction')
+    path = service.config.db_path
+    before = path.stat()
+    schema = conn.execute('PRAGMA schema_version').fetchone()[0]
+    definition = hashlib.sha256(repr([tuple(row) for row in conn.execute(
+        'SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name')]).encode()).hexdigest()
+    after = path.stat()
+    if ((before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+            or conn.execute('PRAGMA schema_version').fetchone()[0] != schema
+            or conn.in_transaction):
+        raise RuntimeError('initial_physical_boundary_changed')
+    return InitialPhysicalBoundary((str(path.resolve()), after.st_dev, after.st_ino, schema),
+        config_fingerprint(service.config), definition, _initial_config_file(config_path))
+
+
+_INITIAL_PROOF_SEAL = object()
+
+
+@dataclass(frozen=True)
+class _InitialPhysicalProof:
+    source: object
+    before: InitialPhysicalBoundary
+    after: InitialPhysicalBoundary
+    started: float
+    completed: float
+    generation: int
+    seal: object
+
+
+def issue_initial_physical_proof(*, source, before, after, started, completed, codes, generation):
+    if (type(before) is not InitialPhysicalBoundary or before != after or codes != ()
+            or type(generation) is not int or generation < 0
+            or type(started) not in (int, float) or type(completed) not in (int, float)
+            or not math.isfinite(started) or not math.isfinite(completed) or started > completed):
+        return None
+    return _InitialPhysicalProof(source, before, after, started, completed, generation, _INITIAL_PROOF_SEAL)
 
 
 @dataclass(frozen=True)
@@ -53,6 +124,27 @@ class PhysicalProofOwner:
                 raise RuntimeError('physical_owner_already_started')
             self._predecessor = worker
             self._generation += 1
+
+    def adopt_initial(self, proof, *, source, boundary, generation, ttl):
+        """Accept only a same-process resident receipt; never renew its clock."""
+        with self._lock:
+            if (self._closed or self._boundary_failed or self._running or self._record is not None
+                    or (self._predecessor is not None and self._predecessor.is_alive())
+                    or type(proof) is not _InitialPhysicalProof or proof.seal is not _INITIAL_PROOF_SEAL
+                    or proof.source is not source or proof.generation != generation
+                    or type(proof.started) not in (int, float) or type(proof.completed) not in (int, float)
+                    or not math.isfinite(proof.started) or not math.isfinite(proof.completed)
+                    or proof.started > proof.completed
+                    or proof.before != proof.after or proof.after != boundary
+                    or boundary.identity != self.identity or boundary.contract != self.contract):
+                return False
+            now = self._clock()
+            if (not math.isfinite(now) or not math.isfinite(ttl)
+                    or not 0 <= now - proof.completed < min(300., ttl)):
+                return False
+            self._record = (proof.completed, ())
+            self._generation += 1
+            return True
 
     def _matches(self, identity, contract):
         if tuple(identity) != self.identity or contract != self.contract:

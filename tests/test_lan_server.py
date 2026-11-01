@@ -13,18 +13,38 @@ from evolvmem.lan_runtime import LanRuntime
 
 
 @pytest.fixture
-def http_lan(tmp_path):
+def http_lan(tmp_path, request):
     from evolvmem.lan_server import make_http_server
-    runtime = LanRuntime(settings_for(tmp_path))
+    settings = settings_for(tmp_path)
+    if getattr(request, 'param', None) == 'primary':
+        settings.owner_data_dir.mkdir(parents=True)
+        (settings.owner_data_dir / 'config.json').write_text(
+            json.dumps({'knowledge_structure_mode': 'primary'}), encoding='utf-8')
+    runtime = LanRuntime(settings)
     runtime.initialize()
     server = make_http_server(runtime, host='127.0.0.1', port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    yield server, runtime
-    server.shutdown()
-    thread.join(timeout=3)
-    server.server_close()
-    runtime.close()
+    try:
+        # Listening precedes the first asynchronous physical/semantic baseline.
+        # Transport/write tests begin only after the actual worker has checked
+        # every synthetic namespace; do not fabricate or bypass readiness.
+        deadline = time.monotonic() + 10
+        while True:
+            states = [runtime._background_health.status(name)
+                      for name in ('jiangli', 'kane', 'public')]
+            if all(state['hard_gate'] == 'allowed' and
+                   (state.get('diagnostic') or {}).get('last_checked_ready') is True
+                   for state in states):
+                break
+            assert time.monotonic() < deadline, 'synthetic LAN baseline did not become ready'
+            time.sleep(.01)
+        yield server, runtime
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+        server.server_close()
+        runtime.close()
 
 
 def request(server, payload=None, token='jiangli-token', method='POST', headers=None, raw=None):
@@ -287,6 +307,7 @@ def test_catalog_remains_complete_but_degraded_calls_are_rejected(http_lan):
     assert not result.get("block")
 
 
+@pytest.mark.parametrize('http_lan', ['primary'], indirect=True)
 def test_primary_project_event_ids_never_become_context_refs(http_lan):
     from evolvmem.context_store import _now_iso
     from evolvmem.lan_tools import LanTools
@@ -312,7 +333,7 @@ def test_primary_project_event_ids_never_become_context_refs(http_lan):
     archives.rebuild("bluewhale")
     assert event_id != source["context_id"]
     assert event_id == unrelated["context_id"]
-    service.config.knowledge_structure_mode = "primary"
+    assert service.config.knowledge_structure_mode == "primary"
 
     wrong = adapter.call_tool("kane", "context_read",
                               {"ref": f"personal:context:{event_id}"})

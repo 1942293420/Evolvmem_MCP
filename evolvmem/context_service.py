@@ -104,7 +104,8 @@ from evolvmem.continuity_models import (
 )
 from evolvmem.continuity_service import ContinuityService
 from evolvmem.cutover_checks import check_projection_lag
-from evolvmem.physical_integrity import config_fingerprint, physical_scan
+from evolvmem.physical_integrity import (config_fingerprint, physical_scan,
+    initial_physical_boundary, issue_initial_physical_proof)
 from evolvmem.cutover_lock import CutoverLock
 from evolvmem.embedding import EmbeddingEngine
 from evolvmem.legacy_compat import LegacyCompatibilityFacade
@@ -307,6 +308,7 @@ class ContextService:
         retriever: ContextRetriever | None = None,
         renderer: ContextRenderer | None = None,
         continuity: ContinuityService | None = None,
+        initial_physical_config=None,
     ) -> None:
         if not isinstance(config, Config):
             raise ContextValidationError("config must be a Config instance")
@@ -342,6 +344,10 @@ class ContextService:
         self._integrity_closed = False
         self._integrity_generation = 0
         self._integrity_owner = None
+        self._initial_physical_config = initial_physical_config
+        self._initial_physical_source = object()
+        self._initial_physical_proof = None
+        self._initial_physical_attempted = False
 
     # ---- lifecycle ----
 
@@ -381,6 +387,7 @@ class ContextService:
         """Close every dependency the lifecycle coordinates; safe to repeat."""
         with self._integrity_lock:
             self._integrity_closed = True
+            self._initial_physical_proof = None
             if self._integrity_timer is not None:
                 self._integrity_timer.cancel()
                 self._integrity_timer = None
@@ -619,6 +626,18 @@ class ContextService:
             if self._integrity_owner is not None:
                 raise RuntimeError('integrity_owner_already_attached')
             owner.bind_predecessor(self._integrity_worker)
+            proof = self._initial_physical_proof
+            self._initial_physical_proof = None
+            previous = self._integrity_snapshot
+            if (proof is not None and previous is not None and not previous[2]
+                    and previous[0][1:] == proof.after.identity and previous[1] == proof.completed):
+                try:
+                    boundary = initial_physical_boundary(self, self._initial_physical_config)
+                    owner.adopt_initial(proof, source=self._initial_physical_source,
+                        boundary=boundary, generation=self._integrity_generation,
+                        ttl=self._integrity_ttl())
+                except Exception:
+                    pass  # Unproven startup state retains the original background scan.
             self._integrity_owner = owner
             self._integrity_generation += 1
             if self._integrity_timer is not None:
@@ -751,10 +770,31 @@ class ContextService:
                              'physical_baseline_schema' if previous[0][-1] != key[-1] else
                              'physical_baseline_identity')
                 self._integrity_snapshot = None
+                capture_initial = (self._initial_physical_config is not None
+                                   and not self._initial_physical_attempted)
+                before = None
+                if capture_initial:
+                    self._initial_physical_attempted = True
+                    self._initial_physical_proof = None
+                    try:
+                        before = initial_physical_boundary(self, self._initial_physical_config)
+                    except Exception:
+                        pass  # Metadata never substitutes for the real scan below.
+                started = time.monotonic() if capture_initial else None
                 result = self._quick_check_diagnostics()
+                completed = time.monotonic() if capture_initial else None
                 if key != identity():
                     return ("quick_check_failed",)
-                self._integrity_snapshot = (key, time.monotonic(), result)
+                if capture_initial and before is not None and not self._integrity_closed:
+                    try:
+                        after = initial_physical_boundary(self, self._initial_physical_config)
+                        self._initial_physical_proof = issue_initial_physical_proof(
+                            source=self._initial_physical_source, before=before, after=after,
+                            started=started, completed=completed, codes=result,
+                            generation=self._integrity_generation)
+                    except Exception:
+                        pass
+                self._integrity_snapshot = (key, completed if capture_initial else time.monotonic(), result)
                 self._schedule_integrity_refresh()
                 return result
             except Exception:

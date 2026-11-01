@@ -61,7 +61,7 @@ def prepare_bindings(server):
 def prepare_memory_revision(server):
     """A durable change counter also observes writes made by native clients.
 
-    Trigger definitions are refreshed idempotently (DROP + CREATE) so a store
+    Changed trigger definitions are refreshed (DROP + CREATE) so a store
     created by an earlier revision picks up newly tracked columns — including
     the 2026-10-02 temporal validity columns, whose changes must move the LAN
     revision even when no content text changed.
@@ -83,6 +83,8 @@ def prepare_memory_revision(server):
             'capability_categories': 'label,enabled,revision',
         }
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        existing = {row[0]: row[1] for row in conn.execute(
+            "SELECT name,sql FROM sqlite_master WHERE type='trigger'")}
         for table, columns in tracked.items():
             # Optional primary-knowledge tables may be absent in older namespaces.
             if table not in tables:
@@ -91,9 +93,12 @@ def prepare_memory_revision(server):
                 suffix = action.split()[0].lower()
                 condition = (' WHEN ' + ' OR '.join(f'NEW.{c} IS NOT OLD.{c}' for c in columns.split(','))) if suffix == 'update' else ''
                 name = f'lan_revision_{table}_{suffix}'
+                sql = (f'CREATE TRIGGER {name} AFTER {action} ON {table}{condition} '
+                       'BEGIN UPDATE lan_memory_revision SET revision=revision+1 WHERE id=1; END')
+                if existing.get(name) == sql:
+                    continue
                 conn.execute(f'DROP TRIGGER IF EXISTS {name}')
-                conn.execute(f'CREATE TRIGGER {name} AFTER {action} ON {table}{condition} '
-                             'BEGIN UPDATE lan_memory_revision SET revision=revision+1 WHERE id=1; END')
+                conn.execute(sql)
 
 
 @contextmanager

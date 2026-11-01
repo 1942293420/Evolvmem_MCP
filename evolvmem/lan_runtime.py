@@ -413,6 +413,7 @@ class LanRuntime:
             config=self._namespace_config(namespace),
             embedding_engine=self._shared_engine,
             rebuild_legacy_vectors_on_start=False,
+            initial_physical_config=self.settings.owner_data_dir / 'config.json',
         )
         server.initialize()
         server._init_done.set()

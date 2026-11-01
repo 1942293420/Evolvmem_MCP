@@ -183,9 +183,11 @@ class MemoryMCPServer:
         embedding_engine=_DEFAULT_EMBEDDING_ENGINE,
         *,
         rebuild_legacy_vectors_on_start: bool = True,
+        initial_physical_config=None,
     ):
         self.config = config if config is not None else Config.from_file()
         self._rebuild_legacy_vectors_on_start = rebuild_legacy_vectors_on_start
+        self._initial_physical_config = initial_physical_config
         self.adapter = self.config.adapter or "mcp"
         try:
             self.context_mode: ContextMode | None = ContextMode(
@@ -238,7 +240,8 @@ class MemoryMCPServer:
                 # 共享同一引擎与 legacy 投影向量索引：合并判定与写后同步看到
                 # 同一份内存态；服务生命周期由 shutdown() 统一关闭
                 service = ContextService(
-                    self.config, embedding_engine=self.engine
+                    self.config, embedding_engine=self.engine,
+                    initial_physical_config=self._initial_physical_config,
                 )
                 service._legacy_vector = self.vidx
                 service.initialize(
