@@ -255,6 +255,7 @@ def _rows_read(store, ids, original_read, *, status_only=False):
     batches = [None] if selected is None else [selected[i:i+400] for i in range(0, len(selected), 400)]
     result = []
     original_cache = {}
+    missing_original = object()
     source_stamps = {}
     latest_seen = set()
     for batch in batches:
@@ -343,9 +344,12 @@ def _rows_read(store, ids, original_read, *, status_only=False):
                 source_id = row["source_id"]
                 if source_id not in original_cache:
                     current = conn.execute("SELECT * FROM capability_sources WHERE source_id=?", (source_id,)).fetchone()
-                    original_cache[source_id] = original_read.read(dict(current)) if current else None
-                proof = original_cache[source_id]
-                if not proof or proof["proof_hash"] != details["original_proof"]["proof_hash"]:
+                    current_proof = original_read.read(dict(current)) if current else None
+                    # Retain only the proof hash, not the source's full text.
+                    original_cache[source_id] = current_proof["proof_hash"] if current_proof else missing_original
+                    del current_proof
+                proof_hash = original_cache[source_id]
+                if proof_hash is missing_original or proof_hash != details["original_proof"]["proof_hash"]:
                     reasons.append("original_proof_changed")
             elif source_kind != "unit":
                 reasons.append("context_original_proof_missing")

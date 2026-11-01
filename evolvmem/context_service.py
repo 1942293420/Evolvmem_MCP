@@ -368,8 +368,12 @@ class ContextService:
         self._integrity_closed = False
         self._mode = mode
         self._adapter = adapter
-        self._refresh_health()
-        return self.status()
+        token = _health_observations.set((self, {}))
+        try:
+            self._refresh_health()
+            return self.status()
+        finally:
+            _health_observations.reset(token)
 
     def close(self, *, close_embedding_engine: bool = True) -> None:
         """Close every dependency the lifecycle coordinates; safe to repeat."""

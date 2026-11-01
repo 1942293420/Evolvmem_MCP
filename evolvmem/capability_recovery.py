@@ -19,6 +19,7 @@ class CapabilityVectorRecoveryLoop:
         self.index_factory = index_factory
         self.next_attempt_at = 0
         self.failures = 0
+        self.stale_rounds = 0
 
     def due(self):
         return self.clock() >= self.next_attempt_at
@@ -28,6 +29,7 @@ class CapabilityVectorRecoveryLoop:
             return ()
         reports = []
         failed = False
+        stale = False
         for service in services:
             index = None
             try:
@@ -36,6 +38,8 @@ class CapabilityVectorRecoveryLoop:
                     eligible_ids=lambda ids, store=service.store: eligible_memory_ids(store, ids)))
                 report = index.reconcile(limit=self.batch_size)
                 failed |= report["status"] in {"failed", "unavailable", "incompatible"}
+                stale |= (report["status"] == "partial"
+                          and type(report.get("stale")) is int and report["stale"] > 0)
                 reports.append(report)
             except Exception as exc:
                 failed = True
@@ -47,5 +51,9 @@ class CapabilityVectorRecoveryLoop:
                     except Exception:
                         pass
         self.failures = self.failures + 1 if failed else 0
-        self.next_attempt_at = self.clock() + min(900, self.interval_seconds * 2 ** min(max(0, self.failures - 1), 4))
+        # Concurrent writes can repeatedly invalidate a full final audit.
+        # Defer another round without changing its report or admitting stale truth.
+        self.stale_rounds = self.stale_rounds + 1 if stale else 0
+        consecutive = max(self.failures, self.stale_rounds)
+        self.next_attempt_at = self.clock() + min(900, self.interval_seconds * 2 ** min(max(0, consecutive - 1), 4))
         return tuple(reports)
