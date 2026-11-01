@@ -787,7 +787,9 @@ class ContextService:
                 "context_not_enabled",
                 f"context reads are disabled in {self._mode.value} mode",
             )
-        if self._mode is ContextMode.PRIMARY and not self._ready:
+        from evolvmem.request_health import background_read_ready
+        ready = background_read_ready(self)
+        if self._mode is ContextMode.PRIMARY and not (self._ready if ready is None else ready):
             raise ContextServiceError(
                 "degraded_legacy",
                 "primary invariants failed; context reads report degraded_legacy",

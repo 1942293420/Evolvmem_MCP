@@ -19,7 +19,7 @@ PUBLIC_DIRECTORIES = (
 PUBLIC_DOCS = (
     "context-core.md", "codex-context-core-runbook.md", "github-sharing.md",
     "windows-codex.md", "lan-revision-read.md", "lan-background-health.md", "recall-read-scope.md",
-    "lan-continuity-reads.md",
+    "lan-continuity-reads.md", "experience-background-admission.md",
     "lan-capability-reads.md",
     "health-budget-isolation.md",
     "evolvmem-workflow.json", "feishu-login.md",

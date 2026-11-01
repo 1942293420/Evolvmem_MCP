@@ -5,6 +5,7 @@ This lock only coalesces health evaluation; it does not make SQLite transactions
 or the mutable remote identity safe for parallel dispatch.
 """
 from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from pathlib import Path
 import os
@@ -24,6 +25,84 @@ def _ttl():
 
 _entries = WeakKeyDictionary()
 _entries_lock = threading.Lock()
+_background_read = ContextVar('evolvmem_background_read', default=None)
+
+
+class BackgroundReadDenied(RuntimeError):
+    """Fixed, content-free rejection from a request's real background gate."""
+
+
+def _check_read_binding(health, binding):
+    namespace, server, service, mode, adapter = binding
+    if (not health.active or health.servers.get(namespace) is not server
+            or server.context_service is not service
+            or server.context_mode is not mode or service._mode is not mode
+            or server.adapter != adapter or service._adapter != adapter):
+        raise BackgroundReadDenied('health_boundary_changed')
+    if mode is None:
+        raise BackgroundReadDenied('not_initialized')
+    if getattr(mode, 'value', None) not in ('primary', 'shadow'):
+        raise BackgroundReadDenied('context_not_enabled')
+
+
+def _check_read_health(health, bindings):
+    for binding in bindings:
+        _check_read_binding(health, binding)
+        try:
+            observed = health.status(binding[0])
+            gate = observed['hard_gate']
+            ready = (observed.get('diagnostic') or {}).get('last_checked_ready')
+        except Exception:
+            raise BackgroundReadDenied('health_boundary_unavailable') from None
+        if gate != 'allowed':
+            # Only the fixed protocol codes can leave this boundary.
+            codes = {'health_closed', 'health_boundary_unavailable',
+                     'health_baseline_pending', 'health_boundary_changed',
+                     'health_physical_failed', 'health_contract_invalid',
+                     'health_physical_expired', 'health_evaluation_failed'}
+            raise BackgroundReadDenied(gate if gate in codes else 'health_boundary_unavailable')
+        if ready is not True:
+            raise BackgroundReadDenied('degraded_legacy')
+
+
+@contextmanager
+def background_read_scope(health, tool, servers):
+    """Admit only LAN experience recall using each actual namespace baseline.
+
+    This is not a ContextServiceStatus or a health cache. The dispatcher owns
+    the resident business lock throughout. All original candidate/evidence
+    checks still run; the real hard gate is checked before and after dispatch.
+    Semantic staleness schedules the existing worker, never foreground repair.
+    """
+    if tool != 'experience_recall' or _background_read.get() is not None:
+        raise BackgroundReadDenied('health_boundary_unavailable')
+    names = tuple(name for name, _ in servers)
+    if (not names or len(names) > 2 or len(set(names)) != len(names)
+            or not set(names) <= {'jiangli', 'kane', 'public'}
+            or {'jiangli', 'kane'} <= set(names)):
+        raise BackgroundReadDenied('health_boundary_unavailable')
+    bindings = tuple((name, server, server.context_service,
+                      server.context_mode, server.adapter) for name, server in servers)
+    _check_read_health(health, bindings)
+    token = _background_read.set((health, bindings))
+    try:
+        yield
+        _check_read_health(health, bindings)
+    finally:
+        _background_read.reset(token)
+
+
+def background_read_ready(service):
+    """None outside the explicit scope; never authorize a different service."""
+    admission = _background_read.get()
+    if admission is None:
+        return None
+    health, bindings = admission
+    for binding in bindings:
+        if binding[2] is service:
+            _check_read_binding(health, binding)
+            return True
+    raise BackgroundReadDenied('health_boundary_changed')
 
 
 class _Entry:
@@ -40,8 +119,13 @@ def _entry(server):
 
 @contextmanager
 def request_health_scope():
-    # Kept for adapters; snapshots now also survive unchanged request boundaries.
-    yield
+    # Complete health cache remains unchanged. Explicit read admission must
+    # never be inherited by another adapter request, including nested calls.
+    token = _background_read.set(None)
+    try:
+        yield
+    finally:
+        _background_read.reset(token)
 
 
 def _stamp(path):

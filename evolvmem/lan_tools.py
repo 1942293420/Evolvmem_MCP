@@ -16,7 +16,7 @@ from evolvmem.lan_sharing import LanError, LanSharing, validate_request_id
 from evolvmem.mcp_contract import tool_specs
 from evolvmem.lan_context import remote_context, validate_snapshot, prepare_bindings, bind_workspace, prepare_memory_revision
 from evolvmem.lan_capture import CAPTURE_TOOLS, LanCapture, capture_specs
-from evolvmem.request_health import request_health_scope
+from evolvmem.request_health import request_health_scope, background_read_scope, BackgroundReadDenied
 from evolvmem.request_trace import traced_tool, traced_rpc, timed_lock, stage, failure
 
 PROTOCOLS = ('2025-11-25', '2025-03-26')
@@ -314,7 +314,7 @@ class LanTools:
                 if not revision_only and not health_only and name in ('memory_status', 'context_status', 'context_session_start'):
                     result['memory_revision'] = self._memory_revision(user)
                 return result
-            except LanError as exc:
+            except (LanError, BackgroundReadDenied) as exc:
                 return {'error': str(exc)}
             except (ValueError, TypeError, KeyError):
                 return {'error': 'invalid_arguments'}
@@ -357,7 +357,8 @@ class LanTools:
         revision_only = name == 'memory_status' and args.get('detail') == 'revision'
         health_only = name == 'memory_status' and args.get('detail') == 'health'
         background_capability = independent_capability or (name == 'capability_search' and self.runtime._background_health.active)
-        specs = (self._catalog_specs[(user, owner)] if revision_only or health_only or background_capability or name in CONTINUITY_READS else
+        background_experience = name == 'experience_recall' and self.runtime._background_health.active
+        specs = (self._catalog_specs[(user, owner)] if revision_only or health_only or background_capability or background_experience or name in CONTINUITY_READS else
                  self._specs(user, owner=owner, capture_only=name in CAPTURE_TOOLS,
                              continuity_only=name in CONTINUITY_TOOLS))
         if name not in specs:
@@ -427,7 +428,7 @@ class LanTools:
             server = self.runtime.server_for(user)
             if name in CONTINUITY_TOOLS:
                 core_specs = _continuity_tool_specs(server)
-            elif background_capability:
+            elif background_capability or background_experience:
                 core_specs = tool_specs(adapter=server.adapter, mode=server.context_mode, health=None, catalog=True)
             else:
                 adapter, mode, health = server._contract_view()
@@ -437,11 +438,19 @@ class LanTools:
                 raise LanError('invalid_arguments')
         def dispatch():
             server = self.runtime.server_for(user)
+            # Keep the existing resident lock/remote identity. Bind only the
+            # namespaces this exact experience request will actually read.
+            read_servers = []
+            if background_experience:
+                if space != 'public':
+                    read_servers.append((user, server))
+                if space != 'personal':
+                    read_servers.append(('public', self.sharing.server))
             if background_capability:
                 diagnostic = self.runtime._background_health.status(user)
                 if diagnostic['hard_gate'] != 'allowed':
                     return {'error': diagnostic['hard_gate'], 'health': diagnostic}
-            with (nullcontext(None) if owner else remote_context(server, device_id, snapshot)) as provider:
+            with (background_read_scope(self.runtime._background_health, name, tuple(read_servers)) if background_experience else nullcontext()), (nullcontext(None) if owner else remote_context(server, device_id, snapshot)) as provider:
                 if not owner and args.get('workspace_path'):
                     provider.private_key(args['workspace_path'])
                 if name == 'continuity_bind':

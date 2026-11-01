@@ -735,6 +735,9 @@ class MemoryMCPServer:
         """None when context reads may be served, else a stable error."""
         if self.context_mode is None:
             return self._context_error("invalid_config")
+        from evolvmem.request_health import background_read_ready
+        if background_read_ready(self.context_service) is True:
+            return None
         status = self._live_status()
         if status is None:
             return self._context_error("not_initialized")
