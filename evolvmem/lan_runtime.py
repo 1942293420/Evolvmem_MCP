@@ -253,6 +253,7 @@ class LanRuntime:
         # Standalone test adapters do not implicitly create a diagnostic thread.
         health = getattr(self, '_background_health', None)
         if health is not None:
+            health.claim_resident_physical()
             health.start()
         if self._capture_worker is not None:
             return

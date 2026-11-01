@@ -12,6 +12,7 @@ from evolvmem.context_service import ContextService, _health_log_codes
 from evolvmem.health_generation import observed
 from evolvmem.vector_index import VectorIndex
 from evolvmem.request_trace import request_trace, stage
+from evolvmem.physical_integrity import PhysicalProofOwner, config_fingerprint
 
 
 class BackgroundHealth:
@@ -33,6 +34,8 @@ class BackgroundHealth:
         self._running = None
         self._snapshots = {}
         self._physical_cache = {}
+        self._physical_owners = {}
+        self._claiming_physical = False
         self._errors = {}
         self._next = {}
         self._last_selected = {}
@@ -47,12 +50,61 @@ class BackgroundHealth:
 
     def start(self):
         with self._condition:
+            if self._claiming_physical:
+                raise RuntimeError('physical_ownership_pending')
             if self._closed or self._worker is not None:
                 return
             self.active = True
             self._pending.update(self.servers)
             self._worker = threading.Thread(target=self._loop, name='evolvmem-health', daemon=True)
             self._worker.start()
+
+    def claim_resident_physical(self):
+        """LAN hosting only, before workers/listening; metadata reads, no scans."""
+        with self._condition:
+            if self._closed:
+                raise RuntimeError('health_closed')
+            if self._claiming_physical:
+                raise RuntimeError('physical_ownership_pending')
+            if self._physical_owners:
+                return
+            if self._worker is not None or self._running is not None:
+                raise RuntimeError('physical_owner_requires_idle_manager')
+            self._claiming_physical = True
+        owners = {}
+        try:
+            # Hosting bootstrap may recreate identical schema after manager
+            # construction. Observe the committed cookie now, but retain the
+            # original complete contract, exactly as _evaluate does.
+            for name, server in self.servers.items():
+                with closing(self._connect(name)) as conn:
+                    conn.execute('BEGIN')
+                    hard, _ = self._observation(name, conn)
+                expected = self._contracts[name]
+                if hard[:1] + hard[2:] != expected[:1] + expected[2:]:
+                    raise RuntimeError('health_boundary_changed')
+                owners[name] = PhysicalProofOwner((*self._identities[name], hard[1]),
+                    config_fingerprint(server.config),
+                    refresh=lambda name=name: self.refresh(name),
+                    clock=lambda: time.monotonic())
+            with self._condition:
+                if self._closed:
+                    raise RuntimeError('health_closed')
+                self._physical_owners = owners
+                self._snapshots.clear()
+                self._physical_cache.clear()
+            # Never hold manager.condition while acquiring a resident lock.
+            for name, owner in owners.items():
+                self.servers[name].context_service._attach_integrity_owner(owner)
+        except Exception:
+            for owner in owners.values():
+                owner.close()
+            self.close()
+            raise
+        finally:
+            with self._condition:
+                self._claiming_physical = False
+                self._condition.notify_all()
 
     @staticmethod
     def _identity(path):
@@ -119,17 +171,36 @@ class BackgroundHealth:
         current_identity = None if observation is None else (*observation[0][0], observation[0][1])
         known_physical_failure = bool(resident_physical and resident_physical[2]
                                       and resident_physical[0][1:] == current_identity)
+        owner = self._physical_owners.get(name)
+        physical_view = None
+        if owner is not None and observation is not None:
+            try:
+                physical_view = owner.observe(current_identity,
+                    config_fingerprint(self.servers[name].config), ContextService._integrity_ttl())
+            except Exception:
+                observation = None
         with self._condition:
             saved = self._snapshots.get(name)
             age = None if saved is None else max(0.0, now - saved['completed'])
             ttl = ContextService._integrity_ttl()
+            if owner is not None:
+                physical_gate = (None if physical_view is None else {
+                    'ok': None, 'pending': 'health_baseline_pending',
+                    'failed': 'health_physical_failed', 'expired': 'health_physical_expired',
+                    'boundary': 'health_boundary_changed', 'closed': 'health_closed',
+                }[physical_view.state])
+            else:
+                physical_gate = ('health_physical_failed' if saved and (
+                    saved['physical_codes'] or known_physical_failure) else
+                    'health_physical_expired' if saved and (not ttl or
+                        now - saved['physical_checked'] >= ttl) else None)
             gate = ('health_closed' if self._closed else
                     'health_boundary_unavailable' if observation is None else
                     'health_baseline_pending' if saved is None else
                     'health_boundary_changed' if observation[0] != saved['hard'] else
-                    'health_physical_failed' if saved['physical_codes'] or known_physical_failure else
+                    physical_gate if physical_gate and physical_gate != 'health_physical_expired' else
                     'health_contract_invalid' if saved['hard_codes'] else
-                    'health_physical_expired' if not ttl or now - saved['physical_checked'] >= ttl else
+                    physical_gate if physical_gate else
                     'health_evaluation_failed' if name in self._errors else 'allowed')
             stale = saved is None or observation is None or saved['generation'] != observation[1] or saved['hard'] != observation[0]
             if not self._closed and (stale or gate != 'allowed' or age >= min(ttl * .6, 30.0)):
@@ -153,6 +224,11 @@ class BackgroundHealth:
         uses the existing 60% threshold; failed attempts discard old success.
         """
         ttl = ContextService._integrity_ttl()
+        owner = self._physical_owners.get(name)
+        if owner is not None:
+            return owner.check(expected, config_fingerprint(self.servers[name].config), ttl,
+                lambda: ContextService._scan_integrity_readonly(path, expected),
+                current_config=lambda: config_fingerprint(self.servers[name].config))
         now = time.monotonic()
         resident = self.servers[name].context_service._integrity_snapshot
         resident_failed = bool(resident and resident[2] and resident[0][1:] == expected)
@@ -231,7 +307,7 @@ class BackgroundHealth:
     def run_once(self):
         """Run one queued observation; also usable by an explicit lifecycle host."""
         with self._condition:
-            if self._closed or self._running is not None or not self._pending:
+            if self._closed or self._claiming_physical or self._running is not None or not self._pending:
                 return False
             eligible = [name for name in self._pending if self._next.get(name, 0) <= time.monotonic()]
             if not eligible:
@@ -291,7 +367,10 @@ class BackgroundHealth:
             self._epoch += 1
             self._pending.clear()
             self._physical_cache.clear()
+            owners = tuple(self._physical_owners.values())
             self._condition.notify_all()
+        for owner in owners:
+            owner.close()
         # Worker owns its resources until exit; a timeout never closes them.
         if self._worker is not None and self._worker is not threading.current_thread():
             self._worker.join(timeout=1)

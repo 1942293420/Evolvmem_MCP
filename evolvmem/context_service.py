@@ -104,6 +104,7 @@ from evolvmem.continuity_models import (
 )
 from evolvmem.continuity_service import ContinuityService
 from evolvmem.cutover_checks import check_projection_lag
+from evolvmem.physical_integrity import config_fingerprint, physical_scan
 from evolvmem.cutover_lock import CutoverLock
 from evolvmem.embedding import EmbeddingEngine
 from evolvmem.legacy_compat import LegacyCompatibilityFacade
@@ -340,6 +341,7 @@ class ContextService:
         self._integrity_timer = None
         self._integrity_closed = False
         self._integrity_generation = 0
+        self._integrity_owner = None
 
     # ---- lifecycle ----
 
@@ -382,6 +384,9 @@ class ContextService:
             if self._integrity_timer is not None:
                 self._integrity_timer.cancel()
                 self._integrity_timer = None
+            owner = self._integrity_owner
+        if owner is not None:
+            owner.close()
         try:
             resources = (
                 self.store,
@@ -579,13 +584,50 @@ class ContextService:
 
     def _integrity_cache_state(self):
         """Cheap freshness boundaries also invalidate complete status snapshots."""
+        owner = self._integrity_owner
+        if owner is not None:
+            try:
+                identity, contract = self._integrity_owner_input()
+                return owner.token(identity, contract, self._integrity_ttl())
+            except Exception:
+                return ('physical_owner_boundary_unavailable', id(owner))
         previous = self._integrity_snapshot
         ttl = self._integrity_ttl()
         age = time.monotonic() - previous[1] if previous else 0.0
         return (self._integrity_generation, ttl,
                 age >= ttl * 0.6, age >= ttl, age < 0)
 
+    def _integrity_owner_input(self):
+        stat = self.config.db_path.stat()
+        conn = self.store._connection()
+        # Transaction-local DDL is not a committed boundary change and must not
+        # poison the shared owner on rollback. Its schema is checked by the
+        # original transaction-local quick_check, never by a borrowed proof.
+        schema = (self._integrity_owner.identity[-1] if conn.in_transaction
+                  else conn.execute('PRAGMA schema_version').fetchone()[0])
+        return ((str(self.config.db_path.resolve()), stat.st_dev, stat.st_ino,
+                 schema),
+                config_fingerprint(self.config))
+
+    def _attach_integrity_owner(self, owner):
+        """Transfer scheduling, never an unstamped startup proof; no waits/I/O."""
+        with self._integrity_lock:
+            if self._integrity_closed:
+                raise RuntimeError('integrity_service_closed')
+            if self._integrity_owner is owner:
+                return
+            if self._integrity_owner is not None:
+                raise RuntimeError('integrity_owner_already_attached')
+            owner.bind_predecessor(self._integrity_worker)
+            self._integrity_owner = owner
+            self._integrity_generation += 1
+            if self._integrity_timer is not None:
+                self._integrity_timer.cancel()
+                self._integrity_timer = None
+            self._integrity_snapshot = None
+
     @staticmethod
+    @physical_scan('readonly')
     def _scan_integrity_readonly(path, expected) -> tuple[str, ...]:
         """A worker owns only its read-only SQLite connection, never the store."""
         probe = None
@@ -616,7 +658,7 @@ class ContextService:
             self._integrity_timer.cancel()
         previous = self._integrity_snapshot
         ttl = self._integrity_ttl()
-        if self._integrity_closed or previous is None or not ttl:
+        if self._integrity_closed or self._integrity_owner is not None or previous is None or not ttl:
             self._integrity_timer = None
             return
         key, generation = previous[0], self._integrity_generation
@@ -634,7 +676,7 @@ class ContextService:
 
     def _start_integrity_refresh(self, key):
         # Caller owns _integrity_lock. One worker per service, no resident I/O.
-        if self._integrity_closed or (
+        if self._integrity_closed or self._integrity_owner is not None or (
                 self._integrity_worker is not None and self._integrity_worker.is_alive()):
             return
         path = self.config.db_path
@@ -665,6 +707,21 @@ class ContextService:
         """
         ttl = self._integrity_ttl()
         conn = self.store._connection()
+        # An open transaction retains its original own-snapshot check. A
+        # committed proof from another connection cannot certify pending writes.
+        owner = self._integrity_owner
+        if owner is not None:
+            try:
+                identity, contract = self._integrity_owner_input()
+                view = owner.observe(identity, contract, ttl)
+                if view.state in {'closed', 'boundary', 'failed'}:
+                    return view.codes
+                if not conn.in_transaction:
+                    if view.needs_refresh:
+                        owner.request_refresh()  # no service/owner lock held
+                    return view.codes
+            except Exception:
+                return ('quick_check_failed',)
         if conn.in_transaction or not ttl:
             health_event('physical_uncached_transaction' if conn.in_transaction else 'physical_cache_disabled')
             return self._quick_check_diagnostics()
@@ -706,6 +763,7 @@ class ContextService:
                 return ("quick_check_failed",)
 
     @stage('health_physical')
+    @physical_scan('resident')
     def _quick_check_diagnostics(self) -> tuple[str, ...]:
         try:
             conn = self.store._connection()
