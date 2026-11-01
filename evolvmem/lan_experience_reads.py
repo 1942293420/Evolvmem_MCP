@@ -6,6 +6,7 @@ import threading
 import time
 
 from evolvmem.context_retriever import ContextRetriever
+from evolvmem.context_retrieval_inputs import read_scope as retrieval_input_scope, RetrievalInputError
 from evolvmem.context_service import ContextService
 from evolvmem.context_store import ContextStore
 from evolvmem.lan_capability_reads import MAX_READERS
@@ -100,11 +101,16 @@ class ExperienceReader:
                         service._mode,service._adapter=self._residents[name]._mode,self._residents[name]._adapter
                         services[name]=service
                     with background_read_services(tuple((services[n],self._residents[n]) for n in names)):
-                        result=(self._servers[user]._experience_recall(args,service=services[user])
-                                if space!='public' else {'cases':[],'methods':[]})
-                        result['shared_knowledge']=(self.sharing.search(
-                            {k:v for k,v in args.items() if k in ('query','project')},service=services['public'])
-                            if space!='personal' else [])
+                        with ExitStack() as input_scopes:
+                            for name in names:
+                                input_scopes.enter_context(retrieval_input_scope(services[name].store))
+                            result=(self._servers[user]._experience_recall(args,service=services[user])
+                                    if space!='public' else {'cases':[],'methods':[]})
+                            result['shared_knowledge']=(self.sharing.search(
+                                {k:v for k,v in args.items() if k in ('query','project')},service=services['public'])
+                                if space!='personal' else [])
+                        # Initial snapshot inputs are retired before any final
+                        # selected proof or the snapshot's ROLLBACK/new BEGIN.
                         for name in names:
                             rows=(result.get('shared_knowledge',[]) if name=='public' else result.get('results',[]))
                             selected[name]=tuple(row['id'] for row in rows)
@@ -122,6 +128,8 @@ class ExperienceReader:
                 if any(_vector_stamp(self._configs[n])!=stamps[n] for n in names):
                     raise ExperienceReadError('experience_read_changed')
             return result
+        except RetrievalInputError:
+            raise LanError('experience_read_changed') from None
         except ExperienceReadError as exc:
             raise LanError(str(exc)) from None
         except (sqlite3.Error,OSError):

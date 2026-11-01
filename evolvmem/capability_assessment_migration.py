@@ -111,12 +111,16 @@ class OriginalRead:
         try:
             self._scope_start = self._scope_stamp()
             self.roles.cache.clear()
+            self.roles._clear_preflight_cache()
             self.roles._scope_active = True
             self._scope_active = True
             self.provenance = _RoleBudgetProvenance(ReadStore(self.conn), self.roles)
             self.current_archives = None
             self.epoch = self.roles.token()
         except BaseException:
+            self.roles._clear_preflight_cache()
+            self.roles._scope_active = False
+            self._scope_active = False
             if self._owns_snapshot:
                 self.conn.rollback()
             raise
@@ -127,6 +131,7 @@ class OriginalRead:
 
     def _end_scope(self):
         self.roles.cache.clear()
+        self.roles._clear_preflight_cache()
         self.roles._scope_active = False
         self._scope_active = False
         self.provenance = _RoleBudgetProvenance(ReadStore(self.conn), self.roles)

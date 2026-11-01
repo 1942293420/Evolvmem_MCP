@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import math
 from evolvmem.request_trace import stage
+from evolvmem.context_retrieval_inputs import current_inputs
 import re
 
 import numpy as np
@@ -155,7 +156,7 @@ class ContextRetriever:
             return ()
         records = {
             record.item.id: record
-            for record in self.store.get_retrieval_records(
+            for record in self._retrieval_records(
                 [candidate.item_id for candidate in candidates]
             )
         }
@@ -340,6 +341,10 @@ class ContextRetriever:
 
     # ---- candidate generation ----
 
+    def _retrieval_records(self, ids):
+        inputs = current_inputs(self.store)
+        return inputs.records(ids) if inputs is not None else self.store.get_retrieval_records(ids)
+
     @stage('vector')
     def _scoped_vector_candidates(self, request, pool_size, eligible_ids=None, *, reranking=False):
         # Prepared state belongs to this search only: expansion must not repeat
@@ -354,7 +359,7 @@ class ContextRetriever:
             def select(hits):
                 new_ids = [h['id'] for h in hits if h['id'] not in seen]
                 seen.update(new_ids)
-                records = self.store.get_retrieval_records(new_ids)
+                records = self._retrieval_records(new_ids)
                 valid.update({r.item.id: r.item for r in records
                               if (allowed is None or r.item.id in allowed) and self._eligible(r.item, request, self._now())})
                 scoped = [h for h in hits if h['id'] in valid]
@@ -366,7 +371,7 @@ class ContextRetriever:
             return self._vector_candidates(request.query, pool_size, select=select, prepared=prepared)
         hits = self._vector_candidates(request.query, pool_size, prepared=prepared)
         while len(hits) == pool_size:
-            records = self.store.get_retrieval_records([hit["id"] for hit in hits])
+            records = self._retrieval_records([hit["id"] for hit in hits])
             if sum(self._eligible(r.item, request, self._now()) and
                    (eligible_ids is None or r.item.id in eligible_ids) for r in records) >= request.top_k:
                 break
@@ -467,7 +472,8 @@ class ContextRetriever:
         implicit_end: str | None = None,
     ) -> bool:
         from evolvmem.memory_eligibility import eligible
-        if not eligible(self.store, item.id):
+        inputs = current_inputs(self.store)
+        if not (inputs.eligible(item.id) if inputs is not None else eligible(self.store, item.id)):
             return False
         moment = request.as_of or now.strftime(_TIMESTAMP_FORMAT)
         if request.as_of is None:

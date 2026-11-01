@@ -14,9 +14,9 @@ def physical(lan, monkeypatch):
     clock, scans = [100.0], []
     monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
     original = ContextService._scan_integrity_readonly
-    def scan(path, expected):
+    def scan(path, expected, **kwargs):
         scans.append(expected)
-        return original(path, expected)
+        return original(path, expected, **kwargs)
     monkeypatch.setattr(ContextService, '_scan_integrity_readonly', staticmethod(scan))
     return runtime, manager, clock, scans
 
@@ -50,7 +50,7 @@ def test_expired_refresh_failure_cannot_reuse_prior_success(physical, monkeypatc
     clock[0] += 301
     assert manager.status('kane')['hard_gate'] == 'health_physical_expired'
     failures = []
-    def fail(*_):
+    def fail(*_, **__):
         failures.append(True)
         return ('quick_check_failed',)
     monkeypatch.setattr(ContextService, '_scan_integrity_readonly', staticmethod(fail))
@@ -103,10 +103,10 @@ def test_shutdown_during_physical_scan_cannot_cache_or_return_a_proof(physical, 
     _, manager, _, _ = physical
     entered, release = threading.Event(), threading.Event()
     original = ContextService._scan_integrity_readonly
-    def blocked(path, expected):
+    def blocked(path, expected, **kwargs):
         entered.set()
         assert release.wait(3)
-        return original(path, expected)
+        return original(path, expected, **kwargs)
     monkeypatch.setattr(ContextService, '_scan_integrity_readonly', staticmethod(blocked))
     values, errors = [], []
     def evaluate():
@@ -132,7 +132,7 @@ def test_failed_early_refresh_discards_prior_success_even_if_resident_recovers(p
     current_key = (id(service.store._connection()), *scans[0])
     service._integrity_snapshot = (current_key, 100.0, ('quick_check_failed',))
     attempts = []
-    def failure(*_):
+    def failure(*_, **__):
         attempts.append(True)
         raise RuntimeError('physical checker unavailable')
     monkeypatch.setattr(ContextService, '_scan_integrity_readonly', staticmethod(failure))

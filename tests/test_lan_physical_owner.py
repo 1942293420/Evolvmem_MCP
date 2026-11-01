@@ -76,7 +76,7 @@ def test_physical_failure_revokes_before_semantic_evaluation_finishes(lan, monke
         assert manager.status('kane')['hard_gate'] == 'allowed'
         prior = service._integrity_cache_state()
         monkeypatch.setattr(ContextService, '_scan_integrity_readonly',
-                            staticmethod(lambda *args: ('quick_check_failed',)))
+                            staticmethod(lambda *args, **kwargs: ('quick_check_failed',)))
         # Same TTL and clock before/after failure: the previous success is not
         # expired. Only physical failure may invalidate the consumer token.
         with closing(manager._connect('kane')) as conn:
@@ -97,13 +97,13 @@ def test_actual_old_worker_must_exit_and_cannot_publish_after_handoff(lan, monke
     entered, release = threading.Event(), threading.Event()
     scans = []
     original = ContextService._scan_integrity_readonly
-    def scanner(path, expected):
+    def scanner(path, expected, **kwargs):
         scans.append(threading.current_thread().name)
         if threading.current_thread().name == 'evolvmem-integrity-check':
             entered.set()
             assert release.wait(5)
             return ()
-        return original(path, expected)
+        return original(path, expected, **kwargs)
     monkeypatch.setattr(ContextService, '_scan_integrity_readonly', staticmethod(scanner))
     old_worker = None
     try:
@@ -161,7 +161,7 @@ def test_failure_invalidates_actual_request_health_cache_at_same_ttl_and_clock(l
         assert len(evaluations) == count
         prior = service._integrity_cache_state()
         monkeypatch.setattr(ContextService, '_scan_integrity_readonly',
-                            staticmethod(lambda *args: ('quick_check_failed',)))
+                            staticmethod(lambda *args, **kwargs: ('quick_check_failed',)))
         with closing(manager._connect('kane')) as conn:
             expected = (*manager._identities['kane'], conn.execute('PRAGMA schema_version').fetchone()[0])
         manager._physical_result('kane', service.config.db_path, expected)
@@ -262,7 +262,7 @@ def test_transaction_cannot_bypass_owner_hard_withdrawal(lan, monkeypatch, withd
             service.config.context_session_summary_ttl_days = original
         else:
             monkeypatch.setattr(ContextService, '_scan_integrity_readonly',
-                                staticmethod(lambda *args: ('quick_check_failed',)))
+                                staticmethod(lambda *args, **kwargs: ('quick_check_failed',)))
             with closing(manager._connect('kane')) as conn:
                 expected = (*manager._identities['kane'], conn.execute('PRAGMA schema_version').fetchone()[0])
             manager._physical_result('kane', service.config.db_path, expected)

@@ -56,9 +56,9 @@ def test_warm_lan_claim_reuses_actual_initial_scan_timestamp(lan, monkeypatch):
         manager.claim_resident_physical()
         scans = []
         original = ContextService._scan_integrity_readonly
-        def counted(path, expected):
+        def counted(path, expected, **kwargs):
             scans.append(True)
-            return original(path, expected)
+            return original(path, expected, **kwargs)
         monkeypatch.setattr(ContextService, '_scan_integrity_readonly', staticmethod(counted))
         manager.refresh('kane')
         assert manager.run_once()
@@ -104,9 +104,9 @@ def test_changed_startup_proof_requires_actual_background_scan(lan, monkeypatch,
         assert owner._record is None
         scans = []
         original = ContextService._scan_integrity_readonly
-        def counted(path, expected):
+        def counted(path, expected, **kwargs):
             scans.append(True)
-            return original(path, expected)
+            return original(path, expected, **kwargs)
         monkeypatch.setattr(ContextService, '_scan_integrity_readonly', staticmethod(counted))
         assert manager.status('kane')['hard_gate'] != 'allowed'
         manager.refresh('kane')
@@ -154,7 +154,7 @@ def test_finished_failed_timer_invalidates_the_old_startup_receipt(lan, monkeypa
         service = runtime.server_for('kane').context_service
         assert service._initial_physical_proof is not None
         original = ContextService._scan_integrity_readonly
-        def failed(path, expected):
+        def failed(path, expected, **kwargs):
             assert original(path, expected) == ()
             return ('quick_check_failed',)
         monkeypatch.setattr(ContextService, '_scan_integrity_readonly', staticmethod(failed))

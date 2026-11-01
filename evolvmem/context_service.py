@@ -105,7 +105,7 @@ from evolvmem.continuity_models import (
 from evolvmem.continuity_service import ContinuityService
 from evolvmem.cutover_checks import check_projection_lag
 from evolvmem.physical_integrity import (config_fingerprint, physical_scan,
-    initial_physical_boundary, issue_initial_physical_proof)
+    initial_physical_boundary, issue_initial_physical_proof, PhysicalScanTimeout, PhysicalScanBusy)
 from evolvmem.cutover_lock import CutoverLock
 from evolvmem.embedding import EmbeddingEngine
 from evolvmem.legacy_compat import LegacyCompatibilityFacade
@@ -163,6 +163,8 @@ _MAX_DIAGNOSTIC_CHARS = 160
 _HEALTH_LOG_CODES = frozenset(
     {
         "quick_check_failed",
+        "quick_check_timeout",
+        "quick_check_busy",
         "schema_invariant_failed",
         "layer_invariant_failed",
         "projection_evaluation_failed",
@@ -647,11 +649,32 @@ class ContextService:
 
     @staticmethod
     @physical_scan('readonly')
-    def _scan_integrity_readonly(path, expected) -> tuple[str, ...]:
+    def _scan_integrity_readonly(path, expected, *, deadline=None, cancel=None,
+                                 clock=time.monotonic) -> tuple[str, ...]:
         """A worker owns only its read-only SQLite connection, never the store."""
         probe = None
+        timed_out = False
+        cancelled = False
+        def interrupted():
+            nonlocal timed_out, cancelled
+            timed_out = timed_out or (deadline is not None and clock() >= deadline)
+            cancelled = cancelled or (cancel is not None and cancel())
+            return timed_out or cancelled
+        def checked():
+            interrupted()
+            if timed_out:
+                raise PhysicalScanTimeout()
+            if cancelled:
+                raise RuntimeError('physical_scan_cancelled')
         try:
-            probe = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+            if deadline is None:
+                probe = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+            else:
+                checked()
+                probe = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True,
+                                        timeout=min(.1, max(0., deadline - clock())))
+                probe.set_progress_handler(interrupted, 1000)
+                checked()
             probe.execute("PRAGMA query_only=ON")
             def identity():
                 stat = path.stat()
@@ -659,16 +682,29 @@ class ContextService:
                         probe.execute("PRAGMA schema_version").fetchone()[0])
             if identity() != expected:
                 return ("quick_check_failed",)
+            checked()
             rows = probe.execute("PRAGMA quick_check").fetchall()
+            checked()
             if identity() != expected:
                 return ("quick_check_failed",)
             return (() if rows and all(str(row[0]).lower() == "ok" for row in rows)
                     else ("quick_check_failed",))
+        except PhysicalScanTimeout:
+            raise
+        except sqlite3.Error as exc:
+            code = getattr(exc, 'sqlite_errorcode', None)
+            if deadline is not None and type(code) is int and (code & 255) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                raise PhysicalScanBusy() from None
+            return ("quick_check_failed",)
         except Exception:
             return ("quick_check_failed",)
         finally:
             if probe is not None:
                 probe.close()
+            # A late 'ok', including slow close or an interrupt racing SQL
+            # completion, cannot certify this attempt. No cross-thread close.
+            if deadline is not None:
+                checked()
 
     def _schedule_integrity_refresh(self):
         # Only timer metadata is resident. The callback never touches store,
@@ -733,7 +769,7 @@ class ContextService:
             try:
                 identity, contract = self._integrity_owner_input()
                 view = owner.observe(identity, contract, ttl)
-                if view.state in {'closed', 'boundary', 'failed'}:
+                if view.state in {'closed', 'boundary', 'failed', 'timeout', 'busy'}:
                     return view.codes
                 if not conn.in_transaction:
                     if view.needs_refresh:

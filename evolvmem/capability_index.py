@@ -471,9 +471,14 @@ class CapabilityIndex:
                     window = min(20, limit)
                     for offset in range(0, len(matches), window):
                         candidates = []
-                        for match in matches[offset:offset + window]:
+                        ranked = matches[offset:offset + window]
+                        # Release the prior window before the next SQL read.
+                        memories = None
+                        memories = (store._get_vector_window([int(match["id"]) for match in ranked])
+                                    if self.eligible is None else None)
+                        for position, match in enumerate(ranked):
                             ident = int(match["id"])
-                            memory = store.get(ident)
+                            memory = memories[position] if memories is not None else store.get(ident)
                             if memory is None or memory["status"] != "active":
                                 continue
                             # Uncertified legacy vectors retain the existing

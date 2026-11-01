@@ -21,7 +21,7 @@ PUBLIC_DOCS = (
     "windows-codex.md", "lan-revision-read.md", "lan-background-health.md", "recall-read-scope.md",
     "lan-continuity-reads.md", "experience-background-admission.md", "recall-memory-pressure.md",
     "lan-capability-reads.md",
-    "health-budget-isolation.md",
+    "health-budget-isolation.md", "lan-physical-scan-budget.md",
     "evolvmem-workflow.json", "feishu-login.md",
     "evolvmem-atlas.json", "evolvmem-atlas-template.html", "evolvmem-atlas-receipt.json",
     # The single public design/plan file for the 2026-10-02 memory-trust update.

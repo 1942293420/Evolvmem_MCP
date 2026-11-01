@@ -14,6 +14,14 @@ import uuid
 PROTOCOL = 'sqlite-quick-check-v1'
 
 
+class PhysicalScanTimeout(TimeoutError):
+    """A complete physical check was not obtained within its execution budget."""
+
+
+class PhysicalScanBusy(RuntimeError):
+    """SQLite lock contention prevented the bounded physical check."""
+
+
 def config_fingerprint(config):
     return hashlib.sha256(repr(sorted(vars(config).items())).encode()).hexdigest()
 
@@ -99,6 +107,10 @@ class PhysicalObservation:
     def codes(self):
         if self.state == 'ok':
             return ()
+        if self.state == 'timeout':
+            return ('quick_check_timeout',)
+        if self.state == 'busy':
+            return ('quick_check_busy',)
         if self.state in {'pending', 'expired'}:
             return ('quick_check_pending',)
         return ('quick_check_failed',)
@@ -112,6 +124,7 @@ class PhysicalProofOwner:
         self._clock = clock
         self._lock = threading.RLock()
         self._record = None
+        self._unavailable = None
         self._predecessor = None
         self._running = False
         self._closed = False
@@ -128,7 +141,7 @@ class PhysicalProofOwner:
     def adopt_initial(self, proof, *, source, boundary, generation, ttl):
         """Accept only a same-process resident receipt; never renew its clock."""
         with self._lock:
-            if (self._closed or self._boundary_failed or self._running or self._record is not None
+            if (self._closed or self._boundary_failed or self._unavailable or self._running or self._record is not None
                     or (self._predecessor is not None and self._predecessor.is_alive())
                     or type(proof) is not _InitialPhysicalProof or proof.seal is not _INITIAL_PROOF_SEAL
                     or proof.source is not source or proof.generation != generation
@@ -163,6 +176,8 @@ class PhysicalProofOwner:
                 state = 'closed'
             elif not matches:
                 state = 'boundary'
+            elif self._unavailable is not None:
+                state, refresh = self._unavailable, True
             elif self._record is None:
                 state, refresh = 'pending', True
             elif self._record[1]:
@@ -184,7 +199,13 @@ class PhysicalProofOwner:
         if callback is not None:
             callback()
 
-    def check(self, identity, contract, ttl, scanner, *, current_config):
+    def cancelled(self):
+        with self._lock:
+            return self._closed or self._boundary_failed
+
+    def check(self, identity, contract, ttl, scanner, *, current_config, deadline=None):
+        if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
+            raise ValueError('physical_deadline_invalid')
         with self._lock:
             if self._closed:
                 raise RuntimeError('physical_owner_closed')
@@ -203,9 +224,18 @@ class PhysicalProofOwner:
             self._running = True
             generation = self._generation
         try:
+            unavailable = None
             try:
+                if deadline is not None and self._clock() >= deadline:
+                    raise PhysicalScanTimeout()
                 result = scanner()
                 codes = () if result == () else ('quick_check_failed',)
+            except PhysicalScanTimeout:
+                unavailable = 'timeout'
+                codes = ('quick_check_timeout',)
+            except PhysicalScanBusy:
+                unavailable = 'busy'
+                codes = ('quick_check_busy',)
             except Exception:
                 codes = ('quick_check_failed',)
             checked = self._clock()
@@ -218,8 +248,18 @@ class PhysicalProofOwner:
                     raise RuntimeError('physical_owner_closed')
                 if not self._matches(identity, after_config) or generation != self._generation:
                     raise RuntimeError('physical_boundary_changed')
+                if deadline is not None and self._clock() >= deadline:
+                    unavailable = 'timeout'
+                if unavailable is not None:
+                    # No successful completion stamp is issued for an overrun.
+                    # Keep _running until the actual scanner has returned.
+                    self._record = None
+                    self._unavailable = unavailable
+                    self._generation += 1
+                    return (('quick_check_timeout',) if unavailable == 'timeout' else ('quick_check_busy',)), None
                 # Visible immediately, before any following semantic evaluation.
                 self._record = (checked, codes)
+                self._unavailable = None
                 self._generation += 1
             return codes, checked
         finally:

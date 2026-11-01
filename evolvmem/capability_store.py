@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
@@ -260,6 +261,54 @@ class CapabilityStore:
             project for source in sources for project in source["projects"]
         })
         result["sources_count"] = len(sources)
+        return result
+
+    def _get_vector_window(self, memory_ids: list[int]) -> list[dict | None]:
+        """Materialize at most one ranked window in its existing checked snapshot.
+
+        Persisted sources remain claims, not eligibility evidence. Full source
+        rows are decoded (including unused TEXT columns) but streamed rather
+        than retained together. No result or proof outlives this call/window.
+        """
+        if (type(memory_ids) not in (list, tuple) or len(memory_ids) > 20
+                or any(type(ident) is not int for ident in memory_ids)):
+            raise ValueError("invalid_capability_vector_window")
+        if not memory_ids:
+            return []
+        from evolvmem.capability_provenance import scoped_provenance_reader
+        conn = self.conn
+        owner = scoped_provenance_reader(self.context_store)
+        if owner is None or owner.conn is not conn:
+            raise ValueError("capability_vector_window_requires_snapshot")
+        # A caller's custom decoder can have observable ordering/state. Keep
+        # its old per-ID get calls rather than change the decoding schedule.
+        if conn.text_factory is not str:
+            return [self.get(ident) for ident in memory_ids]
+        identities = tuple(dict.fromkeys(memory_ids))
+        marks = ",".join("?" for _ in identities)
+        rows = {row["memory_id"]: self._public(row) for row in conn.execute(
+            "SELECT * FROM capability_memories WHERE memory_id IN (" + marks + ")", identities)}
+        projects = {ident: set() for ident in rows}
+        counts = {ident: 0 for ident in rows}
+        if rows:
+            present = tuple(rows)
+            marks = ",".join("?" for _ in present)
+            cursor = conn.execute("SELECT * FROM capability_sources WHERE memory_id IN (" + marks
+                                  + ") ORDER BY memory_id,source_id", present)
+            try:
+                for source in cursor:
+                    ident = source["memory_id"]
+                    projects[ident].update(json.loads(source["projects"]))
+                    counts[ident] += 1
+            finally:
+                cursor.close()
+        result = []
+        for ident in memory_ids:
+            memory = deepcopy(rows[ident]) if ident in rows else None
+            if memory is not None:
+                memory["source_projects"] = sorted(projects[ident])
+                memory["sources_count"] = counts[ident]
+            result.append(memory)
         return result
 
     @staticmethod

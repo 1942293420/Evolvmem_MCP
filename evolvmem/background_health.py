@@ -12,7 +12,7 @@ from evolvmem.context_service import ContextService, _health_log_codes
 from evolvmem.health_generation import observed
 from evolvmem.vector_index import VectorIndex
 from evolvmem.request_trace import request_trace, stage
-from evolvmem.physical_integrity import PhysicalProofOwner, config_fingerprint
+from evolvmem.physical_integrity import PhysicalProofOwner, PhysicalScanTimeout, PhysicalScanBusy, config_fingerprint
 
 
 class BackgroundHealth:
@@ -187,6 +187,8 @@ class BackgroundHealth:
                 physical_gate = (None if physical_view is None else {
                     'ok': None, 'pending': 'health_baseline_pending',
                     'failed': 'health_physical_failed', 'expired': 'health_physical_expired',
+                    'timeout': 'health_physical_timeout',
+                    'busy': 'health_physical_busy',
                     'boundary': 'health_boundary_changed', 'closed': 'health_closed',
                 }[physical_view.state])
             else:
@@ -196,6 +198,7 @@ class BackgroundHealth:
                         now - saved['physical_checked'] >= ttl) else None)
             gate = ('health_closed' if self._closed else
                     'health_boundary_unavailable' if observation is None else
+                    physical_gate if saved is None and physical_gate in {'health_physical_timeout', 'health_physical_busy'} else
                     'health_baseline_pending' if saved is None else
                     'health_boundary_changed' if observation[0] != saved['hard'] else
                     physical_gate if physical_gate and physical_gate != 'health_physical_expired' else
@@ -226,9 +229,11 @@ class BackgroundHealth:
         ttl = ContextService._integrity_ttl()
         owner = self._physical_owners.get(name)
         if owner is not None:
+            deadline = time.monotonic() + min(max(0., ttl), 300.)
             return owner.check(expected, config_fingerprint(self.servers[name].config), ttl,
-                lambda: ContextService._scan_integrity_readonly(path, expected),
-                current_config=lambda: config_fingerprint(self.servers[name].config))
+                lambda: ContextService._scan_integrity_readonly(path, expected,
+                    deadline=deadline, cancel=lambda: self._closed or owner.cancelled(), clock=time.monotonic),
+                current_config=lambda: config_fingerprint(self.servers[name].config), deadline=deadline)
         now = time.monotonic()
         resident = self.servers[name].context_service._integrity_snapshot
         resident_failed = bool(resident and resident[2] and resident[0][1:] == expected)
@@ -266,6 +271,12 @@ class BackgroundHealth:
             expected = (*self._identities[name], hard[1])
             with stage('health_physical'):
                 physical, physical_checked = self._physical_result(name, config.db_path, expected)
+            if physical == ('quick_check_timeout',):
+                # Owner already revoked admission. Do not spend another full
+                # semantic scan on this unsuccessful physical attempt.
+                raise PhysicalScanTimeout()
+            if physical == ('quick_check_busy',):
+                raise PhysicalScanBusy()
             # The physical checker owns a different connection and cannot be
             # cancelled by this handler. Spending the semantic budget while
             # it runs makes the first semantic SQL fail immediately afterward.

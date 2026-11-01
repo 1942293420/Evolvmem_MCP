@@ -60,7 +60,7 @@ def _check_read_health(health, bindings):
             codes = {'health_closed', 'health_boundary_unavailable',
                      'health_baseline_pending', 'health_boundary_changed',
                      'health_physical_failed', 'health_contract_invalid',
-                     'health_physical_expired', 'health_evaluation_failed'}
+                     'health_physical_expired', 'health_physical_timeout', 'health_physical_busy', 'health_evaluation_failed'}
             raise BackgroundReadDenied(gate if gate in codes else 'health_boundary_unavailable')
         if ready is not True:
             raise BackgroundReadDenied('degraded_legacy')

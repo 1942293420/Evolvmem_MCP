@@ -5,6 +5,7 @@ only for the same connection/content/policy version, never across transactions.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -13,6 +14,7 @@ from evolvmem.conversation import clean_messages, render
 from evolvmem.extraction_policy import redact_messages
 from evolvmem.knowledge_rules import KnowledgeRules
 from evolvmem.topic_segmentation import message_spans
+from evolvmem.request_trace import stage
 
 MAX_SOURCE_BYTES = 8 * 1024 * 1024
 MAX_MEMBERS = 4096
@@ -20,10 +22,35 @@ MAX_MESSAGES = 8192
 MAX_SPANS = 8192
 MAX_CACHED_SPANS = 16384
 MAX_UNIT_CHARS = 24000
+MAX_CACHED_PREFLIGHT_TASKS = 8
+MAX_CACHED_PREFLIGHT_BYTES = 2 * 1024 * 1024
 
 
 def _hash(value):
     return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+
+
+def _metadata_weight(value):
+    """Conservative serialized size, without encoding unbounded metadata text."""
+    pending, total = [value], 0
+    while pending:
+        item = pending.pop()
+        if type(item) is str:
+            total += 6 * len(item) + 2
+        elif item is None or type(item) in (int, float, bool):
+            total += 32
+        elif type(item) is dict:
+            total += 2 + 2 * len(item)
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif type(item) in (list, tuple):
+            total += 2 + len(item)
+            pending.extend(item)
+        else:
+            return None
+        if total > MAX_CACHED_PREFLIGHT_BYTES:
+            return None
+    return total
 
 
 class UnitRoleRead:
@@ -32,6 +59,23 @@ class UnitRoleRead:
         self.cache = {}
         self.epoch = None
         self._scope_active = False
+        self._clear_preflight_cache()
+
+    def _clear_preflight_cache(self):
+        self._preflight_owner = None
+        self._preflight_tasks = {}
+        self._preflight_bytes = 0
+
+    def _remember_preflight(self, task_id, gate):
+        weight = _metadata_weight(gate)
+        if weight is None:
+            return
+        if (len(self._preflight_tasks) >= MAX_CACHED_PREFLIGHT_TASKS
+                or self._preflight_bytes + weight > MAX_CACHED_PREFLIGHT_BYTES):
+            self._preflight_tasks.clear()
+            self._preflight_bytes = 0
+        self._preflight_tasks[task_id] = deepcopy(gate)
+        self._preflight_bytes += weight
 
     def token(self):
         return (id(self.conn), self.conn.execute('PRAGMA data_version').fetchone()[0], self.conn.total_changes,
@@ -52,18 +96,36 @@ class UnitRoleRead:
     def failed(reason, task=None):
         return {'ready':False,'reason':'unit_source_roles_unproven:'+reason,'task':task,'spans':[]}
 
+    @stage('capability_role_preflight')
     def preflight(self, task_id, digest=None):
         """Only lengths/hashes/identity, before provenance can read a body."""
-        row=self.conn.execute('SELECT id,source_key,source_revision,rule_revision,status,superseded_by,'
-            'length(CAST(source_snapshot AS BLOB)) AS snapshot_bytes,length(source_snapshot) AS snapshot_chars '
-            'FROM organization_tasks WHERE id=?',(task_id,)).fetchone()
-        if row is None:return self.failed('task_missing')
-        task=dict(row)
+        # Only OriginalRead's synchronous internal call graph may reuse this
+        # metadata, and only inside the existing explicitly owned query-only
+        # provenance snapshot. Ordinary/caller transactions keep the old path.
+        from evolvmem.capability_provenance import scoped_provenance_reader
+        owner = scoped_provenance_reader(self.store) if self._scope_active else None
+        if owner is not None and owner.conn is not self.conn:
+            owner = None
+        if owner is not self._preflight_owner:
+            self._clear_preflight_cache()
+            self._preflight_owner = owner
+        cacheable = owner is not None and type(task_id) is int
+        cached = self._preflight_tasks.get(task_id) if cacheable else None
+        if cached is None:
+            row=self.conn.execute('SELECT id,source_key,source_revision,rule_revision,status,superseded_by,'
+                'length(CAST(source_snapshot AS BLOB)) AS snapshot_bytes,length(source_snapshot) AS snapshot_chars '
+                'FROM organization_tasks WHERE id=?',(task_id,)).fetchone()
+            if row is None:return self.failed('task_missing')
+            task=dict(row)
+        else:
+            task = deepcopy(cached['task'])
         if digest is not None:
             sizes=self.conn.execute('SELECT max(length(text)),max(length(CAST(text AS BLOB))) '
                 'FROM organization_units WHERE task_id=? AND digest=?',(task_id,digest)).fetchone()
             if (sizes[0] or 0)>MAX_UNIT_CHARS or (sizes[1] or 0)>MAX_SOURCE_BYTES:
                 return self.failed('unit_over_budget',task)
+        if cached is not None:
+            return deepcopy(cached)
         if not task['snapshot_bytes']:return self.failed('snapshot_missing',task)
         total=task['snapshot_bytes']
         if total>MAX_SOURCE_BYTES:return self.failed('over_budget',task)
@@ -100,8 +162,12 @@ class UnitRoleRead:
                 info={'item':dict(item),'layers':layers};total+=sum(r['bytes'] or 0 for r in layers)
             metadata.append({'key':member,'kind':kind,'id':identity,'identity':info})
             if total>MAX_SOURCE_BYTES:return self.failed('over_budget',task)
-        return {'ready':True,'reason':'','task':task,'members':metadata,'budget_bytes':total}
+        result = {'ready':True,'reason':'','task':task,'members':metadata,'budget_bytes':total}
+        if cacheable:
+            self._remember_preflight(task_id, result)
+        return result
 
+    @stage('capability_role_structure')
     def read(self, task_id):
         gate=self.preflight(task_id)
         if not gate['ready']:return gate
