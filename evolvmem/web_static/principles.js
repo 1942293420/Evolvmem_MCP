@@ -115,7 +115,7 @@ window.EvolvPrinciples={render(mount){
  r('knowledge','按名称读取项目历史','task intent knowledge return continue','r1 r2 r18 r16'),r('capability','按开发问题找能力','task intent knowledge eligible vector rerank related dedup return continue','r1 r2 r5 r8 r10 r11 r13 r14 r16'),r('case','查找已验证案例','task intent experience eligible lexical rerank related dedup return continue','r1 r3 r6 r7 r9 r11 r13 r14 r16'),r('none','没有相关内容','task intent knowledge eligible vector rerank related empty continue','r1 r2 r5 r8 r10 r11 r12 r17'),r('resume','精确恢复任务断点','task intent checkpoint return continue','r1 r4 r15 r16')]},
  dataflow:{title:'业务资料怎样流向当前任务',type:'数据流图',goal:'区分会话原文、整理成果、检索候选和返回结果，追踪各自的来源。',height:1170,nodes:[
  n('dialogue','客户端提交的会话',350,20,'actor',facts('客户端','用户与助手可见对话','会话批次及来源标识')),
- n('archive','会话档案与原文',30,210,'store',facts('来源保存','原始会话与来源','可复核对话与来源引用')),
+ n('archive','会话档案与原文',30,210,'store',facts('来源保存','原始会话与来源','可复核对话与来源引用','会话记录逐条校验，完整通过后再提取。提取不改写原文，失败后可继续使用同一归档重试。')),
  n('organize','整理 → 人工归档 → 提炼',350,210,'process',facts('自动整理','会话全文、关联需求与结果、规则与确认指导','有依据的历史与知识成果')),
  n('rules','规则与已确认指导',690,210,'store',facts('你','适用条件、例外与确认决定','符合条件才适用的指导')),
  n('history','项目知识目录与历史',30,430,'store',facts('项目阅读','已保存的归属、事实、版本、原文','目录、当前内容、条件、变化与分歧','页面和 Agent 使用同一阅读视图；旧资料未提炼事实时仍按原内容展示，不能据此判断没有分歧。关系建议不能扩大项目归属。','project_knowledge.directory','#knowledge/projects')),

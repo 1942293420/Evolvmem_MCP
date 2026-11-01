@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import time
 
-from evolvmem.codex_transcript import parse_transcript, same_client_workspace, workspace_details
+from evolvmem.codex_transcript import parse_transcript_events, same_client_workspace, workspace_details
 from evolvmem.continuity_backfill import (
     _ParsedSession, _parse_events, _checkpoint_fields, _objective_matched_workstream,
     deterministic_workstream_id, MAX_LINE_BYTES,
@@ -18,7 +18,8 @@ def _import(capture, row):
     if payload is None:
         return dict(code='candidate', reason='archive_payload_unavailable')
     raw = json.loads(payload)['transcript'].encode('utf-8')
-    rows, _ = parse_transcript(raw, row['session_id'])
+    rows, events = parse_transcript_events(raw, row['session_id'], max_line_bytes=MAX_LINE_BYTES)
+    del payload, raw
     details = workspace_details(rows)
     reason = details['attribution_reason']
     if details['subagent']:
@@ -26,9 +27,8 @@ def _import(capture, row):
     if reason or not row['project']:
         return dict(code='candidate', reason=reason or 'project_unassigned')
     parsed = _ParsedSession(row['session_id'], '', [], {}, 0)
-    events = [(i, json.loads(line)) for i, line in enumerate(raw.splitlines(), 1)
-              if line.strip() and len(line) <= MAX_LINE_BYTES]
     _parse_events(Path('.'), parsed, events, same_workspace=same_client_workspace)
+    del rows, events
     if not parsed.users:
         return dict(code='skipped', reason='no_objective')
     with remote_context(capture.server, row['device_id'], validate_snapshot(None)) as provider:

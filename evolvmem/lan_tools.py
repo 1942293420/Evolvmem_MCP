@@ -196,7 +196,10 @@ class LanTools:
             if credentials is None:
                 raise LanError('extraction_provider_unavailable')
             transcript = json.loads(payload)
-            _, messages = parse_transcript(transcript['transcript'].encode('utf-8'), row['session_id'])
+            parsed_rows, messages = parse_transcript(transcript['transcript'].encode('utf-8'), row['session_id'])
+            # Keep only extractor dialogue across model calls and persistence.
+            # The complete encrypted source remains in the archive for retry.
+            del parsed_rows, transcript, payload
             source = 'codex:' + row['device_id'] + ':' + row['session_id']
             prepared = prepare_extraction(capture.server.config, row['project'], source, messages, credentials, **options)
             with self.lock:
