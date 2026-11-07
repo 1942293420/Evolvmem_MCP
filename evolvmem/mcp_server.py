@@ -1121,6 +1121,9 @@ class MemoryMCPServer:
         Existing generator coverage deduplicates the LLM work. Generation is
         best effort after the evidence commit; failure preserves saved cases.
         """
+        from evolvmem.product_policy import load_policy
+        if not load_policy().ai_processing_enabled:
+            return result
         core = self.context_service
         engine = core.embedding_engine
         if result.get('status') != 'active' or not getattr(engine, 'is_loaded', False):

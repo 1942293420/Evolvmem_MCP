@@ -23,6 +23,7 @@ Run:
 import argparse
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -1264,6 +1265,17 @@ def make_handler(service: ContextService):
     store = service.store
     auth = WebAuth(AuthSettings.load(service.config.data_dir))
     views = TrustViews(service)
+    from evolvmem.product_policy import load_policy
+    from evolvmem.knowledge_console import ConsoleService
+    console = ConsoleService(
+        os.environ.get('EVOLVMEM_CONSOLE_REGISTRY', str(Path.home()/'.config/evolvmem-console/users.db')),
+        os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID', 'jiangli'), service.config.data_dir,
+        os.environ.get('EVOLVMEM_LAN_DATA_DIR', str(Path.home()/'.local/share/evolvmem-lan')),
+        dict(os.environ))
+    def observe_console_login(open_id, name):
+        if load_policy().console_enabled:
+            console.observe_login(open_id, name)
+    auth.login_observer = observe_console_login
     # Browser preconnects may open a socket without sending an HTTP request.
     # Parse those sockets independently, but retain serialized use of this
     # service's shared SQLite connections and transaction state.
@@ -1276,6 +1288,82 @@ def make_handler(service: ContextService):
             self._parsed_body = None
             self.prepared_extraction = None
             parsed = urlparse(self.path)
+            policy = load_policy()
+            console_path = parsed.path == '/api/knowledge-console' or parsed.path.startswith('/api/knowledge-console/')
+            if console_path:
+                if self.command == 'GET':
+                    with auth_lock:
+                        if auth.handle_get(self, parsed):
+                            return
+                if not policy.console_enabled:
+                    self._send_json({'ok':False,'error':'knowledge_console_disabled'}, 410)
+                    return
+                session = auth.session(self) if auth.enabled else None
+                if not auth.enabled or not session:
+                    self._send_json({'ok':False,'error':'login_required'}, 401)
+                    return
+                if self.command not in ('GET', 'POST'):
+                    self._send_json({'ok':False,'error':'method_not_allowed'}, 405)
+                    return
+                params = {k:v[0] for k,v in parse_qs(parsed.query).items()}
+                if any(len(v)!=1 for v in parse_qs(parsed.query).values()):
+                    self._send_json({'ok':False,'error':'duplicate_query_parameter'}, 400)
+                    return
+                if self.command == 'POST':
+                    if not auth._valid_csrf(self, session):
+                        self._send_json({'ok':False,'error':'invalid_csrf'}, 403)
+                        return
+                    body, failed = self._read_body()
+                    if failed: return
+                    if not isinstance(body, dict):
+                        self._send_json({'ok':False,'error':'invalid_request'}, 400)
+                        return
+                    if params:
+                        if params != {'inspect':'1'}:
+                            self._send_json({'ok':False,'error':'invalid_query'}, 400)
+                            return
+                        body = {**body, 'inspect':'1'}
+                    params = body
+                status, content_type, body = console.dispatch(self.command,
+                    unquote(parsed.path[len('/api/knowledge-console'):] or '/'), params, session)
+                if isinstance(body, dict):
+                    if parsed.path.endswith('/me') and status == 200:
+                        body['policy'] = {**body.get('policy', {}), **policy.as_dict()}
+                    self._send_json(body, status)
+                else:
+                    self.send_response(status)
+                    self.send_header('Content-Type', content_type)
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.end_headers()
+                    self.wfile.write(body)
+                return
+            if self.command == 'GET':
+                with auth_lock:
+                    if auth.handle_get(self, parsed): return
+                if policy.console_enabled:
+                    if parsed.path in ('/', '/index.html', '/designs/signal.html'):
+                        self._send_html((_STATIC_INDEX.parent/'knowledge-console.html').read_text(encoding='utf-8'))
+                        return
+                    if parsed.path in ('/knowledge-console.js','/knowledge-console.css','/history-library.js','/history-library.css','/principles.js'):
+                        asset=_STATIC_INDEX.parent/parsed.path.lstrip('/')
+                        data=asset.read_bytes()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/css' if asset.suffix=='.css' else 'text/javascript')
+                        self.send_header('Content-Length', str(len(data)))
+                        self.send_header('Cache-Control','no-store')
+                        self.send_header('X-Content-Type-Options','nosniff')
+                        self.end_headers();self.wfile.write(data)
+                        return
+                    if parsed.path in ('/workflow','/workflow/','/workflow-diagram','/architecture','/architecture.html','/history','/history/'):
+                        self.send_response(302)
+                        self.send_header('Location','/#history' if parsed.path.startswith('/history') else '/#principles')
+                        self.send_header('Content-Length','0');self.end_headers()
+                        return
+            if not policy.legacy_web_enabled and not parsed.path.startswith('/auth/'):
+                self._send_json({'ok':False,'error':'legacy_web_disabled'},410)
+                return
             if self.command == 'GET':
                 # Login and static files do not use the shared database. They
                 # must remain reachable while a business request is working.
@@ -1390,14 +1478,26 @@ def make_handler(service: ContextService):
             """
             if getattr(self, '_parsed_body', None) is not None:
                 return self._parsed_body
-            length = int(self.headers.get("Content-Length") or 0)
+            lengths = self.headers.get_all('Content-Length', [])
+            if (self.headers.get_all('Transfer-Encoding', []) or len(lengths) > 1
+                    or lengths and (len(lengths[0]) > 20 or not lengths[0].isascii() or not lengths[0].isdigit())):
+                self.close_connection = True
+                self._send_json({'ok': False, 'error': 'invalid_body_length'}, 400)
+                return None, True
+            length = int(lengths[0]) if lengths else 0
             if length > _BODY_LIMIT:
+                self.close_connection = True
                 self._send_json({"ok": False, "error": "body too large"}, 413)
                 return None, True
             if not length:
                 return {}, False
             try:
-                return json.loads(self.rfile.read(length).decode("utf-8")), False
+                raw = self.rfile.read(length)
+                if len(raw) != length:
+                    self.close_connection = True
+                    self._send_json({'ok': False, 'error': 'incomplete_body'}, 400)
+                    return None, True
+                return json.loads(raw.decode("utf-8")), False
             except (ValueError, UnicodeDecodeError):
                 self._send_json({"ok": False, "error": "invalid JSON"}, 400)
                 return None, True
@@ -1824,10 +1924,13 @@ def run(port: int = 9377, data_dir: str | None = None,
         except Exception:
             pass
 
-    _threading.Thread(target=_warm_read_cache, daemon=True).start()
+    from evolvmem.product_policy import load_policy
+    policy = load_policy()
+    if policy.legacy_web_enabled:
+        _threading.Thread(target=_warm_read_cache, daemon=True).start()
     # 单个有界后台整理 worker：独立连接、独立线程；中断的任务在启动时回到队列
     from evolvmem.auto_organization import OrganizationWorker
-    organization = OrganizationWorker(config).start()
+    organization = OrganizationWorker(config).start() if policy.legacy_web_enabled and policy.ai_processing_enabled else None
     print(f"EvolvMem web console: http://{host}:{port} "
           f"(data: {config.db_path})")
     try:
@@ -1835,7 +1938,8 @@ def run(port: int = 9377, data_dir: str | None = None,
     except KeyboardInterrupt:
         pass
     finally:
-        organization.stop()
+        if organization is not None:
+            organization.stop()
         server.server_close()
         service.close()
 

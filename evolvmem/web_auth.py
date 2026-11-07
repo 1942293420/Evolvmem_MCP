@@ -270,6 +270,13 @@ class WebAuth:
                     and user["open_id"] != self.settings.owner_open_id)):
             self._login_page(handler, "此飞书账号不在本工作台允许的企业范围内。", 403, cookies)
             return
+        observer = getattr(self, 'login_observer', None)
+        if observer is not None:
+            try:
+                observer(user['open_id'], str(user.get('name') or '飞书用户')[:100])
+            except Exception:
+                self._login_page(handler, '账号绑定服务暂时不可用，请稍后重试。', 503, cookies)
+                return
         self.sessions.pop(self._cookie_value(handler, _SESSION_COOKIE), None)
         session_id = secrets.token_urlsafe(32)
         self.sessions[session_id] = {"open_id": user["open_id"],

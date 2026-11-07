@@ -5,7 +5,8 @@ JSONL without ever entering ``session_archives``. This module is the missing
 local collector: no service, no model, no dependency.
 
 * Capture needs ``${data_dir}/local_codex_capture.json`` (valid, enabled) and the
-  existing ``auto_new`` arrival switch, so pausing arrival stops collection.
+  existing ``auto_new`` arrival switch for legacy callers. The new-console
+  LAN loop owns independent raw capture without the old organization gate.
 * Only new complete LF records are consumed through a per-file cursor (physical
   identity, byte offset, line number). A half-written line waits, and every round
   is capped by byte, line, file and time budgets; a whole file is never read.
@@ -32,6 +33,7 @@ from datetime import datetime, timezone
 
 from evolvmem.codex_transcript import dialogue_messages, workspace_details
 from evolvmem.conversation import clean_messages
+from evolvmem.product_policy import load_policy
 from evolvmem.session_archive import SessionArchiver
 
 CONFIG_NAME = 'local_codex_capture.json'
@@ -1013,7 +1015,7 @@ def status(config, store):
         'enabled': bool(settings.ready),
         'configured': settings.exists,
         'auto_new': auto_new,
-        'active': bool(settings.ready and auto_new),
+        'active': bool(settings.ready and (auto_new or load_policy().console_enabled)),
         'error': settings.error,
         'config': settings.view(),
         'last_scan_at': scan_row['last_scan_at'] if scan_row else '',
@@ -1035,14 +1037,15 @@ def status(config, store):
 
 # ------------------------------------------------------------- worker adapter
 
-def capture_once(service, state, *, now=None):
-    """One throttled, arrival-gated capture round for the organization worker.
+def capture_once(service, state, *, now=None, arrival_required=True):
+    """One bounded raw scan; LAN owns independent scans in console mode.
 
-    ``state`` is a dict the worker owns. Returns the number of newly archived
-    batches (0 when arrival is off, capture is unconfigured, throttled or idle).
+    Arrival remains an optional compatibility gate for legacy callers. A
+    namespace-wide process lease prevents overlapping scans by another host
+    process; cursors and archive commits remain the existing durable boundary.
     """
     from evolvmem.organization_arrival import settings as arrival_settings
-    if not arrival_settings(service)['auto_new']:
+    if arrival_required and not arrival_settings(service)['auto_new']:
         state['capture'] = None
         state['last_poll'] = 0.0
         return 0
@@ -1058,7 +1061,11 @@ def capture_once(service, state, *, now=None):
     if moment - state.get('last_poll', 0.0) < instance.poll_seconds():
         return 0
     state['last_poll'] = moment
-    return int(instance.scan().get('archives', 0))
+    # The same namespace may be visible to both Web and LAN processes. A
+    # process lock protects cursor read + archive commit, not just discovery.
+    from evolvmem.capture_lease import capture_lease
+    with capture_lease(service.config.data_dir) as acquired:
+        return int(instance.scan().get('archives', 0)) if acquired else 0
 
 
 def _config_stamp(config):

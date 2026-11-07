@@ -15,6 +15,8 @@ aftermath). Generated knowledge is never a verified-experience claim.
 """
 from __future__ import annotations
 
+from evolvmem.product_policy import AIProcessingDisabled
+
 from evolvmem import knowledge_scope as ks
 import hashlib
 import json
@@ -1231,9 +1233,11 @@ class OrganizationWorker:
         return unit_views(self._connect(), task_id)
 
     def _run(self):
+        from evolvmem.product_policy import legacy_automation_enabled
         try:
             try:
-                self._restore()
+                if legacy_automation_enabled():
+                    self._restore()
             except Exception:
                 # Never silent: interrupted work stays queued in 'running' when
                 # this fails, and nothing else would report it.
@@ -1246,6 +1250,12 @@ class OrganizationWorker:
                 try:
                     if self._stop.is_set():
                         break
+                    if not legacy_automation_enabled():
+                        # Raw capture has its own LAN loop in console mode.
+                        self.capture_once()
+                        self._wake.wait(POLL_SECONDS)
+                        self._wake.clear()
+                        continue
                     if time.monotonic() >= next_stale_sweep:
                         next_stale_sweep = time.monotonic() + _STALE_SWEEP_SECONDS
                         self._restore_stale()
@@ -1283,6 +1293,9 @@ class OrganizationWorker:
         switch must be on. Both checks live in ``local_codex_capture`` so a paused
         arrival mode stops collection without touching queued work.
         """
+        from evolvmem.product_policy import load_policy
+        if load_policy().console_enabled:
+            return False
         from evolvmem import local_codex_capture
         try:
             return bool(local_codex_capture.capture_once(self._connect(), self._capture_state))
@@ -1325,6 +1338,9 @@ class OrganizationWorker:
     # -- one unit of work --
 
     def tick(self):
+        from evolvmem.product_policy import legacy_automation_enabled
+        if not legacy_automation_enabled():
+            return False
         service = self._connect()
         from evolvmem.organization_semantic_review import tick as review_tick
         if review_tick(service):
@@ -1473,6 +1489,11 @@ class OrganizationWorker:
                 self._extract_units(service, task)
             else:
                 self._finish(service, task_id, 'completed', 'done')
+        except AIProcessingDisabled:
+            with service.store.transaction():
+                service.store._connection().execute(
+                    "UPDATE organization_tasks SET status='pending',attempts=MAX(0,attempts-1),updated_at=? WHERE id=? AND status='running'",
+                    (_now_iso(), task_id))
         except SourceNoDialogue:
             # No dialogue at all is a truthful skip, never a provider failure.
             self._finish(service, task_id, 'completed', 'done', NO_DIALOGUE_CODE)

@@ -206,6 +206,16 @@ def extract_from_messages(
         sanitize_summary,
     )
 
+    from evolvmem.product_policy import load_policy, AIProcessingDisabled
+    from evolvmem.raw_hook_archive import archive_hook_messages
+    config = Config.from_file()
+    source_session = f"dsh:{session_id}"[:kh._MAX_SOURCE_SESSION_CHARS]
+    archive_id = archive_hook_messages(config=config, project=(project or "dsh")[:kh._MAX_PROJECT_CHARS],
+                                      adapter="dsh", source_session=source_session, messages=messages)
+    if archive_id is None:
+        _log("raw session archive unavailable")
+    if not load_policy().ai_processing_enabled:
+        return ("paused", {"reason": "ai_processing_disabled", "archive_id": archive_id}) if archive_id is not None else ("retry", {"reason": "raw_archive_unavailable"})
     reason = ""
     conversation_chars = sum(len(str(m.get("content", ""))) for m in messages)
     if conversation_chars < 200:
@@ -224,6 +234,8 @@ def extract_from_messages(
 
     try:
         candidates = kh._extract_candidates(model_messages, llm_config)
+    except AIProcessingDisabled:
+        return "paused", {"reason": "ai_processing_disabled", "archive_id": archive_id}
     except kh.RetryableExtractionError as e:
         _log(f"extraction deferred: {e}")
         details = {"reason": str(e)}
@@ -365,10 +377,14 @@ def extract_from_messages(
                 max_writes=kh._MAX_MEMORIES_PER_SESSION,
                 source_session=source_session,
             ),
+            source_archive_id=archive_id,
+            source_messages=messages,
             llm=kh._llm_callable(llm_config),
         )
         atomic_ids = [m.legacy_id for m in extraction.candidates]
         n = extraction.persisted
+    except AIProcessingDisabled:
+        return "paused", {"reason": "ai_processing_disabled", "archive_id": archive_id}
     except Exception as error:
         _log(f"persistence failed: {type(error).__name__}")
         return "retry", {"reason": "persistence failed"}

@@ -370,6 +370,9 @@ def stop(service, job_id):
 
 
 def tick(service):
+    from evolvmem.product_policy import legacy_automation_enabled
+    if not legacy_automation_enabled():
+        return False
     conn=service.store._connection()
     with service.store.transaction():
         row=conn.execute("SELECT * FROM organization_review_jobs WHERE status='pending' ORDER BY created_at LIMIT 1").fetchone()

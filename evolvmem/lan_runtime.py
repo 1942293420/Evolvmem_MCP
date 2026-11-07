@@ -266,6 +266,10 @@ class LanRuntime:
                 while not self._capture_stop.wait(_CAPTURE_POLL_SECONDS):
                     try:
                         adapter.process_backfills()
+                        # New console raw capture is independent of legacy organization.
+                        capture_local = getattr(adapter, 'capture_local_sources', None)
+                        if capture_local is not None:
+                            capture_local()
                         adapter.process_pending()
                     except Exception:
                         # Jobs remain queryable; never log transcript/provider details.
@@ -317,11 +321,13 @@ class LanRuntime:
             raise
 
     def _recovery_loop(self):
+        from evolvmem.product_policy import load_policy
         services = ()
         try:
             while not self._recovery_stop.wait(_RECOVERY_POLL_SECONDS):
                 try:
-                    if not self._vector_recovery.due() and not self._capability_recovery.due():
+                    if not self._vector_recovery.due() and not (
+                            load_policy().legacy_web_enabled and self._capability_recovery.due()):
                         continue
                     services = self._open_recovery_services(services)
                     # Scans and encoding hold no dispatch lock. Only the
@@ -329,7 +335,8 @@ class LanRuntime:
                     reports = self._vector_recovery.tick(services)
                     if reports:
                         self._vector_recovery_reports = reports
-                    capability_reports = self._capability_recovery.tick(services)
+                    capability_reports = (self._capability_recovery.tick(services)
+                                          if load_policy().legacy_web_enabled else ())
                     if capability_reports:
                         self._capability_recovery_reports = capability_reports
                 except Exception:

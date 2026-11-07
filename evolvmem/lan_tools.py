@@ -136,7 +136,11 @@ class LanTools:
                 runtime._lan_captures = self.captures
                 for capture in self.captures.values():
                     with capture.store.transaction():
-                        capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='failed',error='extraction_interrupted' WHERE extraction_status='processing'")
+                        from evolvmem.product_policy import load_policy
+                        if load_policy().ai_processing_enabled:
+                            capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='failed',error='extraction_interrupted' WHERE extraction_status='processing'")
+                        else:
+                            capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='pending',error='' WHERE extraction_status='processing'")
             from evolvmem.health_generation import prepare as prepare_health_generation
             for user, space in (('jiangli', 'personal'), ('kane', 'personal'), ('jiangli', 'public')):
                 prepare_health_generation(runtime.server_for(user, space).context_service.store)
@@ -168,6 +172,18 @@ class LanTools:
         return '.'.join(str(self.runtime.server_for(user, space).context_service.store._connection().execute(
             'SELECT revision FROM lan_memory_revision WHERE id=1').fetchone()[0]) for space in ('personal', 'public'))
 
+    def capture_local_sources(self):
+        from evolvmem.product_policy import load_policy
+        if not load_policy().console_enabled:
+            return 0
+        from evolvmem.local_codex_capture import capture_once
+        with self.lock:
+            state = getattr(self, '_local_capture_state', None)
+            if state is None:
+                self._local_capture_state = state = {}
+            return capture_once(self.runtime.server_for('jiangli').context_service, state,
+                                arrival_required=False)
+
     def process_backfills(self, *, now=None):
         from evolvmem.lan_backfill import process_backfill
         with self.lock:
@@ -175,6 +191,9 @@ class LanTools:
 
     def process_pending(self):
         """Process one durable extraction job; no model work in the upload hook."""
+        from evolvmem.product_policy import load_policy, AIProcessingDisabled
+        if not load_policy().ai_processing_enabled:
+            return 0
         from evolvmem import kimi_hooks
         from evolvmem.codex_transcript import parse_transcript
         from evolvmem.session_extraction import prepare_extraction
@@ -226,11 +245,20 @@ class LanTools:
                     rolled = capture.server.context_service.rollup_project(row['project'], llm=unlocked_llm)
                     receipt['project_summary_status'] = rolled.status
                     receipt['project_summary_reason'] = rolled.reason
+                except AIProcessingDisabled:
+                    receipt['project_summary_status'] = 'paused'
+                    receipt['project_summary_reason'] = 'ai_processing_disabled'
                 except Exception:
                     # The session summary is already saved; report the separate rollup failure.
                     receipt['project_summary_status'] = 'failed'
                     receipt['project_summary_reason'] = 'project_summary_failed'
                 capture.finish_extraction(row, result=receipt)
+        except AIProcessingDisabled:
+            with self.lock:
+                with capture.store.transaction():
+                    capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='pending',error='' WHERE device_id=? AND session_id=? AND sha256=? AND extraction_status='processing'",
+                                         (row['device_id'], row['session_id'], row['sha256']))
+            return 0
         except Exception as exc:
             if isinstance(exc, LanError):
                 reason = str(exc)

@@ -12,6 +12,7 @@ from evolvmem.reranking import valid_scores
 from evolvmem.lan_config import LanSettings
 from evolvmem.lan_runtime import LanRuntime
 from evolvmem.lan_tools import LanTools, PROTOCOLS
+from evolvmem.console_access import console_user_gate
 
 MAX_BODY_BYTES = 1024 * 1024
 
@@ -56,6 +57,10 @@ def make_http_server(runtime, host=None, port=None):
             user = runtime.settings.authenticate(value[7:]) if value.startswith('Bearer ') else None
             if user is None:
                 self._reply(401, {'error': 'unauthorized'}, {'WWW-Authenticate': 'Bearer'})
+                return None
+            gate = console_user_gate(user, runtime.settings)
+            if gate is not None:
+                self._reply(*gate)
                 return None
             expected_users = self.headers.get_all('X-EvolvMem-Expected-User', [])
             if expected_users and (len(expected_users) != 1 or expected_users[0] != user):

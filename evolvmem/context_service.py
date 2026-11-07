@@ -2402,6 +2402,8 @@ class ContextService:
         rolling-summary refresh runs post-commit; without one the refresh is
         skipped entirely. The refresh never affects the persisted batch.
         """
+        from evolvmem.product_policy import require_ai_processing
+        require_ai_processing()
         self._require_request(request, LegacyExtractionRequest)
         self._require_initialized()
         if source_archive_id is not None:
@@ -2576,6 +2578,8 @@ class ContextService:
 
     def rollup_project(self, project: str, *, llm) -> ProjectRollupReport:
         """Roll one project with the service-owned incremental vector handoff."""
+        from evolvmem.product_policy import require_ai_processing
+        require_ai_processing()
         if self._mode is None:
             raise ContextServiceError(
                 "not_initialized", "service is not initialized"
@@ -2589,6 +2593,8 @@ class ContextService:
 
     def rollup_projects(self, *, llm) -> tuple[ProjectRollupReport, ...]:
         """Roll all source-bearing projects through the same vector handoff."""
+        from evolvmem.product_policy import require_ai_processing
+        require_ai_processing()
         if self._mode is None:
             raise ContextServiceError(
                 "not_initialized", "service is not initialized"

@@ -38,6 +38,8 @@ def validate_occurred_at(value):
 
 def assert_unit_current(service, task, unit):
     """Compare both revisions and fields, including manual edits during a call."""
+    from evolvmem.product_policy import require_ai_processing
+    require_ai_processing()
     conn = service.store._connection()
     current_task = conn.execute("SELECT * FROM organization_tasks WHERE id=?", (task["id"],)).fetchone()
     current = conn.execute("SELECT * FROM organization_units WHERE task_id=? AND digest=?",

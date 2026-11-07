@@ -360,6 +360,11 @@ class LanCapture:
                       current=self.is_current(row), extraction_status=row['extraction_status'],
                       project=row['project'], attribution_reason=row['attribution_reason'],
                       backfill_status=row['backfill_status'])
+        from evolvmem.product_policy import load_policy
+        result['ai_processing_enabled'] = load_policy().ai_processing_enabled
+        if not result['ai_processing_enabled'] and row['extraction_status'] in ('pending', 'processing', 'not_requested', 'unassigned'):
+            result['processing_state'] = 'paused'
+            result['processing_reason'] = 'ai_processing_disabled'
         if row['archive_id']:
             result['archive_id'] = row['archive_id']
         if row['error']:
@@ -404,6 +409,9 @@ class LanCapture:
         return bool(row) and row['attribution_reason'] in EXCLUDED_REASONS
 
     def claim_pending(self):
+        from evolvmem.product_policy import load_policy
+        if not load_policy().ai_processing_enabled:
+            return None
         row = self.conn.execute('''SELECT a.* FROM lan_session_uploads a
             JOIN lan_session_heads h ON h.device_id=a.device_id AND h.session_id=a.session_id
             WHERE a.sha256=h.sha256 AND a.extraction_status='pending' AND a.archive_id IS NOT NULL
@@ -445,6 +453,9 @@ class LanCapture:
             ORDER BY a.rowid LIMIT 1'''.format(_excluded_sql()), (before,)).fetchone()
 
     def retry(self, args):
+        from evolvmem.product_policy import load_policy
+        if not load_policy().ai_processing_enabled:
+            raise LanError('ai_processing_disabled')
         identity = self._identity(args)
         row = self._current_row(identity)
         if row is None:
@@ -462,6 +473,9 @@ class LanCapture:
         return self.status(args)
 
     def assign(self, args):
+        from evolvmem.product_policy import load_policy
+        if not load_policy().ai_processing_enabled:
+            raise LanError('ai_processing_disabled')
         identity = self._identity(args)
         project = args['project']
         row = self._current_row(identity)

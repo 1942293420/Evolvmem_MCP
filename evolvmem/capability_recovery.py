@@ -25,6 +25,9 @@ class CapabilityVectorRecoveryLoop:
         return self.clock() >= self.next_attempt_at
 
     def tick(self, services):
+        from evolvmem.product_policy import load_policy
+        if not load_policy().legacy_web_enabled:
+            return ()
         if not self.due():
             return ()
         reports = []
