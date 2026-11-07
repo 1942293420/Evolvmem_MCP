@@ -1276,6 +1276,25 @@ def make_handler(service: ContextService):
         if load_policy().console_enabled:
             console.observe_login(open_id, name)
     auth.login_observer = observe_console_login
+    from evolvmem.web_sessions import PersistentSessions, SessionStoreError
+    console_sessions = load_policy().console_enabled
+    def session_identity_allowed(open_id):
+        try:
+            if load_policy().console_enabled != console_sessions:
+                raise SessionStoreError()
+            return console.login_allowed(open_id) if console_sessions else True
+        except Exception:
+            raise SessionStoreError() from None
+    def session_write_allowed(conn, open_id):
+        if load_policy().console_enabled != console_sessions:
+            raise SessionStoreError()
+        return console.login_allowed_in_transaction(conn, open_id) if console_sessions else True
+    auth.session_validator = session_identity_allowed
+    auth.session_write_validator = session_write_allowed
+    if auth.enabled:
+        session_path = console.registry_path if console_sessions else service.config.data_dir/'web-sessions.db'
+        auth.enable_persistence(PersistentSessions(session_path, auth.persistence_scope(),
+                                                  require_existing=console_sessions))
     # Browser preconnects may open a socket without sending an HTTP request.
     # Parse those sockets independently, but retain serialized use of this
     # service's shared SQLite connections and transaction state.
@@ -1438,7 +1457,14 @@ def make_handler(service: ContextService):
                 if elapsed >= 2:
                     # Paths and timing only: no query, body or credentials.
                     _LOG.warning('Slow web request %s %s %.3fs', self.command, parsed.path, elapsed)
-        return call
+        @wraps(method)
+        def guarded_call(self, *args, **kwargs):
+            try:
+                return call(self, *args, **kwargs)
+            except SessionStoreError:
+                self.close_connection = True
+                self._send_json({'ok': False, 'error': 'session_store_unavailable'}, 503)
+        return guarded_call
 
     class MemoryWebHandler(BaseHTTPRequestHandler):
         server_version = "EvolvMemWeb/1.0"

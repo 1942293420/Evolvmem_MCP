@@ -110,16 +110,17 @@ def test_web_stop_existing_session_and_bound_pending_login_metadata(fixture):
     _,users=request(fixture,PREFIX+'/users')
     assert len(users['pending'])==2
     assert request(fixture,PREFIX+'/users/kane',method='POST',csrf=True,body={'enabled':False})[0]==200
-    assert request(fixture,PREFIX+'/me',actor='member')[0]==403
+    assert request(fixture,PREFIX+'/me',actor='member')[0]==401
+    assert request(fixture,'/api/auth/me',actor='member')[1]['authenticated'] is False
     assert request(fixture,PREFIX+'/users',method='POST',csrf=True,body={
         'id':'synthetic-new-user','display_name':'Synthetic New User','open_id':'test-pending-open-id-1'})[0]==201
     status,me=request(fixture,PREFIX+'/me',actor='pending')
     assert status==200 and me['current_user']['id']=='synthetic-new-user'
     assert me['libraries'][0]['history_connected'] is False
     assert request(fixture,PREFIX+'/users/synthetic-new-user',method='POST',csrf=True,body={'enabled':False})[0]==200
-    assert request(fixture,PREFIX+'/me',actor='pending')[0]==403
+    assert request(fixture,PREFIX+'/me',actor='pending')[0]==401
     assert request(fixture,PREFIX+'/users/synthetic-new-user',method='POST',csrf=True,body={'enabled':True})[0]==200
-    assert request(fixture,PREFIX+'/me',actor='pending')[0]==200
+    assert request(fixture,PREFIX+'/me',actor='pending')[0]==401
 
 
 def test_web_negative_body_length_is_rejected_without_account_creation(fixture):

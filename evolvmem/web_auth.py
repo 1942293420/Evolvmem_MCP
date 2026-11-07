@@ -2,7 +2,7 @@
 
 One configured owner may edit; all other permitted Feishu users are viewers.
 OAuth tokens stay on the server and are discarded after reading identity.
-Sessions live in memory, so restarting the Web service signs everyone out.
+HTTP hosting persists scoped eight-hour sessions without retaining OAuth tokens.
 """
 import base64
 import hashlib
@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
+from evolvmem.web_sessions import SessionStoreError, SessionIdentityRejected
 
 _AUTHORIZE = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
 # v3 returned 20049 for valid S256 PKCE in live login; use the compatible v2 flow.
@@ -87,6 +88,38 @@ class WebAuth:
         self.settings = settings
         self.sessions = {}
         self.pending = {}
+        self.session_store = None
+        self.session_validator = None
+        self.session_write_validator = None
+
+    def persistence_scope(self):
+        """Bind durable sessions to trusted configuration, never request Host."""
+        values = {key: getattr(self.settings, key) for key in
+                  ('app_id', 'app_secret', 'owner_open_id', 'redirect_uri', 'tenant_key', 'owner_only')}
+        return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+    def enable_persistence(self, store):
+        """Attach an explicitly initialized store; preserve trusted startup seeds."""
+        store.initialize()
+        store.prune()
+        for token, row in self.sessions.items():
+            try:
+                store.put(token, row, validate=self.session_write_validator)
+            except SessionIdentityRejected:
+                continue
+        self.sessions.clear()
+        self.session_store = store
+
+    def _save_session(self, token, row):
+        if self.session_store is not None:
+            self.session_store.put(token, row, validate=self.session_write_validator)
+        else:
+            self.sessions[token] = row
+
+    def _drop_session(self, token):
+        if self.session_store is not None:
+            return self.session_store.pop(token)
+        return self.sessions.pop(token, None)
 
     @property
     def enabled(self):
@@ -119,7 +152,12 @@ class WebAuth:
 
     def session(self, handler):
         self._prune()
-        return self.sessions.get(self._cookie_value(handler, _SESSION_COOKIE))
+        token = self._cookie_value(handler, _SESSION_COOKIE)
+        row = self.session_store.get(token) if self.session_store is not None else self.sessions.get(token)
+        if row and self.session_validator is not None and not self.session_validator(row['open_id']):
+            self._drop_session(token)
+            return None
+        return row
 
     def can_write(self, session):
         return bool(session and session["open_id"] == self.settings.owner_open_id)
@@ -277,11 +315,19 @@ class WebAuth:
             except Exception:
                 self._login_page(handler, '账号绑定服务暂时不可用，请稍后重试。', 503, cookies)
                 return
-        self.sessions.pop(self._cookie_value(handler, _SESSION_COOKIE), None)
+        if self.session_validator is not None and not self.session_validator(user['open_id']):
+            self._login_page(handler, '此账号已停用或无法绑定登录，请联系管理员。', 403, cookies)
+            return
+        self._drop_session(self._cookie_value(handler, _SESSION_COOKIE))
         session_id = secrets.token_urlsafe(32)
-        self.sessions[session_id] = {"open_id": user["open_id"],
+        row = {"open_id": user["open_id"],
             "name": str(user.get("name") or "飞书用户")[:100],
             "csrf": secrets.token_urlsafe(32), "expires": time.time() + _SESSION_SECONDS}
+        try:
+            self._save_session(session_id, row)
+        except SessionIdentityRejected:
+            self._login_page(handler, '此账号已停用或无法绑定登录，请联系管理员。', 403, cookies)
+            return
         cookies.append(self._cookie(_SESSION_COOKIE, session_id, _SESSION_SECONDS))
         self._redirect(handler, "/", cookies)
 
@@ -309,5 +355,5 @@ class WebAuth:
         if session and not self._valid_csrf(handler, session):
             handler._send_json({"ok": False, "error": "invalid_csrf"}, 403)
             return
-        self.sessions.pop(self._cookie_value(handler, _SESSION_COOKIE), None)
+        self._drop_session(self._cookie_value(handler, _SESSION_COOKIE))
         handler._send_json({"ok": True}, headers=[self._cookie(_SESSION_COOKIE, "", 0)])

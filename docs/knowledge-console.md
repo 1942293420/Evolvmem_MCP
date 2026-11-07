@@ -31,6 +31,14 @@ The legacy capability-index recovery loop also pauses when the old library is di
 
 Deploying a Python file cannot update functions already loaded in a long-lived process. Restart the actual Web/LAN/DSH units and reconnect older standalone MCP clients. Preserve original databases, raw archives and continuation jobs. Do not infer successful OAuth login or archive synchronization from a code change alone.
 
+## Eight-hour login persistence
+
+The Web host stores its own sessions with an absolute expiry of 28800 seconds from login. Restarting the host preserves the remaining lifetime and CSRF token; normal requests never renew it. Browser cookies are random opaque values with HttpOnly and SameSite=Lax (and Secure for HTTPS); metadata stores only their SHA256 hashes, the trusted auth-configuration scope, identity, CSRF and expiry. Feishu access/refresh tokens are discarded after identity verification.
+
+In console mode `web_sessions` shares the account registry, so account disabling or login rebinding deletes the affected identity's sessions in the same transaction. Creating a session rechecks the current enabled/pending identity inside that same database write transaction. Re-enabling an account cannot restore its deleted sessions. Logout revokes the exact cookie hash across configuration scopes. Pending logins have no knowledge access until an administrator binds them. Storage errors fail closed without an in-memory fallback. Compatibility hosting uses a separate `web-sessions.db` in its configured data directory.
+
+The initial upgrade from the former memory-only implementation may require one final login. Later restarts preserve valid issued sessions. Keep the private account/session metadata in operational backups; never publish it with source exports. `tests/test_web_sessions.py` and `tests/test_web_login_persistence.py` cover storage, actual HTTP OAuth login/restart, fixed expiry, revocation and token exclusion using synthetic identities.
+
 ## Verification
 
 The dedicated account, LAN, policy and Web HTTP tests use temporary SQLite databases and synthetic identities. They cover colliding resource IDs, directed grants and revocation, pending login binding, account disable/enable, CSRF, explicit inspection, attachment isolation, source immutability and bounded body parsing. Run:

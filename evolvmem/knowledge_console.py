@@ -206,6 +206,21 @@ class ConsoleService:
         except (ValueError,sqlite3.Error,OSError):
             return False
 
+    def login_allowed_in_transaction(self, conn, open_id):
+        """Check the same metadata transaction that will issue a session."""
+        open_id = _open_id(open_id)
+        meta = conn.execute("SELECT value FROM console_meta WHERE key='owner_id'").fetchone()
+        if not meta or meta[0] != self.owner_id:
+            raise ConsoleError('invalid_console_registry',503)
+        row = conn.execute('SELECT enabled FROM console_users WHERE open_id=?',(open_id,)).fetchone()
+        if row:
+            return bool(row[0])
+        return bool(conn.execute('SELECT 1 FROM console_pending WHERE open_id=?',(open_id,)).fetchone())
+
+    def login_allowed(self, open_id):
+        with self._db() as conn:
+            return self.login_allowed_in_transaction(conn, open_id)
+
     def registry_ready(self):
         """Read-only metadata readiness; distinguish unavailable from disabled."""
         try:
@@ -339,6 +354,11 @@ class ConsoleService:
                 raise ConsoleError('login_already_bound',409)
             if (not old or openid!=old['open_id']) and not conn.execute('SELECT 1 FROM console_pending WHERE open_id=?',(openid,)).fetchone():
                 raise ConsoleError('login_not_observed')
+        from evolvmem.web_sessions import revoke_identity
+        if old and old['open_id'] and (not enabled or old['open_id'] != openid):
+            revoke_identity(conn, old['open_id'])
+        if not enabled and openid and (not old or openid != old['open_id']):
+            revoke_identity(conn, openid)
         if create:
             conn.execute('INSERT INTO console_users(id,display_name,enabled,is_admin,open_id,lan_enabled,created_at,updated_at) '
                          'VALUES(?,?,?,0,?,0,?,?)',(target,name,int(enabled),openid,_now(),_now()))
