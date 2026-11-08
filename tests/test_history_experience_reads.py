@@ -107,3 +107,76 @@ def test_deleted_tombstoned_and_superseded_materials_stay_hidden(db):
 def test_invalid_filters_fail_bounded(db,params):
     with pytest.raises(ValueError):
         reads.experiences(db,'jiangli',params)
+
+
+def test_empty_library_has_complete_zero_summary_without_initialization():
+    conn=sqlite3.connect(':memory:')
+    result=reads.experiences(conn,'jiangli',{'status':'verified'})
+    assert result['summary']==dict(total=0,
+        reviews={name:0 for name in ('accepted','pending_session_review','pending_root_acceptance','needs_revision')},
+        categories={name:dict(all=0,accepted=0,pending_session_review=0,pending_root_acceptance=0,needs_revision=0)
+                    for name in reads.CATEGORIES})
+    assert conn.execute('SELECT count(*) FROM sqlite_master').fetchone()[0]==0
+    conn.close()
+
+
+def test_library_summary_is_owner_scoped_and_independent_of_every_list_filter(db):
+    add(db,'a',review_state='accepted')
+    add(db,'b',review_state='pending_session_review')
+    backend=dict(title='接口',problem='接口失败',category='后端与接口',steps=['读取响应'],result={'outcome':'unknown','summary':'待核对'})
+    add(db,'c',review_state='pending_root_acceptance',raw_card_json=json.dumps(backend,ensure_ascii=False))
+    ai={**backend,'category':'AI工具与协作'}
+    add(db,'d',review_state='needs_revision',raw_card_json=json.dumps(ai,ensure_ascii=False))
+    add(db,'e',owner='other',review_state='accepted')
+    add(db,'f',tombstoned=1,review_state='accepted')
+    add(db,'1',superseded_by='2'*64,review_state='accepted')
+    db.execute("INSERT INTO context_items VALUES(7,'deleted')")
+    add(db,'2',item_id=7,review_state='accepted')
+    before=db.total_changes
+    expected=reads.experiences(db,'jiangli',{})['summary']
+    assert expected['total']==4
+    assert expected['reviews']==dict(accepted=1,pending_session_review=1,pending_root_acceptance=1,needs_revision=1)
+    assert set(expected['categories'])==set(reads.CATEGORIES)
+    assert expected['categories']['前端开发']==dict(all=2,accepted=1,pending_session_review=1,pending_root_acceptance=0,needs_revision=0)
+    assert expected['categories']['后端与接口']['pending_root_acceptance']==1
+    assert expected['categories']['AI工具与协作']['needs_revision']==1
+    assert expected['categories']['部署与运维']['all']==0
+    for params in ({'q':'no-match'},{'project':'no-project'},{'category':'数据库与数据处理'},
+                   {'review':'accepted'},{'review':'pending'},{'status':'verified'},
+                   {'status':'inactive'},{'page':9,'page_size':1},
+                   {'q':'missing','project':'none','category':'前端开发','review':'needs_revision'}):
+        assert reads.experiences(db,'jiangli',params)['summary']==expected
+    other=reads.experiences(db,'other',{})['summary']
+    assert other['total']==1 and other['reviews']['accepted']==1
+    assert db.total_changes==before
+
+
+def test_pending_review_alias_merges_only_three_unfinished_states_before_pagination(db):
+    for digit,review in zip('abcd',('accepted','pending_session_review','pending_root_acceptance','needs_revision')):
+        add(db,digit,review_state=review)
+    add(db,'e',owner='other',review_state='pending_root_acceptance')
+    result=reads.experiences(db,'jiangli',{'review':'pending','page_size':1,'page':2})
+    assert result['total']==3 and len(result['rows'])==1
+    assert result['rows'][0]['id']=='history-'+'c'*64
+    assert reads.experiences(db,'jiangli',{'review':'all'})['total']==4
+    assert reads.experiences(db,'jiangli',{'review':'accepted'})['total']==1
+    assert all(row['status']=='candidate' and row['success_count']==0
+               for row in reads.experiences(db,'jiangli',{'review':'pending'})['rows'])
+
+
+def test_list_method_and_result_summaries_use_displayed_bound_card_without_promotion(db):
+    add(db)
+    row=reads.experiences(db,'jiangli',{})['rows'][0]
+    assert row['method_summary']=='核对总数'
+    assert row['result_summary']=='尚未独立验证'
+    db.execute('ALTER TABLE history_experience_ingest_materials ADD COLUMN envelope_item_json TEXT')
+    raw=json.loads(db.execute('SELECT raw_card_json FROM history_experience_ingest_materials').fetchone()[0])
+    bound={**raw,'steps':['绑定原文中的首个步骤','第二步'], 'result':{'outcome':'unknown','summary':'只记录原文结果'}}
+    db.execute('UPDATE history_experience_ingest_materials SET envelope_item_json=?',(json.dumps({'bound_card':bound}),))
+    row=reads.experiences(db,'jiangli',{})['rows'][0]
+    assert row['method_summary']=='绑定原文中的首个步骤' and row['result_summary']=='只记录原文结果'
+    assert row['status']=='candidate' and row['validation_level']=='unverified'
+    bound['steps']=[];bound['result']=None
+    db.execute('UPDATE history_experience_ingest_materials SET envelope_item_json=?',(json.dumps({'bound_card':bound}),))
+    row=reads.experiences(db,'jiangli',{})['rows'][0]
+    assert row['method_summary']=='' and row['result_summary']==''

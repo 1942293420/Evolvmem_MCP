@@ -15,6 +15,16 @@ An administrator's own card opens ordinary self browsing, retaining self history
 - An administrator can create, bind and disable Web accounts. Feishu OAuth is verified before the console records an identity as pending; an unbound identity cannot read knowledge. New Web accounts do not automatically receive LAN credentials or a source database.
 - Directed grants specify viewer, owner, history permission and experience permission. The reverse direction is independent. Normal browsing, including the administrator's ordinary browsing, obeys grants. Explicit administrator `inspect=1` is a read-only review mode for all libraries. Cross-user mutations and cross-user trash reads are forbidden.
 
+## Reading extracted experience
+
+The main `/#experiences` entry defaults to history extraction with `review=accepted`. **已整理完成**, **全部资料**, and **处理中** are direct view switches; the last combines pending session review, pending acceptance, and requested revisions. Existing Core experience remains available under **其他已有经验** with its original verification states. Switching sources clears incompatible category or verification filters.
+
+Progress and eight-category counts refer to the selected library's entire visible history extraction, independent of search and pagination. The result count refers to the current filters. All statistics use the same authorized owner, tombstone, supersession and deleted-item boundaries as the cards; no data is written or status promoted by reading them.
+
+Cards show the problem and first solution step. The first result opens automatically, and selecting another card shows the full problem, solution, key changes, result, applicability and quoted original sources. Search, project, category, owner and inspection state stay in the URL. Empty results provide a clear-filter or all-materials route. Keyboard navigation and the 390, 768 and 1440 pixel layouts are covered by the synthetic browser suite.
+
+**整理已验收** describes content review, not independent validation. Extracted records remain `candidate`, `unverified`, with `success_count=0`; source-project associations describe provenance rather than the method's applicability. Core evidence rules and all existing account/grant checks remain unchanged.
+
 ## Trust and deployment boundaries
 
 `ConsoleService` stores account mappings, grants and audit records in a separate metadata SQLite database. Actor identity comes exclusively from a trusted WebAuth session, never from a user ID or namespace in request data. Source directories and history environment mappings can only be installed by trusted server configuration. Every list, search, detail and attachment request checks authorization before opening a source. Denied resource counts and connection states are not returned to ordinary readers.

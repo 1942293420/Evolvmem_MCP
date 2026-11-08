@@ -4,3 +4,46 @@
 @media(prefers-reduced-motion:reduce){*{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
 
 .page-head #experience-refresh{white-space:nowrap;flex-shrink:0}
+
+/* Experience reading: review progress, readable cards, and source-bound detail. */
+.experience-progress{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin:0 0 24px}
+.experience-progress-title{margin-bottom:12px;font-size:16px;font-weight:650}
+.experience-states{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.experience-states button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 18px;min-height:78px;text-align:left;background:var(--bg)}
+.experience-states button span{font-size:16px;font-weight:600}
+.experience-states button strong{font:650 30px/1.2 var(--display)}
+.experience-states button[aria-current=true]{background:var(--soft);border-color:var(--accent);color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.experience-boundary{margin:14px 0 0;font-size:15px;color:var(--muted)}
+.experience-filters{padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:12px;gap:14px}
+.experience-filters label{font-size:14px;flex:1;min-width:150px}
+.experience-filters label.grow{flex:2;min-width:240px}
+.experience-filters label[hidden]{display:none}
+.experience-filters .button,.experience-filters button{min-height:46px;display:inline-flex;align-items:center;justify-content:center;font-size:14px}
+.experience-results-head{display:flex;align-items:baseline;gap:16px;justify-content:space-between;margin:24px 0 14px}
+.experience-results-head h2{font-size:20px;margin:0}
+.experience-results-head p{margin:0;color:var(--muted)}
+.experience-layout{grid-template-columns:minmax(310px,410px) minmax(0,1fr);align-items:start}
+.experience-results{min-width:0;scroll-margin-top:100px}
+.experience-list{max-height:76vh;overscroll-behavior:contain}
+.experience-entry{white-space:normal;padding:20px;overflow-wrap:anywhere}
+.experience-entry strong{font-size:17px;margin:10px 0 12px;line-height:1.6}
+.experience-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:14px;color:var(--muted)}
+.experience-card-meta .badge{font-size:13px}
+.experience-card-problem,.experience-card-method,.experience-card-source{display:block;font-size:15px;line-height:1.7;margin-top:8px}
+.experience-card-problem{color:var(--muted)}
+.experience-card-method{color:var(--ink)}
+.experience-card-source{color:var(--muted);font-size:14px}
+.experience-detail{padding:26px 30px;scroll-margin-top:100px;overflow-wrap:anywhere}
+.experience-detail-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}
+.experience-detail-top .badge{font-size:14px}
+.experience-detail-top button{font-size:14px;min-height:44px}
+.experience-detail h2{font-size:25px;line-height:1.5;margin-bottom:12px}
+.experience-detail-state{font-size:15px;color:var(--muted);margin-bottom:18px}
+.experience-detail section h3{font-size:18px}
+.experience-detail .experience-text,.experience-detail p{font-size:15px;line-height:1.8}
+.experience-detail ol{padding-left:24px}
+.experience-source{margin:18px 0 0;border-left:3px solid var(--line);padding:0 0 0 16px}
+.experience-source figcaption{color:var(--muted);font-size:14px;margin-bottom:8px}
+.experience-source blockquote{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:1050px){.experience-layout{grid-template-columns:minmax(270px,340px) minmax(0,1fr);gap:20px}.experience-states button{padding:14px;flex-direction:column;align-items:flex-start;gap:8px}.experience-detail{padding:22px}.experience-filters label.grow{min-width:200px}}
+@media(max-width:780px){.experience-progress{padding:18px}.experience-states{gap:8px}.experience-states button{padding:12px 10px;min-height:90px}.experience-states button span{font-size:15px}.experience-states button strong{font-size:28px}.experience-layout{grid-template-columns:1fr}.experience-list{max-height:52vh}.experience-filters{padding:16px}.experience-filters label{min-width:135px}.experience-filters label.grow{flex-basis:100%}.experience-detail{padding:20px;scroll-margin-top:16px}.experience-results{scroll-margin-top:16px}.experience-detail h2{font-size:23px}.experience-results-head{gap:8px}.experience-card-meta{justify-content:flex-start}}

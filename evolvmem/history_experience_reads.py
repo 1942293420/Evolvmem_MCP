@@ -9,7 +9,9 @@ import re
 
 CATEGORIES = ('前端开发', '后端与接口', '数据库与数据处理', '画图与表达',
               '业务规则与流程', '自动化与平台集成', '部署与运维', 'AI工具与协作')
-REVIEWS = ('all', 'accepted', 'pending_session_review', 'pending_root_acceptance', 'needs_revision')
+PENDING_REVIEWS = ('pending_session_review', 'pending_root_acceptance', 'needs_revision')
+REVIEW_STATES = ('accepted', *PENDING_REVIEWS)
+REVIEWS = ('all', 'pending', *REVIEW_STATES)
 PREFIX = 'history-'
 
 
@@ -24,6 +26,31 @@ def _visible():
             "WHERE i.id=m.item_id AND i.status!='deleted'))")
 
 
+def _empty_summary():
+    return dict(total=0, reviews={name: 0 for name in REVIEW_STATES},
+                categories={name: dict(all=0, **{review: 0 for review in REVIEW_STATES})
+                            for name in CATEGORIES})
+
+
+def _summary(conn, owner_id):
+    summary = _empty_summary()
+    # Library progress uses the same visibility boundary as cards, independent
+    # of the current search, project, review, status, category and page filters.
+    rows = conn.execute("SELECT json_extract(m.raw_card_json,'$.category'),m.review_state,count(*) "
+                        'FROM history_experience_ingest_materials m WHERE ' + _visible() +
+                        " GROUP BY json_extract(m.raw_card_json,'$.category'),m.review_state", (owner_id,))
+    for category, review, count in rows:
+        summary['total'] += count
+        if review in summary['reviews']:
+            summary['reviews'][review] += count
+        if category in summary['categories']:
+            bucket = summary['categories'][category]
+            bucket['all'] += count
+            if review in REVIEW_STATES:
+                bucket[review] += count
+    return summary
+
+
 def _card(row, *, detail=False):
     raw = json.loads(row['raw_card_json'])
     if 'envelope_item_json' in row.keys():
@@ -32,9 +59,15 @@ def _card(row, *, detail=False):
         raw = json.loads(row['envelope_item_json']).get('bound_card', raw)
     projects = json.loads(row['source_projects_json'])
     project = row['canonical_project'] or ''
+    steps, outcome = raw.get('steps'), raw.get('result')
+    method_summary = steps[0] if isinstance(steps, list) and steps and isinstance(steps[0], str) else ''
+    result_summary = outcome.get('summary', '') if isinstance(outcome, dict) else ''
+    if not isinstance(result_summary, str):
+        result_summary = ''
     result = dict(id=PREFIX + row['card_key'], title=raw.get('title', raw['problem']),
                   project=project, source_projects=projects, problem=raw['problem'],
                   category=raw.get('category', ''), tags=raw.get('tags', []),
+                  method_summary=method_summary, result_summary=result_summary,
                   conditions=raw.get('conditions', []), status='candidate',
                   validation_level='unverified', independent_verification=False,
                   success_count=0, failure_count=0, expired=False,
@@ -63,9 +96,11 @@ def experiences(conn, owner_id, params):
     query, project = params.get('q', '').strip(), params.get('project', '').strip()
     if len(query) > 500 or len(project) > 100:
         raise ValueError('filter too long')
-    result = dict(rows=[], total=0, page=page, page_size=size, origin='history')
+    result = dict(rows=[], total=0, page=page, page_size=size, origin='history',
+                  summary=_empty_summary())
     if not _available(conn):
         return result
+    result['summary'] = _summary(conn, owner_id)
     where, args = [_visible()], [owner_id]
     # Extraction/review is never independent verification. Typed cases remain
     # candidates; real verified experience stays in the existing Core view.
@@ -81,7 +116,10 @@ def experiences(conn, owner_id, params):
         where.append('(m.canonical_project=? OR EXISTS (SELECT 1 FROM '
                      'json_each(m.source_projects_json) p WHERE p.value=?))')
         args.extend((project, project))
-    if review != 'all':
+    if review == 'pending':
+        where.append('m.review_state IN (?,?,?)')
+        args.extend(PENDING_REVIEWS)
+    elif review != 'all':
         where.append('m.review_state=?')
         args.append(review)
     clause = ' FROM history_experience_ingest_materials m WHERE ' + ' AND '.join(where)
