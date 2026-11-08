@@ -19,19 +19,18 @@
     return data;
   }
   function notice(text,bad=false){const el=$('console-notice');el.hidden=!text;el.textContent=text;el.classList.toggle('error',bad);}
-  function heading(title,desc,action=''){return `<header class="page-head"><div><p class="eyebrow">EVOLVMEM / ${esc(state.owner?.display_name||'知识管理')}</p><h1>${esc(title)}</h1><p class="muted">${esc(desc)}</p></div>${action}</header>`;}
+  function heading(title,desc,action=''){return `<header class="page-head"><div><p class="eyebrow">EVOLVMEM / 知识管理</p><h1>${esc(title)}</h1><p class="muted">${esc(desc)}</p></div>${action}</header>`;}
   function libraryURL(id,kind,inspection=inspect){return `/?user=${encodeURIComponent(id)}${inspection?'&inspect=1':''}#${kind}`;}
   function sourceState(lib,kind){return !lib[`can_read_${kind}`]?'未授权':!lib[`${kind==='history'?'history':'experience'}_connected`]?'数据尚未接入':'已接入';}
   function libraryBase(){return `${ROOT}/libraries/${encodeURIComponent(state.owner.id)}`;}
   function ownerAllowed(kind){return Boolean(state.owner?.[`can_read_${kind}`]);}
   function ownerConnected(kind){return Boolean(state.owner?.[`${kind==='history'?'history':'experience'}_connected`]);}
   function fillContext(){
-    const me=state.me,libs=me.libraries||[];
+    const me=state.me;
     $('actor-name').textContent=me.current_user.display_name;
     $('admin-nav').hidden=!me.current_user.is_admin;
     $('admin-nav').href='/?#users';
-    $('library-picker').innerHTML=libs.map(u=>`<option value="${esc(u.id)}">${esc(u.display_name)}${u.id===me.current_user.id?' · 我的':''}</option>`).join('');
-    $('library-picker').value=state.owner?.id||'';$('library-picker').disabled=!libs.length;
+    $('library-owner').textContent=state.owner?`当前查看：${state.owner.display_name}的知识库`:'当前查看：知识库不可用';
     $('library-access').textContent=inspect?'管理员只读查看':state.owner?.id===me.current_user.id?'我的知识库':'已授权 · 只读';
     const policy=me.policy||{};
     $('runtime-status').textContent=policy.ai_processing_enabled===false?'AI 自动总结已暂停 · 原文保留':policy.ai_processing_enabled===true?'AI 自动总结运行中':'运行状态尚未确认';
@@ -41,16 +40,16 @@
       state.me=await api(`${ROOT}/me`);
       state.owner=(state.me.libraries||[]).find(x=>x.id===(query.get('user')||state.me.current_user.id)) || null;
       fillContext();
-      if(inspect)notice('管理员查看模式：可查看所有用户的历史和经验，本模式只读。');
       window.EvolvMemHistory.configure({api:state.owner?`${libraryBase()}/history`:'',attachmentBase:state.owner?`${libraryBase()}/history/attachment`:'',storageKey:`evolvmem.history.${state.me.current_user.id}.${state.owner?.id||'none'}.${inspect?'inspect':'normal'}.`,canManage:!!state.owner?.can_manage_history&&!inspect,inspect});
       await route();
-    }catch(e){$('actor-name').textContent='登录与绑定';$('library-picker').disabled=true;$('runtime-status').textContent='';$('console-view').innerHTML=`${heading('暂时无法进入知识库','请核对登录和账号绑定状态。')}<div class="empty"><p role="alert">${esc(e.message)}</p><a class="button" href="/auth/login">重新登录</a></div>`;}
+    }catch(e){$('actor-name').textContent='登录与绑定';$('library-context').hidden=true;$('runtime-status').textContent='';$('console-view').innerHTML=`${heading('暂时无法进入知识库','请核对登录和账号绑定状态。')}<div class="empty"><p role="alert">${esc(e.message)}</p><a class="button" href="/auth/login">重新登录</a></div>`;}
   }
   async function route(){
     if(!state.me)return;
-    let parts=location.hash.replace(/^#\/?/,'').split('/'),tab=parts[0]||'history';
-    if(!['history','experiences','libraries','users','principles'].includes(tab)){history.replaceState(null,'',`${location.pathname}${location.search}#history`);tab='history';}
+    let parts=location.hash.replace(/^#\/?/,'').split('/'),tab=parts[0]||'libraries';
+    if(!['history','experiences','libraries','users','principles'].includes(tab)){history.replaceState(null,'',`${location.pathname}${location.search}#libraries`);tab='libraries';}
     const ticket=++state.ticket;
+    $('library-context').hidden=tab!=='history'&&tab!=='experiences';
     document.querySelectorAll('[data-nav]').forEach(a=>{if(a.dataset.nav===tab)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
     const isHistory=tab==='history'&&ownerAllowed('history')&&ownerConnected('history');
     $('history-view').hidden=!isHistory;$('console-view').hidden=isHistory;
@@ -73,7 +72,10 @@
     // All-user inspection is explicit, never grants ordinary cross-user access.
     const data=await api(`${ROOT}/libraries${admin?'?inspect=1':''}`,undefined,{normal:true});
     if(ticket!==state.ticket)return;
-    $('console-view').innerHTML=heading('用户知识库',admin?'查看每位用户的历史与经验。管理员查看为只读，普通浏览仍按有向授权执行。':'这里列出你自己的知识库，以及明确授权给你的资料。')+`<div class="library-grid">${data.libraries.map(lib=>`<article class="library-card"><div class="section-head"><div><h2>${esc(lib.display_name)}</h2><span class="library-id">${esc(lib.id)}</span></div><span class="badge ${lib.enabled?'good':'disabled'}">${lib.enabled?'已启用':'已停用'}</span></div><div class="library-kinds">${[['history','历史','history_count','段有问答原文'],['experience','经验','experience_count','条经验（全部状态）']].map(([kind,name,count,unit])=>`<div class="kind"><span>${name}</span><strong>${lib[`can_read_${kind}`]?esc(lib[count]??0):'—'}</strong><p>${esc(sourceState(lib,kind))}${lib[`can_read_${kind}`]?' · '+unit:''}</p>${lib[`can_read_${kind}`]?`<a class="button" href="${libraryURL(lib.id,kind==='history'?'history':'experiences',admin)}">${admin?'管理员查看':'打开'+name}</a>`:'<span class="muted">未开放</span>'}</div>`).join('')}</div></article>`).join('')||'<p class="empty">暂时没有可访问的知识库。</p>'}</div>`;
+    $('console-view').innerHTML=heading('用户知识库',admin?'从这里选择要查看的知识库。自己的资料可正常管理；查看其他用户时为管理员只读模式。':'从这里选择自己的知识库，或已授权给你的知识库。查看资料不会改变登录账号。')+`<div class="library-grid">${data.libraries.map(lib=>{
+      const inspection=admin&&lib.id!==state.me.current_user.id;
+      return `<article class="library-card" data-library-id="${esc(lib.id)}"><div class="section-head"><div><h2>${esc(lib.display_name)}${lib.id===state.me.current_user.id?' <span class="badge">我的</span>':''}</h2><span class="library-id">${esc(lib.id)}</span></div><span class="badge ${lib.enabled?'good':'disabled'}">${lib.enabled?'已启用':'已停用'}</span></div><div class="library-kinds">${[['history','历史','history_count','段有问答原文'],['experience','经验','experience_count','条经验（全部状态）']].map(([kind,name,count,unit])=>`<div class="kind"><span>${name}</span><strong>${lib[`can_read_${kind}`]?esc(lib[count]??0):'—'}</strong><p>${esc(sourceState(lib,kind))}${lib[`can_read_${kind}`]?' · '+unit:''}</p>${lib[`can_read_${kind}`]?`<a class="button" href="${libraryURL(lib.id,kind==='history'?'history':'experiences',inspection)}">${inspection?'管理员查看（只读）':'打开'+name}</a>`:'<span class="muted">未开放</span>'}</div>`).join('')}</div></article>`;
+    }).join('')||'<p class="empty">暂时没有可访问的知识库。</p>'}</div>`;
   }
   const adminTabs=tab=>`<nav class="tabs" aria-label="用户管理"><a href="#users" class="${tab==='accounts'?'active':''}">用户账号</a><a href="#users/grants" class="${tab==='grants'?'active':''}">交叉访问权限</a></nav>`;
   async function users(tab,ticket){
@@ -114,7 +116,6 @@
     const pageChange=delta=>{const url=new URL(location.href);url.searchParams.set('page',String(data.page+delta));url.hash='experiences';location.href=url.href;};$('exp-prev').onclick=()=>pageChange(-1);$('exp-next').onclick=()=>pageChange(1);
     if(itemId){const result=await api(`${libraryBase()}/experiences/${encodeURIComponent(decodeURIComponent(itemId))}`);if(ticket!==state.ticket)return;const d=result.experience||result.item||result;const box=$('experience-detail');box.innerHTML=`<p class="eyebrow">EXPERIENCE / ${esc(d.project||'未归属')}</p><h2>${esc(d.problem)}</h2><p class="muted">状态 ${esc(d.status)} · 成功 ${esc(d.success_count)} / 失败 ${esc(d.failure_count)}</p>${detailSection('适用条件',d.conditions)}${detailSection('解决步骤',d.steps)}${detailSection('为什么这样解决',d.rationale)}${detailSection('结果',d.result)}${detailSection('适用范围',d.applicability)}${detailSection('不适用情况',d.exclusions)}${detailSection('验证',d.verification)}${detailSection('来源',d.sources)}`;}
   }
-  $('library-picker').onchange=()=>{const kind=location.hash.startsWith('#experiences')?'experiences':'history';location.href=libraryURL($('library-picker').value,kind);};
   $('logout').onclick=async()=>{try{await api('/auth/logout',{});location.href='/login';}catch(e){notice(e.message,true);}};
   window.addEventListener('hashchange',route);
   boot();

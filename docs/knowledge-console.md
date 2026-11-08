@@ -2,6 +2,14 @@
 
 Each account has two separately readable resources: history and experience.
 
+## Choosing a knowledge library
+
+The **User libraries** overview is the only place to choose whose knowledge to read. It is the landing page and the brand link returns there. Its cards open history or experience for the selected owner. Selecting a library never changes the signed-in account shown in the header.
+
+History and experience share a static “currently viewing” owner label, an access-mode badge, and a link back to the overview. Navigation between them retains the owner and read-only inspection mode. There is no second owner dropdown. The overview, user/permission administration, and working-principles pages do not display an individual owner's context.
+
+An administrator's own card opens ordinary self browsing, retaining self history management. Other users' cards explicitly open administrator read-only inspection. Ordinary members see only their own and granted libraries; all existing directed and resource-specific authorization checks remain in force.
+
 - History reads an explicitly connected conversation candidate. It shows a project introduction, a short chronological list, and original question/answer blocks. Unassigned conversation blocks remain separate. Only the resource owner can soft-delete and restore their own history; immutable source data is retained.
 - Experience reads structured cases from the account's Context source using a read-only snapshot. Verified, candidate and inactive records retain their existing meanings. A verified case must be current, active and have positive evidence recorded by the existing experience service.
 - An administrator can create, bind and disable Web accounts. Feishu OAuth is verified before the console records an identity as pending; an unbound identity cannot read knowledge. New Web accounts do not automatically receive LAN credentials or a source database.
@@ -48,3 +56,5 @@ python -B -m pytest -q tests/test_knowledge_console.py tests/test_console_lan_ac
 ```
 
 `tests/browser/launch_console_fixture.py` starts a loopback-only real WebAuth/HTTP fixture with synthetic session cookies. `tests/browser/product_modules.e2e.cjs` requires `EVOLVMEM_SYNTHETIC_FIXTURE` and a fixture URL. Use an ordinary HTTP test hostname to exercise browsers without `crypto.randomUUID`, and supply `PLAYWRIGHT_MODULE`/`CHROMIUM_EXECUTABLE` for the local test environment. The browser suite checks the current navigation, history, experience, users, directed permissions, deletion/restore, and responsive layouts. The fixture does not validate a live OAuth provider login.
+
+`tests/browser/library_navigation_unify.e2e.cjs` checks the single library-selection entry, static owner context, global-page context removal, preservation of the signed-in actor, self management, and read-only navigation for ordinary granted readers and administrator inspection.
