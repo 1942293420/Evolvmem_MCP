@@ -25,7 +25,7 @@ const output=process.env.EVOLVMEM_SCREENSHOTS||'/tmp/evolvmem-console-screenshot
   await page.locator('#history-list .history-entry').first().click();await page.waitForFunction(()=>document.querySelector('#history-main')?.textContent.includes('项目摘要'));
   assert.match(await page.locator('#history-main').innerText(),/项目摘要/);await shot('01-history');
   await go('#experiences');await page.waitForSelector('#experience-filters');
-  await page.locator('#experience-filters [name=status]').selectOption('candidate');await page.locator('#experience-filters [type=submit]').click();await page.waitForSelector('.experience-entry');
+  await page.locator('#experience-filters [name=origin]').selectOption('core');await page.locator('#experience-filters [name=status]').selectOption('candidate');await page.locator('#experience-filters [type=submit]').click();await page.waitForSelector('.experience-entry');
   await page.locator('.experience-entry').first().click();await page.waitForFunction(()=>document.querySelector('#experience-detail')?.textContent.includes('解决步骤'));assert.match(await page.locator('#experience-detail').innerText(),/解决步骤/);await shot('02-experience');
   checks.push('history project summary and real structured experience detail');
   await go('#libraries');await page.waitForSelector('.library-card');assert.ok(await page.locator('.library-card').count()>=2);await shot('03-libraries');

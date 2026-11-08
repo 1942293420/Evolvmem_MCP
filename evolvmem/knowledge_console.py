@@ -308,7 +308,7 @@ class ConsoleService:
             if history:
                 result['history_count']=self._history_count(env) if history_connected else 0
             if experience:
-                result['experience_count']=self._experience(source,{},None)['total'] if experience_connected else 0
+                result['experience_count']=self._experience(source,{'origin':'history'},None)['total'] if experience_connected else 0
         return result
 
     @staticmethod
@@ -435,7 +435,16 @@ class ConsoleService:
         # global env, migrations, archive keys, directories, or background workers.
         config=Config(data_dir=path,apply_environment=False)
         with snapshot(config) as reader:
-            result=reader.insights().experience(item_id) if item_id is not None else reader.insights().experiences(params)
+            origin=params.get('origin','core')
+            if origin not in ('core','history'):
+                raise ConsoleError('invalid_origin')
+            if isinstance(item_id,str) or item_id is None and origin=='history':
+                from evolvmem import history_experience_reads
+                conn=reader.store._connection()
+                result=(history_experience_reads.experience(conn,source['user_id'],item_id)
+                    if item_id is not None else history_experience_reads.experiences(conn,source['user_id'],params))
+            else:
+                result=reader.insights().experience(item_id) if item_id is not None else reader.insights().experiences(params)
         return {**result,'ok':True,'connected':True,'experience_connected':True}
 
     def dispatch(self, method, relative_path, params_or_body, session):
@@ -523,9 +532,12 @@ class ConsoleService:
             else:
                 item_id=None
                 if suffix:
-                    if not re.fullmatch(r'/[1-9][0-9]{0,17}',suffix):
+                    if re.fullmatch(r'/history-[a-f0-9]{64}',suffix):
+                        item_id=suffix[1:]
+                    elif re.fullmatch(r'/[1-9][0-9]{0,17}',suffix):
+                        item_id=int(suffix[1:])
+                    else:
                         raise ConsoleError('not_found',404)
-                    item_id=int(suffix[1:])
                 data=self._experience(source,body,item_id)
                 data['owner_id']=target
                 result=200,JSON,data
