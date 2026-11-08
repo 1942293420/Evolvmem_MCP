@@ -9,7 +9,7 @@ import re
 
 CATEGORIES = ('前端开发', '后端与接口', '数据库与数据处理', '画图与表达',
               '业务规则与流程', '自动化与平台集成', '部署与运维', 'AI工具与协作')
-REVIEWS = ('all', 'accepted', 'pending_session_review', 'pending_root_acceptance')
+REVIEWS = ('all', 'accepted', 'pending_session_review', 'pending_root_acceptance', 'needs_revision')
 PREFIX = 'history-'
 
 

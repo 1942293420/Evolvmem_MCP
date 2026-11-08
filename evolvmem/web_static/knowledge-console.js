@@ -9,7 +9,7 @@
   const state = {me:null,owner:null,users:[],pending:[],grants:[],ticket:0,edit:null,expPage:1};
   const label = {verified:'已验证',candidate:'候选',inactive:'已失效',all:'全部状态'};
   const experienceCategories=['前端开发','后端与接口','数据库与数据处理','画图与表达','业务规则与流程','自动化与平台集成','部署与运维','AI工具与协作'];
-  const reviewLabel={all:'全部整理状态',accepted:'整理已验收',pending_session_review:'待会话复核',pending_root_acceptance:'待验收'};
+  const reviewLabel={all:'全部整理状态',accepted:'整理已验收',pending_session_review:'待会话复核',pending_root_acceptance:'待验收',needs_revision:'待修订'};
   const errors = {login_required:'登录已失效，请重新登录。',account_not_bound:'此飞书身份尚未绑定用户，请联系管理员在“用户与权限”中绑定。',unbound_identity:'此飞书身份尚未绑定用户，请联系管理员。',user_disabled:'此账号已停用。',account_disabled:'此账号已停用。',access_denied:'没有读取这类知识的权限。',permission_denied:'没有读取这类知识的权限。',forbidden:'没有操作权限。',admin_required:'此操作需要管理员权限。',revision_conflict:'资料已被其他操作更新，请刷新后重试。',invalid_csrf:'登录校验已过期，请刷新页面。',console_not_initialized:'用户管理尚未初始化，请联系管理员。',legacy_web_disabled:'旧功能已关闭。'};
   const inspectPath = path => inspect && path.startsWith(ROOT) ? `${path}${path.includes('?')?'&':'?'}inspect=1` : path;
   async function api(path, body, options={}) {

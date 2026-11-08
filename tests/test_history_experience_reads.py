@@ -85,6 +85,13 @@ def test_window_span_references_are_shown_as_exact_bound_quotes(db):
     assert reads.experience(db,'jiangli',reference)['sources'][0]['quote']=='保留原文依据'
 
 
+def test_revision_requests_are_searchable_without_becoming_accepted(db):
+    reference=add(db,review_state='needs_revision')
+    assert reads.experiences(db,'jiangli',{'review':'needs_revision'})['rows'][0]['id']==reference
+    assert reads.experiences(db,'jiangli',{'review':'accepted'})['total']==0
+    assert reads.experience(db,'jiangli',reference)['status']=='candidate'
+
+
 def test_deleted_tombstoned_and_superseded_materials_stay_hidden(db):
     db.execute("INSERT INTO context_items VALUES(3,'deleted')")
     a=add(db,'a',item_id=3)
