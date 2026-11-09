@@ -54,7 +54,9 @@ def _database(source):
 
 
 def _row(row):
-    return {**dict(row), 'origin': 'manual'}
+    record = dict(row)
+    record.pop('keyword_match', None)
+    return {**record, 'origin': 'manual'}
 
 
 def _summary():
@@ -86,7 +88,7 @@ def _read_params(params):
         _integer(params.get('deleted',0),0,1,'invalid_deleted')
 
 
-def read(source, params, item_id=None):
+def read(source, params, item_id=None, *, search=None):
     category, query, page, page_size, deleted = _read_params(params)
     if item_id is not None and (not isinstance(item_id,str) or not NOTE_ID.fullmatch(item_id)):
         raise ManualExperienceError('experience_not_found',404)
@@ -118,8 +120,31 @@ def read(source, params, item_id=None):
         where = 'owner_id=? AND deleted_at IS '+('NOT NULL' if deleted else 'NULL')
         values = [owner]
         if query:
+            result['search_mode'] = 'keyword'
             literal = '%'+query.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-            where += " AND (problem LIKE ? ESCAPE '\\' OR solution LIKE ? ESCAPE '\\' OR reusable_experience LIKE ? ESCAPE '\\')"
+            match = "(problem LIKE ? ESCAPE '\\' OR solution LIKE ? ESCAPE '\\' OR reusable_experience LIKE ? ESCAPE '\\')"
+            if search is not None and not deleted and any(char.isalnum() for char in query):
+                from evolvmem.manual_experience_search import MAX_DOCUMENTS
+                candidates = conn.execute(
+                    f'SELECT {SELECT}, {match} AS keyword_match FROM manual_experience_notes '
+                    f'WHERE {where} ORDER BY updated_at DESC,id DESC LIMIT ?',
+                    [literal]*3 + values + [MAX_DOCUMENTS + 1],
+                ).fetchall()
+                if candidates:
+                    ranked = search.rank((path, owner), query, candidates)
+                    if ranked is not None:
+                        result['search_mode'] = 'hybrid'
+                        visible = []
+                        for row in ranked:
+                            if row['category'] in CATEGORIES:
+                                result['summary']['categories'][row['category']] += 1
+                            if not category or row['category'] == category:
+                                visible.append(row)
+                        offset = (page - 1) * page_size
+                        result['total'] = len(visible)
+                        result['rows'] = [_row(row) for row in visible[offset:offset + page_size]]
+                        return result
+            where += f' AND {match}'
             values += [literal]*3
         for row in conn.execute('SELECT category,count(*) FROM manual_experience_notes WHERE '+where+' GROUP BY category',values):
             if row[0] in CATEGORIES:

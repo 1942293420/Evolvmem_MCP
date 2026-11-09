@@ -62,7 +62,8 @@ def _json(value):
 
 
 class ConsoleService:
-    def __init__(self, registry_path, owner_id, owner_data_dir, lan_data_dir, history_environ):
+    def __init__(self, registry_path, owner_id, owner_data_dir, lan_data_dir, history_environ, *, experience_search=None):
+        self.experience_search = experience_search
         self.registry_path = Path(registry_path).expanduser().resolve()
         self.owner_id = _slug(owner_id)
         if self.owner_id == 'kane':
@@ -437,11 +438,11 @@ class ConsoleService:
         return status,JSON,result
 
     @staticmethod
-    def _experience(source, params, item_id):
+    def _experience(source, params, item_id, *, search=None):
         if params.get('origin')=='manual' or isinstance(item_id,str) and item_id.startswith('manual-'):
             from evolvmem.manual_experiences import read, ManualExperienceError
             try:
-                return read(source,params,item_id)
+                return read(source,params,item_id,search=search)
             except ManualExperienceError as exc:
                 raise ConsoleError(exc.code,exc.status) from None
         path=Path(source['data_dir']) if source and source['data_dir'] else None
@@ -580,7 +581,7 @@ class ConsoleService:
                         item_id=int(suffix[1:])
                     else:
                         raise ConsoleError('not_found',404)
-                data=self._experience(source,body,item_id)
+                data=self._experience(source,body,item_id,search=self.experience_search)
                 if actor['id']!=target and data.get('origin')=='manual' and isinstance(data.get('summary'),dict):
                     data['summary'].pop('deleted_total',None)
                 data['owner_id']=target

@@ -18,6 +18,12 @@
       <div class="diagram-node"><strong>整理一条经验</strong><small>网页填写或在会话中明确要求记住</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
       <div class="diagram-node"><strong>保存和维护</strong><small>本人管理；他人按授权只读</small></div>
     </div>
+    <h3>查找经验</h3><p>原文命中优先，本机中文向量服务补充相似问题。向量暂不可用时仍可查关键词。</p>
+    <div class="diagram-flow" role="img" aria-label="选择获授权的经验库，输入关键词或问题，合并原文和语义结果，再按分类展示">
+      <div class="diagram-node"><strong>确定经验库</strong><small>按用户授权读取当前经验</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>关键词＋语义</strong><small>匹配原文并查找相似问题</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>显示搜索结果</strong><small>原文命中优先，按分类查看</small></div>
+    </div>
   </section>
   <section class="panel"><h2>用户与交叉访问</h2><p>登录从登录时起固定 8 小时；主动退出或停用账号会立即撤销。重新启用后需再次登录。</p><p>A → B 和 B → A 是两个设置；历史与经验也分别授权。默认只可读取自己的知识。</p><p class="muted">普通浏览包括管理员也遵循授权。“用户知识库”是选择查看对象的统一入口。自己的资料可正常管理；查看其他用户时为只读，不能替他人新增、编辑或删除经验。停用用户后，后续读取会被拒绝。</p></section>
   <section class="panel"><h2>当前运行范围</h2><p>旧项目库与旧资料整理入口${policy.legacy_web_enabled === false ? '已关闭' : '状态以当前策略为准'}；AI 自动整理${policy.ai_processing_enabled === false ? '已暂停' : '状态以当前策略为准'}。</p><p class="muted">经验采用手动维护，自动提取保持停止。原文上传、项目归档与任务续接保留；这与经验提取是两条独立流程。原数据库和旧提取稿未删除。历史与经验页显示当前查看对象；用户管理和工作原理属于全局页面，不显示个人库归属。新建网页账号不代表已经创建 CLI 凭证或接入历史数据。</p></section>

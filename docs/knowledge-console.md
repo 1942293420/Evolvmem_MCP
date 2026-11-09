@@ -35,6 +35,24 @@ The previous HY4/DeepSeek extraction materials, earlier previews and review audi
 
 Raw conversation capture, project archiving and task continuation remain separate from experience extraction. Their existing authorization and ownership checks are unchanged. Stopping experience extraction does not stop raw-history capture or remove project history.
 
+## Web experience search
+
+The experience search box combines literal matches in the problem, solution
+and reusable rule with cosine similarity from the existing loopback Chinese
+embedding service. Literal hits sort first. The semantic query expands the
+short topic “布局” to include responsive layout concepts. The list and category
+counts derive from the same ranked results. The recycle bin uses literal
+matching.
+
+The Web console checks library access before reading any notes. Only active
+manual notes of that owner enter the semantic path. A bounded process-local
+cache keys document vectors by source, owner, note ID and encoded content hash.
+Edits are reflected by current source rows. Search performs no index writes or
+schema migration and sends text only to the configured loopback endpoint.
+When the model is unavailable, busy, or the cold search budget is exceeded,
+the console shows keyword results. Libraries above 512 active notes also use
+keyword search. The existing MCP search contract remains literal.
+
 ## Trust and deployment boundaries
 
 `ConsoleService` stores account mappings, grants and audit records in a separate metadata SQLite database. Actor identity comes exclusively from a trusted WebAuth session, never from a user ID or namespace in request data. Source directories and history environment mappings can only be installed by trusted server configuration. Every list, search, detail and attachment request checks authorization before opening a source. Denied resource counts and connection states are not returned to ordinary readers.

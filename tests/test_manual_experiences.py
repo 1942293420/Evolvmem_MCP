@@ -234,3 +234,75 @@ def test_disabled_account_cannot_read_or_replay_old_write(connected):
     assert call(connected,'/users/kane',body={'enabled':False},method='POST')[0]==200
     assert call(connected,member_base,MEMBER,create,'POST')[0]==403
     assert call(connected,member_base,MEMBER,{'origin':'manual'})[0]==403
+
+
+def test_hybrid_search_ranks_literal_before_semantic_and_paginates(connected):
+    from evolvmem.manual_experience_search import ManualExperienceSearch
+
+    class Provider:
+        def initialize(self):
+            pass
+
+        def encode(self, text, kind):
+            if kind == 'query' or '窄屏' in text:
+                return [1.0, 0.0]
+            return [0.0, 1.0]
+
+    connected.experience_search = ManualExperienceSearch(Provider())
+    literal = new(connected, request_id='hybrid-literal-01', problem='布局层级不清')[1]['experience']
+    related = new(connected, request_id='hybrid-related-01', problem='窄屏容器溢出')[1]['experience']
+    deleted = new(connected, request_id='hybrid-deleted-01', problem='窄屏标签溢出')[1]['experience']
+    new(connected, request_id='hybrid-unrelated-01', problem='登录态过期')
+    new(connected, request_id='hybrid-category-01', problem='窄屏业务规则', category='业务经验')
+    mutation(connected, deleted, 'delete', 'hybrid-trash-01')
+    query = {'origin': 'manual', 'q': '布局', 'category': '前端经验', 'page_size': '1'}
+    assert call(connected, BASE, MEMBER, query)[0] == 403
+    status, first = call(connected, BASE, body=query)
+    assert status == 200
+    assert first['search_mode'] == 'hybrid'
+    assert first['total'] == 2
+    assert first['summary']['categories'] == {'前端经验': 2, '业务经验': 1, '系统环境经验': 0}
+    assert [row['id'] for row in first['rows']] == [literal['id']]
+    _, second = call(connected, BASE, body={**query, 'page': '2'})
+    assert [row['id'] for row in second['rows']] == [related['id']]
+    _, trash = call(connected, BASE, body={**query, 'deleted': '1'})
+    assert trash['rows'] == []
+
+
+def test_hybrid_cache_uses_current_text_and_model_failure_preserves_keyword_search(connected):
+    from evolvmem.manual_experience_search import ManualExperienceSearch
+
+    class Provider:
+        unavailable = False
+        documents = []
+
+        def initialize(self):
+            if self.unavailable:
+                raise RuntimeError('offline')
+
+        def encode(self, text, kind):
+            if self.unavailable:
+                raise RuntimeError('offline')
+            if kind == 'document':
+                self.documents.append(text)
+            return [1.0, 0.0] if kind == 'query' or '窄屏' in text else [0.0, 1.0]
+
+    provider = Provider()
+    connected.experience_search = ManualExperienceSearch(provider)
+    related = new(connected, problem='窄屏标签溢出')[1]['experience']
+    query = {'origin': 'manual', 'q': '布局'}
+    _, initial = call(connected, BASE, body=query)
+    assert [row['id'] for row in initial['rows']] == [related['id']]
+    call(connected, BASE, body=query)
+    assert len(provider.documents) == 1
+    mutation(connected, related, 'update', 'hybrid-edit-01', category='前端经验',
+             problem='修改后的并发问题', solution='并发事务', reusable_experience='按事务隔离')
+    _, updated = call(connected, BASE, body=query)
+    assert len(provider.documents) == 2
+    assert updated['rows'] == []
+    assert call(connected, BASE, body={**query, 'q': '%'})[1]['rows'] == []
+    provider.unavailable = True
+    _, fallback = call(connected, BASE, body={**query, 'q': '并发'})
+    assert fallback['search_mode'] == 'keyword'
+    assert [row['id'] for row in fallback['rows']] == [related['id']]
+    assert fallback['rows'][0]['revision'] == 2

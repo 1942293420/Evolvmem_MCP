@@ -1267,11 +1267,12 @@ def make_handler(service: ContextService):
     views = TrustViews(service)
     from evolvmem.product_policy import load_policy
     from evolvmem.knowledge_console import ConsoleService
+    from evolvmem.manual_experience_search import configured_search
     console = ConsoleService(
         os.environ.get('EVOLVMEM_CONSOLE_REGISTRY', str(Path.home()/'.config/evolvmem-console/users.db')),
         os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID', 'jiangli'), service.config.data_dir,
         os.environ.get('EVOLVMEM_LAN_DATA_DIR', str(Path.home()/'.local/share/evolvmem-lan')),
-        dict(os.environ))
+        dict(os.environ), experience_search=configured_search(service.config))
     def observe_console_login(open_id, name):
         if load_policy().console_enabled:
             console.observe_login(open_id, name)

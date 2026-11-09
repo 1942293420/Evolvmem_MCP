@@ -50,3 +50,42 @@ def test_manual_http_recycle_bin_is_owner_only_for_list_detail_and_admin_inspect
     assert request(fixture,member_path,actor='member',method='POST',body={**delete,'id':created['id'],'request_id':'http-trash-member-delete'},csrf=True)[0]==200
     for route in (member_path+'?origin=manual&deleted=1&inspect=1',member_path+'/'+created['id']+'?deleted=1&inspect=1'):
         assert request(fixture,route)[0]==403
+
+
+def test_manual_http_search_uses_hybrid_for_authorized_library(tmp_path, monkeypatch):
+    from urllib.parse import urlencode
+
+    from evolvmem import manual_experience_search
+    from tests.test_console_web_integration import fixture_module
+
+    class Model:
+        documents = 0
+
+        def initialize(self):
+            pass
+
+        def encode(self, text, kind):
+            if kind == 'document':
+                self.documents += 1
+            return [1.0, 0.0]
+
+    model = Model()
+    search = manual_experience_search.ManualExperienceSearch(model)
+    monkeypatch.setattr(manual_experience_search, 'configured_search', lambda config: search)
+    test_server = fixture_module.Fixture(tmp_path/'hybrid-http').start()
+    try:
+        path = PREFIX+'/libraries/jiangli/experiences'
+        body = dict(action='create', request_id='http-hybrid-create-001', category='前端经验',
+                    problem='窄屏筛选栏溢出', solution='让控件换行', reusable_experience='保持操作可见')
+        note = request(test_server, path, method='POST', body=body, csrf=True)[1]['experience']
+        url = path+'?'+urlencode({'origin':'manual', 'q':'手机上按钮挤出屏幕', 'category':'前端经验'})
+        assert request(test_server, url, actor=None)[0] == 401
+        assert request(test_server, url, actor='member')[0] == 403
+        assert model.documents == 0
+        status, result = request(test_server, url)
+        assert status == 200
+        assert result['search_mode'] == 'hybrid'
+        assert [row['id'] for row in result['rows']] == [note['id']]
+        assert model.documents == 1
+    finally:
+        test_server.close()
