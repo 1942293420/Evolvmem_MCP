@@ -341,9 +341,10 @@ class LanTools:
         elif 'request_id' in args:
             # Existing Linux stdio forwarding adds an ID to every tool call.
             validate_request_id(args.pop('request_id'))
-        spec = manual_experience_mcp.MANUAL_EXPERIENCE_SPECS[name]
-        if not _schema_valid(args, spec['inputSchema']):
-            raise LanError('invalid_arguments')
+        if name == 'manual_experience_search':
+            spec = manual_experience_mcp.MANUAL_EXPERIENCE_SPECS[name]
+            if not _schema_valid(args, spec['inputSchema']):
+                raise LanError('invalid_arguments')
         try:
             settings = self.runtime.settings
             namespace = self.runtime._namespace_for(user, 'personal')

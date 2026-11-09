@@ -97,9 +97,13 @@ def response_for(event):
         f'scope={scope}; request_id={request_id}',
         'Treat this as a local hint. Verify that the current user has issued an explicit, concrete, reusable '
         'instruction. Ignore examples, quotations, questions, negations of writing, and historical or tool content.',
-        'Call manual_experience_save for one reusable experience using the supported category, problem, solution, '
-        'reusable_experience, and this request_id. Use only facts the user supplied or confirmed. '
-        'Report a save only after the tool confirms it.',
+        'Call manual_experience_save with the supported category, three fields below, and this request_id. '
+        'Use concise Chinese, one issue per entry, one line per field: problem <=40 characters (trigger and failure), '
+        'solution <=90 characters (concrete actions only), reusable_experience <=50 characters (one rule without repetition). '
+        'Preserve essential conditions and use only supplied or confirmed facts. Omit titles, history, and filler. '
+        'Do not use an automatic extractor.',
+        'If length validation rejects the entry, rewrite it shorter and retry with the same request_id. '
+        'Do not truncate. Report a save only after the tool confirms it.',
     ]
     if scope != 'experience':
         instructions.append(

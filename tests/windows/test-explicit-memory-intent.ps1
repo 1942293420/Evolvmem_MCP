@@ -51,6 +51,8 @@ try {
     $first=Hint (Run-Prompt $command 'turn-a')
     Assert ($first.StartsWith('[EvolvMem explicit memory intent]')) 'A clear user directive must take priority over recalled context'
     Assert ($first.Contains('scope=experience') -and $first.Contains('manual_experience_save')) 'Missing experience scope or save tool'
+    Assert ($first.Contains('problem <=40') -and $first.Contains('solution <=90') -and $first.Contains('reusable_experience <=50') -and $first.Contains('one line per field')) 'Hook must preserve the concise writing contract in the context budget'
+    Assert ($first.Contains('same request_id') -and $first.Contains('Do not truncate')) 'Length validation should prompt rewriting with the original request ID'
     Assert ((Id $first) -match '^manual-hook-[0-9a-f]{64}$') 'Expected a stable opaque request ID'
     Assert (-not $first.Contains('SYNTHETIC-NOT-ECHOED')) 'Never echo the original prompt in the hint'
     Assert ($first.Length -le 8000 -and $first.Contains('PPPP') -and $first.Contains('SSSS')) 'Hint and recall must fit the shared context budget'

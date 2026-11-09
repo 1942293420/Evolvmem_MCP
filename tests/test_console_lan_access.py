@@ -159,8 +159,14 @@ def test_manual_mcp_fails_closed_when_registered_web_source_differs(service,tmp_
 def test_manual_mcp_search_caps_context_without_shortening_the_saved_note(service):
     server,svc,*_=service
     svc.bootstrap('fixture-owner-open-id','Owner')
-    note=tool(server,'manual_experience_save',{**manual_note(),'problem':'甲'*1000,
-        'solution':'乙'*8000,'reusable_experience':'丙'*8000})['experience']
+    long_note={**manual_note(),'problem':'甲'*1000,'solution':'乙'*4000+'\n'+'乙'*3999,
+               'reusable_experience':'丙'*8000}
+    status,_,created=svc.dispatch('POST','/libraries/jiangli/experiences',
+        {**long_note,'action':'create'},{'open_id':'fixture-owner-open-id'})
+    assert status==201
+    note=created['experience']
+    replay=tool(server,'manual_experience_save',long_note)
+    assert replay['replayed'] is True and replay['experience']==note
     for index in range(10):
         tool(server,'manual_experience_save',manual_note(f'fixture-manual-page-{index}'))
     assert len(note['solution'])==8000
@@ -173,6 +179,27 @@ def test_manual_mcp_search_caps_context_without_shortening_the_saved_note(servic
     status,_,web=svc.dispatch('GET',f"/libraries/jiangli/experiences/{note['id']}",
         {'origin':'manual'},{'open_id':'fixture-owner-open-id'})
     assert status==200 and web['experience']==note
+
+
+def test_manual_mcp_enforces_short_single_line_fields_without_truncating(service):
+    server,svc,*_=service
+    svc.bootstrap('fixture-owner-open-id','Owner')
+    limits={'problem':40,'solution':90,'reusable_experience':50}
+    status,body=request(server,user='jiangli',method='tools/list')
+    assert status==200
+    schema=next(spec['inputSchema'] for spec in body['result']['tools']
+                if spec['name']=='manual_experience_save')
+    assert {field:schema['properties'][field]['maxLength'] for field in limits}==limits
+    at_limit={**manual_note(),**{field:'甲'*(limit-1)+'😀' for field,limit in limits.items()}}
+    note=tool(server,'manual_experience_save',at_limit)['experience']
+    for field,limit in limits.items():
+        assert note[field]==at_limit[field]
+        long_note={**at_limit,field:at_limit[field]+'乙','request_id':f'fixture-too-long-{field}'}
+        assert tool(server,'manual_experience_save',long_note)['error']==f'manual_experience_too_long:{field}:max={limit}'
+        for index,value in enumerate(('第一行\n第二行','换行结尾\n','甲\u2028乙')):
+            multiline={**at_limit,field:value,'request_id':f'fixture-newline-{field}-{index}'}
+            assert tool(server,'manual_experience_save',multiline)['error']==f'manual_experience_multiline:{field}'
+    assert tool(server,'manual_experience_search',{})['rows']==[note]
 
 
 def test_native_stdio_lists_and_saves_manual_experiences_with_degraded_core(service,monkeypatch):
@@ -196,6 +223,8 @@ def test_native_stdio_lists_and_saves_manual_experiences_with_degraded_core(serv
         return json.loads(result['content'][0]['text'])
     note=call('manual_experience_save',manual_note())['experience']
     assert call('manual_experience_save',manual_note())['replayed'] is True
+    over_limit={**manual_note('fixture-native-too-long'),'problem':'甲'*41}
+    assert call('manual_experience_save',over_limit)['error']=='manual_experience_too_long:problem:max=40'
     assert call('manual_experience_search',{})['rows']==[note]
     status,_,web=svc.dispatch('GET','/libraries/jiangli/experiences',{'origin':'manual'},
                               {'open_id':'fixture-owner-open-id'})

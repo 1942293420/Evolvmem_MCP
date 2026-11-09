@@ -36,9 +36,12 @@ def test_candidate_event_emits_only_a_hint(prompt, scope):
     assert set(output) == {'hookSpecificOutput'}
     assert output['hookSpecificOutput']['hookEventName'] == 'UserPromptSubmit'
     hint = output['hookSpecificOutput']['additionalContext']
+    assert len(hint) <= 2000
     assert f'scope={scope}' in hint
     assert re.search(r'request_id=manual-hook-[a-f0-9]{64}', hint)
     assert 'manual_experience_save' in hint and 'tool confirms' in hint
+    assert all(limit in hint for limit in ('problem <=40', 'solution <=90', 'reusable_experience <=50'))
+    assert 'one line per field' in hint and 'same request_id' in hint and 'Do not truncate' in hint
     assert prompt not in hint
     if scope != 'experience':
         assert 'rule file' in hint and 'file only' in hint

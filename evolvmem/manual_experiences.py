@@ -165,9 +165,10 @@ def _write_params(body):
     return body
 
 
-def write(source, actor_id, body):
+def write(source, actor_id, body, *, validate_new=None):
     if not source or actor_id!=source['user_id']:
         raise ManualExperienceError('experience_management_forbidden',403)
+    submitted=body
     body=_write_params(body)
     path=_database(source)
     if not path:
@@ -188,6 +189,10 @@ def write(source, actor_id, body):
             response=json.loads(prior['response_json']);response['replayed']=True
             conn.execute('COMMIT')
             return prior['http_status'],response
+        # A transport can tighten the format for new notes without rejecting
+        # retries of notes that satisfied the contract when they were saved.
+        if validate_new is not None:
+            validate_new(submitted)
         timestamp=datetime.now(timezone.utc).isoformat(timespec='seconds')
         action=body['action']; before=None
         if action=='create':
