@@ -15,6 +15,14 @@ An administrator's own card opens ordinary self browsing, retaining self history
 - An administrator can create, bind and disable Web accounts. Feishu OAuth is verified before the console records an identity as pending; an unbound identity cannot read knowledge. New Web accounts do not automatically receive LAN credentials or a source database.
 - Directed grants specify viewer, owner, history permission and experience permission. The reverse direction is independent. Normal browsing, including the administrator's ordinary browsing, obeys grants. Explicit administrator `inspect=1` is a read-only review mode for all libraries. Cross-user mutations and cross-user trash reads are forbidden.
 
+## Console layout
+
+The console work area follows the available browser width on every page, with
+responsive side gutters. History and experience split the work area between
+their list and detail panels on wider screens. At 780 CSS pixels and below
+they stack in a single column, so a narrow window or zoomed-in view keeps
+both panels within the browser width.
+
 ## Maintaining experience
 
 The main `/#experiences` entry opens the selected user's manual catalog. It provides the three categories, search, a list and a detail view. Details contain only the problem, solution and reusable experience. The owner can add or edit an entry and move it to the recycle bin; restoring it returns it to its category. There is no automatic extraction, model selection, completion-review filter or eight-category classification in this flow.
