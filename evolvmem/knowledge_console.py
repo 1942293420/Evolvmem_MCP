@@ -1,7 +1,8 @@
 """Identity-bound knowledge console; account metadata is separate from sources.
 
-This module does not initialize source schemas, run models, create source users,
-issue LAN credentials, or change the original knowledge databases. The HTTP
+This module does not initialize Core/history schemas, run models, create source users,
+issue LAN credentials, or change original history/extracted experience content.
+Only authorized self-service manual notes write their own source tables. The HTTP
 integration must supply a trusted WebAuth session and enforce CSRF on POST.
 Only bootstrap/configure_library receive trusted server paths; dispatch never does.
 """
@@ -300,6 +301,7 @@ class ConsoleService:
         result={'id':owner['id'],'display_name':owner['display_name'],'enabled':bool(owner['enabled']),
                 'can_read_history':history,'can_read_experience':experience,
                 'can_manage_history':actor['id']==owner['id'] and history_connected and not inspect,
+                'can_manage_experience':actor['id']==owner['id'] and experience_connected and not inspect,
                 'history_connected':history_connected if history else None,
                 'experience_connected':experience_connected if experience else None,
                 'connected':bool(history and history_connected or experience and experience_connected)}
@@ -308,7 +310,7 @@ class ConsoleService:
             if history:
                 result['history_count']=self._history_count(env) if history_connected else 0
             if experience:
-                result['experience_count']=self._experience(source,{'origin':'history'},None)['total'] if experience_connected else 0
+                result['experience_count']=self._experience(source,{'origin':'manual'},None)['total'] if experience_connected else 0
         return result
 
     @staticmethod
@@ -423,6 +425,12 @@ class ConsoleService:
 
     @staticmethod
     def _experience(source, params, item_id):
+        if params.get('origin')=='manual' or isinstance(item_id,str) and item_id.startswith('manual-'):
+            from evolvmem.manual_experiences import read, ManualExperienceError
+            try:
+                return read(source,params,item_id)
+            except ManualExperienceError as exc:
+                raise ConsoleError(exc.code,exc.status) from None
         path=Path(source['data_dir']) if source and source['data_dir'] else None
         if not path or not (path/'memory.db').is_file():
             if item_id is not None:
@@ -520,25 +528,48 @@ class ConsoleService:
                 history,experience=self._permissions(conn,actor,owner,inspect=inspect)
                 if not (history if resource=='history' else experience):
                     raise ConsoleError('library_read_forbidden',403)
+                if (resource=='experiences' and method=='GET' and actor['id']!=target
+                        and re.fullmatch(r'0*1',str(body.get('deleted',0)))):
+                    # Read grants and admin inspection cover active knowledge,
+                    # never another user's private recycle bin. Accept the same
+                    # integer spellings as the manual reader (including "01").
+                    raise ConsoleError('experience_trash_forbidden',403)
                 if resource=='history' and actor['id']!=target and (method!='GET' or suffix.startswith('/management/')):
                     raise ConsoleError('history_management_forbidden',403)
                 if resource=='experiences' and method!='GET':
-                    raise ConsoleError('method_not_allowed',405)
+                    if suffix:
+                        raise ConsoleError('method_not_allowed',405)
+                    if actor['id']!=target:
+                        raise ConsoleError('experience_management_forbidden',403)
                 if resource=='history' and method=='POST' and suffix not in ('/management/delete','/management/restore'):
                     raise ConsoleError('method_not_allowed',405)
                 source=conn.execute('SELECT * FROM console_libraries WHERE user_id=?',(target,)).fetchone()
             if resource=='history':
                 result=self._history(target,source,suffix,method,body)
             else:
+                if method=='POST':
+                    from evolvmem.manual_experiences import write, ManualExperienceError
+                    try:
+                        status,data=write(source,actor['id'],body)
+                    except ManualExperienceError as exc:
+                        raise ConsoleError(exc.code,exc.status) from None
+                    data['owner_id']=target
+                    result=status,JSON,data
+                    self._access_audit(actor['id'],'experiences.manage',target,'allowed')
+                    return result
                 item_id=None
                 if suffix:
-                    if re.fullmatch(r'/history-[a-f0-9]{64}',suffix):
+                    if re.fullmatch(r'/manual-[a-f0-9]{32}',suffix):
+                        item_id=suffix[1:]
+                    elif re.fullmatch(r'/history-[a-f0-9]{64}',suffix):
                         item_id=suffix[1:]
                     elif re.fullmatch(r'/[1-9][0-9]{0,17}',suffix):
                         item_id=int(suffix[1:])
                     else:
                         raise ConsoleError('not_found',404)
                 data=self._experience(source,body,item_id)
+                if actor['id']!=target and data.get('origin')=='manual' and isinstance(data.get('summary'),dict):
+                    data['summary'].pop('deleted_total',None)
                 data['owner_id']=target
                 result=200,JSON,data
             self._access_audit(actor['id'],resource+'.'+('manage' if method=='POST' else 'inspect' if inspect else 'read'),target,

@@ -7,17 +7,15 @@
   const query = new URLSearchParams(location.search);
   const inspect = query.get('inspect') === '1';
   const state = {me:null,owner:null,users:[],pending:[],grants:[],ticket:0,edit:null,expPage:1};
-  const label = {verified:'已验证',candidate:'候选',inactive:'已失效',all:'全部状态'};
-  const experienceCategories=['前端开发','后端与接口','数据库与数据处理','画图与表达','业务规则与流程','自动化与平台集成','部署与运维','AI工具与协作'];
-  const reviewLabel={all:'全部整理状态',accepted:'整理已验收',pending_session_review:'待会话复核',pending_root_acceptance:'待验收',needs_revision:'待修订'};
-  const errors = {login_required:'登录已失效，请重新登录。',account_not_bound:'此飞书身份尚未绑定用户，请联系管理员在“用户与权限”中绑定。',unbound_identity:'此飞书身份尚未绑定用户，请联系管理员。',user_disabled:'此账号已停用。',account_disabled:'此账号已停用。',access_denied:'没有读取这类知识的权限。',permission_denied:'没有读取这类知识的权限。',forbidden:'没有操作权限。',admin_required:'此操作需要管理员权限。',revision_conflict:'资料已被其他操作更新，请刷新后重试。',invalid_csrf:'登录校验已过期，请刷新页面。',console_not_initialized:'用户管理尚未初始化，请联系管理员。',legacy_web_disabled:'旧功能已关闭。'};
+  const experienceCategories=['前端经验','业务经验','系统环境经验'];
+  const errors = {login_required:'登录已失效，请重新登录。',account_not_bound:'此飞书身份尚未绑定用户，请联系管理员在“用户与权限”中绑定。',unbound_identity:'此飞书身份尚未绑定用户，请联系管理员。',user_disabled:'此账号已停用。',account_disabled:'此账号已停用。',access_denied:'没有读取这类知识的权限。',permission_denied:'没有读取这类知识的权限。',forbidden:'没有操作权限。',admin_required:'此操作需要管理员权限。',revision_conflict:'资料已被其他操作更新，请刷新后重试。',invalid_csrf:'登录校验已过期，请刷新页面。',console_not_initialized:'用户管理尚未初始化，请联系管理员。',legacy_web_disabled:'旧功能已关闭。',experience_revision_conflict:'这条经验已被其他操作更新，请刷新后再编辑。',experience_not_found:'经验已移动或删除，请刷新列表。',invalid_experience_category:'请选择正确的经验分类。',experience_management_forbidden:'只能管理自己的经验。',invalid_experience_text:'请检查填写的内容和字数。',experience_request_id_conflict:'本次请求内容已变化，请关闭后重新操作。'};
   const inspectPath = path => inspect && path.startsWith(ROOT) ? `${path}${path.includes('?')?'&':'?'}inspect=1` : path;
   async function api(path, body, options={}) {
     const method = body === undefined ? 'GET' : 'POST';
     const url = method === 'GET' && !options.normal ? inspectPath(path) : path;
-    const response = await fetch(url,{method,credentials:'same-origin',cache:'no-store',headers:body===undefined?{}:{'Content-Type':'application/json','X-CSRF-Token':state.me?.csrf_token||''},...(body===undefined?{}:{body:JSON.stringify(body)})});
-    let data;try{data=await response.json();}catch(_){data={};}
-    if(!response.ok){const error=new Error(errors[data.error] || (response.status===403?'没有操作权限。':response.status===401?'请登录后继续。':response.status===409?'资料已更新，请刷新后重试。':'读取未完成，请刷新后重试。'));error.code=data.error;error.status=response.status;throw error;}
+    let response;try{response=await fetch(url,{method,credentials:'same-origin',cache:'no-store',headers:body===undefined?{}:{'Content-Type':'application/json','X-CSRF-Token':state.me?.csrf_token||''},...(body===undefined?{}:{body:JSON.stringify(body)})});}catch(_){throw new Error(method==='POST'?'网络连接中断，操作结果尚未确认。请保留内容后重试。':'网络连接中断，请重试。');}
+    let data;try{data=await response.json();}catch(_){if(response.ok)throw new Error('服务器返回内容无法读取，操作结果尚未确认，请重试。');data={};}
+    if(!response.ok){const error=new Error(errors[data.error] || (response.status===403?'没有操作权限。':response.status===401?'请登录后继续。':response.status===409?'资料已更新，请刷新后重试。':method==='POST'?'保存未完成，请检查内容后重试。':'读取未完成，请刷新后重试。'));error.code=data.error;error.status=response.status;throw error;}
     return data;
   }
   function notice(text,bad=false){const el=$('console-notice');el.hidden=!text;el.textContent=text;el.classList.toggle('error',bad);}
@@ -76,7 +74,7 @@
     if(ticket!==state.ticket)return;
     $('console-view').innerHTML=heading('用户知识库',admin?'从这里选择要查看的知识库。自己的资料可正常管理；查看其他用户时为管理员只读模式。':'从这里选择自己的知识库，或已授权给你的知识库。查看资料不会改变登录账号。')+`<div class="library-grid">${data.libraries.map(lib=>{
       const inspection=admin&&lib.id!==state.me.current_user.id;
-      return `<article class="library-card" data-library-id="${esc(lib.id)}"><div class="section-head"><div><h2>${esc(lib.display_name)}${lib.id===state.me.current_user.id?' <span class="badge">我的</span>':''}</h2><span class="library-id">${esc(lib.id)}</span></div><span class="badge ${lib.enabled?'good':'disabled'}">${lib.enabled?'已启用':'已停用'}</span></div><div class="library-kinds">${[['history','历史','history_count','段有问答原文'],['experience','经验','experience_count','条经验（全部状态）']].map(([kind,name,count,unit])=>`<div class="kind"><span>${name}</span><strong>${lib[`can_read_${kind}`]?esc(lib[count]??0):'—'}</strong><p>${esc(sourceState(lib,kind))}${lib[`can_read_${kind}`]?' · '+unit:''}</p>${lib[`can_read_${kind}`]?`<a class="button" href="${libraryURL(lib.id,kind==='history'?'history':'experiences',inspection)}">${inspection?'管理员查看（只读）':'打开'+name}</a>`:'<span class="muted">未开放</span>'}</div>`).join('')}</div></article>`;
+      return `<article class="library-card" data-library-id="${esc(lib.id)}"><div class="section-head"><div><h2>${esc(lib.display_name)}${lib.id===state.me.current_user.id?' <span class="badge">我的</span>':''}</h2><span class="library-id">${esc(lib.id)}</span></div><span class="badge ${lib.enabled?'good':'disabled'}">${lib.enabled?'已启用':'已停用'}</span></div><div class="library-kinds">${[['history','历史','history_count','段有问答原文'],['experience','经验','experience_count','条经验']].map(([kind,name,count,unit])=>`<div class="kind"><span>${name}</span><strong>${lib[`can_read_${kind}`]?esc(lib[count]??0):'—'}</strong><p>${esc(sourceState(lib,kind))}${lib[`can_read_${kind}`]?' · '+unit:''}</p>${lib[`can_read_${kind}`]?`<a class="button" href="${libraryURL(lib.id,kind==='history'?'history':'experiences',inspection)}">${inspection?'管理员查看（只读）':'打开'+name}</a>`:'<span class="muted">未开放</span>'}</div>`).join('')}</div></article>`;
     }).join('')||'<p class="empty">暂时没有可访问的知识库。</p>'}</div>`;
   }
   const adminTabs=tab=>`<nav class="tabs" aria-label="用户管理"><a href="#users" class="${tab==='accounts'?'active':''}">用户账号</a><a href="#users/grants" class="${tab==='grants'?'active':''}">交叉访问权限</a></nav>`;
@@ -108,59 +106,86 @@
   document.querySelectorAll('[data-close-user]').forEach(b=>b.onclick=()=>$('user-dialog').close());
   function asText(value){return typeof value==='string'?value:JSON.stringify(value,null,2);}
   function detailSection(title,value){if(value===null||value===undefined||value===''||Array.isArray(value)&&!value.length)return '';return `<section><h3>${esc(title)}</h3>${Array.isArray(value)?`<ol>${value.map(x=>`<li class="experience-text">${esc(asText(x))}</li>`).join('')}</ol>`:`<div class="experience-text">${esc(asText(value))}</div>`}</section>`;}
-  function experienceState(d){return d.origin==='history'?`${reviewLabel[d.review_state]||'待复核'} · 未独立验证`:d.status==='active'&&d.success_count>0&&!d.expired?'已验证':d.status==='candidate'?'候选':'已失效';}
-  function experienceProjects(d){return d.origin==='history'?(d.source_projects||[]).join('、')||'来源项目待确认':d.project||'未归属';}
-  function experienceSources(d){
-    if(d.origin!=='history')return detailSection('来源',d.sources);
-    const kinds={question:'用户提问',problem:'问题原文',solution:'解决过程',answer:'回答原文',result:'结果记录',evidence:'验证依据'};
-    return `<section><h3>原文依据</h3><p>来源项目：${esc(experienceProjects(d))}。来源关联不代表方法适用于所有这些项目。</p>${(d.sources||[]).map((s,i)=>`<figure class="experience-source"><figcaption>依据 ${i+1}${s.kind?' · '+esc(kinds[s.kind]||s.kind):''}${s.ordinal!==undefined?' · 原文段落 '+esc(s.ordinal):''}</figcaption><blockquote class="experience-text">${esc(s.quote)}</blockquote></figure>`).join('')||'<p>此条资料尚未提供可展示的原文摘录。</p>'}</section>`;
-  }
-  function experienceURL(values={},clear=false){
+  function experienceURL(values={}){
     const url=new URL(location.href);
-    if(clear)for(const name of ['q','project','category','status','page'])url.searchParams.delete(name);
-    for(const [name,value] of Object.entries(values)){if(value)url.searchParams.set(name,value);else url.searchParams.delete(name);}
-    url.searchParams.delete('page');url.hash='experiences';return url.href;
+    for(const name of ['origin','review','status','project'])url.searchParams.delete(name);
+    for(const [name,value] of Object.entries(values)){if(value!==''&&value!==null&&value!==undefined)url.searchParams.set(name,String(value));else url.searchParams.delete(name);}
+    url.hash='experiences';return url.href;
   }
-  function pendingCount(counts){return ['pending_session_review','pending_root_acceptance','needs_revision'].reduce((sum,key)=>sum+(counts?.[key]||0),0);}
-  function categoryCount(counts,review){return !counts?'':review==='pending'?pendingCount(counts):counts[review]??counts.all??0;}
+  function experienceNavigate(values={},replace=false){history[replace?'replaceState':'pushState'](null,'',experienceURL(values));return route();}
+  function requestId(){if(typeof crypto?.randomUUID==='function')return crypto.randomUUID();const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return 'manual-'+Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');}
+  function experienceCanManage(){return !inspect&&state.owner?.id===state.me.current_user.id&&state.owner?.can_manage_experience!==false;}
+  function experienceDate(value){const date=new Date(value);return isNaN(date)?'':date.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
+  function experienceEditor(record=null,category=experienceCategories[0]){
+    if(!experienceCanManage())return;
+    const form=$('experience-form');state.expEdit=record;state.expRequest=null;form.reset();
+    $('experience-dialog-title').textContent=record?'编辑经验':'新增经验';
+    form.elements.category.value=record?.category||category;
+    for(const name of ['problem','solution','reusable_experience'])form.elements[name].value=record?.[name]||'';
+    $('experience-form-error').textContent='';$('experience-dialog').showModal();form.elements.problem.focus();
+  }
+  $('experience-form').onsubmit=async event=>{
+    event.preventDefault();if(!experienceCanManage())return;
+    const form=event.currentTarget,button=form.querySelector('[type=submit]');if(button.disabled)return;
+    const record=state.expEdit,body={action:record?'update':'create'};
+    if(record){body.id=record.id;body.revision=record.revision;}
+    for(const key of ['category','problem','solution','reusable_experience'])body[key]=form.elements[key].value.trim();
+    if(['problem','solution','reusable_experience'].some(key=>!body[key])){$('experience-form-error').textContent='请填写问题、解决办法和可复用经验。';return;}
+    const signature=JSON.stringify(body);if(state.expRequest?.signature!==signature)state.expRequest={signature,id:requestId()};
+    state.expSaving=true;for(const control of form.elements)control.disabled=true;button.textContent='正在保存…';$('experience-form-error').textContent='';
+    try{
+      const result=await api(`${libraryBase()}/experiences`,{...body,request_id:state.expRequest.id});
+      $('experience-dialog').close();state.expEdit=null;state.expRequest=null;
+      notice('经验已保存。');await experienceNavigate({category:result.experience.category,q:'',page:'',deleted:''});
+    }catch(e){$('experience-form-error').textContent=e.message||'保存未确认，请保留内容后重试。';}
+    finally{state.expSaving=false;for(const control of form.elements)control.disabled=false;button.textContent='保存经验';}
+  };
+  document.querySelectorAll('[data-close-experience]').forEach(button=>button.onclick=()=>{if(!state.expSaving)$('experience-dialog').close();});
+  $('experience-dialog').addEventListener('cancel',event=>{if(state.expSaving)event.preventDefault();});
+  $('experience-delete-dialog').addEventListener('cancel',event=>{if(state.expDeleting)event.preventDefault();});
+  $('experience-delete-cancel').onclick=()=>{if(!state.expDeleting)$('experience-delete-dialog').close();};
+  $('experience-delete-confirm').onclick=async()=>{
+    const pending=state.expDelete,button=$('experience-delete-confirm');if(!pending||button.disabled||!experienceCanManage())return;
+    state.expDeleting=true;button.disabled=true;$('experience-delete-cancel').disabled=true;button.textContent='正在移入…';$('experience-delete-error').textContent='';
+    try{await api(`${libraryBase()}/experiences`,{action:'delete',id:pending.record.id,revision:pending.record.revision,request_id:pending.requestId});$('experience-delete-dialog').close();notice('经验已移至回收站，可随时恢复。');await experienceNavigate({});}
+    catch(e){$('experience-delete-error').textContent=e.message;}
+    finally{state.expDeleting=false;button.disabled=false;$('experience-delete-cancel').disabled=false;button.textContent='移至回收站';}
+  };
   async function experiences(itemId,ticket){
-    const params=new URLSearchParams({origin:query.get('origin')||'history',status:query.get('status')||'all',q:query.get('q')||'',project:query.get('project')||'',category:query.get('category')||'',review:query.get('review')||'accepted',page:query.get('page')||'1',page_size:'25'});
-    const data=await api(`${libraryBase()}/experiences?${params}`);
-    if(ticket!==state.ticket)return;
-    const fromHistory=params.get('origin')==='history',review=params.get('review'),summary=data.summary;
-    const selected=String(itemId||data.rows[0]?.id||'');
-    const selectedView=review==='accepted'?'accepted':review==='all'?'all':'pending';
-    const views=[['accepted','已整理完成',summary?.reviews?.accepted],['all','全部资料',summary?.total],['pending','处理中',summary?pendingCount(summary.reviews):undefined]];
-    const progress=fromHistory?`<section class="experience-progress" aria-label="本库历史提炼进度"><p class="experience-progress-title">本库历史提炼</p><nav class="experience-states" aria-label="整理状态，本库全部资料">${views.map(([value,name,count])=>`<button type="button" data-experience-review="${value}" aria-current="${selectedView===value}"><span>${name}</span><strong>${count===undefined?'—':esc(count)}</strong></button>`).join('')}</nav><p class="experience-boundary">整理验收与独立验证分别记录；这里的历史提炼仍是候选经验。</p></section>`:'';
-    const listTitle=fromHistory?views.find(([value])=>value===selectedView)[1]:'其他已有经验';
-    $('console-view').innerHTML=heading('项目经验',fromHistory?'从已整理完成的经验开始，查看解决方法、关键改动和原文依据。':'查看已有经验的问题、解决方法和验证记录。','<button id="experience-refresh" type="button">刷新资料</button>')+progress+`
-      <form id="experience-filters" class="filters experience-filters">
-        <input type="hidden" name="review" value="${esc(review)}">
-        <label class="grow">查找经验<input name="q" type="search" value="${esc(params.get('q'))}" placeholder="搜索问题、方法或关键改动"></label>
-        <label>经验分类<select name="category"><option value="">全部分类</option>${experienceCategories.map(v=>{const count=categoryCount(summary?.categories?.[v],review);return `<option value="${esc(v)}" ${params.get('category')===v?'selected':''}>${esc(v)}${count!==''?' · '+count:''}</option>`;}).join('')}</select></label>
-        <label>来源项目<input name="project" value="${esc(params.get('project'))}" placeholder="项目名称"></label>
-        <label>资料来源<select name="origin"><option value="history" ${fromHistory?'selected':''}>历史提炼</option><option value="core" ${!fromHistory?'selected':''}>其他已有经验</option></select></label>
-        <label id="experience-validation-filter" ${fromHistory?'hidden':''}>验证状态<select name="status">${Object.entries(label).map(([v,t])=>`<option value="${v}" ${params.get('status')===v?'selected':''}>${t}</option>`).join('')}</select></label>
-        <button type="submit" class="primary">查找</button><a id="experience-clear" class="button" href="${experienceURL({review,origin:params.get('origin')},true)}">清除筛选</a>
-      </form>
-      <div class="experience-results-head"><h2>${esc(listTitle)}</h2><p role="status">找到 ${esc(data.total)} 条经验</p></div>
-      <div class="experience-layout"><div class="experience-results" id="experience-results"><div class="experience-list" aria-label="经验列表">${data.rows.map(r=>`<button class="experience-entry" type="button" data-experience="${esc(r.id)}" aria-current="${String(r.id)===selected}"><span class="experience-card-meta"><span class="badge">${esc(r.category||'项目经验')}</span><span>${esc(experienceState(r))}</span></span><strong>${esc(r.title||r.problem)}</strong>${r.title&&r.title!==r.problem?`<span class="experience-card-problem">问题：${esc(r.problem)}</span>`:''}${r.method_summary?`<span class="experience-card-method">方法：${esc(r.method_summary)}</span>`:''}<span class="experience-card-source">来源：${esc(experienceProjects(r))}</span></button>`).join('')||`<div class="empty"><p>${fromHistory&&review==='accepted'&&!summary?.reviews?.accepted?'此知识库尚无已整理完成的经验。可查看全部资料或处理中记录。':'当前筛选下没有经验。可清除筛选，或切换到全部资料。'}</p><a class="button" href="${experienceURL({review:'all'},true)}">查看全部资料</a></div>`}</div><div class="pager"><button id="exp-prev" type="button" ${data.page<=1?'disabled':''}>上一页</button><span>${esc(data.page)} / ${Math.max(1,Math.ceil(data.total/data.page_size))}</span><button id="exp-next" type="button" ${data.page*data.page_size>=data.total?'disabled':''}>下一页</button></div></div><article id="experience-detail" class="experience-detail panel" aria-label="经验详情">${selected?'<p role="status">正在读取经验详情…</p>':'<p>选择其他整理状态或调整筛选后，可在这里查看经验全文。</p>'}</article></div>`;
-    $('experience-filters').onsubmit=e=>{e.preventDefault();const f=e.currentTarget,values={};for(const name of ['q','project','status','origin','category','review'])values[name]=f.elements[name].value;if(values.origin==='history')values.status='all';else values.category='';location.href=experienceURL(values);};
-    const toggleExtractionFilters=()=>{const history=$('experience-filters').elements.origin.value==='history';$('experience-filters').elements.category.disabled=!history;$('experience-validation-filter').hidden=history;};
-    $('experience-filters').elements.origin.onchange=toggleExtractionFilters;toggleExtractionFilters();
-    document.querySelectorAll('[data-experience-review]').forEach(b=>b.onclick=()=>{location.href=experienceURL({review:b.dataset.experienceReview,status:'all'});});
-    $('experience-refresh').onclick=()=>route();
-    document.querySelectorAll('[data-experience]').forEach(b=>b.onclick=()=>{location.hash=`experiences/${encodeURIComponent(b.dataset.experience)}`;});
-    const pageChange=delta=>{const url=new URL(location.href);url.searchParams.set('page',String(data.page+delta));url.hash='experiences';location.href=url.href;};$('exp-prev').onclick=()=>pageChange(-1);$('exp-next').onclick=()=>pageChange(1);
-    if(selected){
-      const result=await api(`${libraryBase()}/experiences/${encodeURIComponent(decodeURIComponent(selected))}`);if(ticket!==state.ticket)return;
-      const d=result.experience||result.item||result,box=$('experience-detail');
-      box.innerHTML=`<div class="experience-detail-top"><span class="badge">${esc(d.category||'项目经验')}</span><button type="button" id="experience-back-list" class="quiet">返回列表</button></div><h2 tabindex="-1" id="experience-detail-title">${esc(d.title||d.problem)}</h2><p class="experience-detail-state">${esc(d.origin==='history'?`${reviewLabel[d.review_state]||'待复核'} · 候选经验 · 未独立验证`:experienceState(d))}</p>${detailSection('问题',d.problem)}${detailSection('解决步骤',d.steps)}${detailSection('关键改动',d.key_changes)}${detailSection('结果',d.origin==='history'?d.result?.summary:d.result)}${detailSection('适用条件',d.conditions)}${detailSection('为什么这样解决',d.rationale)}${detailSection('适用范围',d.applicability)}${d.origin==='history'&&!d.project?'<p>具体适用项目待确认，以适用条件和范围为准。</p>':''}${detailSection('不适用情况',d.exclusions)}${detailSection('验证记录',d.verification)}${experienceSources(d)}`;
-      $('experience-back-list').onclick=()=>{const current=document.querySelector('.experience-entry[aria-current=true]')||$('experience-results');current.scrollIntoView({block:'start'});current.focus({preventScroll:true});};
+    const current=new URLSearchParams(location.search),category=experienceCategories.includes(current.get('category'))?current.get('category'):experienceCategories[0];
+    const canReadTrash=state.owner?.id===state.me.current_user.id,trash=current.get('deleted')==='1'&&canReadTrash,canManage=experienceCanManage();
+    const params=new URLSearchParams({origin:'manual',category,q:current.get('q')||'',page:String(Math.max(1,parseInt(current.get('page'),10)||1)),page_size:'20',deleted:trash?'1':'0'});
+    const data=await api(`${libraryBase()}/experiences?${params}`);if(ticket!==state.ticket)return;
+    if(!data.rows.length&&data.page>1)return experienceNavigate({page:Math.max(1,Math.ceil(data.total/data.page_size))},true);
+    const selected=String(itemId&&/^manual-[a-f0-9]{32}$/.test(itemId)?itemId:data.rows[0]?.id||'');
+    const descriptions=['页面布局、交互与展示','业务流程、计算口径与处理方法','运行环境、部署与配置'];
+    const summary=data.summary||{},counts=summary.categories||{};
+    $('console-view').innerHTML=heading('经验','按三类保存需要复用的方法，后续由你决定添加哪些内容。',`<div class="experience-page-actions">${canManage?'<button type="button" class="primary" id="experience-new">新增经验</button>':''}<button type="button" id="experience-refresh">刷新</button></div>`)+`
+      <nav class="experience-categories" aria-label="经验分类">${experienceCategories.map((name,i)=>`<button type="button" data-experience-category="${esc(name)}" aria-current="${category===name}" class="experience-category"><span class="experience-category-top"><span class="experience-category-name">${esc(name)}</span><strong>${esc(counts[name]||0)}</strong></span><span class="experience-category-description">${esc(descriptions[i])}</span></button>`).join('')}</nav>
+      <form id="experience-filters" class="filters experience-filters"><label class="grow">查找经验<input name="q" type="search" maxlength="200" value="${esc(params.get('q'))}" placeholder="搜索问题、解决办法或可复用经验"></label><button type="submit" class="primary">查找</button><button id="experience-clear" type="button">清除搜索</button><button id="experience-trash" class="quiet" type="button" aria-pressed="${trash}">${trash?'返回经验':'回收站 · '+(summary.deleted_total||0)}</button></form>
+      <div class="experience-results-head"><h2>${esc(category)}${trash?' · 回收站':''}</h2><p role="status">${esc(data.total)} 条${canManage?'':' · 只读'}</p></div>
+      <div class="experience-layout"><div class="experience-results" id="experience-results"><div class="experience-list" aria-label="经验列表">${data.rows.map(row=>`<button class="experience-entry" type="button" data-experience="${esc(row.id)}" aria-current="${String(row.id)===selected}"><span class="experience-card-meta"><span>${esc(row.category)}</span><span>${trash?'已移至回收站':'手动保存'}</span></span><strong>${esc(row.problem)}</strong><span class="experience-card-method">${esc(row.solution)}</span><span class="experience-card-source">${esc(experienceDate(row.updated_at))}</span></button>`).join('')||`<div class="empty"><p>${params.get('q')?'没有匹配的经验。':trash?'此分类的回收站为空。':'还没有'+esc(category)+'。'}</p><p>${params.get('q')?'可以清除搜索，或切换分类。':trash?'删除的经验可在这里恢复。':canManage?'需要保存的方法，由你单独添加。':'此用户尚未在这个分类添加经验。'}</p>${canManage&&!trash&&!params.get('q')?'<button type="button" id="experience-empty-new" class="primary">添加第一条经验</button>':''}</div>`}</div><div class="pager"><button id="exp-prev" type="button" ${data.page<=1?'disabled':''}>上一页</button><span>${esc(data.page)} / ${Math.max(1,Math.ceil(data.total/data.page_size))}</span><button id="exp-next" type="button" ${data.page*data.page_size>=data.total?'disabled':''}>下一页</button></div></div><article id="experience-detail" class="experience-detail panel" aria-label="经验详情">${selected?'<p role="status">正在读取经验…</p>':'<div class="experience-detail-empty"><span class="experience-empty-mark" aria-hidden="true">＋</span><p>问题 · 解决办法 · 可复用经验</p><p class="muted">选择一条经验，在这里查看完整内容。</p></div>'}</article></div>`;
+    document.querySelectorAll('[data-experience-category]').forEach(button=>button.onclick=()=>experienceNavigate({category:button.dataset.experienceCategory,page:''}));
+    $('experience-filters').onsubmit=event=>{event.preventDefault();experienceNavigate({q:event.currentTarget.elements.q.value.trim(),page:''});};
+    $('experience-clear').onclick=()=>experienceNavigate({q:'',page:''});$('experience-refresh').onclick=()=>route();
+    $('experience-trash').hidden=!canReadTrash;$('experience-trash').onclick=()=>{if(canReadTrash)experienceNavigate({deleted:trash?'':'1',q:'',page:''});};
+    for(const id of ['experience-new','experience-empty-new'])if($(id))$(id).onclick=()=>experienceEditor(null,category);
+    document.querySelectorAll('[data-experience]').forEach(button=>button.onclick=()=>{location.hash=`experiences/${encodeURIComponent(button.dataset.experience)}`;});
+    $('exp-prev').onclick=()=>experienceNavigate({page:data.page-1});$('exp-next').onclick=()=>experienceNavigate({page:data.page+1});
+    if(!selected)return;
+    try{
+      const result=await api(`${libraryBase()}/experiences/${encodeURIComponent(selected)}?origin=manual&deleted=${trash?'1':'0'}`);if(ticket!==state.ticket)return;
+      const record=result.experience,box=$('experience-detail');
+      box.innerHTML=`<div class="experience-detail-top"><span class="badge">${esc(record.category)}</span><div class="experience-detail-actions">${canManage?(trash?'<button type="button" class="primary" id="experience-restore">恢复经验</button>':'<button type="button" id="experience-edit">编辑</button><button type="button" class="danger-quiet" id="experience-delete">删除</button>'):''}</div></div><section class="experience-problem-section"><h2 id="experience-detail-title" tabindex="-1">问题</h2><div class="experience-text">${esc(record.problem)}</div></section>${detailSection('解决办法',record.solution)}${detailSection('可复用经验',record.reusable_experience)}<p class="experience-updated">更新于 ${esc(experienceDate(record.updated_at))}</p>`;
+      if($('experience-edit'))$('experience-edit').onclick=()=>experienceEditor(record,category);
+      if($('experience-delete'))$('experience-delete').onclick=()=>{state.expDelete={record,requestId:requestId()};$('experience-delete-problem').textContent=record.problem;$('experience-delete-error').textContent='';$('experience-delete-dialog').showModal();};
+      if($('experience-restore')){const id=requestId();$('experience-restore').onclick=async event=>{const button=event.currentTarget;button.disabled=true;button.textContent='正在恢复…';try{await api(`${libraryBase()}/experiences`,{action:'restore',id:record.id,revision:record.revision,request_id:id});notice('经验已恢复。');await experienceNavigate({});}catch(e){notice(e.message,true);button.disabled=false;button.textContent='恢复经验';}};}
       if(itemId){$('experience-detail-title').focus({preventScroll:true});if(innerWidth<=780)box.scrollIntoView({block:'start'});}
-    }
+    }catch(error){if(ticket===state.ticket)$('experience-detail').innerHTML=`<p class="error" role="alert">${esc(error.message)}</p><p>可以重新选择列表中的经验，或刷新资料。</p>`;}
   }
+
   $('logout').onclick=async()=>{try{await api('/auth/logout',{});location.href='/login';}catch(e){notice(e.message,true);}};
   window.addEventListener('hashchange',route);
+  window.addEventListener('popstate',route);
   boot();
 })();

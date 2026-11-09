@@ -11,19 +11,21 @@ History and experience share a static “currently viewing” owner label, an ac
 An administrator's own card opens ordinary self browsing, retaining self history management. Other users' cards explicitly open administrator read-only inspection. Ordinary members see only their own and granted libraries; all existing directed and resource-specific authorization checks remain in force.
 
 - History reads an explicitly connected conversation candidate. It shows a project introduction, a short chronological list, and original question/answer blocks. Unassigned conversation blocks remain separate. Only the resource owner can soft-delete and restore their own history; immutable source data is retained.
-- Experience reads structured cases from the account's Context source using a read-only snapshot. Verified, candidate and inactive records retain their existing meanings. A verified case must be current, active and have positive evidence recorded by the existing experience service.
+- Experience is a manually maintained catalog with three categories: **前端经验**, **业务经验**, and **系统环境经验**. Each entry contains **问题**, **解决办法**, and **可复用经验**, without a separate title. Only the resource owner can create, edit, soft-delete and restore entries. Reading an entry does not mark it verified or alter existing Core evidence.
 - An administrator can create, bind and disable Web accounts. Feishu OAuth is verified before the console records an identity as pending; an unbound identity cannot read knowledge. New Web accounts do not automatically receive LAN credentials or a source database.
 - Directed grants specify viewer, owner, history permission and experience permission. The reverse direction is independent. Normal browsing, including the administrator's ordinary browsing, obeys grants. Explicit administrator `inspect=1` is a read-only review mode for all libraries. Cross-user mutations and cross-user trash reads are forbidden.
 
-## Reading extracted experience
+## Maintaining experience
 
-The main `/#experiences` entry defaults to history extraction with `review=accepted`. **已整理完成**, **全部资料**, and **处理中** are direct view switches; the last combines pending session review, pending acceptance, and requested revisions. Existing Core experience remains available under **其他已有经验** with its original verification states. Switching sources clears incompatible category or verification filters.
+The main `/#experiences` entry opens the selected user's manual catalog. It provides the three categories, search, a list and a detail view. Details contain only the problem, solution and reusable experience. The owner can add or edit an entry and move it to the recycle bin; restoring it returns it to its category. There is no automatic extraction, model selection, completion-review filter or eight-category classification in this flow.
 
-Progress and eight-category counts refer to the selected library's entire visible history extraction, independent of search and pagination. The result count refers to the current filters. All statistics use the same authorized owner, tombstone, supersession and deleted-item boundaries as the cards; no data is written or status promoted by reading them.
+Category and library counts describe this manual catalog, not the earlier extracted materials. Search and category selection must use the same owner, access mode and deletion boundary as the list and details. Reading a library or an empty catalog does not initialize or migrate a source database.
 
-Cards show the problem and first solution step. The first result opens automatically, and selecting another card shows the full problem, solution, key changes, result, applicability and quoted original sources. Search, project, category, owner and inspection state stay in the URL. Empty results provide a clear-filter or all-materials route. Keyboard navigation and the 390, 768 and 1440 pixel layouts are covered by the synthetic browser suite.
+Writes use the authenticated account and the configured owner source; a readable cross-user grant never grants write access. Administrator inspection is also read-only, including the administrator's access to another owner's catalog. Every mutation rechecks the account and owner boundaries, preserves deleted records for recovery, and rejects stale revisions rather than silently replacing a newer edit. POST continues to require the existing session CSRF token.
 
-**整理已验收** describes content review, not independent validation. Extracted records remain `candidate`, `unverified`, with `success_count=0`; source-project associations describe provenance rather than the method's applicability. Core evidence rules and all existing account/grant checks remain unchanged.
+The previous HY4/DeepSeek extraction materials, earlier previews and review audit records remain in their original storage. This change does not delete, reclassify, accept or copy them into the manual catalog. The console does not expose the old extraction workflow as an alternate experience source. Further extraction is a separate operation that requires a new explicit user request; browsing or saving a manual entry never calls a model.
+
+Raw conversation capture, project archiving and task continuation remain separate from experience extraction. Their existing authorization and ownership checks are unchanged. Stopping experience extraction does not stop raw-history capture or remove project history.
 
 ## Trust and deployment boundaries
 
@@ -59,12 +61,12 @@ The initial upgrade from the former memory-only implementation may require one f
 
 ## Verification
 
-The dedicated account, LAN, policy and Web HTTP tests use temporary SQLite databases and synthetic identities. They cover colliding resource IDs, directed grants and revocation, pending login binding, account disable/enable, CSRF, explicit inspection, attachment isolation, source immutability and bounded body parsing. Run:
+The dedicated account, LAN, policy and Web HTTP tests use temporary SQLite databases and synthetic identities. They cover colliding resource IDs, directed grants and revocation, pending login binding, account disable/enable, CSRF, explicit inspection, attachment isolation, source immutability and bounded body parsing. Manual-experience checks also cover the three accepted categories, owner-only writes, stale-revision rejection, deletion/recovery and isolation from old extraction materials. Run:
 
 ```sh
 python -B -m pytest -q tests/test_knowledge_console.py tests/test_console_lan_access.py tests/test_console_web_integration.py tests/test_product_policy.py tests/test_history_candidate_read.py tests/test_history_candidate_view.py tests/test_history_management.py
 ```
 
-`tests/browser/launch_console_fixture.py` starts a loopback-only real WebAuth/HTTP fixture with synthetic session cookies. `tests/browser/product_modules.e2e.cjs` requires `EVOLVMEM_SYNTHETIC_FIXTURE` and a fixture URL. Use an ordinary HTTP test hostname to exercise browsers without `crypto.randomUUID`, and supply `PLAYWRIGHT_MODULE`/`CHROMIUM_EXECUTABLE` for the local test environment. The browser suite checks the current navigation, history, experience, users, directed permissions, deletion/restore, and responsive layouts. The fixture does not validate a live OAuth provider login.
+`tests/browser/launch_console_fixture.py` starts a loopback-only real WebAuth/HTTP fixture with synthetic session cookies. `tests/browser/product_modules.e2e.cjs` requires `EVOLVMEM_SYNTHETIC_FIXTURE` and a fixture URL. Use an ordinary HTTP test hostname to exercise browsers without `crypto.randomUUID`, and supply `PLAYWRIGHT_MODULE`/`CHROMIUM_EXECUTABLE` for the local test environment. The browser suite checks the current navigation, history, manual experience, users, directed permissions, deletion/restore, responsive layouts, and the updated manual-experience workflow diagram. The fixture does not validate a live OAuth provider login.
 
 `tests/browser/library_navigation_unify.e2e.cjs` checks the single library-selection entry, static owner context, global-page context removal, preservation of the signed-in actor, self management, and read-only navigation for ordinary granted readers and administrator inspection.

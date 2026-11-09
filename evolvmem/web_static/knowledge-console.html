@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f7f9fc"><title>EvolvMem · 个人知识库</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233c5de0'/%3E%3Ctext x='32' y='46' fill='white' font-size='44' font-family='Arial' text-anchor='middle'%3EE%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/history-library.css?v=console1"><link rel="stylesheet" href="/knowledge-console.css?v=experience3"></head>
+<link rel="stylesheet" href="/history-library.css?v=console1"><link rel="stylesheet" href="/knowledge-console.css?v=manual1"></head>
 <body data-design="console"><a class="skip" href="#workspace">跳到内容</a>
 <header class="masthead"><a class="brand" href="#libraries"><span class="brand-mark" aria-hidden="true">E</span>EvolvMem<span class="brand-caption">个人知识库</span></a>
 <nav class="main-nav" aria-label="主导航"><a href="#history" data-nav="history">历史</a><a href="#experiences" data-nav="experiences">经验</a><a href="#libraries" data-nav="libraries">用户知识库</a><a href="#users" data-nav="users" id="admin-nav" hidden>用户与权限</a><a href="#principles" data-nav="principles">工作原理</a></nav>
@@ -12,5 +12,14 @@
 <section id="history-view" data-slot="history-library" hidden></section>
 <section id="console-view" aria-live="polite"><p class="empty">正在读取你的知识库…</p></section></main>
 <dialog id="user-dialog" aria-labelledby="user-dialog-title"><form id="user-form"><div class="section-head"><h2 id="user-dialog-title">添加用户</h2><button type="button" class="quiet" data-close-user>关闭</button></div><p class="muted">账号用于网页登录与访问授权。新账号的数据源和 CLI 接入需单独连接。</p><label>用户标识<input name="id" required pattern="[a-z][a-z0-9_-]{0,63}" maxlength="64" placeholder="例如：alice"></label><label>显示名称<input name="display_name" required maxlength="100"></label><label>飞书登录身份<select name="open_id" id="login-binding"></select></label><label class="check"><input type="checkbox" name="enabled" checked>启用账号</label><p id="user-form-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="secondary" data-close-user>取消</button><button type="submit" class="primary">保存用户</button></div></form></dialog>
-<script src="/history-library.js?v=console1"></script><script src="/principles.js?v=experience3"></script><script src="/knowledge-console.js?v=experience3"></script>
+<dialog id="experience-dialog" class="experience-editor" aria-labelledby="experience-dialog-title"><form id="experience-form">
+<div class="section-head"><h2 id="experience-dialog-title">新增经验</h2><button type="button" class="quiet" data-close-experience aria-label="关闭经验编辑">关闭</button></div>
+<label>经验分类<select name="category" required><option>前端经验</option><option>业务经验</option><option>系统环境经验</option></select></label>
+<label>问题<textarea name="problem" rows="2" maxlength="1000" required placeholder="在什么情况下遇到了什么问题"></textarea></label>
+<label>解决办法<textarea name="solution" rows="4" maxlength="8000" required placeholder="记录关键做法"></textarea></label>
+<label>可复用经验<textarea name="reusable_experience" rows="3" maxlength="8000" required placeholder="以后遇到类似情况，应怎样处理"></textarea></label>
+<p id="experience-form-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" data-close-experience>取消</button><button type="submit" class="primary">保存经验</button></div>
+</form></dialog>
+<dialog id="experience-delete-dialog" aria-labelledby="experience-delete-title"><h2 id="experience-delete-title">删除经验</h2><p>将这条经验移至回收站？之后可以恢复。</p><p id="experience-delete-problem" class="experience-text"></p><p id="experience-delete-error" class="error" role="alert"></p><div class="dialog-actions"><button id="experience-delete-cancel" type="button">取消</button><button id="experience-delete-confirm" type="button" class="danger">移至回收站</button></div></dialog>
+<script src="/history-library.js?v=console1"></script><script src="/principles.js?v=manual1"></script><script src="/knowledge-console.js?v=manual1"></script>
 </body></html>

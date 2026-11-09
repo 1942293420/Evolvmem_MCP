@@ -25,9 +25,9 @@ const output=process.env.EVOLVMEM_SCREENSHOTS||'/tmp/evolvmem-console-screenshot
   await page.locator('#history-list .history-entry').first().click();await page.waitForFunction(()=>document.querySelector('#history-main')?.textContent.includes('项目摘要'));
   assert.match(await page.locator('#history-main').innerText(),/项目摘要/);await shot('01-history');
   await go('#experiences');await page.waitForSelector('#experience-filters');
-  await page.locator('#experience-filters [name=origin]').selectOption('core');await page.locator('#experience-filters [name=status]').selectOption('candidate');await page.locator('#experience-filters [type=submit]').click();await page.waitForSelector('.experience-entry');
-  await page.locator('.experience-entry').first().click();await page.waitForFunction(()=>document.querySelector('#experience-detail')?.textContent.includes('解决步骤'));assert.match(await page.locator('#experience-detail').innerText(),/解决步骤/);await shot('02-experience');
-  checks.push('history project summary and real structured experience detail');
+  assert.deepEqual(await page.locator('[data-experience-category] .experience-category-name').allTextContents(),['前端经验','业务经验','系统环境经验']);
+  await page.locator('#experience-new').click();await page.locator('#experience-form [name=problem]').fill('合成页面保存反馈');await page.locator('#experience-form [name=solution]').fill('保存后刷新当前列表。');await page.locator('#experience-form [name=reusable_experience]').fill('写入成功后同步列表和详情。');await page.locator('#experience-form [type=submit]').click();await page.waitForSelector('#experience-dialog',{state:'hidden'});await page.waitForSelector('#experience-edit');assert.match(await page.locator('#experience-detail').innerText(),/解决办法/);await shot('02-experience');
+  checks.push('history summary and three-category user-authored experience detail');
   await go('#libraries');await page.waitForSelector('.library-card');assert.ok(await page.locator('.library-card').count()>=2);await shot('03-libraries');
   const otherInspect=page.locator(`.library-card a[href*="user=${member}"]`).first();await otherInspect.click();await page.waitForSelector('#history-list .history-entry');assert.match(await page.locator('#library-access').innerText(),/管理员只读/);assert.equal(await page.locator('#history-manage').isVisible(),false);assert.equal(await page.locator('[data-history-delete]').count(),0);
   assert.equal((await json(root+`/libraries/${member}/history/projects`)).status,403);

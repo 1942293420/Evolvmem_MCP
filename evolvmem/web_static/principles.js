@@ -1,5 +1,27 @@
-/* Product architecture, rendered locally without old knowledge/AI modules. */
+/* Current product architecture; history capture and manual experience stay separate. */
 (() => {
   'use strict';
-  window.EvolvMemPrinciples={render(policy){return `<header class="page-head"><div><p class="eyebrow">EVOLVMEM / 工作原理</p><h1>每个人的知识，分成历史与经验</h1><p class="muted">历史保存发生过什么；经验保存可复用、带有验证记录的方法。</p></div></header><div class="diagram-flow" role="img" aria-label="飞书登录确定当前账号，从用户知识库选择查看对象，检查有向权限后读取该用户的历史或经验"><div class="diagram-node"><strong>1 · 确定登录账号</strong><small>固定 8 小时登录，服务重启保留</small></div><span class="diagram-arrow" aria-hidden="true">→</span><div class="diagram-node"><strong>2 · 用户知识库</strong><small>统一选择查看对象；登录账号不变</small></div><span class="diagram-arrow" aria-hidden="true">→</span><div class="diagram-node"><strong>3 · 检查访问权限</strong><small>普通浏览逐方向授权；管理员查看为只读</small></div><span class="diagram-arrow" aria-hidden="true">→</span><div class="diagram-node"><strong>4 · 历史 / 经验</strong><small>显示当前查看对象；列表、详情和图片均检查权限</small></div></div><div class="principle-grid"><section class="panel"><h2>历史</h2><ol><li><b>项目摘要：</b>项目用途、环境与必要信息。</li><li><b>简短历史：</b>按时间查看做过的事项。</li><li><b>事项详情：</b>用户的问题、AI 的回答、解决方法和结果。</li></ol><p class="muted">未归属会话先按块保存。缺失原文会明确显示；图片只有能读取时才展示。删除进入回收站，原始资料保留。</p></section><section class="panel"><h2>经验</h2><ol><li><b>问题与条件：</b>什么情况下遇到什么问题。</li><li><b>解决方法：</b>关键步骤、修改位置和原因。</li><li><b>验证结果：</b>成功、失败与适用边界。</li></ol><p class="muted">本次授权的历史提炼使用 HY4：每批校验后立即保存到当前用户的数据库，额度中断后从断点继续。经验页默认展示已整理完成的内容，可直接切换全部资料与处理中，按八类筛选并搜索。每条展示问题、解决步骤、关键改动、结果和原文依据；整理验收与独立验证分开记录。跨项目会话保留全部来源，未确认的方法适用项目不强行归属。已验证、候选和失效经验分别查看。自动总结${policy.ai_processing_enabled===false?'已暂停':'状态以当前策略为准'}。</p><div class="diagram-flow" role="img" aria-label="项目历史经过HY4分类提炼，每批校验后保存，完整会话复核后标为整理已验收，经验页默认展示已完成内容；独立验证另行记录"><div class="diagram-node"><strong>项目历史</strong><small>问答与事项原文</small></div><span class="diagram-arrow" aria-hidden="true">→</span><div class="diagram-node"><strong>HY4 分类提炼</strong><small>八类经验，保留来源</small></div><span class="diagram-arrow" aria-hidden="true">→</span><div class="diagram-node"><strong>逐批保存</strong><small>保存断点，中断可续</small></div><span class="diagram-arrow" aria-hidden="true">→</span><div class="diagram-node"><strong>整理验收</strong><small>独立验证另行记录</small></div><span class="diagram-arrow" aria-hidden="true">→</span><div class="diagram-node"><strong>经验页可见</strong><small>默认已完成，可看全部与处理中</small></div></div></section><section class="panel"><h2>用户与交叉访问</h2><p>登录从登录时起固定 8 小时；主动退出或停用账号会立即撤销。重新启用后需再次登录。</p><p>A → B 和 B → A 是两个设置；历史与经验也分别授权。默认只读自己的知识。</p><p class="muted">普通浏览包括管理员也遵循授权。“用户知识库”是选择查看对象的统一入口。管理员查看自己的资料可正常管理，查看其他用户时明确标为只读，不能替他人删除资料。停用用户后，后续读取会被拒绝。</p></section><section class="panel"><h2>当前运行范围</h2><p>旧项目库与旧资料整理入口${policy.legacy_web_enabled===false?'已关闭':'状态以当前策略为准'}；AI 自动整理${policy.ai_processing_enabled===false?'已暂停':'状态以当前策略为准'}。</p><p class="muted">原文上传、归档与任务续接保留。原数据库未删除，历史与经验页显示当前查看对象；用户管理和工作原理属于全局页面，不显示个人库归属。新建网页账号不代表已经创建 CLI 凭证或接入历史数据。</p></section></div>`;}};
+  window.EvolvMemPrinciples = {
+    render(policy) {
+      return `<header class="page-head"><div><p class="eyebrow">EVOLVMEM / 工作原理</p><h1>每个人的知识，分成历史与经验</h1><p class="muted">历史保存原文与项目进展；经验由你选定，按三类持续维护。</p></div></header>
+<div class="diagram-flow" role="img" aria-label="飞书登录确定当前账号，从用户知识库选择查看对象，检查有向权限后读取该用户的历史或经验">
+  <div class="diagram-node"><strong>1 · 确定登录账号</strong><small>固定 8 小时登录，服务重启保留</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+  <div class="diagram-node"><strong>2 · 用户知识库</strong><small>统一选择查看对象；登录账号不变</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+  <div class="diagram-node"><strong>3 · 检查访问权限</strong><small>普通浏览逐方向授权；管理员查看为只读</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+  <div class="diagram-node"><strong>4 · 历史 / 经验</strong><small>列表、详情和图片均检查权限；仅本人可管理</small></div>
+</div>
+<div class="principle-grid">
+  <section class="panel"><h2>历史</h2><ol><li><b>项目摘要：</b>项目用途、环境与必要信息。</li><li><b>简短历史：</b>按时间查看做过的事项。</li><li><b>事项详情：</b>用户的问题、AI 的回答、解决方法和结果。</li></ol><p class="muted">未归属会话先按块保存。缺失原文会明确显示；图片只有能读取时才展示。删除进入回收站，原始资料保留。</p></section>
+  <section class="panel"><h2>经验</h2><ol><li><b>前端经验：</b>界面、交互与页面开发中的做法。</li><li><b>业务经验：</b>业务规则、流程与计算中的做法。</li><li><b>系统环境经验：</b>部署、运行环境与服务配置中的做法。</li></ol><p>每条填写<b>问题、解决办法、可复用经验</b>。支持分类搜索、手动新增和编辑；删除后可在回收站恢复。</p><p class="muted">经验不再自动提取。需要从会话整理时，由你另行指定。旧提取稿继续保留，不自动放入新的三类经验库。</p>
+    <div class="diagram-flow" role="img" aria-label="本人选择前端经验、业务经验或系统环境经验，填写问题、解决办法和可复用经验后保存；本人可编辑、删除和恢复，其他用户只能按授权阅读">
+      <div class="diagram-node"><strong>选择分类</strong><small>前端 / 业务 / 系统环境</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>填写经验</strong><small>问题 · 解决办法 · 可复用经验</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>保存和维护</strong><small>本人管理；他人按授权只读</small></div>
+    </div>
+  </section>
+  <section class="panel"><h2>用户与交叉访问</h2><p>登录从登录时起固定 8 小时；主动退出或停用账号会立即撤销。重新启用后需再次登录。</p><p>A → B 和 B → A 是两个设置；历史与经验也分别授权。默认只可读取自己的知识。</p><p class="muted">普通浏览包括管理员也遵循授权。“用户知识库”是选择查看对象的统一入口。自己的资料可正常管理；查看其他用户时为只读，不能替他人新增、编辑或删除经验。停用用户后，后续读取会被拒绝。</p></section>
+  <section class="panel"><h2>当前运行范围</h2><p>旧项目库与旧资料整理入口${policy.legacy_web_enabled === false ? '已关闭' : '状态以当前策略为准'}；AI 自动整理${policy.ai_processing_enabled === false ? '已暂停' : '状态以当前策略为准'}。</p><p class="muted">经验采用手动维护，自动提取保持停止。原文上传、项目归档与任务续接保留；这与经验提取是两条独立流程。原数据库和旧提取稿未删除。历史与经验页显示当前查看对象；用户管理和工作原理属于全局页面，不显示个人库归属。新建网页账号不代表已经创建 CLI 凭证或接入历史数据。</p></section>
+</div>`;
+    }
+  };
 })();

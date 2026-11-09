@@ -1,76 +1,24 @@
+// Legacy cases remain preserved, while the experience page uses manual notes only.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE);
 const base=process.env.EVOLVMEM_TEST_URL,output=process.env.EVOLVMEM_SCREENSHOTS;
 if(!base||!process.env.EVOLVMEM_SYNTHETIC_FIXTURE)throw new Error('Synthetic fixture required');
 (async()=>{
- const browser=await chromium.launch({executablePath:'/usr/bin/google-chrome',headless:true,args:['--no-sandbox','--no-proxy-server','--host-resolver-rules=MAP knowledge-console.test 127.0.0.1']});
- const context=await browser.newContext({viewport:{width:1440,height:1050}}),errors=[],checks=[];
- await context.addCookies([{name:'evolvmem_session',value:'test-owner-cookie',url:base}]);
- const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.setDefaultTimeout(12000);
- const open=async suffix=>{await page.goto(base+'/'+(suffix||'#experiences'));await page.waitForSelector('#experience-filters');};
- const state=async review=>{await page.locator(`[data-experience-review="${review}"]`).click();await page.waitForURL(url=>url.searchParams.get('review')===review);await page.waitForSelector('#experience-filters');};
+ const browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE,headless:true,args:['--no-sandbox','--no-proxy-server','--host-resolver-rules=MAP knowledge-console.test 127.0.0.1']});
+ const context=await browser.newContext(),errors=[],checks=[];await context.addCookies([{name:'evolvmem_session',value:'test-owner-cookie',url:base}]);
+ const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
  try{
-  await open();await page.waitForSelector('.experience-entry');
-  assert.equal(await page.locator('.experience-entry').count(),1,'Default entry shows accepted extraction only');
-  await page.waitForSelector('#experience-detail blockquote');
-  assert.equal(await page.locator('[data-experience-review=accepted]').getAttribute('aria-current'),'true');
-  assert.match(await page.locator('[data-experience-review=accepted]').innerText(),/已整理完成\s*1/);
-  assert.match(await page.locator('[data-experience-review=all]').innerText(),/全部资料\s*2/);
-  assert.match(await page.locator('[data-experience-review=pending]').innerText(),/处理中\s*1/);
-  assert.match(await page.locator('.experience-entry').innerText(),/核对实际条数/,'Card previews the method');
-  assert.equal(await page.locator('#experience-filters [name=category] option').count(),9);
-  assert.match(await page.locator('#experience-detail').innerText(),/候选经验.*未独立验证/);
-  for(const title of ['问题','解决步骤','关键改动','结果','原文依据'])assert.match(await page.locator('#experience-detail').innerText(),new RegExp(title));
-  assert.match(await page.locator('#experience-detail blockquote').first().innerText(),/精确原问答/);
-  assert.equal(await page.locator('#experience-detail img').count(),0,'raw HTML must be escaped');
-  checks.push('accepted default, owner-scoped counts, method preview, auto-open full detail, source quotes escaped');
-  await state('all');assert.equal(await page.locator('.experience-entry').count(),2);
-  await state('pending');assert.equal(await page.locator('.experience-entry').count(),1);
-  assert.match(await page.locator('.experience-entry').innerText(),/待会话复核/);
-  assert.match(await page.locator('#experience-detail').innerText(),/来源关联不代表方法适用于/);
-  checks.push('all and processing views accessible without treating source projects as applicability');
-  await state('accepted');
-  await page.locator('#experience-filters [name=category]').selectOption('前端开发');
-  await page.locator('#experience-filters [name=q]').fill('分页');
-  await page.locator('#experience-filters [type=submit]').click();await page.waitForURL(url=>url.searchParams.get('q')==='分页');await page.waitForSelector('.experience-entry');
-  assert.equal(new URL(page.url()).searchParams.get('category'),'前端开发');
-  await page.locator('.main-nav [data-nav=history]').click();await page.waitForSelector('#history-list');
-  await page.locator('.main-nav [data-nav=experiences]').click();await page.waitForSelector('.experience-entry');
-  assert.equal(await page.locator('#experience-filters [name=q]').inputValue(),'分页');
-  await page.locator('#experience-filters [name=q]').fill('no-synthetic-match');await page.locator('#experience-filters [type=submit]').click();await page.waitForSelector('.experience-list .empty');
-  assert.match(await page.locator('.experience-list .empty').innerText(),/清除筛选|全部资料/);
-  await page.locator('#experience-clear').click();await page.waitForSelector('.experience-entry');
-  assert.equal(await page.locator('#experience-filters [name=q]').inputValue(),'');
-  checks.push('classification and search retained across navigation, empty results have a recovery action');
-  await open('?status=verified#experiences');await page.waitForSelector('.experience-list .empty');
-  assert.equal(await page.locator('.experience-entry').count(),0);
-  checks.push('accepted filtering never fabricates independent verification');
-  await open();
-  await page.locator('#experience-filters [name=origin]').selectOption('core');
-  await page.locator('#experience-filters [name=status]').selectOption('verified');
-  await page.locator('#experience-filters [type=submit]').click();await page.waitForURL(url=>url.searchParams.get('origin')==='core');await page.waitForSelector('.experience-entry');
-  assert.match(await page.locator('.experience-entry').innerText(),/Owner verified experience/);
-  await page.locator('#experience-filters [name=origin]').selectOption('history');
-  await page.locator('#experience-filters [type=submit]').click();await page.waitForURL(url=>url.searchParams.get('origin')==='history');await page.waitForSelector('.experience-entry');
-  assert.equal(await page.locator('.experience-entry').count(),1);
-  assert.equal(new URL(page.url()).searchParams.get('status'),'all','Core verified filter must not silently hide history extraction');
-  checks.push('Core evidence remains available and incompatible hidden filters clear on source change');
-  for(const width of [390,768,1440]){
-   await page.setViewportSize({width,height:1050});await open();await page.waitForSelector('#experience-detail blockquote');
-   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'horizontal overflow '+width);
-   for(const selector of ['.experience-states','.experience-entry','#experience-detail'])assert.ok(await page.locator(selector).first().evaluate(el=>el.scrollWidth<=el.clientWidth+2),'component overflow '+selector+' '+width);
-   await page.screenshot({path:path.join(output,'incremental-'+width+'.png'),fullPage:true});
-   await page.locator('[data-experience-review=all]').focus();await page.keyboard.press('Enter');await page.waitForURL(url=>url.searchParams.get('review')==='all');await page.waitForSelector('.experience-entry');
-   await page.locator('.experience-entry').last().focus();await page.keyboard.press('Enter');await page.waitForSelector('#experience-detail blockquote');
-   assert.ok(new URL(page.url()).hash.startsWith('#experiences/history-'));
-   await page.screenshot({path:path.join(output,'incremental-detail-'+width+'.png'),fullPage:true});
+  for(const old of ['?origin=history&review=accepted','?origin=core&status=verified','?category='+encodeURIComponent('后端与接口')]){
+   await page.goto(base+'/'+old+'#experiences');await page.waitForSelector('#experience-filters');
+   assert.equal(await page.locator('[data-experience-category]').count(),3);assert.equal(await page.locator('.experience-entry').count(),0);
+   assert.equal(await page.locator('[name=origin],[name=review],[name=status],.experience-progress').count(),0);
   }
-  checks.push('three widths, keyboard state switching and source detail selection');
-  const denied=await page.evaluate(async()=>{return (await fetch('/api/knowledge-console/libraries/kane/experiences?origin=history')).status;});assert.equal(denied,403);
-  const foreign=await page.evaluate(async()=>{return (await fetch('/api/knowledge-console/libraries/jiangli/experiences/history-'+('c'.repeat(64)))).status;});assert.equal(foreign,404);
-  assert.equal(await page.locator('#actor-name').innerText(),'合成管理员');
-  assert.equal(await page.locator('.library-context select').count(),0);
-  checks.push('directed permissions, owner isolation, static viewing context and unchanged login actor');
-  assert.deepEqual(errors,[]);fs.writeFileSync(path.join(output,'incremental-browser-results.json'),JSON.stringify({checks,errors},null,2));console.log(JSON.stringify({checks,errors}));
+  checks.push('old extraction/Core URL parameters cannot reopen removed interfaces');
+  const data=await page.evaluate(async()=>{
+   const root='/api/knowledge-console/libraries/jiangli/experiences';return {core:await(await fetch(root+'?origin=core&status=all')).json(),manual:await(await fetch(root+'?origin=manual')).json(),other:(await fetch('/api/knowledge-console/libraries/kane/experiences?origin=manual')).status};
+  });assert.ok(data.core.total>=2);assert.equal(data.manual.total,0);assert.equal(data.other,403);
+  checks.push('old Core records retained, manual source isolated, cross-user denial preserved');
+  for(const width of [390,768,1440]){await page.setViewportSize({width,height:1050});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));}
+  assert.deepEqual(errors,[]);fs.mkdirSync(output,{recursive:true});fs.writeFileSync(path.join(output,'legacy-isolation-results.json'),JSON.stringify({checks,errors},null,2));console.log(JSON.stringify({checks,errors}));
  }finally{await context.close();await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});
