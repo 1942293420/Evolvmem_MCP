@@ -22,7 +22,7 @@
     <div class="diagram-flow" role="img" aria-label="选择获授权的经验库，输入关键词或问题，合并原文和语义结果，再按分类展示">
       <div class="diagram-node"><strong>确定经验库</strong><small>按用户授权读取当前经验</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
       <div class="diagram-node"><strong>关键词＋语义</strong><small>匹配原文并查找相似问题</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
-      <div class="diagram-node"><strong>显示搜索结果</strong><small>原文命中优先，按分类查看</small></div>
+      <div class="diagram-node"><strong>浏览搜索结果</strong><small>按分类查看，切换条目时列表保留原位</small></div>
     </div>
   </section>
   <section class="panel"><h2>用户与交叉访问</h2><p>登录从登录时起固定 8 小时；主动退出或停用账号会立即撤销。重新启用后需再次登录。</p><p>A → B 和 B → A 是两个设置；历史与经验也分别授权。默认只可读取自己的知识。</p><p class="muted">普通浏览包括管理员也遵循授权。“用户知识库”是选择查看对象的统一入口。自己的资料可正常管理；查看其他用户时为只读，不能替他人新增、编辑或删除经验。停用用户后，后续读取会被拒绝。</p></section>

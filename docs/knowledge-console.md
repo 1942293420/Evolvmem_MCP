@@ -25,6 +25,12 @@ both panels within the browser width.
 
 ## Maintaining experience
 
+Search stays above the category filters. Selecting a result updates the
+detail panel while keeping the result list, its scroll position, and desktop
+keyboard focus in place. On narrow screens, the detail offers a return to the
+selected list item. Closing an edited experience asks whether to continue
+editing or discard the changes.
+
 The main `/#experiences` entry opens the selected user's manual catalog. It provides the three categories, search, a list and a detail view. Details contain only the problem, solution and reusable experience. The owner can add or edit an entry and move it to the recycle bin; restoring it returns it to its category. There is no automatic extraction, model selection, completion-review filter or eight-category classification in this flow.
 
 Users can also request one entry in conversation. For example, “请记住：以后部署前端先核对线上首页引用的资源版本” asks the assistant to save the stated practice. The Codex `UserPromptSubmit` hook supplies a reminder for a possible instruction in the current message. The assistant checks the user's intent and determines the content and category from the current context before calling `manual_experience_save`. The tool writes the same personal catalog as the Web form and returns a record ID. A retry uses the same request ID. `manual_experience_search` looks up active entries in the authenticated caller's catalog.

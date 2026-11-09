@@ -190,7 +190,7 @@
   const targetId = t => JSON.stringify(t);
   const activeFilter = () => state.mode === 'projects' ? state.projectFilter : state.unassignedFilter;
   const searchKey = () => JSON.stringify([state.mode, state.query.trim(), activeFilter(), searchPage]);
-  const deletionButton = (target, title, label = '') => !canManage ? '' : `<button type="button" class="history-delete ${label ? 'history-delete-text' : ''}" data-history-delete="${esc(targetId(target))}" data-delete-title="${esc(title)}" aria-label="删除${esc(title)}" title="移至回收站">${trashIcon}${label ? esc(label) : ''}</button>`;
+  const deletionButton = (target, title, label = '') => !canManage ? '' : `<button type="button" class="history-delete ${label ? 'history-delete-text' : ''}" data-history-delete="${esc(targetId(target))}" data-delete-title="${esc(title)}" aria-label="将${esc(title)}移至回收站" title="移至回收站">${trashIcon}${label ? esc(label) : ''}</button>`;
   function managedRow(button, target, title, selectable = true) {
     if (selectable) visibleTargets.push({target, title});
     return `<div class="history-managed-row">${managing && selectable ? `<input class="history-select" type="checkbox" data-history-select="${esc(targetId(target))}" data-select-title="${esc(title)}" aria-label="选择${esc(title)}" ${selection.has(targetId(target)) ? 'checked' : ''}>` : ''}${button}${deletionButton(target, title)}</div>`;
@@ -205,7 +205,7 @@
     if (!bar) return;
     $('history-manage').textContent = managing ? '退出管理' : '批量管理';
     bar.hidden = !managing;
-    bar.innerHTML = `<label class="history-select-all"><input type="checkbox" id="history-select-all" ${visibleTargets.length && visibleTargets.every(x => selection.has(targetId(x.target))) ? 'checked' : ''}>全选当前结果</label><span>已选 ${selection.size} 项</span><button type="button" class="history-danger" id="history-delete-selected" ${selection.size ? '' : 'disabled'}>删除所选</button>`;
+    bar.innerHTML = `<label class="history-select-all"><input type="checkbox" id="history-select-all" ${visibleTargets.length && visibleTargets.every(x => selection.has(targetId(x.target))) ? 'checked' : ''}>全选当前结果</label><span>已选 ${selection.size} 项</span><button type="button" class="history-danger" id="history-delete-selected" ${selection.size ? '' : 'disabled'}>将所选移至回收站</button>`;
   }
   async function refreshSearch(reset = true) {
     if (reset) searchPage = 1;
@@ -455,7 +455,7 @@
       : (data.history || []).length ? '有原文' : '暂无原文';
     main.innerHTML = `
       <p class="insights-kicker">Project / 项目资料</p>
-      <div class="history-detail-heading"><h2>${esc(data.display_name || data.project)}</h2>${deletionButton({kind:"project",project:data.project,key:data.project},data.display_name || data.project,"删除项目")}</div>
+      <div class="history-detail-heading"><h2>${esc(data.display_name || data.project)}</h2>${deletionButton({kind:"project",project:data.project,key:data.project},data.display_name || data.project,"移至回收站")}</div>
       <p class="history-submeta">${esc(data.project)} · ${esc(projectLifecycleLabel(data.status))} · ${esc(recoveryLabel)} · 证据：${esc(evidenceStatusLabel(data.evidence_status))}</p>
       <section class="history-summary" id="history-project-summary">
         <h3>项目摘要</h3>
@@ -1024,7 +1024,7 @@
         <section id="history-main" class="history-main" tabindex="-1" aria-live="polite"></section>
       </div>
       <dialog id="history-delete-dialog" class="history-dialog" aria-labelledby="history-delete-title">
-        <h2 id="history-delete-title">删除资料</h2><div id="history-delete-summary"></div>
+        <h2 id="history-delete-title">移至回收站</h2><div id="history-delete-summary"></div>
         <p id="history-delete-error" role="alert" class="history-dialog-error"></p>
         <div class="history-dialog-actions"><button type="button" id="history-delete-cancel" class="ghost">取消</button><button type="button" id="history-delete-confirm" class="history-danger">移至回收站</button></div>
       </dialog>
