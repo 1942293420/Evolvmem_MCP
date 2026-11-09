@@ -10,12 +10,13 @@ import time
 import zlib
 from typing import Any, NamedTuple
 
-from evolvmem.codex_transcript import SUBAGENT_SESSION_REASON, parse_transcript, workspace_details
+from evolvmem.codex_transcript import SUBAGENT_SESSION_REASON
+from evolvmem.transcript_formats import CODEX_FORMAT, SOURCE_FORMATS, adapter_name, source_format, parse_transcript, workspace_details
 from evolvmem.lan_sharing import LanError
 from evolvmem.session_archive import SessionArchiver, AESGCM
 
 
-CAPTURE_TOOLS = frozenset({'session_archive_upload', 'session_archive_status', 'session_archive_retry', 'session_archive_assign'})
+CAPTURE_TOOLS = frozenset({'session_archive_upload', 'session_archive_status', 'session_archive_retry', 'session_archive_assign', 'session_archive_process_history'})
 _STAGE_MAGIC = b'EVOM-UPLOAD\x02\r\n'
 _CHUNKED_STAGE_MAGIC = b'EVOM-UPLOAD\x03\r\n'
 _STAGE_CHUNK_BYTES = 262144
@@ -50,23 +51,37 @@ def capture_specs():
               'extract': {'type': 'boolean'},
               'request_id': {'type': 'string', 'minLength': 1, 'maxLength': 128},
               'source_order': {'type': 'integer', 'minimum': 1},
-              'current_sha256': {'type': 'string', 'minLength': 64, 'maxLength': 64}}
+              'current_sha256': {'type': 'string', 'minLength': 64, 'maxLength': 64},
+              'source_format': {'type': 'string', 'enum': list(SOURCE_FORMATS)}}
     retry = {**identity, 'request_id': upload['request_id']}
     assign = {**retry, 'project': {'type': 'string', 'minLength': 1, 'maxLength': 128}}
-    optional = {'source_order', 'current_sha256'}
+    status = {**identity, 'handoff': {'type': 'object', 'properties': {
+        'sha256': {'type': 'string', 'minLength': 64, 'maxLength': 64},
+        'project': {'type': 'string', 'minLength': 1, 'maxLength': 128},
+        'source_format': {'type': 'string', 'enum': list(SOURCE_FORMATS)}},
+        'required': ['sha256', 'project'], 'additionalProperties': False}}
+    history = {**identity, 'archive_id': {'type': 'integer', 'minimum': 1},
+               'sha256': upload['sha256'], 'source_revision': upload['sha256'],
+               'project': assign['project'], 'source_format': upload['source_format'],
+               'request_id': upload['request_id']}
+    optional = {'source_order', 'current_sha256', 'handoff', 'source_format'}
     return {name: {'name': name, 'description': description,
                    'annotations': {'readOnlyHint': readonly},
                    'inputSchema': {'type': 'object', 'properties': props,
-                                   'required': [key for key in props if key not in optional],
+                                   'required': [key for key in props if key not in optional or name == 'session_archive_process_history'],
                                    'additionalProperties': False}}
             for name, props, readonly, description in (
+                ('session_archive_process_history', history, False,
+                 'Owner-only explicit grant: process exactly this current archive revision into project history. '
+                 'Does not resume global AI, background queues or experience extraction. Stable request_id required.'),
                 ('session_archive_upload', upload, False,
-                 'Upload a complete persisted Codex JSONL snapshot in sequential base64 chunks. '
+                 'Upload a complete persisted native JSONL snapshot (Codex by default, DSH with explicit source_format) in sequential base64 chunks. '
                  'Idempotent by device/session/content/offset. Archived and extracted are separate states. '
                  'Optional source_order is the snapshot\'s fixed client-side order; current_sha256 (needs '
                  'source_order) declares this upload to be the client\'s own current snapshot.'),
-                ('session_archive_status', identity, True,
-                 'Read this personal device/session archive coverage and extraction status; no raw text.'),
+                ('session_archive_status', status, True,
+                 'Read this personal device/session archive coverage and extraction status; no raw text. '
+                 'Optional handoff proves exact current archive inclusion in completed project history without processing it.'),
                 ('session_archive_retry', retry, False,
                  'Explicitly retry the latest failed or unrequested extraction after inspecting its status.'),
                 ('session_archive_assign', assign, False,
@@ -110,6 +125,8 @@ class LanCapture:
                 sha256 TEXT, source_order INTEGER,
                 PRIMARY KEY(device_id, session_id))''')
             columns = {column[1] for column in self.conn.execute('PRAGMA table_info(lan_session_uploads)')}
+            if 'source_format' not in columns:
+                self.conn.execute("ALTER TABLE lan_session_uploads ADD COLUMN source_format TEXT NOT NULL DEFAULT 'codex-jsonl'")
             if 'source_order' not in columns:
                 self.conn.execute('ALTER TABLE lan_session_uploads ADD COLUMN source_order INTEGER')
             if 'extracted_at' not in columns:
@@ -356,7 +373,7 @@ class LanCapture:
     def _receipt(self, row, status=None):
         result = dict(status=status or ('archived' if row['archive_id'] else 'receiving'),
                       next_offset=row['received_bytes'], total_bytes=row['total_bytes'],
-                      source_sha256=row['sha256'], source_order=row['source_order'],
+                      source_sha256=row['sha256'], source_order=row['source_order'], source_format=row['source_format'],
                       current=self.is_current(row), extraction_status=row['extraction_status'],
                       project=row['project'], attribution_reason=row['attribution_reason'],
                       backfill_status=row['backfill_status'])
@@ -367,6 +384,12 @@ class LanCapture:
             result['processing_reason'] = 'ai_processing_disabled'
         if row['archive_id']:
             result['archive_id'] = row['archive_id']
+            from evolvmem.task_history_processing import archive_revision
+            result['source_revision'] = archive_revision(self.conn, row['archive_id'])
+            from evolvmem.task_history_processing import grant_status
+            scoped = grant_status(self.conn, result)
+            if scoped is not None:
+                result['task_history'] = scoped
         if row['error']:
             result['processing_error'] = row['error']
         if row['extraction_result'] != '{}':
@@ -382,6 +405,9 @@ class LanCapture:
         return result
 
     def status(self, args):
+        if 'handoff' in args:
+            from evolvmem.lan_handoff_status import handoff_status
+            return handoff_status(self, args)
         identity = self._identity(args)
         head = self._head(identity)
         if head is not None:
@@ -527,6 +553,7 @@ class LanCapture:
     def upload(self, args):
         identity = self._identity(args)
         digest = args['sha256']
+        format = source_format(args.get('source_format', CODEX_FORMAT))
         if not re.fullmatch(r'[0-9a-f]{64}', digest):
             raise LanError('invalid_transcript_hash')
         key = (*identity, digest)
@@ -541,7 +568,8 @@ class LanCapture:
         row = self.conn.execute('SELECT * FROM lan_session_uploads WHERE device_id=? AND session_id=? AND sha256=?', key).fetchone()
         head = self._head(identity)
         if row is not None:
-            if row['total_bytes'] != total or row['declared_project'] != args['project']:
+            if (row['total_bytes'] != total or row['declared_project'] != args['project']
+                    or row['source_format'] != format):
                 raise LanError('upload_metadata_conflict')
             if order is not None and row['source_order'] is not None and row['source_order'] != order:
                 # One version keeps its captured order while it is merely retried.
@@ -599,8 +627,8 @@ class LanCapture:
         if complete:
             if hashlib.sha256(raw).hexdigest() != digest:
                 raise LanError('transcript_hash_mismatch')
-            parsed, dialogue_messages = parse_transcript(raw, identity[1])
-            details = workspace_details(parsed)
+            parsed, dialogue_messages = parse_transcript(raw, identity[1], format)
+            details = workspace_details(parsed, format)
             reason = details['attribution_reason'] or reason
             if reason and not archive_id:
                 # An unverifiable or system source is never attributed by default.
@@ -655,10 +683,10 @@ class LanCapture:
             payload = json.dumps({'conversation': clean_messages(dialogue_messages), 'source': 'client_reported', 'device_id': identity[0],
                                   'session_id': identity[1], 'source_sha256': digest,
                                   'parent_session_id': details.get('parent_session_id', ''),
-                                  'transcript': raw.decode('utf-8')}, ensure_ascii=False)
+                                  'source_format': format, 'transcript': raw.decode('utf-8')}, ensure_ascii=False)
             # Versions are immutable: old evidence references retain their payload.
             external = hashlib.sha256(json.dumps(identity).encode()).hexdigest() + ':' + digest
-            archive = self.archiver.archive_session(project, 'codex', external, payload)
+            archive = self.archiver.archive_session(project, adapter_name(format), external, payload)
             if archive is None:
                 raise LanError('archive_unavailable')
             archive_id = archive.id
@@ -722,8 +750,8 @@ class LanCapture:
                                       (digest, keep, *identity))
             self.conn.execute('''INSERT INTO lan_session_uploads
                 (device_id,session_id,sha256,project,declared_project,attribution_reason,received_at,
-                 total_bytes,received_bytes,archive_id,extraction_status,source_order,backfill_status)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id,session_id,sha256) DO UPDATE SET
+                 total_bytes,received_bytes,archive_id,extraction_status,source_order,backfill_status,source_format)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id,session_id,sha256) DO UPDATE SET
                 received_bytes=excluded.received_bytes,archive_id=excluded.archive_id,
                 project=excluded.project,attribution_reason=excluded.attribution_reason,
                 source_order=CASE WHEN excluded.source_order IS NULL
@@ -732,7 +760,7 @@ class LanCapture:
                 received_at=CASE WHEN lan_session_uploads.archive_id IS NULL THEN excluded.received_at ELSE lan_session_uploads.received_at END,
                 extraction_status=excluded.extraction_status''',
                 (*key, project, args['project'], reason, time.time(), total, received, archive_id,
-                 extraction, order, backfill))
+                 extraction, order, backfill, format))
             if advanced:
                 self.conn.execute("""UPDATE lan_session_uploads SET extraction_status='superseded'
                     WHERE device_id=? AND session_id=? AND sha256<>? AND extraction_status IN ('pending','processing')""",

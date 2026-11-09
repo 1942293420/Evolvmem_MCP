@@ -17,15 +17,16 @@ class _ResponseDecodeError(ValueError):
     """Only a returned payload failed JSON decoding; provider errors stay intact."""
 
 
-def _call_provider(prompt, provider=None):
+def _call_provider(prompt, provider=None, *, task_history_grant=None):
     from evolvmem.product_policy import require_ai_processing
-    require_ai_processing()
+    require_ai_processing(task_history_grant=task_history_grant)
     if provider is None:
         from evolvmem.auto_organization import _load_llm
         config, call = _load_llm()
-        provider = lambda text: call(text, config, deadline=time.monotonic() + 90)
+        provider = lambda text: call(text, config, deadline=time.monotonic() + 90,
+                                     **({"task_history_grant": task_history_grant} if task_history_grant is not None else {}))
     response = provider(prompt)
-    require_ai_processing()
+    require_ai_processing(task_history_grant=task_history_grant)
     if not isinstance(response, (dict, str)):
         raise _ResponseDecodeError("task_invalid_response")
     if isinstance(response, str) and response.strip().startswith("`" * 3) and "\n" not in response.strip():

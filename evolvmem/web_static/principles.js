@@ -11,7 +11,14 @@
   <div class="diagram-node"><strong>4 · 历史 / 经验</strong><small>列表、详情和图片均检查权限；仅本人可管理</small></div>
 </div>
 <div class="principle-grid">
-  <section class="panel"><h2>历史</h2><ol><li><b>项目摘要：</b>项目用途、环境与必要信息。</li><li><b>简短历史：</b>按时间查看做过的事项。</li><li><b>事项详情：</b>用户的问题、AI 的回答、解决方法和结果。</li></ol><p class="muted">未归属会话先按块保存。缺失原文会明确显示；图片只有能读取时才展示。删除进入回收站，原始资料保留。</p></section>
+  <section class="panel"><h2>历史</h2><ol><li><b>项目摘要：</b>项目用途、环境与必要信息。</li><li><b>简短历史：</b>按时间查看做过的事项。</li><li><b>事项详情：</b>用户的问题、AI 的回答、解决方法和结果。</li></ol><p class="muted">未归属会话先按块保存。缺失原文会明确显示；图片只有能读取时才展示。删除进入回收站，原始资料保留。</p>
+    <h3>任务续接核验</h3><p>切换会话前，保存 DSH 完整原生会话，并核对项目摘要是否包含该来源。需要整理时，由本人明确授权仅处理这份原文和指定项目；核验只读取现有证据，缺项时显示原因。全局后台暂停与历史积压不受影响。</p>
+    <div class="diagram-flow" role="img" aria-label="确认当前原文完整归档，核对已完成的项目历史来源，再确认当前摘要包含该来源；缺项或暂停时停止续接">
+      <div class="diagram-node"><strong>当前原文</strong><small>完整原生归档与所属项目</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>项目历史</strong><small>仅本份原文获授权，整理已完成</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>摘要核验</strong><small>包含该来源后才可续接</small></div>
+    </div>
+  </section>
   <section class="panel"><h2>经验</h2><ol><li><b>前端经验：</b>界面、交互与页面开发中的做法。</li><li><b>业务经验：</b>业务规则、流程与计算中的做法。</li><li><b>系统环境经验：</b>部署、运行环境与服务配置中的做法。</li></ol><p>每条填写<b>问题、解决办法、可复用经验</b>。你可以在网页新增，也可以在会话中明确要求助手记住一条，再到网页查看和编辑。</p><p class="muted">会话中的明确指令由助手判断后逐条写入。旧提取稿保留，自动提取保持停止。</p>
     <div class="diagram-flow" role="img" aria-label="通过网页或当前会话的明确记忆指令，选择前端经验、业务经验或系统环境经验，保存问题、解决办法和可复用经验。本人可管理，其他用户按授权阅读">
       <div class="diagram-node"><strong>选择分类</strong><small>前端 / 业务 / 系统环境</small></div><span class="diagram-arrow" aria-hidden="true">→</span>

@@ -36,10 +36,12 @@ def validate_occurred_at(value):
         raise ValueError("invalid_occurred_at") from None
 
 
-def assert_unit_current(service, task, unit):
+def assert_unit_current(service, task, unit, *, task_history_grant=None):
     """Compare both revisions and fields, including manual edits during a call."""
     from evolvmem.product_policy import require_ai_processing
-    require_ai_processing()
+    if task_history_grant is not None:
+        task_history_grant.assert_scope(service, task, unit)
+    require_ai_processing(task_history_grant=task_history_grant)
     conn = service.store._connection()
     current_task = conn.execute("SELECT * FROM organization_tasks WHERE id=?", (task["id"],)).fetchone()
     current = conn.execute("SELECT * FROM organization_units WHERE task_id=? AND digest=?",
@@ -92,8 +94,10 @@ def cached_payload(service, task, unit, pipeline):
     return json.loads(row["payload"]) if row and row["payload"] is not None else None
 
 
-def extraction_payload(service, task, unit, pipeline, extract, validate=lambda p: None, *, guarded_extract=None):
-    assert_unit_current(service, task, unit)
+def extraction_payload(service, task, unit, pipeline, extract, validate=lambda p: None, *, guarded_extract=None, task_history_grant=None):
+    if task_history_grant is not None:
+        task_history_grant.assert_scope(service, task, unit, pipeline)
+    assert_unit_current(service, task, unit, task_history_grant=task_history_grant)
     key = extraction_key(task, unit, pipeline)
     conn = service.store._connection()
     token = uuid.uuid4().hex
@@ -114,7 +118,7 @@ def extraction_payload(service, task, unit, pipeline, extract, validate=lambda p
             (key, pipeline, task["source_key"], task["source_revision"], unit["digest"], token, now + 300, now, now))
     def check_current():
         """Optional bounded extractors may fence every model attempt."""
-        assert_unit_current(service, task, unit)
+        assert_unit_current(service, task, unit, task_history_grant=task_history_grant)
         lease = conn.execute(
             "SELECT lease_token,lease_until FROM extraction_receipts WHERE input_key=?", (key,)).fetchone()
         if lease is None or lease["lease_token"] != token or lease["lease_until"] <= time.time():
@@ -127,7 +131,7 @@ def extraction_payload(service, task, unit, pipeline, extract, validate=lambda p
             if guarded_extract is not None:
                 check_current()
             else:
-                assert_unit_current(service, task, unit)
+                assert_unit_current(service, task, unit, task_history_grant=task_history_grant)
             updated = conn.execute("UPDATE extraction_receipts SET payload=?,lease_token='',lease_until=0,updated_at=? "
                                    "WHERE input_key=? AND lease_token=?",
                                    (encoded, time.time(), key, token))

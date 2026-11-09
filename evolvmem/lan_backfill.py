@@ -14,6 +14,10 @@ from evolvmem.lan_context import remote_context, validate_snapshot
 
 
 def _import(capture, row):
+    if dict(row).get('source_format') == 'dsh-session-jsonl-v1':
+        # Native DSH task windows save explicit continuity checkpoints. Never
+        # feed their events through the Codex-specific recovery projection.
+        return dict(code='skipped', reason='native_continuity_managed_by_client')
     payload = capture.archiver.read_payload(row['archive_id'])
     if payload is None:
         return dict(code='candidate', reason='archive_payload_unavailable')

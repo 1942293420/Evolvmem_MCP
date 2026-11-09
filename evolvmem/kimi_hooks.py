@@ -357,9 +357,10 @@ def _call_llm(
     llm_config: LLMConfig,
     *,
     deadline: float | None = None,
+    task_history_grant=None,
 ) -> str:
     from evolvmem.product_policy import require_ai_processing
-    require_ai_processing()
+    require_ai_processing(task_history_grant=task_history_grant)
     request_body = {
         "model": llm_config.model,
         "messages": [{"role": "user", "content": prompt}],
@@ -426,7 +427,7 @@ def _call_llm(
                 raise ValueError()
         except (ValueError, KeyError, IndexError, TypeError):
             raise RetryableExtractionError("provider returned no usable response") from None
-    require_ai_processing()  # Discard a response if the policy changed in flight.
+    require_ai_processing(task_history_grant=task_history_grant)  # Recheck the current policy/source.
     return content
 
 
@@ -453,11 +454,13 @@ def _http_error_body(
 
 
 def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
-                         deadline: float | None = None) -> str:
+                         deadline: float | None = None, *, task_history_grant=None) -> str:
     """Try the primary briefly, then the backup within the original budget."""
     from evolvmem.product_policy import require_ai_processing
-    require_ai_processing()
+    require_ai_processing(task_history_grant=task_history_grant)
     def tracked(config, *, fallback=False, **kwargs):
+        if task_history_grant is not None:
+            kwargs["task_history_grant"] = task_history_grant
         call_id, started = uuid.uuid4().hex, time.monotonic()
         _report_provider(config, fallback=fallback, state='running', call_id=call_id)
         try:
@@ -474,6 +477,10 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
                          elapsed_ms=max(0, round((time.monotonic()-started)*1000)))
         return response
 
+    # An explicit source grant authorizes one provider attempt. A lost response
+    # must not turn into another model call or a different provider.
+    if task_history_grant is not None:
+        return tracked(llm_config, deadline=deadline, max_attempts=1)
     backup = llm_config.fallback
     if backup is None:
         return tracked(llm_config, deadline=deadline)
@@ -500,7 +507,7 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
 
 def _call_single_provider_with_retry(prompt: str, llm_config: LLMConfig,
                                     deadline: float | None = None,
-                                    *, max_attempts: int = 3) -> str:
+                                    *, max_attempts: int = 3, task_history_grant=None) -> str:
     """Retry one provider without resetting the caller's remaining budget."""
     if deadline is None:
         deadline = time.monotonic() + _EXTRACTION_BUDGET_S
@@ -508,7 +515,8 @@ def _call_single_provider_with_retry(prompt: str, llm_config: LLMConfig,
         if time.monotonic() >= deadline:
             raise RetryableExtractionError("extraction retry budget exhausted")
         try:
-            content = _call_llm(prompt, llm_config, deadline=deadline)
+            content = _call_llm(prompt, llm_config, deadline=deadline,
+                                **({"task_history_grant": task_history_grant} if task_history_grant is not None else {}))
             if time.monotonic() >= deadline:
                 raise RetryableExtractionError(
                     "extraction retry budget exhausted"

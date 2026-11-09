@@ -32,7 +32,7 @@ class ProjectArchivePipeline:
     def __init__(self, service):
         self.service = service
 
-    def _extract(self, unit, provider):
+    def _extract(self, unit, provider, task_history_grant=None):
         prompt = (
             "你是项目历史整理器。只记录项目实际发生的重大改动、功能更新、已解决问题和里程碑。"
             "不要提取开发经验，不判断项目归属。没有项目历史价值时返回空列表。"
@@ -40,9 +40,9 @@ class ProjectArchivePipeline:
             "\"title\":\"事件标题\",\"content\":\"改动、原因、影响和结果\","
             "\"occurred_at\":\"原文明确时间或null\"}]}。\n原始项目记录：\n" + unit["text"]
         )
-        return _call_provider(prompt, provider)
+        return _call_provider(prompt, provider, task_history_grant=task_history_grant)
 
-    def process_task(self, task, provider=None) -> dict:
+    def process_task(self, task, provider=None, *, task_history_grant=None) -> dict:
         archives = ProjectArchiveStore(self.service.store)
         result = {"event_ids": [], "summary_revision": 0}
         touched = set()
@@ -59,12 +59,13 @@ class ProjectArchivePipeline:
                         raise ValueError("invalid_project_events")
                     validate_occurred_at(event.get("occurred_at"))
             payload = extraction_payload(self.service, task, unit, "project-history:v2",
-                                         lambda: self._extract(unit, provider), validate)
+                                         lambda: self._extract(unit, provider, task_history_grant), validate,
+                                         task_history_grant=task_history_grant)
             events = payload.get("events") or []
             if not isinstance(events, list):
                 raise ValueError("invalid_project_events")
             with self.service.store.transaction():
-                assert_unit_current(self.service, task, unit)
+                assert_unit_current(self.service, task, unit, task_history_grant=task_history_grant)
                 for project in projects:
                     for event in events:
                         draft = ProjectEventDraft(

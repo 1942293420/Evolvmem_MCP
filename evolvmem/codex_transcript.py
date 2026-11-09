@@ -16,6 +16,13 @@ def payload_is_subagent(payload) -> bool:
     """Verify the source's own leading metadata, never quoted dialogue/lineage."""
     if not isinstance(payload, dict) or not isinstance(payload.get('transcript'), str):
         return False
+    if payload.get('source_format') == 'dsh-session-jsonl-v1':
+        from evolvmem.dsh_transcript import parse_transcript as parse_dsh, workspace_details as dsh_details
+        try:
+            rows, _ = parse_dsh(payload['transcript'].encode(), payload.get('session_id', ''))
+            return dsh_details(rows)['subagent']
+        except LanError:
+            return True  # Malformed declared DSH is never admitted as ordinary dialogue.
     for raw in payload['transcript'].split('\n', 6)[:6]:
         try:
             row = json.loads(raw)

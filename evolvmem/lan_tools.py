@@ -196,7 +196,7 @@ class LanTools:
         if not load_policy().ai_processing_enabled:
             return 0
         from evolvmem import kimi_hooks
-        from evolvmem.codex_transcript import parse_transcript
+        from evolvmem.transcript_formats import CODEX_FORMAT, adapter_name, parse_transcript
         from evolvmem.session_extraction import prepare_extraction
         with self.lock:
             selected = next(((user, capture, row) for user, capture in self.captures.items()
@@ -216,11 +216,12 @@ class LanTools:
             if credentials is None:
                 raise LanError('extraction_provider_unavailable')
             transcript = json.loads(payload)
-            parsed_rows, messages = parse_transcript(transcript['transcript'].encode('utf-8'), row['session_id'])
+            format = transcript.get('source_format', CODEX_FORMAT)
+            parsed_rows, messages = parse_transcript(transcript['transcript'].encode('utf-8'), row['session_id'], format)
             # Keep only extractor dialogue across model calls and persistence.
             # The complete encrypted source remains in the archive for retry.
             del parsed_rows, transcript, payload
-            source = 'codex:' + row['device_id'] + ':' + row['session_id']
+            source = adapter_name(format) + ':' + row['device_id'] + ':' + row['session_id']
             prepared = prepare_extraction(capture.server.config, row['project'], source, messages, credentials, **options)
             with self.lock:
                 # A newer snapshot may have replaced this one while the model worked.
@@ -318,9 +319,13 @@ class LanTools:
                             'inputSchema': {'type': 'object', 'properties': props, 'required': required, 'additionalProperties': False}, 'annotations': {}}
         result['continuity_bind'] = {'name': 'continuity_bind', 'description': 'Bind this device to the selected task workspace, preserving its existing focus. Inspect target_focused and focused_workstream_id; when needed use the returned continuity_checkpoint switch_focus CAS step before resuming the selected task.', 'annotations': {}, 'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {k: {'type': 'string'} for k in ('workspace_path', 'device_id', 'project', 'workstream_id', 'request_id')} | {'repo_snapshot': {'type': 'object'}}, 'required': ['workspace_path', 'device_id', 'project', 'workstream_id', 'request_id', 'repo_snapshot']}}
         result.update(capture_specs())
+        if not owner or user != 'jiangli':
+            result.pop('session_archive_process_history', None)
         if owner:
             result.pop('continuity_bind', None)
             for spec in result.values():
+                if spec['name'] == 'session_archive_process_history':
+                    continue
                 schema = spec['inputSchema']
                 schema['properties']['request_id'] = {'type': 'string', 'maxLength': 128}
                 schema['required'] = [k for k in schema.get('required', []) if k != 'request_id']
@@ -433,7 +438,7 @@ class LanTools:
         spec = specs[name]
         mutating = not spec['annotations'].get('readOnlyHint', False)
         if mutating:
-            if owner and 'request_id' not in args:
+            if owner and name != 'session_archive_process_history' and 'request_id' not in args:
                 args['request_id'] = uuid.uuid4().hex
             validate_request_id(args.get('request_id'))
             if self.runtime.settings.authenticate(args['request_id']) is not None:
@@ -466,6 +471,9 @@ class LanTools:
             if space != 'personal':
                 raise LanError('public_write_forbidden')
             capture = self.captures[user]
+            if name == 'session_archive_process_history':
+                from evolvmem.task_history_processing import process_history
+                return process_history(capture, args, request_id, authenticated_user=user, owner=owner)
             action = {'session_archive_upload': capture.upload, 'session_archive_status': capture.status,
                       'session_archive_retry': capture.retry, 'session_archive_assign': capture.assign}[name]
             if name in ('session_archive_retry', 'session_archive_assign'):

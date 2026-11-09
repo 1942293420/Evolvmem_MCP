@@ -50,8 +50,15 @@ def load_policy() -> ProductPolicy:
     return ProductPolicy(False, False, False, False, 'policy_unavailable')
 
 
-def require_ai_processing() -> None:
-    if not load_policy().ai_processing_enabled:
+def require_ai_processing(*, task_history_grant=None) -> None:
+    policy = load_policy()
+    if task_history_grant is not None:
+        from evolvmem.task_history_processing import TaskHistoryGrant
+        if not policy.valid or type(task_history_grant) is not TaskHistoryGrant:
+            raise AIProcessingDisabled()
+        task_history_grant.assert_current()
+        return
+    if not policy.ai_processing_enabled:
         raise AIProcessingDisabled()
 
 
