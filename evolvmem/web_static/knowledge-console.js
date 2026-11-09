@@ -29,6 +29,7 @@
     const me=state.me;
     $('actor-name').textContent=me.current_user.display_name;
     $('admin-nav').hidden=!me.current_user.is_admin;
+    $('skills-nav').hidden=!me.current_user.is_admin;
     $('admin-nav').href='/?#users';
     $('library-owner').textContent=state.owner?`当前查看：${state.owner.display_name}的知识库`:'当前查看：知识库不可用';
     $('library-access').textContent=inspect?'管理员只读查看':state.owner?.id===me.current_user.id?'我的知识库':'已授权 · 只读';
@@ -47,7 +48,7 @@
   async function route(){
     if(!state.me)return;
     let parts=location.hash.replace(/^#\/?/,'').split('/'),tab=parts[0]||'libraries';
-    if(!['history','experiences','libraries','users','principles'].includes(tab)){history.replaceState(null,'',`${location.pathname}${location.search}#libraries`);tab='libraries';}
+    if(!['history','experiences','libraries','skills','users','principles'].includes(tab)){history.replaceState(null,'',`${location.pathname}${location.search}#libraries`);tab='libraries';}
     const ticket=++state.ticket;
     $('library-context').hidden=tab!=='history'&&tab!=='experiences';
     document.querySelectorAll('[data-nav]').forEach(a=>{if(a.dataset.nav===tab)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
@@ -64,9 +65,86 @@
       if(tab==='libraries')await libraries(ticket);
       else if(tab==='users')await users(parts[1]==='grants'?'grants':'accounts',ticket);
       else if(tab==='experiences')await experiences(parts[1],ticket);
+      else if(tab==='skills'){await skills(ticket);}
       else if(tab==='principles'){$('console-view').innerHTML=window.EvolvMemPrinciples.render(state.me.policy||{});}
     }catch(e){if(ticket===state.ticket)$('console-view').innerHTML=heading('页面暂时无法读取','资料仍保留在原来的知识库中。')+`<p class="empty error" role="alert">${esc(e.message)}</p>`;}
   }
+  async function skills(ticket) {
+    const base = ROOT + '/skills';
+    const options = {normal:true};
+    const sources = [['','全部来源'],['official','官方'],['windows','Windows']];
+    const formatSync = value => value ? new Date(value).toLocaleString('zh-CN') : '尚未同步';
+    const initial = await api(base, undefined, options);
+    if (ticket !== state.ticket) return;
+
+    $('console-view').innerHTML = heading('Skill 库','查找官方和 Windows 上已同步的 Skill。') +
+      '<form id="skill-filters" class="filters experience-filters">' +
+      '<label class="grow">查找 Skill<input name="q" type="search" maxlength="160" placeholder="搜索名称、用途或来源"></label>' +
+      '<label>来源<select name="source">' + sources.map(([key,label]) =>
+        '<option value="' + key + '">' + label + '</option>').join('') +
+      '</select></label><button type="submit" class="primary">查找</button></form>' +
+      '<p id="skill-sync" class="muted"></p><p id="skill-count" role="status"></p>' +
+      '<div class="experience-layout"><div class="experience-list" id="skill-results" aria-label="Skill 列表"></div>' +
+      '<section class="panel skill-detail" id="skill-detail" aria-label="Skill 详情"><p class="muted">从列表选择一条 Skill。</p></section></div>';
+    $('skill-sync').textContent = '官方同步 ' + formatSync(initial.sync.official) +
+      ' · Windows 同步 ' + formatSync(initial.sync.windows);
+    let listRequest = 0, detailRequest = 0;
+
+    async function showDetail(id, file) {
+      const request = ++detailRequest;
+      const params = new URLSearchParams({id});
+      if (file) params.set('file',file);
+      const box = $('skill-detail');
+      box.setAttribute('aria-busy','true');
+      try {
+        const data = await api(base + '?' + params, undefined, options);
+        if (ticket !== state.ticket || request !== detailRequest) return;
+        const skill = data.skill;
+        box.innerHTML = '<h2>' + esc(skill.name) + '</h2><p class="muted skill-version">' +
+          esc(skill.origin) + ' · ' + esc(skill.version) + '</p>' +
+          (skill.url ? '<p><a target="_blank" rel="noopener noreferrer" href="' +
+            esc(skill.url) + '">查看官方版本</a></p>' : '') +
+          '<label>文件 <select id="skill-file">' + data.files.map(path =>
+            '<option value="' + esc(path) + '"' + (path === data.file ? ' selected' : '') + '>' +
+            esc(path) + '</option>').join('') + '</select></label>' +
+          (data.base64 ? '<p><a class="button" download="' + esc(data.file.split('/').pop()) +
+            '" href="data:application/octet-stream;base64,' + esc(data.base64) + '">下载文件</a></p>'
+            : '<pre class="skill-text">' + esc(data.text) + '</pre>');
+        $('skill-file').onchange = event => showDetail(id, event.target.value);
+        document.querySelectorAll('[data-skill]').forEach(button =>
+          button.setAttribute('aria-current', String(button.dataset.skill === id)));
+      } catch (error) {
+        if (ticket === state.ticket && request === detailRequest) box.textContent = error.message;
+      } finally {
+        if (request === detailRequest) box.removeAttribute('aria-busy');
+      }
+    }
+
+    function showRows(data) {
+      $('skill-count').textContent = data.rows.length + ' 条 Skill';
+      $('skill-results').innerHTML = data.rows.map(skill =>
+        '<button class="experience-entry" type="button" data-skill="' + esc(skill.id) + '">' +
+        '<span class="experience-card-meta">' + esc(skill.origin) + '</span><strong>' + esc(skill.name) +
+        '</strong><span class="experience-card-method">' + esc(skill.description) + '</span></button>'
+      ).join('') || '<div class="empty">没有符合条件的 Skill。</div>';
+      document.querySelectorAll('[data-skill]').forEach(button =>
+        button.onclick = () => showDetail(button.dataset.skill));
+    }
+
+    showRows(initial);
+    $('skill-filters').onsubmit = async event => {
+      event.preventDefault();
+      const request = ++listRequest;
+      const params = new URLSearchParams(new FormData(event.currentTarget));
+      try {
+        const data = await api(base + '?' + params, undefined, options);
+        if (ticket === state.ticket && request === listRequest) showRows(data);
+      } catch (error) {
+        if (ticket === state.ticket && request === listRequest) notice(error.message,true);
+      }
+    };
+  }
+
   async function libraries(ticket){
     const admin=state.me.current_user.is_admin;
     // All-user inspection is explicit, never grants ordinary cross-user access.

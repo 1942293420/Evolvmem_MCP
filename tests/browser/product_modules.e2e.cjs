@@ -18,7 +18,7 @@ const output=process.env.EVOLVMEM_SCREENSHOTS||'/tmp/evolvmem-console-screenshot
   const me=(await json(root+'/me')).data,owner=me.current_user.id,member='kane';
   assert.equal(await page.evaluate(()=>isSecureContext),false,'must test ordinary HTTP');
   assert.equal(await page.evaluate(()=>typeof crypto.randomUUID),'undefined');
-  assert.equal(await page.locator('.main-nav a').count(),5);assert.match(await page.locator('.main-nav').innerText(),/历史.*经验.*用户知识库.*用户与权限.*工作原理/s);
+  assert.equal(await page.locator('.main-nav a').count(),6);assert.match(await page.locator('.main-nav').innerText(),/历史.*经验.*用户知识库.*Skill 库.*用户与权限.*工作原理/s);
   assert.equal(await page.locator('script[src*="extraction"],script[src*="galaxy"],script[src*="organization"]').count(),0);
   for(const old of ['/api/projects','/api/memories','/api/knowledge/organization','/api/history-candidate/projects'])assert.equal((await json(old)).status,410,old);
   checks.push('ordinary HTTP, five new entries, legacy scripts and APIs closed');

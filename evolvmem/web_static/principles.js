@@ -26,6 +26,13 @@
     </div>
   </section>
   <section class="panel"><h2>用户与交叉访问</h2><p>登录从登录时起固定 8 小时；主动退出或停用账号会立即撤销。重新启用后需再次登录。</p><p>A → B 和 B → A 是两个设置；历史与经验也分别授权。默认只可读取自己的知识。</p><p class="muted">普通浏览包括管理员也遵循授权。“用户知识库”是选择查看对象的统一入口。自己的资料可正常管理；查看其他用户时为只读，不能替他人新增、编辑或删除经验。停用用户后，后续读取会被拒绝。</p></section>
+  <section class="panel"><h2>Skill 库</h2><p>管理员可以按来源查找 Skill，并阅读同步时保存的文件。</p>
+    <div class="diagram-flow" role="img" aria-label="官方来源定时更新 EvolvMem，Windows Skill 单向同步到 EvolvMem 和集成平台">
+      <div class="diagram-node"><strong>官方 / Windows</strong><small>分别定时读取来源</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>EvolvMem Skill 库</strong><small>按来源保留同步版本</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>集成平台</strong><small>只接收 Windows 版本</small></div>
+    </div>
+  </section>
   <section class="panel"><h2>当前运行范围</h2><p>旧项目库与旧资料整理入口${policy.legacy_web_enabled === false ? '已关闭' : '状态以当前策略为准'}；AI 自动整理${policy.ai_processing_enabled === false ? '已暂停' : '状态以当前策略为准'}。</p><p class="muted">经验采用手动维护，自动提取保持停止。原文上传、项目归档与任务续接保留；这与经验提取是两条独立流程。原数据库和旧提取稿未删除。历史与经验页显示当前查看对象；用户管理和工作原理属于全局页面，不显示个人库归属。新建网页账号不代表已经创建 CLI 凭证或接入历史数据。</p></section>
 </div>`;
     }

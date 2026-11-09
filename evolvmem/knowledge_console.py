@@ -510,6 +510,13 @@ class ConsoleService:
                     return 200,JSON,{'ok':True,'current_user':{k:actor[k] for k in ('id','display_name')} | {'is_admin':bool(actor['is_admin'])},
                         'csrf_token':session.get('csrf',''),'libraries':self._libraries(conn,actor,inspect=inspect),
                         'policy':{'cross_user_write':False,'new_accounts_lan_provisioned':False,'default_cross_user_read':False}}
+                if path == '/skills' and method == 'GET':
+                    self._admin(actor)
+                    from evolvmem.skill_library import catalog_root, read_catalog
+                    try:
+                        return 200, JSON, read_catalog(catalog_root(self.owner_data_dir), body)
+                    except LookupError:
+                        raise ConsoleError('skill_not_found', 404) from None
                 if path=='/users' and method=='GET':
                     self._admin(actor)
                     users=[]
