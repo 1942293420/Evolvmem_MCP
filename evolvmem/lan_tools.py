@@ -142,6 +142,10 @@ class LanTools:
                             capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='failed',error='extraction_interrupted' WHERE extraction_status='processing'")
                         else:
                             capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='pending',error='' WHERE extraction_status='processing'")
+            # This owner-only table must exist before schema-bound health is
+            # prepared. No request may introduce DDL behind that baseline.
+            from evolvmem.task_history_processing import prepare_schema as prepare_task_history_schema
+            prepare_task_history_schema(self.captures['jiangli'])
             from evolvmem.health_generation import prepare as prepare_health_generation
             for user, space in (('jiangli', 'personal'), ('kane', 'personal'), ('jiangli', 'public')):
                 prepare_health_generation(runtime.server_for(user, space).context_service.store)

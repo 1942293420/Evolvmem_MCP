@@ -22,6 +22,12 @@ SCHEMA = f"""CREATE TABLE IF NOT EXISTS {TABLE}(
     task_id INTEGER, state TEXT NOT NULL, result TEXT, created_at REAL NOT NULL)"""
 
 
+def prepare_schema(capture):
+    """Owner LAN startup only, before health generations and physical baselines."""
+    with capture.store.transaction():
+        capture.conn.execute(SCHEMA)
+
+
 def archive_revision(conn, archive_id):
     """Read the existing organization revision without enrolling or decrypting."""
     archive = conn.execute('SELECT payload_sha256,state FROM session_archives WHERE id=?', (archive_id,)).fetchone()
@@ -120,7 +126,8 @@ def process_history(capture, args, request_id, *, authenticated_user, owner):
     service, conn = capture.server.context_service, capture.conn
     identity_hash = hashlib.sha256(json.dumps(args, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     with capture.store.transaction():
-        conn.execute(SCHEMA)
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (TABLE,)).fetchone():
+            raise LanError('task_history_schema_unprepared')
         row = conn.execute(f'SELECT * FROM {TABLE} WHERE request_id=?', (request_id,)).fetchone()
         if row and row['identity_hash'] != identity_hash:
             raise LanError('request_id_conflict')
