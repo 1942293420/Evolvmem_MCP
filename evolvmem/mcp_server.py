@@ -31,10 +31,9 @@ Project-board tools (same adapters/modes; optional private configuration):
   project_board_sync    — manually deliver committed checkpoint progress
   project_board_status  — read local delivery state without network activity
 
-The exposed tool set comes from one registry (evolvmem.mcp_contract):
-tools/list and tools/call share it, so a hidden tool cannot still be
-called. MCP dictionaries are parsed only at this boundary; the Context
-side speaks the typed ContextService API.
+Core tools/list and tools/call share evolvmem.mcp_contract. The console's
+independent manual note tools share a fixed contract with the LAN adapter.
+MCP dictionaries are parsed at this boundary; Context uses typed requests.
 """
 
 import json
@@ -45,6 +44,8 @@ import os
 import threading
 import time
 import traceback
+from copy import deepcopy
+from evolvmem import manual_experience_mcp
 from evolvmem.config import Config
 from evolvmem.context_lifecycle import ContextLifecycleError
 from evolvmem.context_models import (
@@ -73,6 +74,7 @@ from evolvmem.continuity_models import (
 )
 from evolvmem.continuity_service import ContinuityService
 from evolvmem.project_board_sync import ProjectBoardSync
+from evolvmem.product_policy import load_policy
 from evolvmem.cutover_checks import compare_shadow
 from evolvmem.legacy_models import (
     LegacyAddRequest,
@@ -320,6 +322,12 @@ class MemoryMCPServer:
 
     def handle_tool_call(self, tool_name: str, args: dict) -> dict:
         """Route tool calls."""
+        if tool_name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
+            try:
+                source = self._manual_experience_source()
+                return manual_experience_mcp.call(tool_name, args, source)
+            except manual_experience_mcp.ManualMcpError as exc:
+                return {'error': str(exc)}
         handler = self._tool_handlers().get(tool_name)
         if handler is None:
             return {"error": f"Unknown tool: {tool_name}"}
@@ -328,6 +336,14 @@ class MemoryMCPServer:
             if gate_error is not None:
                 return {"error": gate_error}
         return handler(args)
+
+    def _manual_experience_source(self):
+        policy = load_policy()
+        if not policy.valid or not policy.console_enabled:
+            raise manual_experience_mcp.ManualMcpError('manual_experience_console_unavailable')
+        return manual_experience_mcp.registered_source(
+            self.config.data_dir, owner_data_dir=self.config.data_dir,
+            db_path=self.config.db_path)
 
     def _tool_handlers(self):
         return {
@@ -1966,47 +1982,50 @@ class MemoryMCPServer:
 
         elif method == "tools/list":
             adapter, mode, health = self._contract_view()
+            tools = [
+                {
+                    "name": spec.name,
+                    "description": spec.description,
+                    "inputSchema": spec.input_schema,
+                    "annotations": spec.annotations,
+                }
+                for spec in tool_specs(adapter=adapter, mode=mode, health=health)
+            ]
+            try:
+                self._manual_experience_source()
+            except manual_experience_mcp.ManualMcpError:
+                pass
+            else:
+                tools.extend(deepcopy(list(manual_experience_mcp.MANUAL_EXPERIENCE_SPECS.values())))
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {
-                    "tools": [
-                        {
-                            "name": spec.name,
-                            "description": spec.description,
-                            "inputSchema": spec.input_schema,
-                            "annotations": spec.annotations,
-                        }
-                        for spec in tool_specs(
-                            adapter=adapter, mode=mode, health=health
-                        )
-                    ]
-                },
+                "result": {"tools": tools},
             }
 
         elif method == "tools/call":
             params = request.get("params", {})
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
-            adapter, mode, health = self._contract_view()
-            exposed = {
-                spec.name
-                for spec in tool_specs(adapter=adapter, mode=mode, health=health)
-            }
-            if tool_name not in exposed:
-                # 与 tools/list 同一注册表：隐藏工具不能被调用；
-                # 未知工具也无需等待初始化门闩
-                result = {"error": f"Unknown tool: {tool_name}"}
-            elif tool_name.startswith(("context_", "continuity_", "project_board_")):
-                # context_*/continuity_* 不等重初始化门闩：服务未就绪即返回
-                # 各自的稳定错误（continuity_not_ready / context_* gate）
+            if isinstance(tool_name, str) and tool_name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
                 result = self.handle_tool_call(tool_name, tool_args)
             else:
-                gate_error = self._init_gate_error()
-                if gate_error is not None:
-                    result = {"error": gate_error}
-                else:
+                adapter, mode, health = self._contract_view()
+                exposed = {spec.name for spec in tool_specs(adapter=adapter, mode=mode, health=health)}
+                if tool_name not in exposed:
+                    # 与 tools/list 同一注册表：隐藏工具不能被调用；
+                    # 未知工具也无需等待初始化门闩
+                    result = {"error": f"Unknown tool: {tool_name}"}
+                elif tool_name.startswith(("context_", "continuity_", "project_board_")):
+                    # context_*/continuity_* 不等重初始化门闩：服务未就绪即返回
+                    # 各自的稳定错误（continuity_not_ready / context_* gate）
                     result = self.handle_tool_call(tool_name, tool_args)
+                else:
+                    gate_error = self._init_gate_error()
+                    if gate_error is not None:
+                        result = {"error": gate_error}
+                    else:
+                        result = self.handle_tool_call(tool_name, tool_args)
             response_result = {
                 "content": [
                     {

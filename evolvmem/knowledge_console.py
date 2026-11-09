@@ -207,6 +207,19 @@ class ConsoleService:
         except (ValueError,sqlite3.Error,OSError):
             return False
 
+    def manual_experience_source(self, user_id):
+        """Resolve the registered library for an already authenticated LAN identity."""
+        user_id = _slug(user_id)
+        with self._db() as conn:
+            row = conn.execute('''SELECT u.enabled, l.user_id, l.data_dir
+                FROM console_users AS u LEFT JOIN console_libraries AS l ON l.user_id=u.id
+                WHERE u.id=?''', (user_id,)).fetchone()
+            if not row or not row['enabled']:
+                raise ConsoleError('account_disabled', 403)
+            if not row['data_dir']:
+                raise ConsoleError('experience_not_connected', 404)
+            return {'user_id': row['user_id'], 'data_dir': row['data_dir']}
+
     def login_allowed_in_transaction(self, conn, open_id):
         """Check the same metadata transaction that will issue a session."""
         open_id = _open_id(open_id)

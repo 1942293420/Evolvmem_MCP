@@ -17,6 +17,7 @@ from evolvmem.lan_sharing import LanError, LanSharing, validate_request_id
 from evolvmem.mcp_contract import tool_specs
 from evolvmem.lan_context import remote_context, validate_snapshot, prepare_bindings, bind_workspace, prepare_memory_revision
 from evolvmem.lan_capture import CAPTURE_TOOLS, LanCapture, capture_specs
+from evolvmem import manual_experience_mcp
 from evolvmem.request_health import request_health_scope, background_read_scope, BackgroundReadDenied
 from evolvmem.request_trace import traced_tool, traced_rpc, timed_lock, stage, failure
 
@@ -323,7 +324,35 @@ class LanTools:
                 schema = spec['inputSchema']
                 schema['properties']['request_id'] = {'type': 'string', 'maxLength': 128}
                 schema['required'] = [k for k in schema.get('required', []) if k != 'request_id']
+        result.update(deepcopy(manual_experience_mcp.MANUAL_EXPERIENCE_SPECS))
         return result
+
+    def _manual_experience(self, user, name, args):
+        space = args.pop('space', 'personal')
+        if space == 'public':
+            raise LanError('public_write_forbidden')
+        if space != 'personal':
+            raise LanError('invalid_space')
+        if name == 'manual_experience_save':
+            request_id = args.get('request_id')
+            validate_request_id(request_id)
+            if self.runtime.settings.authenticate(request_id) is not None:
+                raise LanError('invalid_request_id')
+        elif 'request_id' in args:
+            # Existing Linux stdio forwarding adds an ID to every tool call.
+            validate_request_id(args.pop('request_id'))
+        spec = manual_experience_mcp.MANUAL_EXPERIENCE_SPECS[name]
+        if not _schema_valid(args, spec['inputSchema']):
+            raise LanError('invalid_arguments')
+        try:
+            settings = self.runtime.settings
+            namespace = self.runtime._namespace_for(user, 'personal')
+            source = manual_experience_mcp.registered_source(
+                namespace, owner_data_dir=settings.owner_data_dir,
+                lan_data_dir=settings.data_dir, user=user)
+            return manual_experience_mcp.call(name, args, source)
+        except manual_experience_mcp.ManualMcpError as exc:
+            raise LanError(str(exc)) from None
 
     @traced_tool
     def call_tool(self, user, name, arguments, *, owner=False):
@@ -371,6 +400,8 @@ class LanTools:
         args = deepcopy(arguments)
         if IDENTITY_FIELDS.intersection(args):
             raise LanError('identity_override_forbidden')
+        if name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
+            return self._manual_experience(user, name, args)
         space = args.pop('space', 'both' if name in SEARCH else 'personal')
         if space not in ('personal', 'public', 'both') or (space == 'both' and name not in SEARCH):
             raise LanError('invalid_space')
