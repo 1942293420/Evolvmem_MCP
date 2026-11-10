@@ -30,6 +30,15 @@ MAX_FILE = 1024 * 1024
 MAX_PRESENTATION = 2 * 1024 * 1024
 PRESENTATION_FILE = 'presentation.zh-CN.json'
 PRESENTATION_FIELDS = {'title_zh': 80, 'summary_zh': 600, 'content_zh': 12000}
+CATEGORY_FILE = 'categories.zh-CN.json'
+MAX_CATEGORIES = 512 * 1024
+CATEGORIES = {
+    'frontend': '前端与界面', 'development': '开发与代码', 'testing': '测试与验收',
+    'business': '业务与数据', 'feishu': '飞书协作', 'ziniao': '紫鸟管理',
+    'visual': '绘图与图像', 'system': '系统与工具', 'skills': '技能管理',
+    'uncategorized': '待分类',
+}
+
 MAX_ARCHIVE = 192 * 1024 * 1024
 WINDOWS_FOLDERS = {'references', 'scripts', 'assets', 'templates', 'examples', 'rules'}
 TEXT_EXTENSIONS = {'.md', '.txt', '.rst', '.py', '.ps1', '.sh', '.js', '.mjs', '.cjs',
@@ -186,15 +195,60 @@ def skill_presentation(entry, presentations):
     return None
 
 
+def read_categories(root):
+    """Optional, source-bound purpose labels; independent of native Skill content."""
+    path = root / CATEGORY_FILE
+    if path.is_symlink():
+        return {}
+    try:
+        with path.open('rb') as stream:
+            raw = stream.read(MAX_CATEGORIES + 1)
+        if len(raw) > MAX_CATEGORIES:
+            return {}
+        data = json.loads(raw)
+        if (not isinstance(data, dict) or type(data.get('schema')) is not int
+                or data['schema'] != 1 or not isinstance(data.get('entries'), dict)
+                or len(data['entries']) > 1024):
+            return {}
+        result = {}
+        for key, item in data['entries'].items():
+            if not re.fullmatch(r'[a-f0-9]{24}', key) or not isinstance(item, dict):
+                continue
+            sha = item.get('source_sha256')
+            ids = item.get('category_ids')
+            if (not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{64}', sha)
+                    or not isinstance(ids, list) or not 1 <= len(ids) <= 3
+                    or not all(isinstance(i, str) and i in CATEGORIES and i != 'uncategorized' for i in ids)
+                    or len(set(ids)) != len(ids)):
+                continue
+            result[key] = {'source_sha256': sha, 'category_ids': list(ids)}
+        return result
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        return {}
+
+
+def skill_categories(entry, classifications):
+    item = classifications.get(entry['id'])
+    ids = item['category_ids'] if item and item['source_sha256'] == digest(
+        entry['files']['SKILL.md'].encode('utf-8')) else ['uncategorized']
+    return [{'id': ident, 'label': CATEGORIES[ident]} for ident in ids]
+
+
 def read_catalog(root, params):
-    if set(params) - {'source', 'q', 'id', 'file'}:
+    if set(params) - {'source', 'q', 'id', 'file', 'category'}:
         raise ValueError('invalid catalog query')
     source, q = params.get('source', ''), params.get('q', '')
+    category = params.get('category', '')
+    if not isinstance(category, str) or category not in ('', *CATEGORIES):
+        raise ValueError('invalid skill category')
     if source not in ('', *SOURCES) or not isinstance(q, str) or len(q) > 160:
         raise ValueError('invalid catalog filter')
     sources = (source,) if source else SOURCES
     rows, sync = [], {}
     presentations = read_presentations(root)
+    classifications = read_categories(root)
+    counts = dict.fromkeys(CATEGORIES, 0)
+    matched_total = 0
     key = params.get('id')
     if 'file' in params and not key:
         raise ValueError('file requires a skill')
@@ -207,6 +261,7 @@ def read_catalog(root, params):
             assets = entry.get('assets', {})
             item = {k: entry[k] for k in ('id', 'name', 'description', 'origin', 'version', 'url')}
             item['source'] = kind
+            item['categories'] = skill_categories(entry, classifications)
             presentation = skill_presentation(entry, presentations)
             if presentation:
                 item['presentation'] = presentation
@@ -219,13 +274,21 @@ def read_catalog(root, params):
                     return {**detail, 'base64': assets[file]}
                 raise LookupError('unknown skill file')
             search_text = [item['name'], item['description'], item['origin']]
+            search_text.extend(c['label'] for c in item['categories'])
             if presentation:
                 search_text.extend(presentation[field] for field in PRESENTATION_FIELDS)
             if not key and needle in ' '.join(search_text).casefold():
-                rows.append({**item, 'file_count': len(files) + len(assets)})
+                matched_total += 1
+                ids = [c['id'] for c in item['categories']]
+                for ident in ids:
+                    counts[ident] += 1
+                if not category or category in ids:
+                    rows.append({**item, 'file_count': len(files) + len(assets)})
     if key:
         raise LookupError('unknown skill')
-    return {'ok': True, 'rows': rows, 'sync': sync}
+    return {'ok': True, 'rows': rows, 'sync': sync, 'matched_total': matched_total,
+            'categories': [{'id': ident, 'label': label, 'count': counts[ident]}
+                           for ident, label in CATEGORIES.items()]}
 
 
 def _http(url, limit):

@@ -84,7 +84,12 @@
       '<label class="grow">查找 Skill<input name="q" type="search" maxlength="160" placeholder="搜索中文用途、原名或来源"></label>' +
       '<label>来源<select name="source">' + sources.map(([key,label]) =>
         '<option value="' + key + '">' + label + '</option>').join('') +
-      '</select></label><button type="submit" class="primary">查找</button></form>' +
+      '</select></label><button type="submit" class="primary">查找</button>' +
+      '<button type="button" id="skill-reset">清除筛选</button></form>' +
+      '<section class="skill-category-section" aria-labelledby="skill-category-heading">' +
+      '<div class="skill-category-heading"><h2 id="skill-category-heading">用途分类</h2>' +
+      '<p class="muted">一项 Skill 可用于多个分类</p></div>' +
+      '<div id="skill-categories" class="skill-categories" role="group" aria-label="按用途筛选"></div></section>' +
       '<div class="skill-results-head"><p id="skill-count" role="status"></p><p id="skill-sync" class="muted"></p></div>' +
       '<div class="skill-grid" id="skill-results" aria-label="Skill 宫格"></div></div>' +
       '<section class="skill-detail" id="skill-detail" aria-label="Skill 详情" hidden></section>';
@@ -95,6 +100,30 @@
     const title = skill => presentation(skill).title_zh || skill.name;
     const summary = skill => presentation(skill).summary_zh || skill.description;
     const untranslated = skill => !presentation(skill).title_zh;
+    let filters = {q:'',source:'',category:''}, desiredCategory = '';
+    const categories = skill => skill.categories || [];
+    const categoryBadges = skill => '<span class="skill-card-categories">' +
+      categories(skill).map(item => '<span class="skill-category-badge">' + esc(item.label) + '</span>').join('') + '</span>';
+
+    function showCategories(data) {
+      const focused = document.activeElement?.dataset.skillCategory;
+      const choices = [{id:'',label:'全部',count:data.matched_total ?? data.rows.length},
+        ...(data.categories || []).filter(item => item.id !== 'uncategorized' || item.count > 0 || filters.category === item.id)];
+      $('skill-categories').innerHTML = choices.map(item =>
+        '<button type="button" class="skill-category" data-skill-category="' + esc(item.id) +
+        '" aria-pressed="' + String(filters.category === item.id) + '"><span>' + esc(item.label) +
+        '</span><span class="skill-category-count">' + esc(item.count) + '</span></button>'
+      ).join('');
+      document.querySelectorAll('[data-skill-category]').forEach(button =>
+        button.onclick = () => applyFilters(button.dataset.skillCategory));
+      if (focused !== undefined) Array.from(document.querySelectorAll('[data-skill-category]'))
+        .find(button => button.dataset.skillCategory === focused)?.focus({preventScroll:true});
+    }
+
+    function resetFilters() {
+      $('skill-filters').reset();
+      return applyFilters('');
+    }
 
     function backToGrid() {
       ++detailRequest;
@@ -152,7 +181,7 @@
         const skill = data.skill;
         const info = presentation(skill);
         $('skill-detail-body').innerHTML = '<div class="skill-detail-heading"><span class="badge">' +
-          esc(skill.origin) + '</span><h2 id="skill-title" tabindex="-1">' + esc(title(skill)) +
+          esc(skill.origin) + '</span>' + categoryBadges(skill) + '<h2 id="skill-title" tabindex="-1">' + esc(title(skill)) +
           '</h2><p class="skill-original-name">' + esc(skill.name) + '</p></div>' +
           '<section class="skill-description"><h3>中文用途说明</h3>' +
           (untranslated(skill) ? '<p class="muted">中文说明待更新，以下为原始用途。</p>' : '') +
@@ -182,10 +211,12 @@
     }
 
     function showRows(data) {
-      $('skill-count').textContent = data.rows.length + ' 条 Skill';
+      const label = (data.categories || []).find(item => item.id === filters.category)?.label;
+      $('skill-count').textContent = (label ? label + ' · ' : '') + data.rows.length + ' 条 Skill';
+      showCategories(data);
       $('skill-results').innerHTML = data.rows.map(skill =>
         '<button class="skill-card" type="button" data-skill="' + esc(skill.id) + '">' +
-        '<span class="skill-card-source">' + esc(skill.origin) + '</span>' +
+        categoryBadges(skill) + '<span class="skill-card-source">' + esc(skill.origin) + '</span>' +
         '<strong class="skill-card-title">' + esc(title(skill)) + '</strong>' +
         '<span class="skill-card-name">' + esc(skill.name) + '</span>' +
         '<span class="skill-card-summary">' + esc(summary(skill)) + '</span>' +
@@ -194,36 +225,47 @@
       ).join('') || '<div class="empty"><p>没有符合条件的 Skill。</p><button type="button" id="skill-clear">清除筛选</button></div>';
       document.querySelectorAll('[data-skill]').forEach(button =>
         button.onclick = () => showDetail(button.dataset.skill));
-      if ($('skill-clear')) $('skill-clear').onclick = () => {
-        $('skill-filters').reset();
-        $('skill-filters').requestSubmit();
-      };
+      if ($('skill-clear')) $('skill-clear').onclick = resetFilters;
     }
 
-    showRows(initial);
-    $('skill-filters').onsubmit = async event => {
-      event.preventDefault();
+    async function applyFilters(category = desiredCategory) {
+      desiredCategory = category;
       const request = ++listRequest;
-      const form = event.currentTarget;
+      const form = $('skill-filters');
       const submit = form.querySelector('[type=submit]');
-      const params = new URLSearchParams(new FormData(form));
+      const next = {q:form.elements.q.value,source:form.elements.source.value,category};
+      const params = new URLSearchParams(next);
       submit.disabled = true;
       submit.textContent = '正在查找…';
       $('skill-results').setAttribute('aria-busy','true');
+      $('skill-categories').setAttribute('aria-busy','true');
       notice('');
       try {
         const data = await api(base + '?' + params, undefined, options);
-        if (ticket === state.ticket && request === listRequest) showRows(data);
+        if (ticket === state.ticket && request === listRequest) {
+          filters = next;
+          showRows(data);
+        }
       } catch (error) {
-        if (ticket === state.ticket && request === listRequest) notice(error.message,true);
+        if (ticket === state.ticket && request === listRequest) {
+          desiredCategory = filters.category;
+          form.elements.q.value = filters.q;
+          form.elements.source.value = filters.source;
+          notice(error.message + '；筛选未生效，仍显示上次结果。',true);
+        }
       } finally {
         if (ticket === state.ticket && request === listRequest) {
           submit.disabled = false;
           submit.textContent = '查找';
           $('skill-results').removeAttribute('aria-busy');
+          $('skill-categories').removeAttribute('aria-busy');
         }
       }
-    };
+    }
+    showRows(initial);
+    $('skill-filters').onsubmit = event => { event.preventDefault(); applyFilters(); };
+    $('skill-filters').elements.source.onchange = () => applyFilters();
+    $('skill-reset').onclick = resetFilters;
   }
 
   async function libraries(ticket){

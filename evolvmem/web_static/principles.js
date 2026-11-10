@@ -33,7 +33,7 @@
     </div>
   </section>
   <section class="panel"><h2>用户与交叉访问</h2><p>登录从登录时起固定 8 小时；主动退出或停用账号会立即撤销。重新启用后需再次登录。</p><p>A → B 和 B → A 是两个设置；历史与经验也分别授权。默认只可读取自己的知识。</p><p class="muted">普通浏览包括管理员也遵循授权。“用户知识库”是选择查看对象的统一入口。自己的资料可正常管理；查看其他用户时为只读，不能替他人新增、编辑或删除经验。停用用户后，后续读取会被拒绝。</p></section>
-  <section class="panel"><h2>Skill 库</h2><p>管理员可以按中文用途或原名查找 Skill，以宫格卡片浏览中文说明，并展开查看原始文件。中文说明独立保存；原文更新后需重新核对说明。</p>
+  <section class="panel"><h2>Skill 库</h2><p>管理员可以联合用途分类、关键词与来源筛选 Skill，以宫格卡片浏览中文说明，并展开查看原始文件。分类数量随搜索和来源更新，一项 Skill 可归入多个用途。分类和中文说明独立保存；原文更新后需重新核对，尚未分类的条目仍保留在“待分类”中。</p>
     <div class="diagram-flow" role="img" aria-label="官方来源定时更新 EvolvMem，Windows Skill 单向同步到 EvolvMem 和集成平台">
       <div class="diagram-node"><strong>官方 / Windows</strong><small>分别定时读取来源</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
       <div class="diagram-node"><strong>EvolvMem Skill 库</strong><small>保留原文＋独立中文说明</small></div><span class="diagram-arrow" aria-hidden="true">→</span>

@@ -51,3 +51,19 @@ overwrites this file and never consumes platform input. Presentation data for
 private skills is held outside the public source repository. Usage explanations
 are concise Chinese descriptions, not executable translations or full copies
 of the original instructions.
+
+
+## Purpose categories
+
+The EvolvMem gallery combines a purpose category with the keyword and source
+filters. Category facets count matches after keyword/source filtering and before
+the category filter, so other categories remain available. A Skill can belong to
+up to three categories; category counts are not summed into the unique total.
+
+The optional private `categories.zh-CN.json` sidecar uses
+`{schema:1, entries:{<id>:{source_sha256,category_ids}}}`. Category IDs are
+frontend, development, testing, business, feishu, ziniao, visual, system, skills.
+Every classification binds to the exact SKILL.md content hash. Missing, invalid
+or stale classifications appear under uncategorized, retaining the original
+Skill and its content. Native sync never overwrites this sidecar. Classification
+does not rewrite source files, descriptions or the separate Chinese explanations.
