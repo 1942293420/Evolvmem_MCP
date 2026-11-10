@@ -79,70 +79,149 @@
     const initial = await api(base, undefined, options);
     if (ticket !== state.ticket) return;
 
-    $('console-view').innerHTML = heading('Skill 库','查找官方和 Windows 上已同步的 Skill。') +
-      '<form id="skill-filters" class="filters experience-filters">' +
-      '<label class="grow">查找 Skill<input name="q" type="search" maxlength="160" placeholder="搜索名称、用途或来源"></label>' +
+    $('console-view').innerHTML = heading('Skill 库','按用途查找 Skill，点击卡片查看中文说明和原文。') +
+      '<div id="skill-catalog"><form id="skill-filters" class="filters experience-filters">' +
+      '<label class="grow">查找 Skill<input name="q" type="search" maxlength="160" placeholder="搜索中文用途、原名或来源"></label>' +
       '<label>来源<select name="source">' + sources.map(([key,label]) =>
         '<option value="' + key + '">' + label + '</option>').join('') +
       '</select></label><button type="submit" class="primary">查找</button></form>' +
-      '<p id="skill-sync" class="muted"></p><p id="skill-count" role="status"></p>' +
-      '<div class="experience-layout"><div class="experience-list" id="skill-results" aria-label="Skill 列表"></div>' +
-      '<section class="panel skill-detail" id="skill-detail" aria-label="Skill 详情"><p class="muted">从列表选择一条 Skill。</p></section></div>';
+      '<div class="skill-results-head"><p id="skill-count" role="status"></p><p id="skill-sync" class="muted"></p></div>' +
+      '<div class="skill-grid" id="skill-results" aria-label="Skill 宫格"></div></div>' +
+      '<section class="skill-detail" id="skill-detail" aria-label="Skill 详情" hidden></section>';
     $('skill-sync').textContent = '官方同步 ' + formatSync(initial.sync.official) +
       ' · Windows 同步 ' + formatSync(initial.sync.windows);
-    let listRequest = 0, detailRequest = 0;
+    let listRequest = 0, detailRequest = 0, fileRequest = 0, selected = '', gridScroll = 0;
+    const presentation = skill => skill.presentation || {};
+    const title = skill => presentation(skill).title_zh || skill.name;
+    const summary = skill => presentation(skill).summary_zh || skill.description;
+    const untranslated = skill => !presentation(skill).title_zh;
 
-    async function showDetail(id, file) {
-      const request = ++detailRequest;
-      const params = new URLSearchParams({id});
-      if (file) params.set('file',file);
-      const box = $('skill-detail');
-      box.setAttribute('aria-busy','true');
+    function backToGrid() {
+      ++detailRequest;
+      ++fileRequest;
+      $('skill-detail').hidden = true;
+      $('skill-catalog').hidden = false;
+      const button = Array.from(document.querySelectorAll('[data-skill]')).find(el => el.dataset.skill === selected);
+      if (button) button.focus({preventScroll:true});
+      window.scrollTo({top:gridScroll,behavior:'instant'});
+    }
+
+    function rawContent(data) {
+      return data.base64 ? '<a class="button" download="' + esc(data.file.split('/').pop()) +
+        '" href="data:application/octet-stream;base64,' + esc(data.base64) + '">下载文件</a>'
+        : '<pre class="skill-text">' + esc(data.text) + '</pre>';
+    }
+
+    async function showFile(id, file) {
+      const request = ++fileRequest;
+      const target = $('skill-file-content');
+      const error = $('skill-file-error');
+      target.setAttribute('aria-busy','true');
+      error.textContent = '正在读取文件…';
       try {
-        const data = await api(base + '?' + params, undefined, options);
+        const data = await api(base + '?' + new URLSearchParams({id,file}), undefined, options);
+        if (ticket !== state.ticket || request !== fileRequest || $('skill-detail').hidden) return;
+        target.innerHTML = rawContent(data);
+        error.textContent = '';
+      } catch (failure) {
+        if (ticket !== state.ticket || request !== fileRequest) return;
+        target.innerHTML = '';
+        error.innerHTML = esc(failure.message) + ' <button type="button" id="skill-file-retry">重试</button>';
+        $('skill-file-retry').onclick = () => showFile(id,file);
+      } finally {
+        if (request === fileRequest) target.removeAttribute('aria-busy');
+      }
+    }
+
+    async function showDetail(id) {
+      const request = ++detailRequest;
+      ++fileRequest;
+      selected = id;
+      if (!$('skill-catalog').hidden) gridScroll = window.scrollY;
+      $('skill-catalog').hidden = true;
+      const box = $('skill-detail');
+      box.hidden = false;
+      box.innerHTML = '<button type="button" id="skill-back" class="skill-back">← 返回宫格</button>' +
+        '<div class="panel skill-detail-body" id="skill-detail-body" aria-busy="true"><p role="status">正在读取 Skill…</p></div>';
+      $('skill-back').onclick = backToGrid;
+      box.scrollIntoView({block:'start',behavior:'instant'});
+      $('skill-back').focus({preventScroll:true});
+      try {
+        const data = await api(base + '?' + new URLSearchParams({id}), undefined, options);
         if (ticket !== state.ticket || request !== detailRequest) return;
         const skill = data.skill;
-        box.innerHTML = '<h2>' + esc(skill.name) + '</h2><p class="muted skill-version">' +
-          esc(skill.origin) + ' · ' + esc(skill.version) + '</p>' +
+        const info = presentation(skill);
+        $('skill-detail-body').innerHTML = '<div class="skill-detail-heading"><span class="badge">' +
+          esc(skill.origin) + '</span><h2 id="skill-title" tabindex="-1">' + esc(title(skill)) +
+          '</h2><p class="skill-original-name">' + esc(skill.name) + '</p></div>' +
+          '<section class="skill-description"><h3>中文用途说明</h3>' +
+          (untranslated(skill) ? '<p class="muted">中文说明待更新，以下为原始用途。</p>' : '') +
+          '<p class="skill-summary">' + esc(summary(skill)) + '</p>' +
+          (info.content_zh ? '<p class="skill-explanation">' + esc(info.content_zh) + '</p>' : '') + '</section>' +
+          '<details class="skill-original"><summary>查看原文与文件</summary>' +
+          '<p class="muted">此处为同步的原始文件。中文说明单独保存，不修改原生 Skill。</p>' +
+          '<p class="muted skill-version">版本 ' + esc(skill.version) + '</p>' +
           (skill.url ? '<p><a target="_blank" rel="noopener noreferrer" href="' +
             esc(skill.url) + '">查看官方版本</a></p>' : '') +
-          '<label>文件 <select id="skill-file">' + data.files.map(path =>
+          '<label class="skill-file-label">文件 <select id="skill-file">' + data.files.map(path =>
             '<option value="' + esc(path) + '"' + (path === data.file ? ' selected' : '') + '>' +
             esc(path) + '</option>').join('') + '</select></label>' +
-          (data.base64 ? '<p><a class="button" download="' + esc(data.file.split('/').pop()) +
-            '" href="data:application/octet-stream;base64,' + esc(data.base64) + '">下载文件</a></p>'
-            : '<pre class="skill-text">' + esc(data.text) + '</pre>');
-        $('skill-file').onchange = event => showDetail(id, event.target.value);
-        document.querySelectorAll('[data-skill]').forEach(button =>
-          button.setAttribute('aria-current', String(button.dataset.skill === id)));
+          '<p id="skill-file-error" class="muted" role="status"></p>' +
+          '<div id="skill-file-content">' + rawContent(data) + '</div></details>';
+        $('skill-detail-body').removeAttribute('aria-busy');
+        $('skill-file').onchange = event => showFile(id,event.target.value);
+        // Keep keyboard focus on the persistent Back control if the user has moved it.
+        if (document.activeElement === $('skill-back')) $('skill-title').focus({preventScroll:true});
       } catch (error) {
-        if (ticket === state.ticket && request === detailRequest) box.textContent = error.message;
-      } finally {
-        if (request === detailRequest) box.removeAttribute('aria-busy');
+        if (ticket !== state.ticket || request !== detailRequest) return;
+        $('skill-detail-body').innerHTML = '<p class="error" role="alert">' + esc(error.message) +
+          '</p><button type="button" id="skill-detail-retry">重新读取</button>';
+        $('skill-detail-body').removeAttribute('aria-busy');
+        $('skill-detail-retry').onclick = () => showDetail(id);
       }
     }
 
     function showRows(data) {
       $('skill-count').textContent = data.rows.length + ' 条 Skill';
       $('skill-results').innerHTML = data.rows.map(skill =>
-        '<button class="experience-entry" type="button" data-skill="' + esc(skill.id) + '">' +
-        '<span class="experience-card-meta">' + esc(skill.origin) + '</span><strong>' + esc(skill.name) +
-        '</strong><span class="experience-card-method">' + esc(skill.description) + '</span></button>'
-      ).join('') || '<div class="empty">没有符合条件的 Skill。</div>';
+        '<button class="skill-card" type="button" data-skill="' + esc(skill.id) + '">' +
+        '<span class="skill-card-source">' + esc(skill.origin) + '</span>' +
+        '<strong class="skill-card-title">' + esc(title(skill)) + '</strong>' +
+        '<span class="skill-card-name">' + esc(skill.name) + '</span>' +
+        '<span class="skill-card-summary">' + esc(summary(skill)) + '</span>' +
+        '<span class="skill-card-footer">' + (untranslated(skill) ? '中文说明待更新' : '查看详情') +
+        '<span aria-hidden="true"> →</span></span></button>'
+      ).join('') || '<div class="empty"><p>没有符合条件的 Skill。</p><button type="button" id="skill-clear">清除筛选</button></div>';
       document.querySelectorAll('[data-skill]').forEach(button =>
         button.onclick = () => showDetail(button.dataset.skill));
+      if ($('skill-clear')) $('skill-clear').onclick = () => {
+        $('skill-filters').reset();
+        $('skill-filters').requestSubmit();
+      };
     }
 
     showRows(initial);
     $('skill-filters').onsubmit = async event => {
       event.preventDefault();
       const request = ++listRequest;
-      const params = new URLSearchParams(new FormData(event.currentTarget));
+      const form = event.currentTarget;
+      const submit = form.querySelector('[type=submit]');
+      const params = new URLSearchParams(new FormData(form));
+      submit.disabled = true;
+      submit.textContent = '正在查找…';
+      $('skill-results').setAttribute('aria-busy','true');
+      notice('');
       try {
         const data = await api(base + '?' + params, undefined, options);
         if (ticket === state.ticket && request === listRequest) showRows(data);
       } catch (error) {
         if (ticket === state.ticket && request === listRequest) notice(error.message,true);
+      } finally {
+        if (ticket === state.ticket && request === listRequest) {
+          submit.disabled = false;
+          submit.textContent = '查找';
+          $('skill-results').removeAttribute('aria-busy');
+        }
       }
     };
   }

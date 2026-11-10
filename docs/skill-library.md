@@ -1,8 +1,11 @@
 # Skill library
 
 The administrator-only Web page at /#skills lists two independent snapshots.
-It searches by skill name, purpose or source and displays stored instructions
-and references as plain text. The catalog preserves official Git revisions
+It displays a responsive full-width card grid. Cards use Chinese purpose titles
+and summaries, with original names retained. Details default to a Chinese usage
+explanation; original instructions and references remain available as inert plain
+text. Search matches Chinese titles, summaries and content as well as original
+names, descriptions and sources. The catalog preserves official Git revisions
 and available upstream license files. Skill text and assets are inert data.
 
 Official refresh tracks five fixed GitHub directories. It includes the
@@ -29,3 +32,22 @@ local time and on the owner's logon, with missed runs caught up when available.
 The Windows last-success receipt lives under the current user's local
 EvolvMem SkillLibrary folder. Linux logs the GitHub refresh service separately.
 Invalid snapshots cannot replace valid data. An upstream fetch failure retains the previous official snapshot.
+
+## Display translations
+
+Chinese explanations are separate display-only metadata in
+`presentation.zh-CN.json` beside the catalog snapshots. They do not rewrite or
+execute any original skill files. The schema is `{schema:1, locale:"zh-CN",
+entries:{<skill-id>:{title_zh,summary_zh,content_zh,source_sha256}}}`.
+The hash binds each explanation to the UTF-8 content of its original SKILL.md.
+A source update with different content suppresses the old explanation until
+it is reviewed again; the UI falls back to the original and marks the Chinese
+explanation as needing an update. Invalid or absent optional metadata does not
+hide the source catalog. Search only uses matching explanations.
+
+The platform receives a separate identical presentation file alongside its
+Windows snapshot and validates the same hash. Scheduled raw-source sync never
+overwrites this file and never consumes platform input. Presentation data for
+private skills is held outside the public source repository. Usage explanations
+are concise Chinese descriptions, not executable translations or full copies
+of the original instructions.

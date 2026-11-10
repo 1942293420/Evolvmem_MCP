@@ -77,3 +77,72 @@ def test_official_binary_asset_is_returned_as_data(tmp_path):
     result = read_catalog(tmp_path, {'id': skill['id'], 'file': 'assets/example.png'})
     assert result['base64'] == 'iVBORw==' and 'text' not in result
     assert result['files'] == ['SKILL.md', 'assets/example.png']
+
+
+def _translated_catalog(tmp_path):
+    import hashlib
+    from evolvmem.skill_library import envelope, write_snapshot
+    entry = {'id': 'b'*24, 'name': 'frontend-helper', 'description': 'UI guidance',
+             'origin': 'Fixture', 'version': 'c'*40, 'url': '',
+             'files': {'SKILL.md': '# Original\nKeep original bytes <script>inert</script>.'}}
+    write_snapshot(snapshot_path(tmp_path, 'windows'), envelope('windows', [entry]))
+    translation = {'title_zh': '设计网页布局', 'summary_zh': '设计清晰的页面。',
+                   'content_zh': '按设备宽度调整宫格列数。',
+                   'source_sha256': hashlib.sha256(entry['files']['SKILL.md'].encode()).hexdigest()}
+    metadata = {'schema': 1, 'locale': 'zh-CN', 'entries': {entry['id']: translation}}
+    (tmp_path / 'presentation.zh-CN.json').write_bytes(encode(metadata))
+    return entry, metadata
+
+
+def test_chinese_presentation_searches_without_rewriting_originals(tmp_path):
+    entry, metadata = _translated_catalog(tmp_path)
+    original = snapshot_path(tmp_path, 'windows').read_bytes()
+    for query in ('布局', '清晰', '宫格', 'FRONTEND'):
+        rows = read_catalog(tmp_path, {'q': query})['rows']
+        assert len(rows) == 1
+        assert rows[0]['name'] == entry['name']
+        assert rows[0]['presentation']['title_zh'] == '设计网页布局'
+    detail = read_catalog(tmp_path, {'id': entry['id']})
+    assert detail['text'] == entry['files']['SKILL.md']
+    assert detail['files'] == ['SKILL.md']
+    assert snapshot_path(tmp_path, 'windows').read_bytes() == original
+
+
+@pytest.mark.parametrize('kind', ['stale', 'invalid', 'oversized', 'bad-fields', 'missing', 'symlink'])
+def test_outdated_or_invalid_translation_falls_back_to_source(tmp_path, kind):
+    entry, data = _translated_catalog(tmp_path)
+    path = tmp_path / 'presentation.zh-CN.json'
+    if kind == 'stale':
+        data['entries'][entry['id']]['source_sha256'] = '0'*64
+        path.write_bytes(encode(data))
+    elif kind == 'invalid':
+        path.write_text('invalid json')
+    elif kind == 'oversized':
+        path.write_bytes(b' ' * (2*1024*1024+1))
+    elif kind == 'bad-fields':
+        data['entries'][entry['id']]['title_zh'] = []
+        path.write_bytes(encode(data))
+    elif kind == 'symlink':
+        saved = tmp_path / 'saved.json'
+        path.rename(saved)
+        path.symlink_to(saved)
+    else:
+        path.unlink()
+    assert read_catalog(tmp_path, {'q': '宫格'})['rows'] == []
+    rows = read_catalog(tmp_path, {'q': 'frontend'})['rows']
+    assert len(rows) == 1 and 'presentation' not in rows[0]
+    assert read_catalog(tmp_path, {'id': entry['id']})['text'] == entry['files']['SKILL.md']
+
+
+def test_raw_refresh_retains_display_metadata_but_rejects_stale_translation(tmp_path, monkeypatch):
+    from evolvmem.skill_library import envelope
+    entry, metadata = _translated_catalog(tmp_path)
+    display_path = tmp_path / 'presentation.zh-CN.json'
+    previous = display_path.read_bytes()
+    entry['files']['SKILL.md'] += '\nNew source content'
+    data = envelope('windows', [entry])
+    monkeypatch.setattr('evolvmem.skill_library.sys.stdin', SimpleNamespace(buffer=io.BytesIO(encode(data))))
+    receive_windows(tmp_path)
+    assert display_path.read_bytes() == previous
+    assert 'presentation' not in read_catalog(tmp_path, {})['rows'][0]
+    assert read_catalog(tmp_path, {'id': entry['id']})['text'].endswith('New source content')

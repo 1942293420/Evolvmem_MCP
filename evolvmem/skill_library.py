@@ -27,6 +27,9 @@ SKILLS = (
 )
 MAX_SNAPSHOT = 48 * 1024 * 1024
 MAX_FILE = 1024 * 1024
+MAX_PRESENTATION = 2 * 1024 * 1024
+PRESENTATION_FILE = 'presentation.zh-CN.json'
+PRESENTATION_FIELDS = {'title_zh': 80, 'summary_zh': 600, 'content_zh': 12000}
 MAX_ARCHIVE = 192 * 1024 * 1024
 WINDOWS_FOLDERS = {'references', 'scripts', 'assets', 'templates', 'examples', 'rules'}
 TEXT_EXTENSIONS = {'.md', '.txt', '.rst', '.py', '.ps1', '.sh', '.js', '.mjs', '.cjs',
@@ -144,6 +147,45 @@ def write_snapshot(path, data, mode=0o600):
     return raw
 
 
+def read_presentations(root):
+    """Read optional display-only translations; damaged metadata never hides skills."""
+    path = root / PRESENTATION_FILE
+    if path.is_symlink():
+        return {}
+    try:
+        with path.open('rb') as stream:
+            raw = stream.read(MAX_PRESENTATION + 1)
+        if len(raw) > MAX_PRESENTATION:
+            return {}
+        data = json.loads(raw)
+        if (not isinstance(data, dict) or type(data.get('schema')) is not int or data['schema'] != 1
+                or data.get('locale') != 'zh-CN' or not isinstance(data.get('entries'), dict)
+                or len(data['entries']) > 1024):
+            return {}
+        result = {}
+        for key, value in data['entries'].items():
+            if (not re.fullmatch(r'[a-f0-9]{24}', key) or not isinstance(value, dict)
+                    or not isinstance(value.get('source_sha256'), str)
+                    or not re.fullmatch(r'[a-f0-9]{64}', value['source_sha256'])):
+                continue
+            if not all(isinstance(value.get(field), str)
+                       and 0 < len(value[field].strip()) <= limit and '\x00' not in value[field]
+                       for field, limit in PRESENTATION_FIELDS.items()):
+                continue
+            result[key] = {field: value[field] for field in (*PRESENTATION_FIELDS, 'source_sha256')}
+        return result
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        return {}
+
+
+def skill_presentation(entry, presentations):
+    """Translations are valid only for their exact original SKILL.md."""
+    value = presentations.get(entry['id'])
+    if value and value['source_sha256'] == digest(entry['files']['SKILL.md'].encode('utf-8')):
+        return dict(value)
+    return None
+
+
 def read_catalog(root, params):
     if set(params) - {'source', 'q', 'id', 'file'}:
         raise ValueError('invalid catalog query')
@@ -152,6 +194,7 @@ def read_catalog(root, params):
         raise ValueError('invalid catalog filter')
     sources = (source,) if source else SOURCES
     rows, sync = [], {}
+    presentations = read_presentations(root)
     key = params.get('id')
     if 'file' in params and not key:
         raise ValueError('file requires a skill')
@@ -164,6 +207,9 @@ def read_catalog(root, params):
             assets = entry.get('assets', {})
             item = {k: entry[k] for k in ('id', 'name', 'description', 'origin', 'version', 'url')}
             item['source'] = kind
+            presentation = skill_presentation(entry, presentations)
+            if presentation:
+                item['presentation'] = presentation
             if key == item['id']:
                 file = params.get('file', 'SKILL.md')
                 detail = {'ok': True, 'skill': item, 'files': sorted((*files, *assets)), 'file': file}
@@ -172,7 +218,10 @@ def read_catalog(root, params):
                 if file in assets:
                     return {**detail, 'base64': assets[file]}
                 raise LookupError('unknown skill file')
-            if not key and needle in ' '.join((item['name'], item['description'], item['origin'])).casefold():
+            search_text = [item['name'], item['description'], item['origin']]
+            if presentation:
+                search_text.extend(presentation[field] for field in PRESENTATION_FIELDS)
+            if not key and needle in ' '.join(search_text).casefold():
                 rows.append({**item, 'file_count': len(files) + len(assets)})
     if key:
         raise LookupError('unknown skill')
