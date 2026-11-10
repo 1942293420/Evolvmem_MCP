@@ -12,6 +12,12 @@
 </div>
 <div class="principle-grid">
   <section class="panel"><h2>历史</h2><ol><li><b>项目摘要：</b>项目用途、环境与必要信息。</li><li><b>简短历史：</b>按时间查看做过的事项。</li><li><b>事项详情：</b>用户的问题、AI 的回答、解决方法和结果。</li></ol><p class="muted">未归属会话先按块保存。缺失原文会明确显示；图片只有能读取时才展示。删除进入回收站，原始资料保留。</p>
+    <h3>桌面会话如何保存</h3><p>Codex 和 DSH 在聊天时先保存本机原文，后台定时检查并上传，不必关闭会话。断网时保留待传内容，恢复后继续。只有收到服务器的完整归档回执，才算已同步。</p>
+    <div class="diagram-flow" role="img" aria-label="桌面聊天先落盘，本机加密保存待传内容，后台上传并核对完整归档回执，再按需整理项目历史；自动整理暂停不影响原文上传">
+      <div class="diagram-node"><strong>聊天落盘</strong><small>Codex / DSH 原生会话</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>本机待传</strong><small>加密保存，失败后继续补传</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>确认已归档</strong><small>核对服务器回执与完整内容</small></div>
+    </div><p class="muted">能读取记忆不代表聊天已同步。后台任务被禁用、上传失败或来源格式不支持时，应分别显示原因。AI 自动整理暂停不影响原文上传；明确要求“记住”的经验单独保存。</p>
     <h3>任务续接核验</h3><p>切换会话前，保存 DSH 完整原生会话，并核对项目摘要是否包含该来源。需要整理时，由本人明确授权仅处理这份原文和指定项目；核验只读取现有证据，缺项时显示原因。全局后台暂停与历史积压不受影响。</p>
     <div class="diagram-flow" role="img" aria-label="确认当前原文完整归档，核对已完成的项目历史来源，再确认当前摘要包含该来源；缺项或暂停时停止续接">
       <div class="diagram-node"><strong>当前原文</strong><small>完整原生归档与所属项目</small></div><span class="diagram-arrow" aria-hidden="true">→</span>

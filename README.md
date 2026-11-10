@@ -402,7 +402,9 @@ PowerShell 5.1 接入脚本在加解密前加载 `System.Security`；可运行 `
 | 两端续接同一任务 | 显式 `continuity_bind` 核对 Git 后绑定；焦点不被抢占，旧 revision 不覆盖新进度 |
 | 用真实工具结果反馈经验 | `archive:<id>#<行号>` 可验证；助手自述不能证明成功，重复事件只计一次 |
 
-安装时使用 Windows 自带 .NET 编译 `evolvmem-sync.exe`，计划任务每分钟及用户登录后无窗口启动采集器。它独立扫描 Codex `sessions` / `archived_sessions`，发现安装后新建或继续写入的会话，并通过同一个 MCP 上传；不依赖模型记得调用工具，也不依赖 hook 已登记。小版本优先，每版本每轮最多上传 16 块（4 MiB），大历史保留偏移跨轮继续；关闭 Codex 后仍可补传；注销或关机期间暂停，重新登录后继续。服务端复用现有提炼凭据，摘要生成可能产生与 Linux 相同的模型费用。归档与提炼失败分开报告：`session_archive_retry` 显式重试，`session_archive_assign` 把待归属会话分配给已登记项目。收到最新归档后至少闲置 30 分钟才尝试保守断点补录；只处理已有唯一目录绑定的单一来源，不把沉默或助手自述当成任务完成。
+安装时使用 Windows 自带 .NET 编译 `evolvmem-sync.exe`，计划任务每分钟及用户登录后无窗口启动采集器。它独立扫描 Codex `sessions` / `archived_sessions`，发现安装后新建或继续写入的会话，并通过同一个 MCP 上传；不依赖模型记得调用工具，也不依赖 hook 已登记。待传会话轮换处理，每版本每轮默认最多上传 16 块（4 MiB，可配置），大历史保留偏移跨轮继续；关闭 Codex 后仍可补传；注销或关机期间暂停，重新登录后继续。原文归档不要求调用模型；项目摘要整理需独立授权并服从全局处理开关，启用后才可能产生模型费用。归档与提炼失败分开报告：`session_archive_retry` 显式重试，`session_archive_assign` 把待归属会话分配给已登记项目。收到最新归档后至少闲置 30 分钟才尝试保守断点补录；只处理已有唯一目录绑定的单一来源，不把沉默或助手自述当成任务完成。
+
+Windows 桌面原文归档的当前机制、DSH 自动采集安装和状态检查见 [桌面自动归档](docs/windows-desktop-archive.md)。原文同步与 AI 整理分别控制；连接成功不等于完整聊天已同步。
 
 全局 AGENTS 规则提醒 Codex 保存已确认决定和任务断点，不能保证逐条调用。后台按完整 JSONL 记录归档已落盘且仍可读取的会话；未写完的行等待补齐，未落盘或采集前已删除的数据无法恢复。默认不批量导入长期未使用的旧历史，升级保留首次采集起点。全局规则在下一次启动会话时加载，见 [官方 AGENTS.md 说明](https://learn.chatgpt.com/docs/agent-configuration/agents-md)。完整实现边界见 [Windows 对齐说明](docs/windows-codex.md) 和架构图册的 Windows 专题。卸载时运行安装器加 `-Uninstall`，保留已有加密队列，移除自身 hooks、MCP 配置、全局文档中的 EvolvMem 段落、启动器与计划任务。
 
