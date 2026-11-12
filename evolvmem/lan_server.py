@@ -6,6 +6,7 @@ from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import getpass
 import json
+import inspect
 import ipaddress
 import os
 from pathlib import Path
@@ -27,6 +28,14 @@ def owner_peer_allowed(peer, user, owner_user=None):
         return user == expected_owner and ipaddress.ip_address(peer).is_loopback
     except ValueError:
         return False
+
+
+def _accepts_kwarg(fn, name):
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 def make_http_server(runtime, host=None, port=None, *, library_host=None, deadline_guard=None, allow_legacy=True, agent_registry=None, device_resolver=None):
@@ -54,7 +63,10 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
         raise ValueError('request-owned host cannot borrow a static HTTP guard')
     if runtime is not None:
         from evolvmem.lan_tools import LanTools
-        adapter = LanTools(runtime, agent_registry=agent_registry, device_resolver=device_resolver)
+        if agent_registry is not None or device_resolver is not None:
+            adapter = LanTools(runtime, agent_registry=agent_registry, device_resolver=device_resolver)
+        else:
+            adapter = LanTools(runtime)
     else:
         adapter = None
     if runtime is not None:
@@ -160,7 +172,7 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
             if self._library_request and self.path not in ('/mcp','/library/mcp'):
                 self._reply(403, {'error': 'library_endpoint_forbidden'})
                 return None
-            expected_owner = runtime.owner_user if runtime is not None else None
+            expected_owner = getattr(runtime, 'owner_user', None) if runtime is not None else None
             if self.path == '/owner/mcp' and not owner_peer_allowed(self.client_address[0], user, owner_user=expected_owner):
                 self._reply(403, {'error': 'owner_forbidden'})
                 return None
@@ -250,7 +262,7 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
                 if self._library_request:
                     # Do not return a body and publish it after the host's lease
                     # exits. The callback is the actual HTTP response boundary.
-                    if scoped_host is not None:
+                    if _accepts_kwarg(library_host.serve_rpc, 'session_id'):
                         library_host.serve_rpc(
                             user,
                             request,
@@ -311,13 +323,16 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
                             return
                         result = {'vector': vector}
                 else:
-                    result = adapter.handle_request(
-                        user,
-                        request,
-                        owner=self.path == '/owner/mcp',
-                        session_id=mcp_session_id,
-                        client_hint=client_hint or None,
-                    )
+                    if _accepts_kwarg(adapter.handle_request, 'session_id'):
+                        result = adapter.handle_request(
+                            user,
+                            request,
+                            owner=self.path == '/owner/mcp',
+                            session_id=mcp_session_id,
+                            client_hint=client_hint or None,
+                        )
+                    else:
+                        result = adapter.handle_request(user, request, owner=self.path == '/owner/mcp')
             except Exception:
                 if not getattr(self, '_response_started', False):
                     self._reply(500, _rpc_error(None, -32603, 'Internal error'))

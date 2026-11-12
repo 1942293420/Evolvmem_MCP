@@ -160,9 +160,18 @@ class LibraryHost:
         self._attributions = {}
         self._latest_device_attribution = {}
 
+    def _ensure_attribution_state(self):
+        lock = getattr(self, '_attribution_lock', None)
+        if lock is None:
+            lock = threading.RLock()
+            self._attribution_lock = lock
+            self._attributions = {}
+            self._latest_device_attribution = {}
+        return lock
+
     def last_attribution(self, device_id, *, session_id=None, principal_id=None):
         dev_key = str(device_id)
-        with self._attribution_lock:
+        with self._ensure_attribution_state():
             if session_id is not None:
                 sess_key = str(session_id)
                 if principal_id is not None:
@@ -922,12 +931,16 @@ class LibraryHost:
                 return self._publish(state, None, publish)
             if 'id' not in request:
                 raise FoundationError('request_id_required')
+            recall_enabled = bool(getattr(self, '_recall_enabled', False))
+            acl_enabled = bool(getattr(self, '_acl_enabled', False))
+            actor_resolver = getattr(self, '_actor_resolver', None)
+            agent_registry = getattr(self, '_agent_registry', None)
             if method == 'initialize':
                 protocol = params.get('protocolVersion')
                 if protocol not in PROTOCOLS:
                     raise FoundationError('unsupported_protocol_version')
                 from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
-                actor_id = self._actor_resolver(identity.principal_id) if callable(self._actor_resolver) else identity.principal_id
+                actor_id = actor_resolver(identity.principal_id) if callable(actor_resolver) else identity.principal_id
                 c_info = dict(params['clientInfo']) if isinstance(params.get('clientInfo'), dict) else {}
                 if isinstance(client_hint, dict):
                     for k in ('name', 'model'):
@@ -935,12 +948,12 @@ class LibraryHost:
                             c_info[k] = client_hint[k]
                 merged_info = c_info or None
                 meta_info = params.get('_meta')
-                if self._agent_registry is not None:
-                    attr = self._agent_registry.record_seen(actor=actor_id, client_info=merged_info, device_id=identity.device_id, meta=meta_info)
+                if agent_registry is not None:
+                    attr = agent_registry.record_seen(actor=actor_id, client_info=merged_info, device_id=identity.device_id, meta=meta_info)
                 else:
                     attr = resolve_mcp_client_info(merged_info, actor=actor_id, device_id=identity.device_id, meta=meta_info)
                 sess_key = str(session_id) if session_id else '__default__'
-                with self._attribution_lock:
+                with self._ensure_attribution_state():
                     if len(self._attributions) >= 4096:
                         self._attributions.pop(next(iter(self._attributions)))
                     self._attributions[(str(identity.principal_id), str(identity.device_id), sess_key)] = attr
@@ -955,21 +968,21 @@ class LibraryHost:
             elif method == 'tools/list':
                 if params:
                     raise FoundationError('invalid_arguments')
-                result = {'tools': self._specs(include_acl=self._acl_enabled,include_recall=self._recall_enabled)}
+                result = {'tools': self._specs(include_acl=acl_enabled,include_recall=recall_enabled)}
             elif method == 'tools/call':
                 if set(params) != {'name', 'arguments'} or params.get('name') not in (TOOLS
-                        | (RECALL_TOOLS if self._recall_enabled else frozenset())
-                        | (ADMIN_TOOLS if self._acl_enabled else frozenset())):
+                        | (RECALL_TOOLS if recall_enabled else frozenset())
+                        | (ADMIN_TOOLS if acl_enabled else frozenset())):
                     raise FoundationError('library_tool_unsupported')
                 from evolvmem.experience_v2.control.agent_identity import bind_active_attribution, resolve_mcp_client_info
-                actor_id = self._actor_resolver(identity.principal_id) if callable(self._actor_resolver) else identity.principal_id
+                actor_id = actor_resolver(identity.principal_id) if callable(actor_resolver) else identity.principal_id
                 active_attr = self.last_attribution(
                     identity.device_id, session_id=session_id, principal_id=identity.principal_id
                 ) if session_id is not None else None
                 if active_attr is None and isinstance(client_hint, dict) and (client_hint.get('name') or client_hint.get('model')):
                     active_attr = (
-                        self._agent_registry.record_seen(actor=actor_id, client_info=client_hint, device_id=identity.device_id)
-                        if self._agent_registry is not None
+                        agent_registry.record_seen(actor=actor_id, client_info=client_hint, device_id=identity.device_id)
+                        if agent_registry is not None
                         else resolve_mcp_client_info(client_hint, actor=actor_id, device_id=identity.device_id)
                     )
                 if active_attr is None:
