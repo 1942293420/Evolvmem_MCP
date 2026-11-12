@@ -1,6 +1,8 @@
 """USearch HNSW vector index — stores only (id, embedding), acts as a read cache for SQLite."""
 
 from dataclasses import dataclass
+import os
+import tempfile
 
 import numpy as np
 from pathlib import Path
@@ -160,11 +162,22 @@ class VectorIndex:
             raise RuntimeError(
                 "cannot save a view-mode index; use rebuild() instead"
             )
-        path = str(self.path)
         if self._shared_cache is not None:
             self._shared_cache.save()
         else:
-            self._index.save(path)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, raw_tmp = tempfile.mkstemp(
+                prefix=f"{self.path.name}.",
+                suffix=".tmp",
+                dir=str(self.path.parent),
+            )
+            os.close(fd)
+            temporary = Path(raw_tmp)
+            try:
+                self._index.save(str(temporary))
+                os.replace(temporary, self.path)
+            finally:
+                temporary.unlink(missing_ok=True)
         if self._owns_dirty_marker:
             self.clear_dirty()
 

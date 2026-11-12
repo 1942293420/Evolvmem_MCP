@@ -913,23 +913,36 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--apply", action="store_true", help="实际写库（默认 dry-run）")
     parser.add_argument("--max-per-run", type=int, default=MAX_PER_RUN)
     parser.add_argument("--idle-minutes", type=int, default=IDLE_MINUTES)
+    parser.add_argument("--verbose", action="store_true", help="输出全部扫描会话（默认仅输出有动作会话）")
+    parser.add_argument("--log-file", type=Path, default=None, help="可选日志文件路径（0600 权限并支持按大小轮转）")
+    parser.add_argument("--log-max-bytes", type=int, default=5 * 1024 * 1024, help="单日志文件轮转阈值字节数")
+    parser.add_argument("--log-backups", type=int, default=3, help="保留的历史轮转日志文件份数")
     return parser
 
 
 def main(argv=None) -> int:
+    from evolvmem.backfill_log import ACTIONABLE_ACTIONS, emit_cli_line, rotate_log_if_needed
+
     args = _build_parser().parse_args(argv)
+    log_target = args.log_file if args.log_file is not None else (args.data_dir / "continuity_backfill.log")
+    rotate_log_if_needed(log_target, args.log_max_bytes, args.log_backups)
+
+    def _emit(payload: dict, *, is_error: bool = False) -> None:
+        emit_cli_line(
+            json.dumps(payload, ensure_ascii=False),
+            log_file=args.log_file,
+            log_target=log_target,
+            max_bytes=args.log_max_bytes,
+            backups=args.log_backups,
+            is_error=is_error,
+        )
+
     scoped = bool(args.project.strip() and args.workspace_path.strip())
     if args.auto and (args.project.strip() or args.workspace_path.strip()):
-        print(
-            json.dumps({"error": "auto_conflicts_with_scoped_attribution"}),
-            file=sys.stderr,
-        )
+        _emit({"error": "auto_conflicts_with_scoped_attribution"}, is_error=True)
         return 2
     if args.apply and not args.auto and not scoped:
-        print(
-            json.dumps({"error": "apply_requires_auto_or_project_and_workspace"}),
-            file=sys.stderr,
-        )
+        _emit({"error": "apply_requires_auto_or_project_and_workspace"}, is_error=True)
         return 2
     state_path = args.state_path or (args.data_dir / ".continuity_backfill.json")
     store = ContextStore(Config(data_dir=args.data_dir))
@@ -951,24 +964,23 @@ def main(argv=None) -> int:
                 idle_minutes=args.idle_minutes,
             )
         except WorkspaceIdentityError as exc:
-            print(json.dumps({"error": exc.code}), file=sys.stderr)
+            _emit({"error": exc.code}, is_error=True)
             return 2
         except ContinuityError as exc:
-            print(json.dumps({"error": exc.code}), file=sys.stderr)
+            _emit({"error": exc.code}, is_error=True)
             return 2
         for report in reports:
-            print(
-                json.dumps(
-                    {
-                        "session": report.session_id,
-                        "action": report.action,
-                        "reason": report.reason,
-                        "workstream_id": report.workstream_id,
-                        "completed": report.completed,
-                        "pending": report.pending,
-                    },
-                    ensure_ascii=False,
-                )
+            if not args.verbose and report.action not in ACTIONABLE_ACTIONS:
+                continue
+            _emit(
+                {
+                    "session": report.session_id,
+                    "action": report.action,
+                    "reason": report.reason,
+                    "workstream_id": report.workstream_id,
+                    "completed": report.completed,
+                    "pending": report.pending,
+                }
             )
         return 0
     finally:
