@@ -234,10 +234,12 @@ class MemoryMCPServer:
         self._agent_registry = agent_registry
         self._actor_id = actor_id
         self._device_id = device_id
+        self._attribution_lock = threading.RLock()
         self._current_attribution = None
 
     def current_attribution(self):
-        return self._current_attribution
+        with self._attribution_lock:
+            return self._current_attribution
 
     def initialize(self):
         """Initialize all components."""
@@ -1966,15 +1968,17 @@ class MemoryMCPServer:
             actor_val = self._actor_id or "local"
             client_info = params.get("clientInfo")
             if self._agent_registry is not None:
-                self._current_attribution = self._agent_registry.record_seen(
+                attr = self._agent_registry.record_seen(
                     actor=actor_val, client_info=client_info, device_id=self._device_id,
                     default_client=self.adapter or "unknown",
                 )
             else:
-                self._current_attribution = resolve_mcp_client_info(
+                attr = resolve_mcp_client_info(
                     client_info, actor=actor_val, device_id=self._device_id,
                     default_client=self.adapter or "unknown",
                 )
+            with self._attribution_lock:
+                self._current_attribution = attr
             protocol_version = params.get("protocolVersion", "2024-11-05")
             result = {
                 "protocolVersion": protocol_version,
@@ -2027,28 +2031,41 @@ class MemoryMCPServer:
             }
 
         elif method == "tools/call":
+            from evolvmem.experience_v2.control.agent_identity import (
+                bind_active_attribution,
+                resolve_mcp_client_info,
+            )
             params = request.get("params", {})
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
-            if isinstance(tool_name, str) and tool_name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
-                result = self.handle_tool_call(tool_name, tool_args)
-            else:
-                adapter, mode, health = self._contract_view()
-                exposed = {spec.name for spec in tool_specs(adapter=adapter, mode=mode, health=health)}
-                if tool_name not in exposed:
-                    # 与 tools/list 同一注册表：隐藏工具不能被调用；
-                    # 未知工具也无需等待初始化门闩
-                    result = {"error": f"Unknown tool: {tool_name}"}
-                elif tool_name.startswith(("context_", "continuity_", "project_board_")):
-                    # context_*/continuity_* 不等重初始化门闩：服务未就绪即返回
-                    # 各自的稳定错误（continuity_not_ready / context_* gate）
+            active_attr = self.current_attribution()
+            if active_attr is None:
+                active_attr = resolve_mcp_client_info(
+                    None,
+                    actor=self._actor_id or "local",
+                    device_id=self._device_id,
+                    default_client=self.adapter or "unknown",
+                )
+            with bind_active_attribution(active_attr):
+                if isinstance(tool_name, str) and tool_name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
                     result = self.handle_tool_call(tool_name, tool_args)
                 else:
-                    gate_error = self._init_gate_error()
-                    if gate_error is not None:
-                        result = {"error": gate_error}
-                    else:
+                    adapter, mode, health = self._contract_view()
+                    exposed = {spec.name for spec in tool_specs(adapter=adapter, mode=mode, health=health)}
+                    if tool_name not in exposed:
+                        # 与 tools/list 同一注册表：隐藏工具不能被调用；
+                        # 未知工具也无需等待初始化门闩
+                        result = {"error": f"Unknown tool: {tool_name}"}
+                    elif tool_name.startswith(("context_", "continuity_", "project_board_")):
+                        # context_*/continuity_* 不等重初始化门闩：服务未就绪即返回
+                        # 各自的稳定错误（continuity_not_ready / context_* gate）
                         result = self.handle_tool_call(tool_name, tool_args)
+                    else:
+                        gate_error = self._init_gate_error()
+                        if gate_error is not None:
+                            result = {"error": gate_error}
+                        else:
+                            result = self.handle_tool_call(tool_name, tool_args)
             response_result = {
                 "content": [
                     {

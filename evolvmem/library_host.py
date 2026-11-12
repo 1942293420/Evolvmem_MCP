@@ -156,10 +156,22 @@ class LibraryHost:
         self._request = ContextVar('evolvmem_library_host_request', default=None)
         self._agent_registry = agent_registry
         self._actor_resolver = actor_resolver
+        self._attribution_lock = threading.RLock()
         self._attributions = {}
+        self._latest_device_attribution = {}
 
-    def last_attribution(self, device_id):
-        return self._attributions.get(str(device_id))
+    def last_attribution(self, device_id, *, session_id=None, principal_id=None):
+        dev_key = str(device_id)
+        with self._attribution_lock:
+            if session_id is not None:
+                sess_key = str(session_id)
+                if principal_id is not None:
+                    return self._attributions.get((str(principal_id), dev_key, sess_key))
+                for (p_key, d_key, s_key), attr in self._attributions.items():
+                    if d_key == dev_key and s_key == sess_key:
+                        return attr
+                return None
+            return self._latest_device_attribution.get(dev_key)
 
     @property
     def active_requests(self):
@@ -887,7 +899,7 @@ class LibraryHost:
         return dict(operation_id=operation.operation_id,library_id=operation.library_id,
                     policy_epoch=operation.target_policy_epoch,state=operation.operation_state)
 
-    def serve_rpc(self, identity, request, *, publish):
+    def serve_rpc(self, identity, request, *, publish, session_id=None, client_hint=None):
         state = self._state()
         self._check_open()
         if identity is not state.identity or not isinstance(identity, RequestIdentity):
@@ -916,12 +928,22 @@ class LibraryHost:
                     raise FoundationError('unsupported_protocol_version')
                 from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
                 actor_id = self._actor_resolver(identity.principal_id) if callable(self._actor_resolver) else identity.principal_id
-                c_info = params.get('clientInfo')
+                c_info = dict(params['clientInfo']) if isinstance(params.get('clientInfo'), dict) else {}
+                if isinstance(client_hint, dict):
+                    for k in ('name', 'model'):
+                        if not c_info.get(k) and client_hint.get(k):
+                            c_info[k] = client_hint[k]
+                merged_info = c_info or None
                 if self._agent_registry is not None:
-                    attr = self._agent_registry.record_seen(actor=actor_id, client_info=c_info, device_id=identity.device_id)
+                    attr = self._agent_registry.record_seen(actor=actor_id, client_info=merged_info, device_id=identity.device_id)
                 else:
-                    attr = resolve_mcp_client_info(c_info, actor=actor_id, device_id=identity.device_id)
-                self._attributions[str(identity.device_id)] = attr
+                    attr = resolve_mcp_client_info(merged_info, actor=actor_id, device_id=identity.device_id)
+                sess_key = str(session_id) if session_id else '__default__'
+                with self._attribution_lock:
+                    if len(self._attributions) >= 4096:
+                        self._attributions.pop(next(iter(self._attributions)))
+                    self._attributions[(str(identity.principal_id), str(identity.device_id), sess_key)] = attr
+                    self._latest_device_attribution[str(identity.device_id)] = attr
                 result = {'protocolVersion': protocol, 'capabilities': {'tools': {}},
                     'serverInfo': {'name': 'evolvmem-library-host', 'version': '0.1'},
                     'instructions': 'Select an authorized library_id and registered project_key. '
@@ -938,35 +960,51 @@ class LibraryHost:
                         | (RECALL_TOOLS if self._recall_enabled else frozenset())
                         | (ADMIN_TOOLS if self._acl_enabled else frozenset())):
                     raise FoundationError('library_tool_unsupported')
+                from evolvmem.experience_v2.control.agent_identity import bind_active_attribution, resolve_mcp_client_info
+                actor_id = self._actor_resolver(identity.principal_id) if callable(self._actor_resolver) else identity.principal_id
+                active_attr = self.last_attribution(
+                    identity.device_id, session_id=session_id, principal_id=identity.principal_id
+                ) if session_id is not None else None
+                if active_attr is None and isinstance(client_hint, dict) and (client_hint.get('name') or client_hint.get('model')):
+                    active_attr = (
+                        self._agent_registry.record_seen(actor=actor_id, client_info=client_hint, device_id=identity.device_id)
+                        if self._agent_registry is not None
+                        else resolve_mcp_client_info(client_hint, actor=actor_id, device_id=identity.device_id)
+                    )
+                if active_attr is None:
+                    active_attr = self.last_attribution(identity.device_id) or resolve_mcp_client_info(
+                        None, actor=actor_id, device_id=identity.device_id
+                    )
                 tool, arguments = params['name'], params['arguments']
-                if tool in RECALL_TOOLS:
-                    def deliver_recall(dto):
-                        self._publish(state,{'jsonrpc':'2.0','id':request_id,'result':{
-                            'content':[{'type':'text','text':json.dumps(dto,ensure_ascii=False,allow_nan=False)}],
-                            'isError':isinstance(dto,dict) and 'error' in dto}},publish)
-                    return self._recall(state,tool,arguments,deliver_recall)
-                if tool in ADMIN_TOOLS:
-                    dto=self._admin(state,tool,arguments)
-                    return self._publish(state,{'jsonrpc':'2.0','id':request_id,'result':{
-                        'content':[{'type':'text','text':json.dumps(dto,ensure_ascii=False)}],'isError':False}},publish)
-                args = self._arguments(tool, arguments)
-                route = state.router.plan(identity, tool, library_id=arguments.get('library_id'),
-                                          request_fields=arguments)
-                # All validation/routing above precedes the first content
-                # connection and the legacy-wire import. No SQLite bootstrap.
-                from evolvmem.pg_business_core.executor import PgBusinessExecutor
-                executor = PgBusinessExecutor(state.manager, self._config,
-                    model_contract=self._model_contract, semantic_merge_enabled=self._semantic_merge,
-                    project_key=arguments['project_key'])
-                def deliver(dto):
-                    payload = {'jsonrpc': '2.0', 'id': request_id, 'result': {
-                        'content': [{'type': 'text', 'text': json.dumps(dto, ensure_ascii=False, allow_nan=False)}],
-                        'isError': isinstance(dto, dict) and 'error' in dto}}
-                    self._publish(state, payload, publish)
-                if tool == 'context_read':
-                    return executor.read(route, args, publish=deliver, preflight_errors_as_results=True)
-                return executor.mutate(route, args, request_id=arguments['request_id'], publish=deliver,
-                                       preflight_errors_as_results=True)
+                with bind_active_attribution(active_attr):
+                    if tool in RECALL_TOOLS:
+                        def deliver_recall(dto):
+                            self._publish(state,{'jsonrpc':'2.0','id':request_id,'result':{
+                                'content':[{'type':'text','text':json.dumps(dto,ensure_ascii=False,allow_nan=False)}],
+                                'isError':isinstance(dto,dict) and 'error' in dto}},publish)
+                        return self._recall(state,tool,arguments,deliver_recall)
+                    if tool in ADMIN_TOOLS:
+                        dto=self._admin(state,tool,arguments)
+                        return self._publish(state,{'jsonrpc':'2.0','id':request_id,'result':{
+                            'content':[{'type':'text','text':json.dumps(dto,ensure_ascii=False)}],'isError':False}},publish)
+                    args = self._arguments(tool, arguments)
+                    route = state.router.plan(identity, tool, library_id=arguments.get('library_id'),
+                                              request_fields=arguments)
+                    # All validation/routing above precedes the first content
+                    # connection and the legacy-wire import. No SQLite bootstrap.
+                    from evolvmem.pg_business_core.executor import PgBusinessExecutor
+                    executor = PgBusinessExecutor(state.manager, self._config,
+                        model_contract=self._model_contract, semantic_merge_enabled=self._semantic_merge,
+                        project_key=arguments['project_key'])
+                    def deliver(dto):
+                        payload = {'jsonrpc': '2.0', 'id': request_id, 'result': {
+                            'content': [{'type': 'text', 'text': json.dumps(dto, ensure_ascii=False, allow_nan=False)}],
+                            'isError': isinstance(dto, dict) and 'error' in dto}}
+                        self._publish(state, payload, publish)
+                    if tool == 'context_read':
+                        return executor.read(route, args, publish=deliver, preflight_errors_as_results=True)
+                    return executor.mutate(route, args, request_id=arguments['request_id'], publish=deliver,
+                                           preflight_errors_as_results=True)
             else:
                 raise FoundationError('method_not_supported')
         except FoundationError as exc:

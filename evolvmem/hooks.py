@@ -471,7 +471,53 @@ def get_stop_prompt(messages_summary: str) -> str:
     )
 
 
-def parse_agent_model_args(argv, *, actor: str = "local"):
+def parse_agent_model_args(argv, *, actor: str | None = None):
     """Parse optional --agent / --model CLI arguments for Claude/generic hooks."""
     from evolvmem.experience_v2.control.agent_identity import parse_cli_agent_model
     return parse_cli_agent_model(argv, default_client="claude", default_model="unknown", actor=actor)
+
+
+def main(argv=None) -> int:
+    """CLI entry point for Claude/generic SessionStart & Stop hooks."""
+    import json
+    from evolvmem.experience_v2.control.agent_identity import activate_cli_attribution
+
+    try:
+        attr, rest = parse_agent_model_args(sys.argv[1:] if argv is None else argv)
+    except ValueError as exc:
+        print(f"[evolvmem] invalid CLI arguments: {exc}", file=sys.stderr)
+        return 2
+    activate_cli_attribution(attr)
+    sub = rest[0] if rest else "session-start"
+    try:
+        if sub == "session-start":
+            block = get_session_start_block()
+            if block:
+                print(block)
+            return 0
+        if sub == "stop":
+            summary = sys.stdin.read()
+            print(get_stop_prompt(summary))
+            return 0
+        if sub == "status":
+            print(
+                json.dumps(
+                    {
+                        "actor": attr.actor,
+                        "agent_id": attr.agent_id,
+                        "client": attr.client,
+                        "model": attr.model,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return 0
+        print(f"[evolvmem] unknown hooks subcommand: {sub!r}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # fail-open for live sessions
+        print(f"[evolvmem] hook error ({sub}): {exc}", file=sys.stderr)
+        return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

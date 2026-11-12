@@ -484,13 +484,16 @@ def extract_cli(args: argparse.Namespace) -> int:
     return 0
 
 
-def parse_agent_model_args(argv, *, actor: str = "local"):
+def parse_agent_model_args(argv, *, actor: str | None = None):
     from evolvmem.experience_v2.control.agent_identity import parse_cli_agent_model
     return parse_cli_agent_model(argv, default_client="dsh", default_model="unknown", actor=actor)
 
 
-def main() -> int:
-    _attr, rest_argv = parse_agent_model_args(sys.argv[1:])
+def main(argv=None) -> int:
+    from evolvmem.experience_v2.control.agent_identity import activate_cli_attribution
+
+    attr, rest_argv = parse_agent_model_args(sys.argv[1:] if argv is None else argv)
+    activate_cli_attribution(attr)
     parser = argparse.ArgumentParser(prog="evolvmem.dsh_bridge")
     sub = parser.add_subparsers(dest="command", required=True)
 
