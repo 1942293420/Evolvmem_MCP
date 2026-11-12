@@ -503,7 +503,7 @@ def check_projection_lag(
     mapped_item_ids = sorted(
         {int(row["context_item_id"]) for row in rows if row["context_item_id"] is not None}
     )
-    items_by_id, layers_by_item = _load_mapped_items(store, mapped_item_ids)
+    items_by_id, layers_by_item, l1_by_item = _load_mapped_items(store, mapped_item_ids)
     quarantined = _duplicate_active_quarantined_items(store, mapped_item_ids)
 
     duplicate_active = duplicate_active_legacy_ids(rows)
@@ -543,12 +543,11 @@ def check_projection_lag(
                 and item_id in quarantined
             ):
                 status_mismatch += 1
-        content_type = LegacyMemoryMigrator.content_type_for(row)
         original_l2 = LegacyMemoryMigrator.source_text(row.get("value")).replace(
             "\r\n", "\n"
         )
-        expected_l1 = migrator.layers_for(original_l2, content_type).l1
-        if store.get_layer(item_id, ContextLayer.L1) != expected_l1:
+        expected_l1 = migrator.l1_for(original_l2)
+        if l1_by_item.get(item_id) != expected_l1:
             l1_mismatch += 1
         if (
             item["supersedes"] != _expected_link(row.get("supersedes"), mapping_by_legacy)
@@ -591,14 +590,14 @@ def check_projection_lag(
 
 def _load_mapped_items(
     store: ContextStore, item_ids: list[int]
-) -> tuple[dict[int, dict], dict[int, frozenset]]:
-    """Status/links and layer-name sets for mapped items, in two queries.
+) -> tuple[dict[int, dict], dict[int, frozenset], dict[int, str]]:
+    """Status/links, layer names and L1 for mapped items in two queries.
 
     Raw SQL because retrieval records inner-join L0, which would misclassify
     an item missing only its L0 row as dangling instead of layer-incomplete.
     """
     if not item_ids:
-        return {}, {}
+        return {}, {}, {}
     placeholders = ",".join("?" for _ in item_ids)
     conn = store._connection()
     items = {
@@ -614,12 +613,17 @@ def _load_mapped_items(
         )
     }
     layers: dict[int, set] = {}
+    l1_by_item: dict[int, str] = {}
     for row in conn.execute(
-        f"SELECT item_id, layer FROM context_layers WHERE item_id IN ({placeholders})",
+        "SELECT item_id, layer, CASE WHEN layer='l1' THEN content END AS l1 "
+        f"FROM context_layers WHERE item_id IN ({placeholders})",
         tuple(item_ids),
     ):
-        layers.setdefault(int(row["item_id"]), set()).add(str(row["layer"]))
-    return items, {item_id: frozenset(names) for item_id, names in layers.items()}
+        item_id = int(row["item_id"])
+        layers.setdefault(item_id, set()).add(str(row["layer"]))
+        if row["layer"] == "l1":
+            l1_by_item[item_id] = row["l1"]
+    return items, {item_id: frozenset(names) for item_id, names in layers.items()}, l1_by_item
 
 
 def _duplicate_active_quarantined_items(

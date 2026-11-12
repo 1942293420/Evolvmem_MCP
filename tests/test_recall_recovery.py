@@ -1110,15 +1110,11 @@ def test_recovery_keeps_dirty_when_the_atomic_swap_fails(test_config, monkeypatc
         index.close()
 
 
-def test_recovery_thread_uses_the_shared_connection_without_blocking_requests(
-        tmp_path):
-    """The real worker thread, the real shared connection, concurrent readers.
+def test_recovery_thread_keeps_requests_readable_during_rebuild(tmp_path):
+    """The real worker owns its handles while resident request readers continue.
 
-    The reviewer's boundary: recovery runs on the very connection the request
-    path uses, the runtime's own thread performs it, and the status stays
-    readable while a large library is encoded. SQLite is opened with
-    ``check_same_thread=False`` and the store documents a bounded background
-    worker sharing it, so this test proves the real path, not a mock.
+    The runtime's own thread performs the rebuild, and status stays readable
+    throughout encoding and the final atomic publication.
     """
     import threading
     import time

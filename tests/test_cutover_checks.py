@@ -1730,3 +1730,32 @@ def test_migration_rerun_never_auto_activates_quarantined_candidate(test_config)
         assert report.projection_lag == 0
     finally:
         store.close()
+
+
+def test_projection_lag_batches_l1_checks_without_changing_mismatch_verdicts(test_config):
+    ids, store = _migrated_library(test_config)
+    try:
+        item_id = store.resolve_legacy_mapping(ids["active"])
+        with store.transaction():
+            store._connection().execute("UPDATE context_layers SET content='changed summary' WHERE item_id=? AND layer='l1'", (item_id,))
+        statements = []
+        store._connection().set_trace_callback(statements.append)
+        report = check_projection_lag(test_config, store)
+        store._connection().set_trace_callback(None)
+        assert report.l1_mismatch == 1
+        assert report.projection_lag == 1
+        individual_reads = [sql for sql in statements if sql.startswith("SELECT content FROM context_layers WHERE item_id=")]
+        assert not individual_reads, "health must not issue one L1 read per legacy row"
+    finally:
+        store.close()
+
+
+def test_projection_comparison_does_not_construct_unused_l0_or_l2(test_config, monkeypatch):
+    _, store = _migrated_library(test_config)
+    try:
+        def unused(*args, **kwargs):
+            pytest.fail('projection health compares only the equivalent L1 projection')
+        monkeypatch.setattr(LegacyMemoryMigrator, 'layers_for', unused)
+        assert check_projection_lag(test_config, store).projection_lag == 0
+    finally:
+        store.close()

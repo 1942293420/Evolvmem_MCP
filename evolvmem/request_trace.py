@@ -12,7 +12,52 @@ import uuid
 
 SLOW_MS = 1000
 _current = ContextVar('recall_trace', default=None)
-_STAGES = frozenset({'queue', 'dispatch', 'health', 'retrieval', 'lexical', 'vector', 'embedding', 'rerank'})
+_STAGES = frozenset({'queue', 'dispatch', 'health', 'retrieval', 'lexical', 'vector', 'embedding', 'rerank',
+                     'health_state', 'health_physical', 'health_projection', 'health_vector',
+                     'health_documents', 'health_counts',
+                     'capability_search', 'capability_vector', 'capability_embedding',
+                     'capability_lock_wait', 'capability_lock_held', 'capability_vector_eligibility',
+                     'capability_lexical', 'capability_facts', 'capability_modules',
+                     'capability_selected_validation', 'capability_selected_facts',
+                     'capability_selected_modules', 'capability_recovery_initial_audit',
+                     'capability_role_preflight', 'capability_role_structure',
+                     'capability_recovery_final_audit', 'capability_sync_initial_proof',
+                     'capability_sync_final_proof'})
+HEALTH_STATE_FIELDS = (
+    'service', 'connection', 'database_changes', 'data_version', 'schema_version',
+    'transaction', 'config', 'configured_mode', 'configured_adapter', 'service_mode',
+    'service_adapter', 'embedding', 'embedding_loaded', 'context_index', 'legacy_index',
+    'physical_cache', 'files',
+)
+_HEALTH_EVENTS = frozenset({
+    'physical_baseline_initial', 'physical_baseline_schema', 'physical_baseline_identity',
+    'physical_uncached_transaction', 'physical_cache_disabled', 'physical_pending',
+    'physical_failed_cached', 'generation_fallback', 'state_unavailable',
+})
+
+
+def health_event(name):
+    trace = _current.get()
+    if trace is None:
+        return
+    if name == 'cache_hit':
+        trace['health_cache_hits'] = trace.get('health_cache_hits', 0) + 1
+    elif name in _HEALTH_EVENTS:
+        events = trace.setdefault('health_events', {})
+        events[name] = events.get(name, 0) + 1
+
+
+def health_evaluation(elapsed_ms, ready, changed):
+    trace = _current.get()
+    if trace is None:
+        return
+    trace['health_evaluations'] = trace.get('health_evaluations', 0) + 1
+    trace['health_evaluate_ms'] = round(trace.get('health_evaluate_ms', 0) + elapsed_ms, 3)
+    passes = trace.setdefault('health_passes', [])
+    if len(passes) < 8:
+        passes.append(dict(elapsed_ms=round(elapsed_ms, 3),
+                           ready=ready if type(ready) is bool else None,
+                           changed=[name for name in HEALTH_STATE_FIELDS if name in changed]))
 
 
 def failure(exc, stage_name='dispatch'):
@@ -26,6 +71,13 @@ def failure(exc, stage_name='dispatch'):
         trace['error'] = dict(category=type(exc).__name__, stage=stage_name, frames=frames)
     elif len(frames) > len(trace['error']['frames']):
         trace['error']['frames'] = frames
+
+
+def revision_observation(observation):
+    """Attach fixed revision phases/codes; never replace the existing error."""
+    trace = _current.get()
+    if trace is not None:
+        trace.setdefault('revision', observation.snapshot())
 
 
 @contextmanager

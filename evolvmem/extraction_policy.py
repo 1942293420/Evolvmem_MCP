@@ -340,6 +340,10 @@ def _substitute(
     pattern: re.Pattern[str],
     replacement: _Replacement,
 ) -> tuple[str, int]:
+    # A URL credential cannot match without its literal scheme separator.
+    # Avoid repeatedly backtracking over URL-free long alphanumeric inputs.
+    if pattern is _URL_CREDENTIAL_RE and "://" not in value:
+        return value, 0
     count = 0
 
     def replace(match: re.Match[str]) -> str:

@@ -657,6 +657,9 @@ class ContextStore:
         from evolvmem.knowledge_facts import SCHEMA as fact_schema
         from evolvmem.capability_models import CAPABILITY_SCHEMA, CAPABILITY_CATEGORIES, CAPABILITY_CATEGORY_LABELS
         from evolvmem.project_archive_models import PROJECT_ARCHIVE_SCHEMA
+        from evolvmem.pipeline_state import SCHEMA as pipeline_schema
+        from evolvmem.project_modules import SCHEMA as module_schema
+        from evolvmem.governance_sources import SCHEMA as source_enrollment_schema
         for statement in (
             *_SCHEMA_TABLE_STATEMENTS,
             *learning_schema,
@@ -664,6 +667,9 @@ class ContextStore:
             *fact_schema,
             *CAPABILITY_SCHEMA,
             *PROJECT_ARCHIVE_SCHEMA,
+            *pipeline_schema,
+            *module_schema,
+            *source_enrollment_schema,
         ):
             conn.execute(statement)
         now = _now_iso()
@@ -1708,8 +1714,35 @@ class ContextStore:
             "ORDER BY i.id",
             (_now_iso(),),
         ).fetchall()
-        from evolvmem.memory_eligibility import eligible
-        return [ContextVectorDocument(item_id=row["item_id"], l0=row["l0"]) for row in rows if eligible(self, row["item_id"])]
+        from evolvmem.memory_eligibility import eligible_ids
+        allowed = eligible_ids(self, [row["item_id"] for row in rows], preserve_text_decoding=True)
+        return [ContextVectorDocument(item_id=row["item_id"], l0=row["l0"]) for row in rows if row["item_id"] in allowed]
+
+    def validate_item_structure(self, item_ids) -> None:
+        """Batch get_item checks, decoding each body then discarding it.
+
+        Every original SQLite TEXT read is retained: malformed UTF-8 must
+        still fail even for an unused item column or an unmapped L2 body.
+        Layer bodies are streamed instead of retained in ContextLayers.
+        _row_to_item keeps the existing enum and projects/tags conversions.
+        """
+        ids = list(dict.fromkeys(item_ids))
+        conn = self._connection()
+        required = {member.value for member in ContextLayer}
+        for offset in range(0, len(ids), 500):
+            batch = ids[offset:offset + 500]
+            marks = ','.join('?' for _ in batch)
+            layers, generators = {}, {}
+            for row in conn.execute(f'SELECT item_id,layer,generator,content FROM context_layers WHERE item_id IN ({marks})', batch):
+                layers.setdefault(row['item_id'], set()).add(row['layer'])
+                generators.setdefault(row['item_id'], set()).add(row['generator'])
+            for row in conn.execute(f'SELECT * FROM context_items WHERE id IN ({marks})', batch):
+                ident = row['id']
+                if layers.get(ident, set()) != required:
+                    raise RuntimeError(f'context item {ident} does not have exactly L0/L1/L2')
+                if len(generators[ident]) != 1:
+                    raise RuntimeError(f'context item {ident} layers have mixed generators')
+                self._row_to_item(row, None)
 
     def get_retrieval_records(
         self, item_ids: list[int]

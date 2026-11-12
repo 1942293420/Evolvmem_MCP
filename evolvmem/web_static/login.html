@@ -1,25 +1,166 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="referrer" content="no-referrer">
-  <title>登录 · EvolvMem</title>
-  <style>
-    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f3f4f6;color:#1a1a2e;font:16px/1.7 system-ui,sans-serif}
-    main{width:100%;max-width:440px;background:#fff;padding:42px 36px;border:1px solid #e5e7eb;border-radius:20px;box-shadow:0 12px 40px #1a1a2e08}
-    .brand{font-size:15px;font-weight:650;color:#8b5cf6;letter-spacing:.04em}h1{font-size:28px;line-height:1.3;margin:22px 0 12px}p{color:#656879;margin:0 0 24px}
-    .login{display:block;text-align:center;padding:12px 20px;border-radius:10px;background:#8b5cf6;color:#fff;text-decoration:none;font-weight:600}.login:hover{background:#7c3aed}.login:focus-visible{outline:3px solid #c4b5fd;outline-offset:4px}
-    .error{font-size:14px;color:#a33636;background:#fff1f1;border-radius:8px;margin-bottom:20px;padding:12px}.error:empty{display:none}
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>登录 · EvolvMem</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%238b5cf6'/%3E%3Ccircle cx='32' cy='32' r='7' fill='white'/%3E%3C/svg%3E">
+<style>
+:root{
+ --bg:#f4f5f9;--panel:#fff;--panel-2:#f8f9fc;--soft:#f1edff;
+ --ink:#1c1a2e;--ink-2:#4c4d63;--ink-3:#82849a;
+ --line:#e3e5ee;--line-2:#cfd2e2;
+ --accent:#8b5cf6;--accent-dark:#7040e0;--accent-soft:rgba(139,92,246,.09);
+ --danger:#a33636;--danger-soft:#fff1f1;
+ --shadow:0 12px 40px rgba(26,26,46,.07);--shadow-hi:0 18px 52px rgba(26,26,46,.12);
+ --font:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+ --mono:ui-monospace,'SF Mono',Consolas,monospace;
+ --display:Georgia,'Songti SC','Noto Serif SC',serif;
+}
+html[data-theme="dark"]{
+ --bg:#0d1020;--panel:#171b31;--panel-2:#1d2240;--soft:#241f47;
+ --ink:#eef0ff;--ink-2:#b2b6d4;--ink-3:#7e84a6;
+ --line:#2b3152;--line-2:#3a426b;
+ --accent:#a78bfa;--accent-dark:#8b5cf6;--accent-soft:rgba(167,139,250,.13);
+ --danger:#f08a8a;--danger-soft:rgba(240,138,138,.1);
+ --shadow:0 14px 44px rgba(0,0,0,.32);--shadow-hi:0 20px 56px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.65;
+ -webkit-font-smoothing:antialiased;overflow-x:hidden}
+button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer;border:0;background:none}
+a{color:var(--accent);text-decoration:none}
+button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.starfield{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.55}
+.wash{position:fixed;inset:0;z-index:0;pointer-events:none;
+ background:radial-gradient(760px 560px at 12% 18%,var(--accent-soft),transparent 70%),
+            radial-gradient(700px 520px at 88% 82%,rgba(91,63,214,.07),transparent 72%)}
+.gridbg{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.5;
+ background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+ background-size:44px 44px;mask-image:radial-gradient(ellipse at 50% 50%,#000 0%,transparent 78%)}
+.tools{position:fixed;right:22px;top:20px;z-index:5;display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.tool{font:10.5px var(--mono);color:var(--ink-2);border:1px solid var(--line);padding:6px 10px;
+ border-radius:6px;background:var(--panel);white-space:nowrap}
+.tool:hover{border-color:var(--accent);color:var(--accent)}
+.ro{font:10.5px var(--mono);color:var(--ink-3);border:1px dashed var(--line-2);padding:5px 9px;border-radius:6px}
+.shell{position:relative;z-index:2;min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+ max-width:1180px;margin:0 auto;padding:36px 28px}
+.left{display:flex;flex-direction:column;justify-content:center;padding:20px 44px 20px 12px}
+.brandline{display:flex;align-items:center;gap:13px}
+.brand-logo{width:48px;height:48px;flex:none;border-radius:13px;overflow:hidden;
+ box-shadow:0 8px 24px rgba(139,92,246,.28)}
+.brand-logo svg{width:100%;height:100%;display:block}
+.brand-name{font-size:17px;font-weight:750}
+.brand-sub{font:10.5px var(--mono);letter-spacing:.16em;color:var(--accent);margin-top:2px;text-transform:uppercase}
+.left h2{font:600 clamp(26px,3.3vw,38px)/1.35 var(--display);letter-spacing:-.02em;margin:34px 0 12px}
+.left h2 em{font-style:normal;color:var(--accent)}
+.left .lede{font-size:13.5px;color:var(--ink-2);line-height:1.9;max-width:430px}
+.caps{display:flex;flex-direction:column;gap:12px;margin-top:30px}
+.cap{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;background:var(--panel);
+ border:1px solid var(--line);border-radius:9px;max-width:430px}
+.cap i{width:28px;height:28px;flex:none;border-radius:7px;display:grid;place-items:center;
+ font:700 11px var(--mono);color:var(--accent);background:var(--accent-soft);font-style:normal}
+.cap b{display:block;font-size:12.5px;font-weight:700}
+.cap span{display:block;font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.left-foot{margin-top:36px;font:10.5px var(--mono);color:var(--ink-3);letter-spacing:.08em}
+.right{display:flex;align-items:center;justify-content:center;padding:20px 0}
+.card{position:relative;width:100%;max-width:430px;background:var(--panel);border:1px solid var(--line);
+ border-radius:12px;box-shadow:var(--shadow);padding:34px 32px 28px;overflow:hidden;transition:box-shadow .2s}
+.card::before{content:'';position:absolute;left:0;right:0;top:0;height:3px;
+ background:linear-gradient(90deg,var(--accent),#c4b5fd)}
+.card:hover{box-shadow:var(--shadow-hi)}
+.card-kicker{font:10px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+.card h1{font-size:26px;font-weight:730;letter-spacing:-.02em;line-height:1.35;margin:16px 0 8px}
+.card .sub{font-size:12.5px;color:var(--ink-3);margin-bottom:24px}
+.error{font-size:12.5px;color:var(--danger);background:var(--danger-soft);
+ border:1px solid rgba(163,54,54,.25);border-radius:7px;padding:11px 13px;margin-bottom:18px;line-height:1.6}
+.error:empty{display:none}
+.btn-main{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;
+ padding:12px 18px;border-radius:8px;background:var(--accent);color:#fff;font-size:13.5px;font-weight:700;
+ box-shadow:0 6px 18px rgba(139,92,246,.24);transition:.16s}
+.btn-main:hover{background:var(--accent-dark);transform:translateY(-1px)}
+.btn-main svg{width:16px;height:16px;flex:none}
+.note{font-size:11px;color:var(--ink-3);text-align:center;margin-top:14px;line-height:1.7}
+.help{margin-top:22px;border-top:1px solid var(--line);padding-top:14px}
+.help summary{cursor:pointer;font-size:11.5px;color:var(--accent);list-style:none}
+.help summary::-webkit-details-marker{display:none}
+.help summary::before{content:'▸ '}
+.help[open] summary::before{content:'▾ '}
+.help ul{padding:12px 0 0 18px;font-size:11.5px;color:var(--ink-3);line-height:1.9}
+.card-foot{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);
+ font:10px var(--mono);color:var(--ink-3);letter-spacing:.04em;line-height:1.8}
+@media(max-width:900px){.shell{grid-template-columns:1fr;padding:28px 18px}.left{padding:12px 6px 4px}
+ .left h2{margin-top:22px}.caps{margin-top:18px}.left-foot{display:none}.card{max-width:460px}}
+@media(max-width:560px){.left{display:none}.shell{padding:20px 16px}.card{padding:28px 22px 22px}
+ .tools{position:static;justify-content:center;margin:14px 0 0}}
+</style>
+<script>
+/* 尽早恢复主题，避免闪烁；受限存储环境静默降级 */
+try{var t=localStorage.getItem('evolvmem.login.theme');if(t==='dark')document.documentElement.dataset.theme='dark';}catch(e){}
+</script>
 </head>
 <body>
-  <main>
-    <div class="brand">EvolvMem · 记忆工作台</div>
-    <h1>用飞书账号登录</h1>
-    <p>查看记忆、经验与项目进展。</p>
-    <div class="error" role="alert">{{message}}</div>
-    <a class="login" href="/auth/login">飞书登录</a>
+<svg class="starfield" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><line x1="110" y1="140" x2="220" y2="90" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="220" y1="90" x2="320" y2="210" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="320" y1="210" x2="180" y2="320" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="180" y1="320" x2="110" y2="140" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="220" y1="90" x2="420" y2="130" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="420" y1="130" x2="520" y2="260" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="520" y1="260" x2="610" y2="90" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="520" y1="260" x2="700" y2="330" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="700" y1="330" x2="980" y2="250" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="980" y1="250" x2="1090" y2="120" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="180" y1="320" x2="300" y2="640" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="300" y1="640" x2="470" y2="540" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="470" y1="540" x2="640" y2="660" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="640" y1="660" x2="820" y2="580" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="820" y1="580" x2="1010" y2="680" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="1010" y1="680" x2="1130" y2="520" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="320" y1="210" x2="250" y2="450" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="250" y1="450" x2="560" y2="420" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="560" y1="420" x2="900" y2="430" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="900" y1="430" x2="1050" y2="390" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="560" y1="420" x2="700" y2="330" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><line x1="470" y1="540" x2="520" y2="260" stroke="#8b5cf6" stroke-opacity=".16" stroke-width="1"/><circle cx="110" cy="140" r="5" fill="#8b5cf6" fill-opacity="0.32"/><circle cx="110" cy="140" r="10" fill="none" stroke="#8b5cf6" stroke-opacity=".12"/><circle cx="220" cy="90" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="320" cy="210" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="180" cy="320" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="420" cy="130" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="520" cy="260" r="5" fill="#8b5cf6" fill-opacity="0.32"/><circle cx="520" cy="260" r="10" fill="none" stroke="#8b5cf6" stroke-opacity=".12"/><circle cx="610" cy="90" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="700" cy="330" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="860" cy="160" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="980" cy="250" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="1090" cy="120" r="5" fill="#8b5cf6" fill-opacity="0.32"/><circle cx="1090" cy="120" r="10" fill="none" stroke="#8b5cf6" stroke-opacity=".12"/><circle cx="140" cy="560" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="300" cy="640" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="470" cy="540" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="640" cy="660" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="820" cy="580" r="5" fill="#8b5cf6" fill-opacity="0.32"/><circle cx="820" cy="580" r="10" fill="none" stroke="#8b5cf6" stroke-opacity=".12"/><circle cx="1010" cy="680" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="1130" cy="520" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="250" cy="450" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="560" cy="420" r="3" fill="#8b5cf6" fill-opacity="0.2"/><circle cx="900" cy="430" r="5" fill="#8b5cf6" fill-opacity="0.32"/><circle cx="900" cy="430" r="10" fill="none" stroke="#8b5cf6" stroke-opacity=".12"/><circle cx="1050" cy="390" r="3" fill="#8b5cf6" fill-opacity="0.2"/></svg>
+<div class="wash"></div><div class="gridbg"></div>
+<div class="tools">
+ <button class="tool" id="themeBtn" type="button">◐ 深色</button>
+ <span class="ro">◉ 企业飞书单点登录</span>
+</div>
+<div class="shell">
+ <section class="left">
+  <div class="brandline"><div class="brand-logo"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+<defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8B5CF6"/><stop offset="1" stop-color="#5B3FD6"/></linearGradient></defs>
+<rect width="64" height="64" rx="16" fill="url(#lg)"/>
+<g stroke="#fff" stroke-width="2.4" stroke-linecap="round" opacity=".85"><path d="M32 32 L18 20"/><path d="M32 32 L47 20"/><path d="M32 32 L44 46"/><path d="M32 32 L20 45"/></g>
+<g fill="#fff"><circle cx="32" cy="32" r="6.2"/><circle cx="18" cy="20" r="4.1"/><circle cx="47" cy="20" r="4.1"/><circle cx="44" cy="46" r="4.1"/><circle cx="20" cy="45" r="4.1"/></g></svg></div>
+   <div><div class="brand-name">EvolvMem · 记忆工作台</div><div class="brand-sub">Long-term Memory Layer</div></div></div>
+  <h2>让每一次对话，<br>都成为<em>可复用的记忆</em>。</h2>
+  <p class="lede">给编程 Agent 的本地长期记忆层。会话归档、项目归类、证据提炼与按需召回——「学习」只发生在记忆与证据层，不训练模型。</p>
+  <div class="caps">
+   <div class="cap"><i>01</i><div><b>会话归档与清洗</b><span>保留原始上下文，去除噪声与无效片段</span></div></div>
+   <div class="cap"><i>02</i><div><b>项目归类与断点</b><span>按项目沉淀摘要、任务断点与资料链</span></div></div>
+   <div class="cap"><i>03</i><div><b>证据召回与问答</b><span>带来源链的检索，不虚构结论</span></div></div>
+  </div>
+  <div class="left-foot">LOCAL-FIRST · OWNER-GATED · 192.168.1.135:9377</div>
+ </section>
+ <section class="right">
+  <main class="card">
+   <div class="card-kicker">Secure Sign-in / 单点登录</div>
+   <h1>用飞书账号登录</h1>
+   <p class="sub">查看记忆、经验与项目进展。</p>
+   <div class="error" role="alert">{{message}}</div>
+   <a class="btn-main" href="/auth/login">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 19H9a7 7 0 1 1 6.7-9"/><path d="M21 12.5 17.5 9v3.5A3.5 3.5 0 0 0 21 16z"/></svg>
+    <span>飞书登录</span>
+   </a>
+   <p class="note">仅支持企业飞书账号 · 由管理员统一授权</p>
+   <details class="help"><summary>登录遇到问题？</summary>
+    <ul>
+     <li>企业不匹配：请使用已登记的企业飞书账号</li>
+     <li>授权已过期或已取消：重新发起登录即可</li>
+     <li>未绑定账号：联系管理员在用户管理中登记</li>
+     <li>登录态失效：页面会自动返回此登录页</li>
+    </ul>
+   </details>
+   <div class="card-foot">EvolvMem · 本地长期记忆层<br>登录态由服务端会话管理，仅 owner 可读原文与图片</div>
   </main>
+ </section>
+</div>
+<script>
+(function(){
+ var btn=document.getElementById('themeBtn');
+ function sync(){var dark=document.documentElement.dataset.theme==='dark';
+  if(btn)btn.textContent=dark?'◐ 浅色':'◐ 深色';}
+ if(btn)btn.addEventListener('click',function(){
+  var dark=document.documentElement.dataset.theme==='dark';
+  document.documentElement.dataset.theme=dark?'light':'dark';
+  try{localStorage.setItem('evolvmem.login.theme',dark?'light':'dark');}catch(e){}
+  sync();
+ });
+ sync();
+})();
+</script>
 </body>
 </html>

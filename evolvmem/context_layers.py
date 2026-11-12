@@ -55,6 +55,24 @@ def layers_from_legacy_value(
     return layers
 
 
+def l1_from_legacy_value(value: str, *, config: Config) -> str:
+    """Equivalent L1 projection without deriving unused L0 or copying L2.
+
+    The full constructor always produces nonempty, bounded L0/L1 from this
+    nonempty source; its remaining validation is the three positive budgets.
+    L2 overflow is explicitly allowed for legacy values in both paths.
+    """
+    source = normalize_content(value)
+    if not source:
+        raise ContextValidationError("content must not be empty")
+    for name, limit in (("l0", config.context_l0_max_chars),
+                        ("l1", config.context_l1_max_chars),
+                        ("l2", config.context_l2_max_chars)):
+        if type(limit) is not int or limit <= 0:
+            raise ContextValidationError(f"{name} maximum must be a positive integer")
+    return _truncate(source, config.context_l1_max_chars)
+
+
 def _first_meaningful_sentence_or_line(value: str) -> str:
     start = 0
     while start < len(value):

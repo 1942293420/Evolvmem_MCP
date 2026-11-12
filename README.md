@@ -332,7 +332,7 @@ Linux Codex 每个会话会持续写入 `~/.codex/sessions/**/rollout-*.jsonl`�
 codex mcp add evolvmem --url http://memory.lan:9378/mcp --bearer-token-env-var EVOLVMEM_KANE_TOKEN
 ```
 
-`SetEnvironmentVariable(..., 'User')` 不会改变已经打开的 PowerShell。执行后关闭并重新打开 PowerShell，再重启 Codex，才可测试连接；也可以在当前窗口额外设置 `$env:EVOLVMEM_KANE_TOKEN`。先用 `codex mcp get evolvmem` 确认条目。新会话先调用 `context_status`，再验收 `knowledge_recall`、`experience_recall` 与 `continuity_begin`；新增资料通过自动整理和知识库页面处理，并只通过 `memory_publish` 明确公开经整理的摘要；Kane 看不到 owner 的 personal namespace。远端 workspace 传非空 `workspace_path` 时必须带稳定 `device_id`；Git snapshot 是客户端报告值。`continuity_bind` 不会擅自切换已有 focus，客户端要用返回的当前 revision 显式 `continuity_checkpoint(action="switch_focus")` 后再恢复其他目标。
+`SetEnvironmentVariable(..., 'User')` 不会改变已经打开的 PowerShell。执行后关闭并重新打开 PowerShell，再重启 Codex，才可测试连接；也可以在当前窗口额外设置 `$env:EVOLVMEM_KANE_TOKEN`。先用 `codex mcp get evolvmem` 确认条目。新会话先调用 `context_status`，再用已登记项目验收 `project_archive_get` / `context_project_recall`、`capability_search`、`experience_recall` 与 `continuity_begin`。新版 primary 知识结构中的旧 `knowledge_recall` 会提示替代入口，不能用这个旧入口判断新项目历史是否存在；新增资料通过自动整理和知识库页面处理，并只通过 `memory_publish` 明确公开经整理的摘要；Kane 看不到 owner 的 personal namespace。远端 workspace 传非空 `workspace_path` 时必须带稳定 `device_id`；Git snapshot 是客户端报告值。`continuity_bind` 不会擅自切换已有 focus，客户端要用返回的当前 revision 显式 `continuity_checkpoint(action="switch_focus")` 后再恢复其他目标。
 
 没有服务或网络不可用时，owner 的本机 stdio 转发返回凭据安全的 `LAN MCP unavailable`；不要把它当作写入失败后可自动重试的信号。Kane 端需要检查服务、地址、环境变量和 token；写请求结果不明时先查记录，确实要手动重试则沿用原 `request_id`，不要生成新 ID。原 Linux 入口可选将 `lan_mcp_client_config` 指向私有 `jiangli-client.json`，设置 `embedding_http_url` 为数值 loopback 基址 `http://127.0.0.1:9378`、`embedding_http_token_file` 为 owner token，及 `lan_shared_vector_cache=true`；完整的四项占位片段见 [lan-owner-config.example.json](examples/lan-owner-config.example.json)，不要把它覆盖进通用 `config.example.json`。改完后重启原生 MCP 和 hooks。LAN runtime 本身不回转发且独占一个可选模型。原本严格的 standalone 向量健康门仍有效，LAN namespace 在共享模型不可用时保留 SQLite/FTS 路径。
 
@@ -400,7 +400,9 @@ PowerShell 5.1 接入脚本在加解密前加载 `System.Security`；可运行 `
 | 两端续接同一任务 | 显式 `continuity_bind` 核对 Git 后绑定；焦点不被抢占，旧 revision 不覆盖新进度 |
 | 用真实工具结果反馈经验 | `archive:<id>#<行号>` 可验证；助手自述不能证明成功，重复事件只计一次 |
 
-安装时使用 Windows 自带 .NET 编译 `evolvmem-sync.exe`，计划任务每分钟及用户登录后无窗口启动采集器。它独立扫描 Codex `sessions` / `archived_sessions`，发现安装后新建或继续写入的会话，并通过同一个 MCP 上传；不依赖模型记得调用工具，也不依赖 hook 已登记。小版本优先，每版本每轮最多上传 16 块（4 MiB），大历史保留偏移跨轮继续；关闭 Codex 后仍可补传；注销或关机期间暂停，重新登录后继续。服务端复用现有提炼凭据，摘要生成可能产生与 Linux 相同的模型费用。归档与提炼失败分开报告：`session_archive_retry` 显式重试，`session_archive_assign` 把待归属会话分配给已登记项目。收到最新归档后至少闲置 30 分钟才尝试保守断点补录；只处理已有唯一目录绑定的单一来源，不把沉默或助手自述当成任务完成。
+安装时使用 Windows 自带 .NET 编译 `evolvmem-sync.exe`，计划任务每分钟及用户登录后无窗口启动采集器。它独立扫描 Codex `sessions` / `archived_sessions`，发现安装后新建或继续写入的会话，并通过同一个 MCP 上传；不依赖模型记得调用工具，也不依赖 hook 已登记。待传会话轮换处理，每版本每轮默认最多上传 16 块（4 MiB，可配置），大历史保留偏移跨轮继续；关闭 Codex 后仍可补传；注销或关机期间暂停，重新登录后继续。原文归档不要求调用模型；项目摘要整理需独立授权并服从全局处理开关，启用后才可能产生模型费用。归档与提炼失败分开报告：`session_archive_retry` 显式重试，`session_archive_assign` 把待归属会话分配给已登记项目。收到最新归档后至少闲置 30 分钟才尝试保守断点补录；只处理已有唯一目录绑定的单一来源，不把沉默或助手自述当成任务完成。
+
+Windows 桌面原文归档的当前机制、DSH 自动采集安装和状态检查见 [桌面自动归档](docs/windows-desktop-archive.md)。原文同步与 AI 整理分别控制；连接成功不等于完整聊天已同步。
 
 全局 AGENTS 规则提醒 Codex 保存已确认决定和任务断点，不能保证逐条调用。后台按完整 JSONL 记录归档已落盘且仍可读取的会话；未写完的行等待补齐，未落盘或采集前已删除的数据无法恢复。默认不批量导入长期未使用的旧历史，升级保留首次采集起点。全局规则在下一次启动会话时加载，见 [官方 AGENTS.md 说明](https://learn.chatgpt.com/docs/agent-configuration/agents-md)。完整实现边界见 [Windows 对齐说明](docs/windows-codex.md) 和架构图册的 Windows 专题。卸载时运行安装器加 `-Uninstall`，保留已有加密队列，移除自身 hooks、MCP 配置、全局文档中的 EvolvMem 段落、启动器与计划任务。
 

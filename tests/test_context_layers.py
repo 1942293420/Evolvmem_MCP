@@ -119,3 +119,31 @@ def test_legacy_conversion_keeps_exact_limit_and_truncates_one_character_overflo
     assert overflow.l0 == "1234…"
     assert overflow.l1 == "1234…"
     assert overflow.l2 == "123456"
+
+
+@pytest.mark.parametrize('value', ['', '  ', '\r\n', ' alpha \r\n beta ', '长内容'*400,
+                                    'a'*20000+'. end', '\u2003spaced\u2003', '\ufeff'])
+@pytest.mark.parametrize('limits', [(1,1,1), (2,3,1), (100,1000,1), (700,10000,50)])
+def test_health_l1_projection_matches_full_legacy_constructor(test_config, value, limits):
+    from evolvmem.context_migration import LegacyMemoryMigrator
+    from evolvmem.context_store import ContextStore
+    from evolvmem.context_models import ContextContentType
+    test_config.context_l0_max_chars, test_config.context_l1_max_chars, test_config.context_l2_max_chars = limits
+    migrator = LegacyMemoryMigrator(ContextStore(test_config), test_config)
+    for content_type in ContextContentType:
+        assert migrator.l1_for(value) == migrator.layers_for(value, content_type).l1
+
+
+@pytest.mark.parametrize('name', ['l0', 'l1', 'l2'])
+@pytest.mark.parametrize('invalid', [0, -1, True, 1.5, None, '100'])
+def test_health_l1_keeps_every_legacy_budget_validation(test_config, name, invalid):
+    from evolvmem.context_migration import LegacyMemoryMigrator
+    from evolvmem.context_store import ContextStore
+    from evolvmem.context_models import ContextContentType, ContextValidationError
+    setattr(test_config, 'context_'+name+'_max_chars', invalid)
+    migrator = LegacyMemoryMigrator(ContextStore(test_config), test_config)
+    with pytest.raises(ContextValidationError) as original:
+        migrator.layers_for('value', ContextContentType.FACT)
+    with pytest.raises(ContextValidationError) as fast:
+        migrator.l1_for('value')
+    assert str(fast.value) == str(original.value)

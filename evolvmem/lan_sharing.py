@@ -170,15 +170,16 @@ class LanSharing:
         return {**self._view(row), 'layer': layer,
                 'content': row['title'] if layer == 'l0' else row['summary']}
 
-    def search(self, args):
-        rows = self.conn.execute('SELECT p.* FROM lan_publications p JOIN context_items i ON i.id=p.context_id WHERE p.active=1 AND i.status=?', ('active',)).fetchall()
+    def search(self, args, *, service=None):
+        service = self.service if service is None else service
+        rows = service.store._connection().execute('SELECT p.* FROM lan_publications p JOIN context_items i ON i.id=p.context_id WHERE p.active=1 AND i.status=?', ('active',)).fetchall()
         eligible = {r['context_id']: r for r in rows}
         if not eligible:
             return []
         # Eligibility precedes candidate budgets, so orphan rows cannot crowd
         # real publications out of lexical or semantic retrieval.
-        self.service._require_serving()
-        hits = self.service.retriever.search(ContextSearchRequest(
+        service._require_serving()
+        hits = service.retriever.search(ContextSearchRequest(
             query=args['query'], top_k=min(max(args.get('top_k', 10), 1), 20),
             project=args.get('project', ''), cross_project=True,
             content_types=tuple(ContextContentType(t) for t in args.get('content_types', [])),

@@ -16,6 +16,13 @@ def payload_is_subagent(payload) -> bool:
     """Verify the source's own leading metadata, never quoted dialogue/lineage."""
     if not isinstance(payload, dict) or not isinstance(payload.get('transcript'), str):
         return False
+    if payload.get('source_format') == 'dsh-session-jsonl-v1':
+        from evolvmem.dsh_transcript import parse_transcript as parse_dsh, workspace_details as dsh_details
+        try:
+            rows, _ = parse_dsh(payload['transcript'].encode(), payload.get('session_id', ''))
+            return dsh_details(rows)['subagent']
+        except LanError:
+            return True  # Malformed declared DSH is never admitted as ordinary dialogue.
     for raw in payload['transcript'].split('\n', 6)[:6]:
         try:
             row = json.loads(raw)
@@ -124,14 +131,29 @@ def dialogue_messages(rows: list[dict]) -> list[dict]:
     return messages
 
 
-def parse_transcript(raw: bytes, session_id: str) -> tuple[list[dict], list[dict]]:
-    """Keep original rows; produce extractor messages from complete JSONL only."""
+def _parse_transcript_rows(raw: bytes, session_id: str, *, event_limit: int | None = None):
+    """Validate all LF records once; optional events share the original row objects."""
     if not raw or not raw.endswith(b'\n'):
         raise LanError('invalid_transcript')
+    rows, events = [], []
+    start, lineno = 0, 0
     try:
         # JSONL records end at LF. Unicode separators inside JSON strings are
         # valid content; str.splitlines() would split and corrupt those records.
-        rows = [json.loads(line) for line in raw.decode('utf-8').split('\n') if line.strip()]
+        while start < len(raw):
+            end = raw.find(b'\n', start)
+            lineno += 1
+            text = raw[start:end].decode('utf-8')
+            if text.strip():
+                row = json.loads(text)
+                rows.append(row)
+                # Match the old backfill cap for LF and CRLF records. The cap
+                # selects events only: oversized records are still validated.
+                size = end - start - int(end > start and raw[end - 1] == 13)
+                if event_limit is not None and size <= event_limit:
+                    events.append((lineno, row))
+            del text
+            start = end + 1
     except (UnicodeError, ValueError):
         raise LanError('invalid_transcript') from None
     if not rows or any(not isinstance(row, dict) for row in rows):
@@ -145,4 +167,19 @@ def parse_transcript(raw: bytes, session_id: str) -> tuple[list[dict], list[dict
     metadata = [row.get('payload') for row in rows if row.get('type') == 'session_meta']
     if not metadata or not isinstance(metadata[0], dict) or metadata[0].get('id') != session_id:
         raise LanError('session_id_mismatch')
+    return rows, events
+
+
+def parse_transcript(raw: bytes, session_id: str) -> tuple[list[dict], list[dict]]:
+    """Keep original rows; produce extractor messages from complete JSONL only."""
+    rows, _ = _parse_transcript_rows(raw, session_id)
     return rows, dialogue_messages(rows)
+
+
+def parse_transcript_events(raw: bytes, session_id: str, *, max_line_bytes: int):
+    """Return validated rows and byte-bounded events with physical LF line numbers.
+
+    No record is omitted from validation or from rows. Event row objects are
+    shared; callers must finish validation before any persistent side effect.
+    """
+    return _parse_transcript_rows(raw, session_id, event_limit=max_line_bytes)

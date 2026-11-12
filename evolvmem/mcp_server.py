@@ -31,10 +31,9 @@ Project-board tools (same adapters/modes; optional private configuration):
   project_board_sync    — manually deliver committed checkpoint progress
   project_board_status  — read local delivery state without network activity
 
-The exposed tool set comes from one registry (evolvmem.mcp_contract):
-tools/list and tools/call share it, so a hidden tool cannot still be
-called. MCP dictionaries are parsed only at this boundary; the Context
-side speaks the typed ContextService API.
+Core tools/list and tools/call share evolvmem.mcp_contract. The console's
+independent manual note tools share a fixed contract with the LAN adapter.
+MCP dictionaries are parsed at this boundary; Context uses typed requests.
 """
 
 import json
@@ -45,6 +44,8 @@ import os
 import threading
 import time
 import traceback
+from copy import deepcopy
+from evolvmem import manual_experience_mcp
 from evolvmem.config import Config
 from evolvmem.context_lifecycle import ContextLifecycleError
 from evolvmem.context_models import (
@@ -73,6 +74,7 @@ from evolvmem.continuity_models import (
 )
 from evolvmem.continuity_service import ContinuityService
 from evolvmem.project_board_sync import ProjectBoardSync
+from evolvmem.product_policy import load_policy
 from evolvmem.cutover_checks import compare_shadow
 from evolvmem.legacy_models import (
     LegacyAddRequest,
@@ -183,9 +185,11 @@ class MemoryMCPServer:
         embedding_engine=_DEFAULT_EMBEDDING_ENGINE,
         *,
         rebuild_legacy_vectors_on_start: bool = True,
+        initial_physical_config=None,
     ):
         self.config = config if config is not None else Config.from_file()
         self._rebuild_legacy_vectors_on_start = rebuild_legacy_vectors_on_start
+        self._initial_physical_config = initial_physical_config
         self.adapter = self.config.adapter or "mcp"
         try:
             self.context_mode: ContextMode | None = ContextMode(
@@ -238,7 +242,8 @@ class MemoryMCPServer:
                 # 共享同一引擎与 legacy 投影向量索引：合并判定与写后同步看到
                 # 同一份内存态；服务生命周期由 shutdown() 统一关闭
                 service = ContextService(
-                    self.config, embedding_engine=self.engine
+                    self.config, embedding_engine=self.engine,
+                    initial_physical_config=self._initial_physical_config,
                 )
                 service._legacy_vector = self.vidx
                 service.initialize(
@@ -317,6 +322,12 @@ class MemoryMCPServer:
 
     def handle_tool_call(self, tool_name: str, args: dict) -> dict:
         """Route tool calls."""
+        if tool_name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
+            try:
+                source = self._manual_experience_source()
+                return manual_experience_mcp.call(tool_name, args, source)
+            except manual_experience_mcp.ManualMcpError as exc:
+                return {'error': str(exc)}
         handler = self._tool_handlers().get(tool_name)
         if handler is None:
             return {"error": f"Unknown tool: {tool_name}"}
@@ -325,6 +336,14 @@ class MemoryMCPServer:
             if gate_error is not None:
                 return {"error": gate_error}
         return handler(args)
+
+    def _manual_experience_source(self):
+        policy = load_policy()
+        if not policy.valid or not policy.console_enabled:
+            raise manual_experience_mcp.ManualMcpError('manual_experience_console_unavailable')
+        return manual_experience_mcp.registered_source(
+            self.config.data_dir, owner_data_dir=self.config.data_dir,
+            db_path=self.config.db_path)
 
     def _tool_handlers(self):
         return {
@@ -518,6 +537,10 @@ class MemoryMCPServer:
         return similarity < self.config.context_vector_min_similarity
 
     def _memory_status(self, args: dict) -> dict:
+        if args.get("detail") == "revision":
+            # Only LAN can bind a revision to an authenticated namespace. Its
+            # wrapper handles this diagnostic before entering business dispatch.
+            return {"error": "revision_requires_authenticated_lan"}
         status = self._live_status()
         embedding_diagnostics = self._embedding_diagnostics()
         if status is None:
@@ -731,6 +754,9 @@ class MemoryMCPServer:
         """None when context reads may be served, else a stable error."""
         if self.context_mode is None:
             return self._context_error("invalid_config")
+        from evolvmem.request_health import background_read_ready
+        if background_read_ready(self.context_service) is True:
+            return None
         status = self._live_status()
         if status is None:
             return self._context_error("not_initialized")
@@ -773,6 +799,8 @@ class MemoryMCPServer:
             # L2 原文或绝对路径
             "continuation_code": result.continuation_code or "",
         }
+        if getattr(result, "capability_ids", ()):
+            payload["capability_ids"] = list(result.capability_ids)
         if result.continuation is not None:
             payload["continuation"] = result.continuation
         return payload
@@ -788,7 +816,15 @@ class MemoryMCPServer:
 
     def _knowledge_recall(self, args: dict) -> dict:
         if self.context_service.config.knowledge_structure_mode == 'primary':
-            return {'error': 'legacy_read_only'}
+            return {
+                'error': 'legacy_read_only',
+                'message': 'Primary knowledge uses context_project_recall or '
+                           'project_archive_get for project history and '
+                           'capability_search for reusable capabilities. These '
+                           'do not preserve every legacy knowledge_recall kind.',
+                'alternatives': ['context_project_recall', 'project_archive_get',
+                                 'capability_search'],
+            }
         error = self._context_gate_error()
         if error is not None:
             return error
@@ -866,8 +902,8 @@ class MemoryMCPServer:
             "as_of": request.as_of,
         }
 
-    def _capability_search(self, args: dict) -> dict:
-        if not isinstance(args, dict) or set(args) - {"query", "categories", "top_k"}:
+    def _capability_search(self, args: dict, *, service=None) -> dict:
+        if not isinstance(args, dict) or set(args) - {"query", "categories", "top_k", "project", "module_id"}:
             return self._context_error("invalid_arguments")
         query = args.get("query")
         categories = args.get("categories") or ()
@@ -875,8 +911,9 @@ class MemoryMCPServer:
             return self._context_error("invalid_arguments")
         try:
             from evolvmem.capability_retriever import CapabilityRetriever
-            results = CapabilityRetriever(self.context_service).search(
-                query, categories=tuple(categories), top_k=args.get("top_k", 10)
+            results = CapabilityRetriever(service if service is not None else self.context_service).search(
+                query, categories=tuple(categories), top_k=args.get("top_k", 10),
+                project=args.get("project"), module_id=args.get("module_id")
             )
         except (ValueError, TypeError):
             return self._context_error("invalid_arguments")
@@ -917,14 +954,20 @@ class MemoryMCPServer:
         try:
             if self.context_service.config.knowledge_structure_mode == 'primary':
                 from evolvmem.project_archive_pipeline import recall_project_archive
-                result = recall_project_archive(
+                return recall_project_archive(
                     self.context_service, query=query, max_chars=max_chars,
                 )
             else:
                 result = recall_mentioned_projects(
                     self.context_service, query=query, max_chars=max_chars,
                 )
-        except (ContextValidationError, ValueError, TypeError):
+        except ValueError as exc:
+            code = str(exc)
+            return self._context_error(
+                code if code in {"project_not_registered", "project_ambiguous"}
+                else "invalid_arguments"
+            )
+        except TypeError:
             return self._context_error("invalid_arguments")
         except ContextServiceError as exc:
             return self._context_error(exc.code)
@@ -1058,16 +1101,17 @@ class MemoryMCPServer:
             "evidence_id": report.evidence_id,
         }
 
-    def _experience_recall(self, args: dict) -> dict:
-        if not isinstance(args, dict) or set(args) - {"project", "query", "constraints", "workstream_id"}:
+    def _experience_recall(self, args: dict, *, service=None) -> dict:
+        if not isinstance(args, dict) or set(args) - {"project", "query", "constraints", "workstream_id", "mode"}:
             return self._context_error("invalid_arguments")
         error = self._context_gate_error()
         if error is not None:
             return error
         try:
-            return self.context_service.experiences().recall(
+            return (self.context_service if service is None else service).experiences().recall(
                 project=args.get("project", ""), query=args.get("query"),
-                constraints=args.get("constraints"), workstream_id=args.get("workstream_id"))
+                constraints=args.get("constraints"), workstream_id=args.get("workstream_id"),
+                mode=args.get("mode", "full"))
         except (ValueError, TypeError, ContextValidationError):
             return self._context_error("invalid_arguments")
         except ContextServiceError as exc:
@@ -1093,6 +1137,9 @@ class MemoryMCPServer:
         Existing generator coverage deduplicates the LLM work. Generation is
         best effort after the evidence commit; failure preserves saved cases.
         """
+        from evolvmem.product_policy import load_policy
+        if not load_policy().ai_processing_enabled:
+            return result
         core = self.context_service
         engine = core.embedding_engine
         if result.get('status') != 'active' or not getattr(engine, 'is_loaded', False):
@@ -1247,20 +1294,22 @@ class MemoryMCPServer:
             self._continuity_service = service
         return service
 
-    def _continuity_gate_error(self) -> dict | None:
+    def _continuity_gate_error(self, *, service=None) -> dict | None:
         """continuity 专用就绪检查：schema 表存在 + workspace key 可用。
 
         不复用 ``_context_gate_error``：续接不依赖 Core serving gate，
         compat/降级 primary 下续接仍可用，不得被 ``context_not_enabled``
         或 ``degraded_legacy`` 提前拒掉。
         """
-        service = self._continuity()
+        explicit = service is not None
+        service = service if explicit else self._continuity()
         if service is None:
             return self._context_error("continuity_not_ready")
         try:
             if not service._schema_ready():
                 return self._context_error("continuity_not_ready")
-            if self._workspace_identity().status().state != "ready":
+            identity = service._workspace_identity if explicit else self._workspace_identity()
+            if identity.status().state != "ready":
                 return self._context_error("continuity_not_ready")
         except Exception:
             return self._context_error("continuity_not_ready")
@@ -1337,7 +1386,7 @@ class MemoryMCPServer:
             "bound": result.bound,
         }
 
-    def _continuity_find(self, args: dict) -> dict:
+    def _continuity_find(self, args: dict, *, service=None) -> dict:
         if not isinstance(args, dict) or set(args) - self._FIND_FIELDS:
             return self._context_error("invalid_arguments")
         try:
@@ -1350,7 +1399,7 @@ class MemoryMCPServer:
             return self._context_error("invalid_arguments")
         # find 从通用目录也应可用：只要求 continuity schema，workspace key
         # 缺失时降级为“未核验工作区”，绝不因此隐藏 continuity 能力
-        service = self._continuity()
+        service = service if service is not None else self._continuity()
         if service is None:
             return self._context_error("continuity_not_ready")
         try:
@@ -1397,15 +1446,16 @@ class MemoryMCPServer:
             )
         return payload
 
-    def _continuity_resume(self, args: dict) -> dict:
+    def _continuity_resume(self, args: dict, *, service=None) -> dict:
         request = self._continuity_read_request(args)
         if isinstance(request, dict):
             return request
-        gate_error = self._continuity_gate_error()
+        service = service if service is not None else self._continuity()
+        gate_error = self._continuity_gate_error(service=service)
         if gate_error is not None:
             return gate_error
         try:
-            result = self._continuity().resume(request)
+            result = service.resume(request)
         except ContinuityError as exc:
             # resume 设计上对数据不抛错；边界处仍做稳定映射兜底
             return self._context_error(exc.code)
@@ -1436,15 +1486,16 @@ class MemoryMCPServer:
             )
         return payload
 
-    def _continuity_list(self, args: dict) -> dict:
+    def _continuity_list(self, args: dict, *, service=None) -> dict:
         request = self._continuity_read_request(args)
         if isinstance(request, dict):
             return request
-        gate_error = self._continuity_gate_error()
+        service = service if service is not None else self._continuity()
+        gate_error = self._continuity_gate_error(service=service)
         if gate_error is not None:
             return gate_error
         try:
-            summaries = self._continuity().list_open(request)
+            summaries = service.list_open(request)
         except ContinuityError as exc:
             return self._context_error(exc.code)
         except Exception:
@@ -1632,25 +1683,14 @@ class MemoryMCPServer:
         return current_status(self, self._evaluate_live_status)
 
     def _evaluate_live_status(self):
-        """已初始化服务的健康快照；不可用返回 None。
-
-        PRIMARY 每次调用都用与设计门禁相同的评估器重新复查，服务在
-        早前 tools/list 之后降级也不能凭旧健康结论继续服务。
-        """
+        """Evaluate one complete snapshot; reuse is guarded by request_health."""
         service = getattr(self, "context_service", None)
         if service is None:
             return None
         try:
-            status = service.status()
+            return service.evaluated_status()
         except Exception:
             return None
-        if status.mode is ContextMode.PRIMARY:
-            try:
-                service._refresh_health()  # 与正式门禁同一评估器，按次复查
-                status = service.status()
-            except Exception:
-                return None
-        return status
 
     def _contract_view(self):
         """(adapter, mode, health) 三元组，喂给单一工具注册表。"""
@@ -1942,47 +1982,50 @@ class MemoryMCPServer:
 
         elif method == "tools/list":
             adapter, mode, health = self._contract_view()
+            tools = [
+                {
+                    "name": spec.name,
+                    "description": spec.description,
+                    "inputSchema": spec.input_schema,
+                    "annotations": spec.annotations,
+                }
+                for spec in tool_specs(adapter=adapter, mode=mode, health=health)
+            ]
+            try:
+                self._manual_experience_source()
+            except manual_experience_mcp.ManualMcpError:
+                pass
+            else:
+                tools.extend(deepcopy(list(manual_experience_mcp.MANUAL_EXPERIENCE_SPECS.values())))
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {
-                    "tools": [
-                        {
-                            "name": spec.name,
-                            "description": spec.description,
-                            "inputSchema": spec.input_schema,
-                            "annotations": spec.annotations,
-                        }
-                        for spec in tool_specs(
-                            adapter=adapter, mode=mode, health=health
-                        )
-                    ]
-                },
+                "result": {"tools": tools},
             }
 
         elif method == "tools/call":
             params = request.get("params", {})
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
-            adapter, mode, health = self._contract_view()
-            exposed = {
-                spec.name
-                for spec in tool_specs(adapter=adapter, mode=mode, health=health)
-            }
-            if tool_name not in exposed:
-                # 与 tools/list 同一注册表：隐藏工具不能被调用；
-                # 未知工具也无需等待初始化门闩
-                result = {"error": f"Unknown tool: {tool_name}"}
-            elif tool_name.startswith(("context_", "continuity_", "project_board_")):
-                # context_*/continuity_* 不等重初始化门闩：服务未就绪即返回
-                # 各自的稳定错误（continuity_not_ready / context_* gate）
+            if isinstance(tool_name, str) and tool_name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
                 result = self.handle_tool_call(tool_name, tool_args)
             else:
-                gate_error = self._init_gate_error()
-                if gate_error is not None:
-                    result = {"error": gate_error}
-                else:
+                adapter, mode, health = self._contract_view()
+                exposed = {spec.name for spec in tool_specs(adapter=adapter, mode=mode, health=health)}
+                if tool_name not in exposed:
+                    # 与 tools/list 同一注册表：隐藏工具不能被调用；
+                    # 未知工具也无需等待初始化门闩
+                    result = {"error": f"Unknown tool: {tool_name}"}
+                elif tool_name.startswith(("context_", "continuity_", "project_board_")):
+                    # context_*/continuity_* 不等重初始化门闩：服务未就绪即返回
+                    # 各自的稳定错误（continuity_not_ready / context_* gate）
                     result = self.handle_tool_call(tool_name, tool_args)
+                else:
+                    gate_error = self._init_gate_error()
+                    if gate_error is not None:
+                        result = {"error": gate_error}
+                    else:
+                        result = self.handle_tool_call(tool_name, tool_args)
             response_result = {
                 "content": [
                     {

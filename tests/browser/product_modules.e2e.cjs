@@ -1,48 +1,55 @@
-async function revealRule(page,selector){await page.waitForSelector(selector,{state:'attached'});const rule=page.locator('.history-rules');if(await rule.count()&&!await rule.evaluate(el=>el.open))await rule.locator(':scope > summary').click();await page.waitForSelector(selector);}
-// Real HTTP + UI against knowledge_fixture.py (synthetic data only).
-const assert=require('node:assert/strict');const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
-(async()=>{const browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE,headless:true,args:['--no-sandbox']});const qaProject='qa-'+Date.now(),caseProject='case-'+Date.now();const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(10000);const base=process.env.EVOLVMEM_TEST_URL||'http://127.0.0.1:39478',errors=[],checks=[];page.on('pageerror',e=>errors.push(e.message));
-const done=async()=>{await page.waitForLoadState('networkidle');await page.waitForFunction(()=>!document.querySelector('#content')?.inert&&document.querySelector('.knowledge-workspace')?.getAttribute('aria-busy')!=='true');};
-const go=async(hash,selector)=>{await page.goto(base+'/'+hash);if(['#clean-instructions','#history-instructions'].includes(selector))await revealRule(page,selector);else await page.waitForSelector(selector);await done();};const click=async s=>{await page.locator(s).first().click();await done();};
-try{
- await go('#knowledge/qa','#qa-project-filter');await click('[data-memory-action="new"]');await page.locator('#qa-question').fill('怎样在经验中新增项目？');await page.locator('#qa-answer').fill('在问答编辑处创建项目，创建成功后自动选中。');await page.locator('[data-memory-action="project-new"]').click();await page.waitForSelector('#new-project-id');await page.locator('#new-project-id').fill(qaProject);await page.locator('#new-project-name').fill('问答内新增项目');await page.locator('#new-project-aliases').fill(qaProject+'-alias');await click('.project-create-dialog [type="submit"]');await page.waitForSelector('.project-create-dialog',{state:'detached'});assert.equal(await page.locator('.memory-dialog [name=projects]:checked').inputValue(),qaProject);assert.equal(await page.locator('#qa-question').inputValue(),'怎样在经验中新增项目？');await click('[data-memory-action="publish"]');await go('#knowledge/projects','.project-list');assert.match(await page.locator('.project-list').innerText(),/问答内新增项目/);checks.push('问答原位新增项目、自动选中、草稿保留、入库可查');
- await go('#experiences','[data-case-project-new]');await click('[data-case-project-new]');await page.locator('#new-project-id').fill(caseProject);await page.locator('#new-project-name').fill('案例内新增项目');await click('.project-create-dialog [type="submit"]');await page.waitForSelector('.project-create-dialog',{state:'detached'});assert.equal(await page.locator('[data-slot="experience-browser"] [data-filter="project"]').inputValue(),caseProject);checks.push('经验案例原位新增项目与筛选选中');
- await go('#progress','[data-slot="progress-browser"] [data-results]');assert.equal(await page.locator('[data-progress-mode="summary"]').count(),0);assert.match(await page.locator('[data-slot="progress-browser"] [data-filter="status"]').innerText(),/全部任务/);await go('#knowledge/library?project=evo&lane=summary','.project-document');assert.match(await page.locator('.project-document').innerText(),/项目摘要/);await page.getByText('AI 项目摘要 · 已生成',{exact:true}).click();assert.match(await page.locator('.project-document').innerText(),/项目摘要应归入项目历史/);checks.push('任务断点只列任务，项目摘要归入历史');
- await go('#knowledge/projects','.history-tabs');assert.match(await page.locator('.history-tabs').innerText(),/已整理/);await click('.history-tabs [data-view="unassigned"]');await revealRule(page,'#history-instructions');assert.ok((await page.locator('#history-instructions').inputValue()).length>10);
- const instructions=await page.locator('#history-instructions').inputValue();await page.locator('#history-instructions').fill(instructions+'\n演示资料按原话确认，多个项目保留待确认。');await click('[data-history-action="rules-save"]');await page.reload();await revealRule(page,'#history-instructions');assert.match(await page.locator('#history-instructions').inputValue(),/演示资料按原话确认/);
- await page.locator('#history-select-all').check();await click('[data-history-action="preview"]');assert.match(await page.locator('#history-notice').innerText(),/尚未保存分类/);assert.equal(await page.locator('[data-history-row]').count(),3);assert.equal(await page.locator('[data-history-project]').first().inputValue(),'evo');
- await page.locator('[data-history-project]').first().selectOption('dsh-a');await click('[data-history-action="detail"]');await page.waitForSelector('.history-source-dialog');assert.match(await page.locator('.history-source-dialog').innerText(),/Evo/);await page.locator('.history-source-dialog button').click();await page.screenshot({path:'/tmp/evo-history-classification-desktop.png',fullPage:true});
- await page.setViewportSize({width:390,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'history overflow 390');await page.screenshot({path:'/tmp/evo-history-classification-mobile.png',fullPage:true});await page.setViewportSize({width:1440,height:1000});
- await click('[data-history-action="save-all"]');assert.match(await page.locator('#history-notice').innerText(),/成功 3 条，失败 0 条/);assert.equal(await page.locator('[data-history-row]').count(),0);await click('.signal-nav [data-knowledge-view="projects"]');await page.waitForSelector('.project-list');checks.push('项目历史已整理与未归属分栏，规则保存读回、真实接口 AI 预览、手动修正、批量分类、响应式页面');
- await go('#knowledge/skill','[data-pipeline-stage]');assert.equal(await page.locator('[data-pipeline-stage]').count(),1);assert.equal(await page.locator('[data-pipeline-stage="extraction"]').count(),1);assert.match(await page.locator('#content').innerText(),/经验提取与验证/);assert.equal(await page.locator('a[data-view="learning"]').count(),0);checks.push('提取与验证合并，协作学习入口移除');
- const admission=await page.locator('#stage-admission').inputValue();await page.locator('#stage-admission').fill(admission+'\n方法必须核对实际验证依据。');await page.locator('#stage-min_chars').fill('12');await click('[data-pipeline-action="save"]');await page.reload();await page.waitForSelector('#stage-admission');assert.match(await page.locator('#stage-admission').inputValue(),/方法必须核对实际验证依据/);assert.equal(await page.locator('#stage-min_chars').inputValue(),'12');checks.push('提取说明与准入条件统一保存并读回');
- await page.locator('#stage-instructions').fill('未保存的临时规则');page.once('dialog',d=>d.dismiss());await click('a[data-view="unassigned"]');assert.equal(await page.locator('#stage-instructions').inputValue(),'未保存的临时规则');page.once('dialog',d=>d.accept());await click('a[data-view="unassigned"]');await revealRule(page,'#history-instructions');await go('#knowledge/skill','#stage-instructions');checks.push('统一规则编辑的离开保护');
- const download=page.waitForEvent('download');await click('[data-pipeline-action="download"]');assert.equal((await download).suggestedFilename(),'SKILL.md');
- await page.locator('#stage-sample').fill('用户：我想在经验里直接加项目，不要让我到处找。');await page.locator('#stage-project').selectOption('evo');await click('[data-pipeline-action="verify"]');assert.match(await page.locator('#stage-result').innerText(),/放入待确认 [1-9]\d* 条/);checks.push('统一环节提取候选，保存不冒充验证成功');
- await go('#knowledge/learning','.panel');assert.match(await page.locator('#content').innerText(),/协作学习已停用/);assert.equal(await page.locator('[data-learning-action]').count(),0);checks.push('旧协作页面提示停用，保留数据');
- for(const path of ['/workflow','/workflow-diagram','/architecture']){await page.goto(base+path);await page.waitForSelector('.product-diagram svg');assert.ok(page.url().endsWith('#principles'));assert.equal(await page.locator('.signal-masthead').count(),1);}checks.push('原工作原理与架构地址统一进入主界面');
- for(const width of [390,768,1024,1440]){await page.setViewportSize({width,height:1000});await go('#knowledge/skill','[data-pipeline-stage]');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),`skill overflow ${width}`);if(width===1440)await page.screenshot({path:'/tmp/evo-skills-desktop.png',fullPage:true});await go('#principles','.product-diagram svg');for(const kind of ['modules','flow','activity','organization','recall','dataflow','storage']){await click(`[data-principle="${kind}"]`);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),`${kind} overflow ${width}`);if(kind==='recall'){assert.match(await page.locator('.product-diagram').innerText(),/重新排序/);assert.match(await page.locator('.product-diagram').innerText(),/保留各自的来源/);}if(width===1440)await page.screenshot({path:`/tmp/evo-product-${kind}.png`,fullPage:true});}if(width===390)await page.screenshot({path:'/tmp/evo-product-mobile.png',fullPage:true});}checks.push('八个业务模块、七类业务图以及 Skill 页四种屏宽可用');
- await page.setViewportSize({width:1440,height:1000});await go('#principles','.product-diagram svg');
- await click('[data-principle="recall"]');await click('[data-node="knowledge"]');
- assert.match(await page.locator('[data-node-detail]').innerText(),/knowledge_recall/);
- assert.match(await page.locator('[data-node-detail]').innerText(),/输入/);
- assert.match(await page.locator('[data-node-detail]').innerText(),/输出/);
- await click('[data-principle="dataflow"]');
- assert.match(await page.locator('.product-diagram').innerText(),/项目知识目录与历史/);
- assert.match(await page.locator('.product-diagram').innerText(),/可用问答/);
- await click('[data-principle="activity"]');
- assert.ok(await page.locator('.diagram-start').count());assert.ok(await page.locator('.diagram-end').count());
- await click('[data-principle="organization"]');
- assert.equal(await page.locator('[data-lane]').count(),3);
- await page.locator('[data-route-select]').selectOption('review');
- await click('[data-trace-next]');assert.match(await page.locator('[data-trace-status]').innerText(),/1\//);
- await click('[data-trace-play]');await page.waitForFunction(()=>document.querySelector('[data-trace-play]')?.textContent==='暂停演示');
- await click('[data-principle="recall"]');assert.equal(await page.locator('[data-trace-play]').innerText(),'演示路径');
- await page.emulateMedia({reducedMotion:'reduce'});await page.waitForFunction(()=>document.querySelector('[data-trace-play]')?.disabled);assert.equal(await page.locator('[data-trace-play]').isDisabled(),true);
- await click('[data-trace-next]');assert.match(await page.locator('[data-trace-status]').innerText(),/1\//);
- await page.emulateMedia({reducedMotion:'no-preference'});
- await go('#knowledge/qa','#qa-project-filter');await go('#principles','.product-diagram svg');
- assert.equal(await page.locator('[data-principle="recall"]').getAttribute('aria-pressed'),'true');
- checks.push('业务节点输入输出、数据流、三泳道、活动起止、分支演示、减少动画与切页状态');
- assert.deepEqual(errors,[]);console.log(JSON.stringify({checks,errors},null,2));
-}catch(error){await page.screenshot({path:'/tmp/evo-modules-failed.png',fullPage:true});console.error('COMPLETED',checks,'ERRORS',errors);throw error;}finally{await browser.close();}})().catch(e=>{console.error(e);process.exit(1)});
+// Synthetic real HTTP fixture; never run mutations against a production URL.
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const base=process.env.EVOLVMEM_TEST_URL;
+if(!base||!process.env.EVOLVMEM_SYNTHETIC_FIXTURE)throw new Error('A synthetic fixture URL is required');
+const output=process.env.EVOLVMEM_SCREENSHOTS||'/tmp/evolvmem-console-screenshots';fs.mkdirSync(output,{recursive:true});
+(async()=>{
+ const browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE,headless:true,args:['--no-sandbox','--no-proxy-server','--host-resolver-rules=MAP knowledge-console.test 127.0.0.1']});
+ const context=await browser.newContext({viewport:{width:1440,height:1050}});
+ await context.addCookies([{name:'evolvmem_session',value:process.env.OWNER_COOKIE||'test-owner-cookie',url:base}]);
+ const page=await context.newPage(),errors=[],checks=[];page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));
+ const shot=async name=>page.screenshot({path:path.join(output,name+'.png'),fullPage:true});
+ const go=async suffix=>{await page.goto(base+'/'+suffix);await page.waitForFunction(()=>!document.querySelector('#actor-name')?.textContent.includes('正在'));};
+ const json=async url=>page.evaluate(async u=>{const r=await fetch(u,{cache:'no-store'});return {status:r.status,data:await r.json()};},url);
+ const root='/api/knowledge-console';
+ try{
+  await go('#history');await page.waitForSelector('#history-list .history-entry');
+  const me=(await json(root+'/me')).data,owner=me.current_user.id,member='kane';
+  assert.equal(await page.evaluate(()=>isSecureContext),false,'must test ordinary HTTP');
+  assert.equal(await page.evaluate(()=>typeof crypto.randomUUID),'undefined');
+  assert.equal(await page.locator('.main-nav a').count(),5);assert.match(await page.locator('.main-nav').innerText(),/历史.*经验.*用户知识库.*用户与权限.*工作原理/s);
+  assert.equal(await page.locator('script[src*="extraction"],script[src*="galaxy"],script[src*="organization"]').count(),0);
+  for(const old of ['/api/projects','/api/memories','/api/knowledge/organization','/api/history-candidate/projects'])assert.equal((await json(old)).status,410,old);
+  checks.push('ordinary HTTP, five new entries, legacy scripts and APIs closed');
+  await page.locator('#history-list .history-entry').first().click();await page.waitForFunction(()=>document.querySelector('#history-main')?.textContent.includes('项目摘要'));
+  assert.match(await page.locator('#history-main').innerText(),/项目摘要/);await shot('01-history');
+  await go('#experiences');await page.waitForSelector('#experience-filters');
+  await page.locator('#experience-filters [name=status]').selectOption('candidate');await page.locator('#experience-filters [type=submit]').click();await page.waitForSelector('.experience-entry');
+  await page.locator('.experience-entry').first().click();await page.waitForFunction(()=>document.querySelector('#experience-detail')?.textContent.includes('解决步骤'));assert.match(await page.locator('#experience-detail').innerText(),/解决步骤/);await shot('02-experience');
+  checks.push('history project summary and real structured experience detail');
+  await go('#libraries');await page.waitForSelector('.library-card');assert.ok(await page.locator('.library-card').count()>=2);await shot('03-libraries');
+  const otherInspect=page.locator(`.library-card a[href*="user=${member}"]`).first();await otherInspect.click();await page.waitForSelector('#history-list .history-entry');assert.match(await page.locator('#library-access').innerText(),/管理员只读/);assert.equal(await page.locator('#history-manage').isVisible(),false);assert.equal(await page.locator('[data-history-delete]').count(),0);
+  assert.equal((await json(root+`/libraries/${member}/history/projects`)).status,403);
+  assert.equal((await json(root+`/libraries/${member}/history/projects?inspect=1`)).status,200);
+  checks.push('explicit admin inspection, normal admin deny and cross-user read-only');
+  await go('#users');await page.waitForSelector('[data-edit-user]');await page.locator('#add-user').click();await page.locator('#user-form [name=id]').fill('new-reader');await page.locator('#user-form [name=display_name]').fill('新用户验收');await page.locator('#user-form [type=submit]').click();await page.waitForSelector('#user-dialog',{state:'hidden'});await page.waitForFunction(()=>document.querySelector('#console-view').textContent.includes('新用户验收'));await shot('04-users');
+  checks.push('user creation and truthful not-connected state');
+  await go('#users/grants');await page.waitForSelector('[data-save-grant]');
+  const forward=page.locator(`tr[data-viewer="${owner}"][data-owner="${member}"]`),reverse=page.locator(`tr[data-viewer="${member}"][data-owner="${owner}"]`);
+  await forward.locator('[data-grant-history]').check();await forward.locator('[data-grant-experience]').check();await forward.locator('[data-save-grant]').click();await page.waitForFunction(()=>document.querySelector('#console-notice')?.textContent.includes('有向授权已保存'));
+  assert.equal(await reverse.locator('[data-grant-history]').isChecked(),false);assert.equal(await reverse.locator('[data-grant-experience]').isChecked(),false);
+  assert.equal((await json(root+`/libraries/${member}/history/projects`)).status,200);await shot('05-directed-grants');
+  await forward.locator('[data-grant-history]').uncheck();await forward.locator('[data-grant-experience]').uncheck();await forward.locator('[data-save-grant]').click();await page.waitForFunction(()=>Number(document.querySelector('tr[data-viewer="jiangli"][data-owner="kane"]')?.dataset.revision)>=2);
+  assert.equal((await json(root+`/libraries/${member}/history/projects`)).status,403);
+  checks.push('A to B independent of B to A, grant and immediate revoke');
+  await go('#history');await page.waitForSelector('#history-manage');await page.locator('#history-manage').click();await page.locator('[data-history-select]').last().check();await page.locator('#history-delete-selected').click();await page.waitForSelector('#history-delete-dialog[open]');await page.locator('#history-delete-confirm').click();await page.waitForSelector('#history-delete-dialog',{state:'hidden'});await page.locator('#history-trash').click();await page.waitForSelector('[data-history-restore]');await page.locator('[data-history-restore]').first().click();await page.waitForFunction(()=>document.querySelector('#history-trash-items')?.textContent.includes('回收站为空'));await page.locator('#history-trash-close').click();
+  checks.push('self delete and restore over insecure HTTP with UUID fallback');
+  for(const width of [390,768,1024,1440]){await page.setViewportSize({width,height:1000});for(const tab of ['history','experiences','libraries','users','users/grants','principles']){await go('#'+tab);await page.waitForTimeout(120);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),`overflow ${tab} ${width}`);}if(width===390)await shot('06-mobile-principles');if(width===1440)await shot('07-principles');}
+  checks.push('six pages at four widths, updated architecture diagram');
+  const memberContext=await browser.newContext({viewport:{width:1200,height:950}});await memberContext.addCookies([{name:'evolvmem_session',value:process.env.MEMBER_COOKIE||'test-member-cookie',url:base}]);const mp=await memberContext.newPage();mp.on('pageerror',e=>errors.push(e.message));await mp.goto(base+'/#history');await mp.waitForSelector('#history-list .history-entry');assert.equal(await mp.locator('#admin-nav').isVisible(),false);assert.equal(await mp.locator('#history-manage').isVisible(),true);
+  const deny=await mp.evaluate(async([r,o])=>{const result={};for(const p of ['/users','/grants','/libraries?inspect=1',`/libraries/${o}/history/projects`,`/libraries/${o}/experiences`])result[p]=(await fetch(r+p)).status;return result;},[root,owner]);assert.ok(Object.values(deny).every(s=>s===403),JSON.stringify(deny));await memberContext.close();checks.push('member own history, admin UI hidden, private and inspect APIs denied');
+  assert.deepEqual(errors,[]);fs.writeFileSync(path.join(output,'browser-results.json'),JSON.stringify({checks,errors},null,2));console.log(JSON.stringify({checks,errors},null,2));
+ }catch(e){await shot('failure');console.error('Completed checks:',checks,'page errors:',errors);throw e;}
+ finally{await context.close();await browser.close();}
+})().catch(e=>{console.error(e);process.exit(1);});

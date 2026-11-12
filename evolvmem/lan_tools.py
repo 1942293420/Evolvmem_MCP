@@ -10,16 +10,22 @@ import threading
 import uuid
 from contextlib import nullcontext
 
+from evolvmem.lan_continuity_reads import ContinuityReader, READ_TOOLS as CONTINUITY_READS
+from evolvmem.lan_capability_reads import CapabilityReader
+from evolvmem.lan_experience_reads import ExperienceReader
 from evolvmem.lan_sharing import LanError, LanSharing, validate_request_id
 from evolvmem.mcp_contract import tool_specs
 from evolvmem.lan_context import remote_context, validate_snapshot, prepare_bindings, bind_workspace, prepare_memory_revision
 from evolvmem.lan_capture import CAPTURE_TOOLS, LanCapture, capture_specs
-from evolvmem.request_health import request_health_scope
+from evolvmem import manual_experience_mcp
+from evolvmem.request_health import request_health_scope, background_read_scope, BackgroundReadDenied
 from evolvmem.request_trace import traced_tool, traced_rpc, timed_lock, stage, failure
 
 PROTOCOLS = ('2025-11-25', '2025-03-26')
 SEARCH = frozenset({'memory_search', 'context_search', 'experience_recall'})
 PUBLIC_TOOLS = frozenset({'memory_publish', 'memory_update_public', 'memory_unpublish'})
+CONTINUITY_TOOLS = frozenset({'continuity_begin', 'continuity_find', 'continuity_resume',
+                              'continuity_checkpoint', 'continuity_list'})
 IDENTITY_FIELDS = frozenset({'user', 'user_id', 'owner', 'data_dir'})
 INSTRUCTIONS = (
     'Remote EvolvMem uses the authenticated personal namespace and curated public summaries. '
@@ -54,11 +60,30 @@ INSTRUCTIONS = (
     'Evidence-free experience_record saves an unverified candidate. Maintenance and project-board '
     'operations use this user namespace and its existing configuration; sharing remains explicit. '
     'Continuation belongs to personal only. '
-    'Use knowledge_recall kind=history for prior dialogue and progress, then conversation_read for '
-    'cleaned database dialogue; use kind=experience for concise Q&A, knowledge for the project knowledge directory with versions/conditions/conflicts, and both for mixed questions. '
+    'Use context_project_recall or project_archive_get for project history and progress, '
+    'capability_search for reusable capabilities, and conversation_read for referenced cleaned dialogue. '
+    'knowledge_recall is a legacy-mode route; in primary knowledge mode it returns legacy_read_only '
+    'with alternatives, which do not preserve every legacy kind. '
     'A request_indeterminate result means an earlier write may have happened: inspect state '
     'before any new request ID; do not automatically retry the effect.'
 )
+
+
+def _continuity_tool_specs(server):
+    """Resolve the canonical continuation contract without Context health I/O.
+
+    ContextService.status exposes these initialized mode/adapter fields. Its
+    health counts and vectors do not decide continuation visibility; readiness
+    remains the handler's independent schema/key check.
+    """
+    service = getattr(server, 'context_service', None)
+    mode = getattr(service, '_mode', None)
+    if mode is None:
+        adapter, mode = server.adapter, server.context_mode
+    else:
+        adapter = service._adapter
+    return tuple(spec for spec in tool_specs(adapter=adapter, mode=mode, health=None)
+                 if spec.name in CONTINUITY_TOOLS)
 
 
 def _schema_valid(value, schema):
@@ -112,11 +137,53 @@ class LanTools:
                 runtime._lan_captures = self.captures
                 for capture in self.captures.values():
                     with capture.store.transaction():
-                        capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='failed',error='extraction_interrupted' WHERE extraction_status='processing'")
+                        from evolvmem.product_policy import load_policy
+                        if load_policy().ai_processing_enabled:
+                            capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='failed',error='extraction_interrupted' WHERE extraction_status='processing'")
+                        else:
+                            capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='pending',error='' WHERE extraction_status='processing'")
+            from evolvmem.health_generation import prepare as prepare_health_generation
+            for user, space in (('jiangli', 'personal'), ('kane', 'personal'), ('jiangli', 'public')):
+                prepare_health_generation(runtime.server_for(user, space).context_service.store)
+
+        # Explicit startup preparation, after the revision schema exists and
+        # before this adapter is published to the HTTP server. No request calls
+        # this initializer; runtime's getter is fail-closed until preparation.
+        self._revision_reader = runtime.prepare_revision_reader()
+        self._continuity_reader = ContinuityReader(runtime)
+        self._capability_reader = CapabilityReader(runtime)
+        self._experience_reader = ExperienceReader(runtime,self.sharing)
+        if not hasattr(runtime, '_background_health'):
+            from evolvmem.background_health import BackgroundHealth
+            runtime._background_health = BackgroundHealth({
+                'jiangli': runtime.server_for('jiangli'),
+                'kane': runtime.server_for('kane'),
+                'public': runtime.server_for('jiangli', 'public'),
+            }, start=False)
+
+        # Clients may cache tools/list for the entire session. Discovery must
+        # describe supported schemas, never fluctuate with lock/readiness state.
+        # Business calls retain live gates; capability uses its explicit hard baseline and current candidate proofs.
+        self._catalog_specs = {
+            (user, owner): self._specs(user, owner=owner, catalog=True)
+            for user in ('jiangli', 'kane') for owner in (False, True)
+        }
 
     def _memory_revision(self, user):
         return '.'.join(str(self.runtime.server_for(user, space).context_service.store._connection().execute(
             'SELECT revision FROM lan_memory_revision WHERE id=1').fetchone()[0]) for space in ('personal', 'public'))
+
+    def capture_local_sources(self):
+        from evolvmem.product_policy import load_policy
+        if not load_policy().console_enabled:
+            return 0
+        from evolvmem.local_codex_capture import capture_once
+        with self.lock:
+            state = getattr(self, '_local_capture_state', None)
+            if state is None:
+                self._local_capture_state = state = {}
+            return capture_once(self.runtime.server_for('jiangli').context_service, state,
+                                arrival_required=False)
 
     def process_backfills(self, *, now=None):
         from evolvmem.lan_backfill import process_backfill
@@ -125,8 +192,11 @@ class LanTools:
 
     def process_pending(self):
         """Process one durable extraction job; no model work in the upload hook."""
+        from evolvmem.product_policy import load_policy, AIProcessingDisabled
+        if not load_policy().ai_processing_enabled:
+            return 0
         from evolvmem import kimi_hooks
-        from evolvmem.codex_transcript import parse_transcript
+        from evolvmem.transcript_formats import CODEX_FORMAT, adapter_name, parse_transcript
         from evolvmem.session_extraction import prepare_extraction
         with self.lock:
             selected = next(((user, capture, row) for user, capture in self.captures.items()
@@ -146,8 +216,12 @@ class LanTools:
             if credentials is None:
                 raise LanError('extraction_provider_unavailable')
             transcript = json.loads(payload)
-            _, messages = parse_transcript(transcript['transcript'].encode('utf-8'), row['session_id'])
-            source = 'codex:' + row['device_id'] + ':' + row['session_id']
+            format = transcript.get('source_format', CODEX_FORMAT)
+            parsed_rows, messages = parse_transcript(transcript['transcript'].encode('utf-8'), row['session_id'], format)
+            # Keep only extractor dialogue across model calls and persistence.
+            # The complete encrypted source remains in the archive for retry.
+            del parsed_rows, transcript, payload
+            source = adapter_name(format) + ':' + row['device_id'] + ':' + row['session_id']
             prepared = prepare_extraction(capture.server.config, row['project'], source, messages, credentials, **options)
             with self.lock:
                 # A newer snapshot may have replaced this one while the model worked.
@@ -173,11 +247,20 @@ class LanTools:
                     rolled = capture.server.context_service.rollup_project(row['project'], llm=unlocked_llm)
                     receipt['project_summary_status'] = rolled.status
                     receipt['project_summary_reason'] = rolled.reason
+                except AIProcessingDisabled:
+                    receipt['project_summary_status'] = 'paused'
+                    receipt['project_summary_reason'] = 'ai_processing_disabled'
                 except Exception:
                     # The session summary is already saved; report the separate rollup failure.
                     receipt['project_summary_status'] = 'failed'
                     receipt['project_summary_reason'] = 'project_summary_failed'
                 capture.finish_extraction(row, result=receipt)
+        except AIProcessingDisabled:
+            with self.lock:
+                with capture.store.transaction():
+                    capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='pending',error='' WHERE device_id=? AND session_id=? AND sha256=? AND extraction_status='processing'",
+                                         (row['device_id'], row['session_id'], row['sha256']))
+            return 0
         except Exception as exc:
             if isinstance(exc, LanError):
                 reason = str(exc)
@@ -189,13 +272,26 @@ class LanTools:
                 capture.finish_extraction(row, error=reason)
         return 1
 
-    def _specs(self, user, *, owner=False):
-        server = self.runtime.server_for(user)
-        adapter, mode, health = server._contract_view()
+    def _specs(self, user, *, owner=False, capture_only=False, continuity_only=False, catalog=False):
+        # Archive intake has its own fixed schema and storage validation. It
+        # does not serve Context data, so avoid scanning every Context layer
+        # and vector merely to accept a chunk or report archive coverage.
+        core_specs = ()
+        if not capture_only:
+            server = self.runtime.server_for(user)
+            if continuity_only:
+                core_specs = _continuity_tool_specs(server)
+            else:
+                adapter, mode, health = ((server.adapter, server.context_mode, None)
+                                         if catalog else server._contract_view())
+                core_specs = tool_specs(
+                    adapter=adapter, mode=mode, health=health, catalog=catalog)
         result = {}
-        for spec in tool_specs(adapter=adapter, mode=mode, health=health):
+        for spec in core_specs:
             schema = deepcopy(spec.input_schema)
             props = schema.setdefault('properties', {})
+            if spec.name == 'memory_status':
+                props['detail']['enum'].append('health')
             if 'workspace_path' in props and not owner:
                 props['device_id'] = {'type': 'string', 'minLength': 1, 'maxLength': 64}
                 props['repo_snapshot'] = {'type': 'object'}
@@ -223,25 +319,72 @@ class LanTools:
                             'inputSchema': {'type': 'object', 'properties': props, 'required': required, 'additionalProperties': False}, 'annotations': {}}
         result['continuity_bind'] = {'name': 'continuity_bind', 'description': 'Bind this device to the selected task workspace, preserving its existing focus. Inspect target_focused and focused_workstream_id; when needed use the returned continuity_checkpoint switch_focus CAS step before resuming the selected task.', 'annotations': {}, 'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {k: {'type': 'string'} for k in ('workspace_path', 'device_id', 'project', 'workstream_id', 'request_id')} | {'repo_snapshot': {'type': 'object'}}, 'required': ['workspace_path', 'device_id', 'project', 'workstream_id', 'request_id', 'repo_snapshot']}}
         result.update(capture_specs())
+        if not owner or user != 'jiangli':
+            result.pop('session_archive_process_history', None)
         if owner:
             result.pop('continuity_bind', None)
             for spec in result.values():
+                if spec['name'] == 'session_archive_process_history':
+                    continue
                 schema = spec['inputSchema']
                 schema['properties']['request_id'] = {'type': 'string', 'maxLength': 128}
                 schema['required'] = [k for k in schema.get('required', []) if k != 'request_id']
+        result.update(deepcopy(manual_experience_mcp.MANUAL_EXPERIENCE_SPECS))
         return result
+
+    def _manual_experience(self, user, name, args):
+        space = args.pop('space', 'personal')
+        if space == 'public':
+            raise LanError('public_write_forbidden')
+        if space != 'personal':
+            raise LanError('invalid_space')
+        if name == 'manual_experience_save':
+            request_id = args.get('request_id')
+            validate_request_id(request_id)
+            if self.runtime.settings.authenticate(request_id) is not None:
+                raise LanError('invalid_request_id')
+        elif 'request_id' in args:
+            # Existing Linux stdio forwarding adds an ID to every tool call.
+            validate_request_id(args.pop('request_id'))
+        if name == 'manual_experience_search':
+            spec = manual_experience_mcp.MANUAL_EXPERIENCE_SPECS[name]
+            if not _schema_valid(args, spec['inputSchema']):
+                raise LanError('invalid_arguments')
+        try:
+            settings = self.runtime.settings
+            namespace = self.runtime._namespace_for(user, 'personal')
+            source = manual_experience_mcp.registered_source(
+                namespace, owner_data_dir=settings.owner_data_dir,
+                lan_data_dir=settings.data_dir, user=user)
+            return manual_experience_mcp.call(name, args, source)
+        except manual_experience_mcp.ManualMcpError as exc:
+            raise LanError(str(exc)) from None
 
     @traced_tool
     def call_tool(self, user, name, arguments, *, owner=False):
-        with timed_lock(self.lock), request_health_scope():
+        revision_only = (name == 'memory_status' and isinstance(arguments, dict)
+                         and arguments.get('detail') == 'revision')
+        health_only = (name == 'memory_status' and isinstance(arguments, dict)
+                       and arguments.get('detail') == 'health')
+        continuity_read = isinstance(name,str) and name in CONTINUITY_READS
+        capability_read = name == 'capability_search' and self.runtime._background_health.active
+        experience_read = name == 'experience_recall' and self.runtime._background_health.active
+        # These fixed reads use owned connections and never enter mutable
+        # request identity or resident SQLite transactions.
+        with (nullcontext() if revision_only or health_only or continuity_read or capability_read or experience_read else timed_lock(self.lock)), request_health_scope():
             try:
                 with stage('dispatch'):
-                    result = self._call_tool(user, name, arguments, owner=owner)
+                    result = self._call_tool(user, name, arguments, owner=owner,
+                        independent_capability=capability_read,independent_experience=experience_read)
+                    if revision_only:
+                        if self.runtime._closed:
+                            raise RuntimeError('LAN runtime is closed')
+                        result['memory_revision'] = self._revision_reader.read(user)
                 result['authenticated_user'] = user
-                if name in ('memory_status', 'context_status', 'context_session_start'):
+                if not revision_only and not health_only and name in ('memory_status', 'context_status', 'context_session_start'):
                     result['memory_revision'] = self._memory_revision(user)
                 return result
-            except LanError as exc:
+            except (LanError, BackgroundReadDenied) as exc:
                 return {'error': str(exc)}
             except (ValueError, TypeError, KeyError):
                 return {'error': 'invalid_arguments'}
@@ -253,7 +396,7 @@ class LanTools:
                 logging.getLogger(__name__).warning('tool_failure name=%s category=%s', safe_name, type(exc).__name__)
                 return {'error': 'request_indeterminate' if isinstance(arguments, dict) and arguments.get('request_id') else 'remote_tool_failed'}
 
-    def _call_tool(self, user, name, arguments, *, owner=False):
+    def _call_tool(self, user, name, arguments, *, owner=False, independent_capability=False, independent_experience=False):
         if owner and user != "jiangli":
             raise LanError("owner_forbidden")
         if user not in ('jiangli', 'kane'):
@@ -263,6 +406,8 @@ class LanTools:
         args = deepcopy(arguments)
         if IDENTITY_FIELDS.intersection(args):
             raise LanError('identity_override_forbidden')
+        if name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
+            return self._manual_experience(user, name, args)
         space = args.pop('space', 'both' if name in SEARCH else 'personal')
         if space not in ('personal', 'public', 'both') or (space == 'both' and name not in SEARCH):
             raise LanError('invalid_space')
@@ -281,13 +426,19 @@ class LanTools:
             space, args['id'] = match[1], int(match[3])
         if space == 'public' and name not in SEARCH | PUBLIC_TOOLS | {'context_read', 'memory_status', 'context_status'}:
             raise LanError('public_write_forbidden')
-        specs = self._specs(user, owner=owner)
+        revision_only = name == 'memory_status' and args.get('detail') == 'revision'
+        health_only = name == 'memory_status' and args.get('detail') == 'health'
+        background_capability = independent_capability or (name == 'capability_search' and self.runtime._background_health.active)
+        background_experience = independent_experience or (name == 'experience_recall' and self.runtime._background_health.active)
+        specs = (self._catalog_specs[(user, owner)] if revision_only or health_only or background_capability or background_experience or name in CONTINUITY_READS else
+                 self._specs(user, owner=owner, capture_only=name in CAPTURE_TOOLS,
+                             continuity_only=name in CONTINUITY_TOOLS))
         if name not in specs:
             raise LanError('unknown_tool')
         spec = specs[name]
         mutating = not spec['annotations'].get('readOnlyHint', False)
         if mutating:
-            if owner and 'request_id' not in args:
+            if owner and name != 'session_archive_process_history' and 'request_id' not in args:
                 args['request_id'] = uuid.uuid4().hex
             validate_request_id(args.get('request_id'))
             if self.runtime.settings.authenticate(args['request_id']) is not None:
@@ -305,10 +456,24 @@ class LanTools:
                     proof = None
             if proof:
                 self._remote_evidence(user, proof)
+        if health_only:
+            status = self.runtime._background_health.status('public' if space == 'public' else user)
+            # A successful diagnostic query can describe a failed scan. Keep
+            # that state distinct from the existing top-level tool error key.
+            status['diagnostic_error'] = status.pop('error')
+            return {'detail': 'health', **status}
+        if revision_only:
+            # The authenticated wrapper adds this user's personal/public revision.
+            # Keep schema/identity validation, but do not
+            # touch health, bodies, remote workspace state or business handlers.
+            return {'detail': 'revision'}
         if name in CAPTURE_TOOLS:
             if space != 'personal':
                 raise LanError('public_write_forbidden')
             capture = self.captures[user]
+            if name == 'session_archive_process_history':
+                from evolvmem.task_history_processing import process_history
+                return process_history(capture, args, request_id, authenticated_user=user, owner=owner)
             action = {'session_archive_upload': capture.upload, 'session_archive_status': capture.status,
                       'session_archive_retry': capture.retry, 'session_archive_assign': capture.assign}[name]
             if name in ('session_archive_retry', 'session_archive_assign'):
@@ -317,20 +482,75 @@ class LanTools:
         canonical_args = deepcopy(args)
         device_id = args.pop('device_id', None)
         args.pop('repo_snapshot', None)
+        if independent_capability:
+            diagnostic = self.runtime._background_health.status(user)
+            if diagnostic['hard_gate'] != 'allowed':
+                return {'error':diagnostic['hard_gate'],'health':diagnostic}
+            result = self._capability_reader.read(user,args)
+            current_health = self.runtime._background_health.status(user)
+            if current_health['hard_gate'] != 'allowed':
+                result = {'error':current_health['hard_gate']}
+            result = self._qualify(self._sanitize(result),'personal',name)
+            result['health'] = current_health
+            return result
+        if name in CONTINUITY_READS:
+            result = self._continuity_reader.read(user,name,args,owner=owner,device_id=device_id,snapshot=snapshot)
+            result = self._qualify(self._sanitize(result),'personal',name)
+            if not owner and args.get('workspace_path'):
+                result['repo_source'] = 'client_reported' if canonical_args.get('repo_snapshot') else 'unknown'
+            return result
         if name not in PUBLIC_TOOLS | {'continuity_bind'}:
             server = self.runtime.server_for(user)
-            adapter, mode, health = server._contract_view()
-            core = next(s for s in tool_specs(adapter=adapter, mode=mode, health=health) if s.name == name)
+            if name in CONTINUITY_TOOLS:
+                core_specs = _continuity_tool_specs(server)
+            elif background_capability or background_experience:
+                core_specs = tool_specs(adapter=server.adapter, mode=server.context_mode, health=None, catalog=True)
+            else:
+                adapter, mode, health = server._contract_view()
+                core_specs = tool_specs(adapter=adapter, mode=mode, health=health)
+            core = next(s for s in core_specs if s.name == name)
             if not _schema_valid(args, core.input_schema):
                 raise LanError('invalid_arguments')
+        if independent_experience:
+            result=self._experience_reader.read(user,args,space)
+            shared=result.pop('shared_knowledge')
+            result=self._qualify(self._sanitize(result),'personal',name)
+            result['shared_knowledge']=shared
+            return result
         def dispatch():
             server = self.runtime.server_for(user)
-            with (nullcontext(None) if owner else remote_context(server, device_id, snapshot)) as provider:
+            # Keep the existing resident lock/remote identity. Bind only the
+            # namespaces this exact experience request will actually read.
+            read_servers = []
+            if background_experience:
+                if space != 'public':
+                    read_servers.append((user, server))
+                if space != 'personal':
+                    read_servers.append(('public', self.sharing.server))
+            if background_capability:
+                diagnostic = self.runtime._background_health.status(user)
+                if diagnostic['hard_gate'] != 'allowed':
+                    return {'error': diagnostic['hard_gate'], 'health': diagnostic}
+            with (background_read_scope(self.runtime._background_health, name, tuple(read_servers)) if background_experience else nullcontext()), (nullcontext(None) if owner else remote_context(server, device_id, snapshot)) as provider:
                 if not owner and args.get('workspace_path'):
                     provider.private_key(args['workspace_path'])
                 if name == 'continuity_bind':
                     return bind_workspace(server, provider, args)
                 result = self._dispatch(user, name, args, space)
+                if background_capability:
+                    if 'error' not in result:
+                        from evolvmem.capability_retriever import CapabilityRetriever
+                        try:
+                            result['results'] = CapabilityRetriever(server.context_service).validate_current_results(
+                                result.get('results', []), project=args.get('project'), module_id=args.get('module_id'))
+                            result['count'] = len(result['results'])
+                            result = self._qualify(self._sanitize(result), 'personal', name)
+                        except Exception:
+                            result = {'error': 'context_unavailable'}
+                    current_health = self.runtime._background_health.status(user)
+                    if current_health['hard_gate'] != 'allowed':
+                        result = {'error': current_health['hard_gate']}
+                    result['health'] = current_health
                 if not owner and args.get('workspace_path'):
                     result['repo_source'] = 'client_reported' if canonical_args.get('repo_snapshot') else 'unknown'
                 return result
@@ -460,42 +680,56 @@ class LanTools:
         for field in ('selected_ids', 'source_context_ids', 'demoted_playbook_ids', 'candidate_method_ids'):
             if field in value:
                 result[field.removesuffix('_ids') + '_refs'] = [f'{space}:context:{i}' for i in value[field]]
+        if 'capability_ids' in value:
+            result['capability_refs'] = [f'{space}:capability:{i}' for i in value['capability_ids']]
+        if name == 'capability_search' and type(value.get('memory_id')) is int:
+            result.update(space=space, ref=f'{space}:capability:{value["memory_id"]}')
         if root and name in ('memory_status', 'context_status'):
             result['space'] = space
         return result
 
     @traced_rpc
     def handle_request(self, user, request, *, owner=False):
-        with timed_lock(self.lock):
-            if user not in ('jiangli', 'kane'):
-                return self._rpc_error(None, -32600, 'Unauthorized')
-            if (not isinstance(request, dict) or request.get('jsonrpc') != '2.0'
-                    or not isinstance(request.get('method'), str)
-                    or ('id' in request and request['id'] is not None and type(request['id']) not in (str, int))
-                    or ('params' in request and not isinstance(request['params'], dict))):
-                return self._rpc_error(None, -32600, 'Invalid Request')
-            if IDENTITY_FIELDS.intersection(request):
-                return self._rpc_error(request.get('id'), -32600, 'Identity override forbidden')
-            if 'id' not in request:
-                return None
-            method, ident, params = request['method'], request['id'], request.get('params', {})
-            if IDENTITY_FIELDS.intersection(params):
-                return self._rpc_error(ident, -32600, 'Identity override forbidden')
-            if method == 'initialize':
-                requested = params.get('protocolVersion')
-                result = {'protocolVersion': requested if requested in PROTOCOLS else PROTOCOLS[0],
-                          'capabilities': {'tools': {}}, 'serverInfo': {'name': 'evolvmem-lan', 'version': '0.1.0'},
-                          'instructions': (self.runtime.server_for(user)._handle_request({'id': ident, 'method': 'initialize'})['result']['instructions'] + '\nSearch defaults to personal plus curated public summaries. Use memory_publish to explicitly share.' if owner else INSTRUCTIONS)}
-            elif method == 'ping':
-                result = {}
-            elif method == 'tools/list':
-                result = {'tools': list(self._specs(user, owner=owner).values())}
-            elif method == 'tools/call':
-                data = self.call_tool(user, params.get('name'), params.get('arguments', {}), owner=owner)
-                result = {'content': [{'type': 'text', 'text': json.dumps(data, ensure_ascii=False)}], 'isError': 'error' in data}
-            else:
-                return self._rpc_error(ident, -32601, 'Method not found')
-            return {'jsonrpc': '2.0', 'id': ident, 'result': result}
+        if user not in ('jiangli', 'kane'):
+            return self._rpc_error(None, -32600, 'Unauthorized')
+        if (not isinstance(request, dict) or request.get('jsonrpc') != '2.0'
+                or not isinstance(request.get('method'), str)
+                or ('id' in request and request['id'] is not None and type(request['id']) not in (str, int))
+                or ('params' in request and not isinstance(request['params'], dict))):
+            return self._rpc_error(None, -32600, 'Invalid Request')
+        if IDENTITY_FIELDS.intersection(request):
+            return self._rpc_error(request.get('id'), -32600, 'Identity override forbidden')
+        if 'id' not in request:
+            return None
+        method, ident, params = request['method'], request['id'], request.get('params', {})
+        if IDENTITY_FIELDS.intersection(params):
+            return self._rpc_error(ident, -32600, 'Identity override forbidden')
+        if method == 'initialize' and not owner:
+            requested = params.get('protocolVersion')
+            result = {'protocolVersion': requested if requested in PROTOCOLS else PROTOCOLS[0],
+                      'capabilities': {'tools': {}}, 'serverInfo': {'name': 'evolvmem-lan', 'version': '0.1.0'},
+                      'instructions': INSTRUCTIONS}
+        elif method == 'ping':
+            result = {}
+        elif method == 'tools/list':
+            specs = deepcopy(self._catalog_specs[(user, owner)])
+            result = {'tools': list(specs.values())}
+        elif method == 'initialize':
+            # Owner instructions derive from live Context readiness, unlike
+            # remote transport negotiation. Keep their store access serialized.
+            with timed_lock(self.lock):
+                result = self.runtime.server_for(user)._handle_request(
+                    {'id': ident, 'method': 'initialize', 'params': params})['result']
+                result['protocolVersion'] = params.get('protocolVersion') if params.get('protocolVersion') in PROTOCOLS else PROTOCOLS[0]
+                result['serverInfo']['name'] = 'evolvmem-lan'
+                result['instructions'] = result.get('instructions', '') + '\nSearch defaults to personal plus curated public summaries. Use memory_publish to explicitly share.'
+        elif method == 'tools/call':
+            data = self.call_tool(user, params.get('name'), params.get('arguments', {}), owner=owner)
+            result = {'content': [{'type': 'text', 'text': json.dumps(data, ensure_ascii=False)}], 'isError': 'error' in data}
+        else:
+            return self._rpc_error(ident, -32601, 'Method not found')
+        return {'jsonrpc': '2.0', 'id': ident, 'result': result}
+
 
     @staticmethod
     def _rpc_error(ident, code, message):

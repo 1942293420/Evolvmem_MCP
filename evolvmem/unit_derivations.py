@@ -47,9 +47,11 @@ _BACKING_SQL = (
 
 class BackingRead:
     """Transient read inputs, rebuilt for each batch; never retained by a service."""
-    def __init__(self, store, ids):
+    def __init__(self, store, ids, *, preserve_text_decoding=False):
         self.rows = {}
-        self.sources = {}
+        # Strict scans keep the original SELECT * source iterator and its
+        # early return; prefetching sources could decode an unread corrupt row.
+        self.sources = None if preserve_text_decoding else {}
         self.archives = {}
         conn = store._connection()
         ids = list(set(ids))
@@ -58,8 +60,9 @@ class BackingRead:
             placeholders = ','.join('?' * len(batch))
             for row in conn.execute(_BACKING_SQL + f' WHERE d.item_id IN ({placeholders})', batch):
                 self.rows.setdefault(row['item_id'], []).append(row)
-            for row in conn.execute(f'SELECT item_id,source_kind,archive_id,source_ref FROM context_sources WHERE item_id IN ({placeholders})', batch):
-                self.sources.setdefault(row['item_id'], []).append(row)
+            if self.sources is not None:
+                for row in conn.execute(f'SELECT item_id,source_kind,archive_id,source_ref FROM context_sources WHERE item_id IN ({placeholders})', batch):
+                    self.sources.setdefault(row['item_id'], []).append(row)
 
 
 def currently_backed(store, item_id, *, read=None):
@@ -93,7 +96,7 @@ def currently_backed(store, item_id, *, read=None):
                 if read is not None:
                     read.archives[key] = linked
 
-    sources = read.sources.get(item_id, []) if read is not None else conn.execute(
+    sources = read.sources.get(item_id, []) if read is not None and read.sources is not None else conn.execute(
         'SELECT * FROM context_sources WHERE item_id=?', (item_id,))
     for source in sources:
         if source['source_kind'] == 'session' and source['archive_id'] in archives:

@@ -3,7 +3,7 @@ import hashlib
 import json
 import time
 
-VERSION = 'business-chain-v1'
+VERSION = 'business-chain-v2-candidates'
 STAGES = {'need': '需求目标', 'analysis': '问题分析', 'change': '修改或设计对象', 'result': '验收或当前结果'}
 INSTRUCTIONS = '''先沿需求目标、问题分析、修改或设计对象、验收或当前结果理解同一任务。
 项目名、工具名、技术词、相似主题只用于发现线索，不能直接决定归属。
@@ -171,6 +171,53 @@ def validate(item, unit, context, projects, target=None):
             'uses_predecessor':uses_prior}
 
 
+def current_direct_analysis(service, unit, analysis):
+    """Recheck explicit project proof before scoping an unrelated rule verdict.
+
+    Cached project labels and input stamps alone are insufficient. Re-read the
+    unit/source, then validate every retained quote and role in current context.
+    Global or uncertain analyses cannot prove that project scopes are disjoint.
+    """
+    from evolvmem import auto_organization as org
+    if not isinstance(analysis, dict) or not unit.get('task_id'):
+        return {}
+    try:
+        current = org.find_unit(service, unit['task_id'], unit['digest'])
+        if (current['decision'] == 'manual' or current['disposition'] not in ('keep', 'history_only')
+                or org._unit_revision(current) != org._unit_revision(unit)
+                or any(current.get(k) != unit.get(k) for k in ('text', 'title', 'source_start', 'source_end'))):
+            return {}
+        from evolvmem import task_narrative, topic_segmentation
+        if task_narrative.read(current.get('task_record')).get('prior_decisions'):
+            return {}
+        task = org._task_row(service, unit['task_id'])
+        org._assert_current(service, task)
+        snapshot = task.get('source_snapshot') or ''
+        ranges = topic_segmentation.unit_ranges(current) or [[current['source_start'], current['source_end']]]
+        if (not isinstance(ranges, list) or any(not isinstance(pair, (list, tuple)) or len(pair) != 2
+                or any(type(n) is not int for n in pair) or not 0 <= pair[0] < pair[1] <= len(snapshot)
+                for pair in ranges)
+                or any(left[1] > right[0] for left, right in zip(ranges, ranges[1:]))
+                or '\n\n'.join(snapshot[a:b] for a, b in ranges) != current['text']):
+            return {}
+        checked = validated({**current, 'ownership_analysis': analysis}, service.knowledge().rules.read()['revision'])
+        if checked.get('decision') != 'include' or checked.get('knowledge_scope') != 'project':
+            return {}
+        context = context_for(service, current)
+        if checked.get('input_stamp') != stamp(service, current, context):
+            return {}
+        normalized = validate({**checked, 'quote': checked.get('evidence_quote'),
+                               'continues_context': checked.get('uses_predecessor')}, current, context,
+                              set(org.project_names(service)))
+        if (normalized['decision'] != 'include' or normalized['knowledge_scope'] != 'project'
+                or not normalized['projects']
+                or any(normalized[k] != checked.get(k) for k in ('projects', 'targets', 'chain', 'evidence_quote', 'uses_predecessor'))):
+            return {}
+        return {**checked, **normalized}
+    except (ValueError, KeyError, TypeError):
+        return {}
+
+
 def analyze(service, units, *, criteria='', exceptions='', target=None):
     from evolvmem.auto_organization import _load_llm
     from evolvmem.organization_semantic_review import _key
@@ -193,6 +240,31 @@ def analyze(service, units, *, criteria='', exceptions='', target=None):
         inputs = ['\n\n'.join(task_narrative.evidence(contexts[i]['organized_task'])) if i in complete and len(u['text'])>10000 else u['text'] for i,u in enumerate(chunk)]
         too_long={i for i,u in enumerate(chunk) if len(inputs[i])+len(json.dumps(contexts[i],ensure_ascii=False))>MODEL_MAX_CHARS}
         rows = [{'id':i,'title':u.get('title',''),'text':inputs[i],'context':contexts[i]} for i,u in enumerate(chunk) if (i in complete or len(u['text'])<=10000) and i not in too_long]
+        candidate_clues = []
+        candidate_registry = set()
+        if target is None:
+            from evolvmem.ownership_candidates import CandidateRead, recall
+            try:
+                candidate_read = CandidateRead(service)
+            except Exception:
+                candidate_read = None
+            for row in rows:
+                try:
+                    if candidate_read is None:
+                        raise ValueError('candidate_read_unavailable')
+                    recalled = recall(service, row['text'], read=candidate_read)
+                    candidate_registry.update(p['project'] for p in recalled['registry'])
+                    candidate_clues.append({'id': row['id'], 'fallback': recalled['fallback'],
+                        'candidates': [{'project': c['project'], 'score': c['score'],
+                            'evidence': [{k: e[k] for k in ('origin', 'ref', 'quote')}
+                                         for e in c['evidence'][:2]]}
+                                       for c in recalled['candidates']]})
+                except Exception:
+                    # Candidate lookup is an optimization, never a new write
+                    # dependency or permission to lose a registered project.
+                    candidate_registry.update(names)
+                    candidate_clues.append({'id': row['id'], 'fallback': True, 'candidates': []})
+        prompt_registry = [p for p in registry if p['project'] in candidate_registry] if target is None and candidate_registry else registry
         prompt = ('你是业务资料归类核对员。\n'+INSTRUCTIONS+
             '\n这是'+('依据用户分类标准核对适用范围。' if target is not None else '自动识别实际归属项目。')+
             '\n返回 {"items":[{"id":0,"decision":"include|exclude|uncertain","reason":"业务理由",'
@@ -204,7 +276,8 @@ def analyze(service, units, *, criteria='', exceptions='', target=None):
             '\norganized_task 是先阅读全文整理的完整任务，按需求、原因、处理、结果判断实际影响对象；evidence 引用才是原话，text 是摘要，不能把摘要当作逐字证据。'
             '\n有目标范围时，decision 只回答是否归入该目标；即使另一个项目是实际负责方，也不能因此把当前目标写成 include。'
             '\nrelation=session_background 的记录尚未建立有效任务关联，只供人工核查背景；不能作为自动归类的 chain 或 targets 引用。若归属必须依赖这些记录才能确定，返回 uncertain，请人工先核对任务关联。'
-            '\n已登记项目：'+json.dumps(registry,ensure_ascii=False)+
+            '\n候选线索只用于检索方向；相似度不证明归属，其他历史记录不得替代本条原文和已核对任务上下文的证据：'+json.dumps(candidate_clues,ensure_ascii=False)+
+            '\n已登记项目：'+json.dumps(prompt_registry,ensure_ascii=False)+
             '\n项目归属说明：'+policy['settings'].get('ownership_instructions','')+
             '\n目标范围：'+json.dumps(rendered_target,ensure_ascii=False)+
             '\n归类依据：'+criteria+'\n不适用情况：'+exceptions+'\n待判断资料：'+json.dumps(rows,ensure_ascii=False))

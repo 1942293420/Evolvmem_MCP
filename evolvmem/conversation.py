@@ -88,8 +88,8 @@ def from_payload(payload, *, policy=None):
     if isinstance(payload.get('messages'), list):
         return clean_messages(payload['messages'], policy=policy)
     if isinstance(payload.get('transcript'), str):
-        from evolvmem.codex_transcript import parse_transcript
-        _, messages = parse_transcript(payload['transcript'].encode(), payload['session_id'])
+        from evolvmem.transcript_formats import CODEX_FORMAT, parse_transcript
+        _, messages = parse_transcript(payload['transcript'].encode(), payload['session_id'], payload.get('source_format', CODEX_FORMAT))
         return clean_messages(messages, policy=policy)
     return []
 

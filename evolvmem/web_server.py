@@ -23,6 +23,7 @@ Run:
 import argparse
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -47,6 +48,73 @@ from evolvmem.web_auth import AuthSettings, WebAuth
 
 _BUSINESS_WAIT_SECONDS = 5
 _LOG = logging.getLogger(__name__)
+
+# --- 只读接口短缓存：首页三个聚合接口原来每次 15-25s，命中缓存后毫秒级 ---
+import threading as _threading
+import time as _time
+
+_READ_CACHE: dict = {}
+_READ_CACHE_LOCK = _threading.Lock()
+_READ_CACHE_TTL = 60.0
+_READ_CACHE_MAX = 96
+
+
+def _read_cache_get(key):
+    now = _time.time()
+    with _READ_CACHE_LOCK:
+        item = _READ_CACHE.get(key)
+        if item is None:
+            return None
+        stamp, value, ttl = item
+        if now - stamp > ttl:
+            _READ_CACHE.pop(key, None)
+            return None
+        return value
+
+
+def _read_cache_put(key, value, ttl=None):
+    with _READ_CACHE_LOCK:
+        if len(_READ_CACHE) >= _READ_CACHE_MAX:
+            for stale in list(_READ_CACHE)[: max(1, _READ_CACHE_MAX // 3)]:
+                _READ_CACHE.pop(stale, None)
+        _READ_CACHE[key] = (_time.time(), value, _READ_CACHE_TTL if ttl is None else ttl)
+
+
+def _read_cache_clear():
+    with _READ_CACHE_LOCK:
+        _READ_CACHE.clear()
+
+_READ_REFRESHING = set()
+
+
+def _read_cache_swr(key, compute, ttl):
+    """先返回旧值，再在后台刷新：命中过期数据时请求不被 20s 的聚合拖住。"""
+    now = _time.time()
+    with _READ_CACHE_LOCK:
+        item = _READ_CACHE.get(key)
+        if item is not None:
+            stamp, value, item_ttl = item
+            if now - stamp <= item_ttl:
+                return value
+            if key not in _READ_REFRESHING:
+                _READ_REFRESHING.add(key)
+
+                def _refresh():
+                    try:
+                        _read_cache_put(key, compute(), ttl)
+                    except Exception:
+                        pass
+                    finally:
+                        with _READ_CACHE_LOCK:
+                            _READ_REFRESHING.discard(key)
+
+                _threading.Thread(target=_refresh, daemon=True).start()
+            return value
+    value = compute()
+    _read_cache_put(key, value, ttl)
+    return value
+
+
 
 _STATIC_INDEX = Path(__file__).parent / "web_static" / "index.html"
 _STATIC_SIGNAL = _STATIC_INDEX.parent / "designs" / "signal.html"
@@ -1197,6 +1265,37 @@ def make_handler(service: ContextService):
     store = service.store
     auth = WebAuth(AuthSettings.load(service.config.data_dir))
     views = TrustViews(service)
+    from evolvmem.product_policy import load_policy
+    from evolvmem.knowledge_console import ConsoleService
+    from evolvmem.manual_experience_search import configured_search
+    console = ConsoleService(
+        os.environ.get('EVOLVMEM_CONSOLE_REGISTRY', str(Path.home()/'.config/evolvmem-console/users.db')),
+        os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID', 'jiangli'), service.config.data_dir,
+        os.environ.get('EVOLVMEM_LAN_DATA_DIR', str(Path.home()/'.local/share/evolvmem-lan')),
+        dict(os.environ), experience_search=configured_search(service.config))
+    def observe_console_login(open_id, name):
+        if load_policy().console_enabled:
+            console.observe_login(open_id, name)
+    auth.login_observer = observe_console_login
+    from evolvmem.web_sessions import PersistentSessions, SessionStoreError
+    console_sessions = load_policy().console_enabled
+    def session_identity_allowed(open_id):
+        try:
+            if load_policy().console_enabled != console_sessions:
+                raise SessionStoreError()
+            return console.login_allowed(open_id) if console_sessions else True
+        except Exception:
+            raise SessionStoreError() from None
+    def session_write_allowed(conn, open_id):
+        if load_policy().console_enabled != console_sessions:
+            raise SessionStoreError()
+        return console.login_allowed_in_transaction(conn, open_id) if console_sessions else True
+    auth.session_validator = session_identity_allowed
+    auth.session_write_validator = session_write_allowed
+    if auth.enabled:
+        session_path = console.registry_path if console_sessions else service.config.data_dir/'web-sessions.db'
+        auth.enable_persistence(PersistentSessions(session_path, auth.persistence_scope(),
+                                                  require_existing=console_sessions))
     # Browser preconnects may open a socket without sending an HTTP request.
     # Parse those sockets independently, but retain serialized use of this
     # service's shared SQLite connections and transaction state.
@@ -1209,6 +1308,82 @@ def make_handler(service: ContextService):
             self._parsed_body = None
             self.prepared_extraction = None
             parsed = urlparse(self.path)
+            policy = load_policy()
+            console_path = parsed.path == '/api/knowledge-console' or parsed.path.startswith('/api/knowledge-console/')
+            if console_path:
+                if self.command == 'GET':
+                    with auth_lock:
+                        if auth.handle_get(self, parsed):
+                            return
+                if not policy.console_enabled:
+                    self._send_json({'ok':False,'error':'knowledge_console_disabled'}, 410)
+                    return
+                session = auth.session(self) if auth.enabled else None
+                if not auth.enabled or not session:
+                    self._send_json({'ok':False,'error':'login_required'}, 401)
+                    return
+                if self.command not in ('GET', 'POST'):
+                    self._send_json({'ok':False,'error':'method_not_allowed'}, 405)
+                    return
+                params = {k:v[0] for k,v in parse_qs(parsed.query).items()}
+                if any(len(v)!=1 for v in parse_qs(parsed.query).values()):
+                    self._send_json({'ok':False,'error':'duplicate_query_parameter'}, 400)
+                    return
+                if self.command == 'POST':
+                    if not auth._valid_csrf(self, session):
+                        self._send_json({'ok':False,'error':'invalid_csrf'}, 403)
+                        return
+                    body, failed = self._read_body()
+                    if failed: return
+                    if not isinstance(body, dict):
+                        self._send_json({'ok':False,'error':'invalid_request'}, 400)
+                        return
+                    if params:
+                        if params != {'inspect':'1'}:
+                            self._send_json({'ok':False,'error':'invalid_query'}, 400)
+                            return
+                        body = {**body, 'inspect':'1'}
+                    params = body
+                status, content_type, body = console.dispatch(self.command,
+                    unquote(parsed.path[len('/api/knowledge-console'):] or '/'), params, session)
+                if isinstance(body, dict):
+                    if parsed.path.endswith('/me') and status == 200:
+                        body['policy'] = {**body.get('policy', {}), **policy.as_dict()}
+                    self._send_json(body, status)
+                else:
+                    self.send_response(status)
+                    self.send_header('Content-Type', content_type)
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.end_headers()
+                    self.wfile.write(body)
+                return
+            if self.command == 'GET':
+                with auth_lock:
+                    if auth.handle_get(self, parsed): return
+                if policy.console_enabled:
+                    if parsed.path in ('/', '/index.html', '/designs/signal.html'):
+                        self._send_html((_STATIC_INDEX.parent/'knowledge-console.html').read_text(encoding='utf-8'))
+                        return
+                    if parsed.path in ('/knowledge-console.js','/knowledge-console.css','/history-library.js','/history-library.css','/principles.js','/nebula.js'):
+                        asset=_STATIC_INDEX.parent/parsed.path.lstrip('/')
+                        data=asset.read_bytes()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/css' if asset.suffix=='.css' else 'text/javascript')
+                        self.send_header('Content-Length', str(len(data)))
+                        self.send_header('Cache-Control','no-store')
+                        self.send_header('X-Content-Type-Options','nosniff')
+                        self.end_headers();self.wfile.write(data)
+                        return
+                    if parsed.path in ('/workflow','/workflow/','/workflow-diagram','/architecture','/architecture.html','/history','/history/'):
+                        self.send_response(302)
+                        self.send_header('Location','/#history' if parsed.path.startswith('/history') else '/#principles')
+                        self.send_header('Content-Length','0');self.end_headers()
+                        return
+            if not policy.legacy_web_enabled and not parsed.path.startswith('/auth/'):
+                self._send_json({'ok':False,'error':'legacy_web_disabled'},410)
+                return
             if self.command == 'GET':
                 # Login and static files do not use the shared database. They
                 # must remain reachable while a business request is working.
@@ -1283,7 +1458,14 @@ def make_handler(service: ContextService):
                 if elapsed >= 2:
                     # Paths and timing only: no query, body or credentials.
                     _LOG.warning('Slow web request %s %s %.3fs', self.command, parsed.path, elapsed)
-        return call
+        @wraps(method)
+        def guarded_call(self, *args, **kwargs):
+            try:
+                return call(self, *args, **kwargs)
+            except SessionStoreError:
+                self.close_connection = True
+                self._send_json({'ok': False, 'error': 'session_store_unavailable'}, 503)
+        return guarded_call
 
     class MemoryWebHandler(BaseHTTPRequestHandler):
         server_version = "EvolvMemWeb/1.0"
@@ -1323,14 +1505,26 @@ def make_handler(service: ContextService):
             """
             if getattr(self, '_parsed_body', None) is not None:
                 return self._parsed_body
-            length = int(self.headers.get("Content-Length") or 0)
+            lengths = self.headers.get_all('Content-Length', [])
+            if (self.headers.get_all('Transfer-Encoding', []) or len(lengths) > 1
+                    or lengths and (len(lengths[0]) > 20 or not lengths[0].isascii() or not lengths[0].isdigit())):
+                self.close_connection = True
+                self._send_json({'ok': False, 'error': 'invalid_body_length'}, 400)
+                return None, True
+            length = int(lengths[0]) if lengths else 0
             if length > _BODY_LIMIT:
+                self.close_connection = True
                 self._send_json({"ok": False, "error": "body too large"}, 413)
                 return None, True
             if not length:
                 return {}, False
             try:
-                return json.loads(self.rfile.read(length).decode("utf-8")), False
+                raw = self.rfile.read(length)
+                if len(raw) != length:
+                    self.close_connection = True
+                    self._send_json({'ok': False, 'error': 'incomplete_body'}, 400)
+                    return None, True
+                return json.loads(raw.decode("utf-8")), False
             except (ValueError, UnicodeDecodeError):
                 self._send_json({"ok": False, "error": "invalid JSON"}, 400)
                 return None, True
@@ -1346,21 +1540,69 @@ def make_handler(service: ContextService):
             views = TrustViews(read_service)
             parsed = urlparse(self.path)
             path = parsed.path
+            if path.startswith('/api/project-modules'):
+                from evolvmem.project_module_web import dispatch
+                try:
+                    self._send_json(dispatch(read_service, 'GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()}))
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 400)
+                return
             if path == '/api/overview':
                 from evolvmem.capability_web import overview
                 self._send_json(overview(read_service))
                 return
-            if path == '/api/capabilities':
+            if path in ('/api/capabilities', '/api/project-archives'):
                 from evolvmem.capability_web import capabilities
-                self._send_json(capabilities(read_service, {k: v[0] for k, v in parse_qs(parsed.query).items()}))
+                from evolvmem.project_archive_web import project_archives
+                reader = capabilities if path == '/api/capabilities' else project_archives
+                try:
+                    self._send_json(reader(read_service, {k: v[0] for k, v in parse_qs(parsed.query).items()}))
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 400)
                 return
             archive_match = re.fullmatch(r'/api/project-archives/(.+)', path)
             if archive_match:
-                from evolvmem.capability_web import project_archive
+                from evolvmem.project_archive_web import project_archive
                 try:
-                    self._send_json(project_archive(read_service, unquote(archive_match.group(1))))
+                    self._send_json(project_archive(read_service, unquote(archive_match.group(1)),
+                                                    {k: v[0] for k, v in parse_qs(parsed.query).items()}))
                 except ValueError as exc:
-                    self._send_json({'ok': False, 'error': str(exc)}, 404)
+                    status = 404 if str(exc) == 'project_not_registered' else 409 if str(exc) == 'project_ambiguous' else 400
+                    self._send_json({'ok': False, 'error': str(exc)}, status)
+                return
+            if path.startswith('/api/history-candidate/') or path == '/history' or path.startswith('/history/'):
+                # Additive read-only history candidate: owner-session HTML entry
+                # plus the headless JSON/token fallback. Existing routes and all
+                # write paths are untouched. Fail-closed when auth is disabled.
+                from evolvmem.history_candidate_web import dispatch as history_json_dispatch
+                from evolvmem.history_candidate_view import handle as history_view_handle
+                params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                session = auth.session(self) if auth.enabled else None
+                owner_verified = bool(auth.enabled and session and auth.can_write(session))
+                if path.startswith('/api/history-candidate/'):
+                    try:
+                        status, payload = history_json_dispatch(
+                            'GET', path, params, self.headers, owner_verified=owner_verified)
+                    except Exception:
+                        status, payload = 500, {'ok': False, 'error': 'history_candidate_internal_error'}
+                    self._send_json(payload, status)
+                else:
+                    try:
+                        status, content_type, body = history_view_handle(
+                            'GET', path, params, owner_verified=owner_verified,
+                            auth_enabled=auth.enabled)
+                    except Exception:
+                        status, content_type, body = 500, 'text/html; charset=utf-8', 'history error'
+                    if isinstance(body, dict):
+                        self._send_json(body, status)
+                    else:
+                        data = body.encode('utf-8') if isinstance(body, str) else body
+                        self.send_response(status)
+                        self.send_header('Content-Type', content_type)
+                        self.send_header('Content-Length', str(len(data)))
+                        self.send_header('Cache-Control', 'no-store')
+                        self.end_headers()
+                        self.wfile.write(data)
                 return
             if path.startswith('/api/knowledge/'):
                 self._knowledge('GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()})
@@ -1374,7 +1616,7 @@ def make_handler(service: ContextService):
                 except Exception as exc:  # bounded surface, no internal detail
                     self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
                 return
-            if path in ('/ui-feedback.js', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/project-review.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js', '/capabilities.js', '/project-archives.js', '/refresh.css', '/refresh.js'):
+            if path in ('/ui-feedback.js', '/history-library.js', '/history-library.css', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/project-review.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js', '/capabilities.js', '/project-archives.js', '/project-library.css', '/refresh.css', '/refresh.js'):
                 asset = _STATIC_INDEX.parent / path.lstrip('/')
                 data = asset.read_bytes()
                 self.send_response(200)
@@ -1518,7 +1760,8 @@ def make_handler(service: ContextService):
                 self._send_json(api_memories(facade, params, store, read_service.config))
                 return
             if path == "/api/projects":
-                self._send_json(api_projects(facade, store))
+                self._send_json(_read_cache_swr(
+                    ('projects',), lambda: api_projects(facade, store), 300.0))
                 return
             if path == "/api/resolutions":
                 qs = parse_qs(parsed.query)
@@ -1558,10 +1801,36 @@ def make_handler(service: ContextService):
         def do_POST(self):
             read_service = getattr(self, 'read_service', None) or service
             path = urlparse(self.path).path
+            if path.startswith('/api/history-candidate/') or path == '/history' or path.startswith('/history/'):
+                if path in ('/api/history-candidate/management/delete', '/api/history-candidate/management/restore'):
+                    session = auth.session(self) if auth.enabled else None
+                    if not (auth.enabled and session and auth.can_write(session)):
+                        self._send_json({'ok': False, 'error': 'history_management_forbidden'}, 403)
+                        return
+                    body, failed = self._read_body()
+                    if failed:
+                        return
+                    from evolvmem.history_candidate_web import dispatch as history_dispatch
+                    status, payload = history_dispatch('POST', path, body, self.headers, owner_verified=True)
+                    self._send_json(payload, status)
+                    return
+                self._send_json({'ok': False, 'error': 'history_candidate_method_not_allowed'}, 405)
+                return
             if path.startswith('/api/knowledge/'):
                 body, failed = self._read_body()
                 if not failed:
                     self._knowledge('POST', path, body)
+                return
+            if path.startswith('/api/project-modules'):
+                from evolvmem.project_module_web import dispatch
+                body, failed = self._read_body()
+                if failed:
+                    return
+                try:
+                    result = dispatch(service, 'POST', path, body)
+                    self._send_json({'ok': True, **result})
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 409 if str(exc) == 'revision_conflict' else 400)
                 return
             intake_match = re.fullmatch(r'/api/capabilities/intake/(\d+)/assign', path)
             suggestion_match = re.fullmatch(r'/api/capability-categories/suggestions/(\d+)/(accept|reject)', path)
@@ -1664,7 +1933,14 @@ def make_handler(service: ContextService):
                     from evolvmem.pipeline_skills import verify
                     result = verify(service, 'extraction', body, prepared=self.prepared_extraction)
                 else:
-                    result = dispatch(reader or getattr(self, 'read_service', None) or service, method, path, body)
+                    if method == 'GET':
+                        _key = ('knowledge', path, tuple(sorted((body or {}).items())))
+                        _target = reader or getattr(self, 'read_service', None) or service
+                        result = _read_cache_swr(
+                            _key, lambda: dispatch(_target, method, path, body), 45.0)
+                    else:
+                        _read_cache_clear()
+                        result = dispatch(reader or getattr(self, 'read_service', None) or service, method, path, body)
                 self._send_json(result)
             except LookupError:
                 self._send_json({'ok': False, 'error': 'not_found'}, 404)
@@ -1713,9 +1989,24 @@ def run(port: int = 9377, data_dir: str | None = None,
         rules.save({'expected_revision': rules.read()['revision']})
     # 空闲浏览器连接独立等待；共享 service 的业务处理仍由 handler 串行执行。
     server = make_http_server(service, host=host, port=port)
+
+    def _warm_read_cache():
+        try:
+            fac = service.legacy_facade()
+            _read_cache_swr(('projects',), lambda: api_projects(fac, service.store), 300.0)
+            from evolvmem.knowledge_api import dispatch as _kd
+            _read_cache_swr(('knowledge', '/api/knowledge/organization', ()),
+                            lambda: _kd(service, 'GET', '/api/knowledge/organization', {}), 45.0)
+        except Exception:
+            pass
+
+    from evolvmem.product_policy import load_policy
+    policy = load_policy()
+    if policy.legacy_web_enabled:
+        _threading.Thread(target=_warm_read_cache, daemon=True).start()
     # 单个有界后台整理 worker：独立连接、独立线程；中断的任务在启动时回到队列
     from evolvmem.auto_organization import OrganizationWorker
-    organization = OrganizationWorker(config).start()
+    organization = OrganizationWorker(config).start() if policy.legacy_web_enabled and policy.ai_processing_enabled else None
     print(f"EvolvMem web console: http://{host}:{port} "
           f"(data: {config.db_path})")
     try:
@@ -1723,7 +2014,8 @@ def run(port: int = 9377, data_dir: str | None = None,
     except KeyboardInterrupt:
         pass
     finally:
-        organization.stop()
+        if organization is not None:
+            organization.stop()
         server.server_close()
         service.close()
 

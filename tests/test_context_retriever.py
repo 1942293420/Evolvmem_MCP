@@ -875,3 +875,29 @@ def test_target_type_not_starved_by_irrelevant_types(test_config, store):
     results = make_retriever(test_config, store).search(request_for(
         top_k=1, content_types=(ContextContentType.SESSION_SUMMARY,)))
     assert [r.id for r in results] == [target.id]
+
+
+def test_expanding_eligible_vector_pool_prepares_once_per_search(store, test_config, monkeypatch):
+    from evolvmem import context_vector_health
+    items = [add_item(store, f'neighbor-{i}', l0=f'unrelated stored fact {i}') for i in range(30)]
+    index = FakeVectorIndex(test_config, [{'id':item.id, 'distance':.02} for item in items])
+    engine = QueryEmbeddingEngine([1., 0., 0.])
+    retriever = make_retriever(test_config, store, index, engine)
+    inspections = []
+    inspect = context_vector_health.inspect_context_vector
+    def counted(*args, **kwargs):
+        inspections.append(args[1])
+        return inspect(*args, **kwargs)
+    monkeypatch.setattr(context_vector_health, 'inspect_context_vector', counted)
+    request = request_for('different natural question', top_k=1, cross_project=True)
+    for expected in (1, 2):
+        hits = retriever.search(request, eligible_ids=(items[-1].id,))
+        assert [hit.id for hit in hits] == [items[-1].id]
+        assert index.search_calls[-4:] == [5, 10, 20, 30]
+        assert len(engine.queries) == expected
+        assert len(inspections) == expected
+    # A new request must revalidate changed cache identity/health.
+    index._dirty = True
+    assert retriever.search(request, eligible_ids=(items[-1].id,)) == ()
+    assert len(inspections) == 3
+    assert len(engine.queries) == 2

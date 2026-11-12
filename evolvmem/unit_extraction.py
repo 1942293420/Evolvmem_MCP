@@ -148,6 +148,8 @@ def extract_unit(service, task, unit, spans, *, llm_config=None):
     Returns ``{'stage': ..., 'item_ids': [...], 'candidates': n, 'error': ''}``.
     The provider is only ever the existing one; tests substitute ``kimi_hooks``.
     """
+    from evolvmem.product_policy import require_ai_processing
+    require_ai_processing()
     from evolvmem import kimi_hooks
     from evolvmem.unit_derivations import record_derivation
     messages = topic_segmentation.unit_messages(unit, spans)

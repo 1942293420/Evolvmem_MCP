@@ -9,7 +9,7 @@ from evolvmem.capability_models import CAPABILITY_CATEGORIES
 from evolvmem.capability_pipeline import _call_provider
 from evolvmem.capability_store import CapabilityMemoryDraft, CapabilityStore
 from evolvmem.context_store import ContextStore, _now_iso
-from evolvmem.project_archive_store import ProjectArchiveStore, ProjectEventDraft
+from evolvmem.project_archive_store import ProjectArchiveStore, ProjectEventDraft, source_progress_date
 
 
 HISTORICAL_TYPES = {"session_summary", "project_summary", "workstream_checkpoint"}
@@ -221,7 +221,7 @@ def migrate_project_event(service, row, provider=None) -> tuple[str, str, int, s
         title=str(candidate.get("title") or (metadata[0] if metadata else title) or f"项目记录 #{row['id']}"),
         content=str(candidate.get("content") or body),
         source_ref=_source_ref(store, row["id"]),
-        occurred_at=row["occurred_at"],
+        occurred_at=row["occurred_at"] or source_progress_date(row["identity_key"]),
     )
     _ensure_project(store, project)
     event_id = ProjectArchiveStore(store).record_event(event)

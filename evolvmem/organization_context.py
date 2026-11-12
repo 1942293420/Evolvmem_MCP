@@ -273,7 +273,7 @@ def _declares_subagent(payload):
     return payload_is_subagent(payload)
 
 
-def archive_info(service, source_key):
+def archive_info(service, source_key, *, excluded=None, cache=None):
     """Verified incremental-batch facts for one source key, or ``None``.
 
     Every check is structural: the identity must have the exact incremental
@@ -289,12 +289,20 @@ def archive_info(service, source_key):
     if info is None:
         return None
     from evolvmem.history_organization import source_excluded
-    if source_excluded(service, source_key):
+    if source_excluded(service, source_key, excluded=excluded):
         return None
     archive = service.store.get_session_archive(info['archive_id'])
     cache_key = (archive.get('payload_sha256'), archive.get('state'), archive.get('external_session_id'))
-    cached = _cache_get(cache_key)
+    # A registration can verify hundreds of siblings. Retain only the checked
+    # facts for that operation, with the live row signature in the key; the
+    # global cross-operation cache stays bounded at its existing size.
+    local_key = (info['archive_id'], *cache_key)
+    cached = cache.get(local_key, _MISS) if cache is not None else _MISS
+    if cached is _MISS:
+        cached = _cache_get(cache_key)
     if cached is not _MISS:
+        if cache is not None:
+            cache[local_key] = cached
         return dict(cached) if cached else None
     from evolvmem.session_archive import SessionArchiver
     raw = SessionArchiver(service.config, service.store).read_payload(info['archive_id'])
@@ -332,6 +340,8 @@ def archive_info(service, source_key):
         return None
     verified = {**info, 'session_id': session_id}
     _cache_put(cache_key, verified)
+    if cache is not None:
+        cache[local_key] = verified
     return dict(verified)
 
 
@@ -411,7 +421,7 @@ def current_source(service, source_key):
     """
     from evolvmem.knowledge_cleaning import record, review
     try:
-        revision = str(record(service, source_key)['expected_revision'])
+        revision = str(record(service, source_key, owner_governance=True)['expected_revision'])
     except Exception:
         return None, 0
     saved = review(service, source_key)

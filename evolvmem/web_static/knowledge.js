@@ -13,7 +13,8 @@
   const state = {view:'projects',intakeMode:'groups',project:'__all__',q:'',status:'',type:'',category:'',page:1,queue:'all',rows:[],selected:new Set(),projects:[],rules:null,total:0,document:null,memoryLane:'overview',projectSort:'recent',qaSort:'recent',fragmentsOpen:false};
   let toastTimer, renderSequence=0, rulesDirty=false, actionBusy=false;
   let organizationTab='review';const memoryFilters=new Map(), projectReaders=new Map(), projectDocuments=new Map(), projectReviews=new Map();
-  let capabilitiesNode=null,capabilitiesHandle=null;
+  let capabilitiesNode=null,capabilitiesHandle=null,capabilityTab='formal';
+  let archivesNode=null,archivesHandle=null;
   let cleaningNode=null;let organizationNode=null,organizationHandle=null;const cleaningState={dirty:false,busy:false,background:false};
   function syncCleaning(){if(state.view==='cleaning'){rulesDirty=cleaningState.dirty;actionBusy=cleaningState.busy&&!cleaningState.background;mount.setAttribute('aria-busy',String(cleaningState.busy));}}
   function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,6500); }
@@ -60,6 +61,9 @@
     if(state.view!=='capabilities'&&capabilitiesNode&&$('#content').contains(capabilitiesNode)){
       capabilitiesHandle?.suspend?.();capabilitiesNode.remove();
     }
+    if(state.view!=='archives'&&archivesNode&&$('#content').contains(archivesNode)){
+      archivesHandle?.suspend?.();archivesNode.remove();
+    }
     if($('#knowledge-receipt').querySelector('[data-action="retry"]'))$('#knowledge-receipt').hidden=true;
     if(state.view==='cleaning')syncCleaning();else{if($('#content').contains(cleaningNode)||$('#content').contains(organizationNode))rulesDirty=false;actionBusy=false;mount.setAttribute('aria-busy','false');}
     $('#new-item').hidden=!['intake','library'].includes(state.view)||(state.view==='library'&&!state.project.startsWith('__'));
@@ -68,7 +72,7 @@
     $('.knowledge-tabs').hidden=!management;$('.knowledge-flow').hidden=true;mount.dataset.workspaceView=state.view;
     const flowSteps={intake:3,library:3,rules:3,skill:3,learning:4};
     mount.querySelectorAll('.knowledge-flow li').forEach((li,i)=>{const current=flowSteps[state.view]===i+1;li.classList.toggle('current',current);if(current)li.setAttribute('aria-current','step');else li.removeAttribute('aria-current');});
-    const titles={projects:'项目知识',unassigned:'项目历史',organization:'自动整理',cleaning:'数据清洗',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'经验知识',intake:'存量资料',rules:'清洗与入库规则',skill:'整理规则',learning:'协作学习',capabilities:'开发能力记忆',archives:'项目存档'};
+    const titles={projects:'旧版项目资料',unassigned:'项目历史',organization:'自动整理',cleaning:'数据清洗',library:state.project==='__all__'?'来源资料':state.project==='__global__'?'全局知识':'项目历史',qa:'旧版经验问答',intake:'存量资料',rules:'清洗与入库规则',skill:'整理规则',learning:'协作学习',capabilities:'经验与能力库',archives:'项目库'};
     $('#knowledge-title').textContent=titles[state.view];$('#knowledge-description').textContent='';
     try {
     mount.querySelectorAll('[data-view]').forEach(a=>{const active=a.dataset.view===state.view;a.classList.toggle('active',active);a.setAttribute('aria-current',active?'page':'false');});
@@ -79,19 +83,18 @@
       if(!capabilitiesNode){
         capabilitiesNode=document.createElement('div');
         $('#content').replaceChildren(capabilitiesNode);
-        capabilitiesHandle=EvolvCapabilities.render({mount:capabilitiesNode,esc,toast});
+        capabilitiesHandle=EvolvCapabilities.render({mount:capabilitiesNode,esc,toast,initialTab:capabilityTab,onTab:value=>{capabilityTab=value;if(state.view==='capabilities')syncHash();}});
       }else{
-        $('#content').replaceChildren(capabilitiesNode);capabilitiesHandle?.resume?.();
+        $('#content').replaceChildren(capabilitiesNode);capabilitiesHandle?.resume?.(capabilityTab);
       }
       $('#content').inert=false;$('#knowledge-loading').hidden=true;return;
     }
     if(state.view==='archives'){
-      await EvolvProjectArchives.render({mount:$('#content'),esc});
-      if(!state.project.startsWith('__')){
-        const form=$('#project-archive-form');
-        form.elements.project.value=state.project;
-        form.requestSubmit();
-      }
+      $('#content').onclick=null;$('#content').oninput=null;$('#content').onchange=null;
+      if(!archivesNode){
+        archivesNode=document.createElement('div');$('#content').replaceChildren(archivesNode);
+        archivesHandle=EvolvProjectArchives.render({mount:archivesNode,esc,initialProject:state.project.startsWith('__')?'':state.project,onProject:project=>{state.project=project||'__all__';if(state.view==='archives')syncHash();}});
+      }else{$('#content').replaceChildren(archivesNode);archivesHandle?.resume?.(state.project.startsWith('__')?'':state.project);}
       return;
     }
     const info=await refreshProjects();if(seq!==renderSequence)return;
@@ -115,7 +118,7 @@
       if(organizationNode){$('#content').replaceChildren(organizationNode);organizationHandle?.resume?.();await organizationHandle?.selectTab?.(organizationTab);actionBusy=false;mount.setAttribute('aria-busy','false');return;}
       $('#content').innerHTML='<div id="organization-panel"></div>';
       organizationNode=$('#organization-panel');
-      try{organizationHandle=await EvolvOrganization.render({mount:organizationNode,api,esc,toast,projects:state.projects,initialTab:organizationTab,onReady:()=>{if(seq===renderSequence&&state.view==='organization')$('#content').inert=false;},onTab:value=>{organizationTab=value;if(state.view==='organization')history.replaceState(null,'',hash());},onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});}catch(error){organizationNode=null;organizationHandle=null;throw error;}return;
+      try{organizationHandle=await EvolvOrganization.render({mount:organizationNode,api,esc,toast,projects:state.projects,initialTab:organizationTab,onReady:()=>{if(seq===renderSequence&&state.view==='organization')$('#content').inert=false;},onTab:value=>{organizationTab=value;if(state.view==='organization')syncHash();},onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});}catch(error){organizationNode=null;organizationHandle=null;throw error;}return;
     }
     if(state.view==='unassigned'){$('#content').innerHTML=historyTabs()+'<div id="history-organization"></div>';await EvolvHistoryOrganization.render({mount:$('#history-organization'),api,esc,toast,projects:state.projects,onDirty:v=>rulesDirty=v,onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));}});return;}
     if(state.view==='qa'){const hashSort=new URLSearchParams(location.hash.split('?')[1]||'').get('sort');if(Object.hasOwn(qaSorts,hashSort))state.qaSort=hashSort;$('#content').innerHTML=`<div class="qa-sort-bar"><label for="qa-sort">排序</label><select id="qa-sort" aria-label="问答排序方式">${Object.entries(qaSorts).map(([key,label])=>`<option value="${key}" ${state.qaSort===key?'selected':''}>${label}</option>`).join('')}</select></div><div class="memory-manager"></div>`;await EvolvMemory.render({mount:$('.memory-manager'),doc:{project:state.project,name:'所有项目',source_ids:[],sessions:[],qa_count:0},filters:memoryFilters.get('qa'),onFilters:v=>memoryFilters.set('qa',v),projects:state.projects,api:qaApi,esc,toast,lane:'qa',standalone:true,onLane:()=>{},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));},onChanged:render,onSource:detail,onDirty:v=>rulesDirty=v});return;}
@@ -133,7 +136,7 @@
     if(state.page>lastPage){
       state.page=lastPage;params.set('page',state.page);
       result=await api('items?'+params);if(seq!==renderSequence)return;
-      history.replaceState(null,'',hash());
+      syncHash();
     }
     state.document=null;
     if(state.view==='library'&&state.projects.some(p=>p.project===state.project&&p.status==='active')){
@@ -211,7 +214,7 @@
       </tr>`;
     }).join('')}</tbody></table></div>`:`<div class="project-empty"><span aria-hidden="true">⌕</span><h3>${terms.length?'没有找到匹配的项目':'从第一个项目开始'}</h3><p>${terms.length?'试试项目名称、标识或业务别名。':'添加项目后，历次对话与知识资料会在这里积累。'}</p>${terms.length?'<button data-action="project-search-clear">清除搜索</button>':'<button class="primary write" data-action="project-new">＋ 添加项目</button>'}</div>`;
   }
-  function filterProjects(){renderProjectCards();history.replaceState(null,'',hash());}
+  function filterProjects(){renderProjectCards();syncHash();}
   async function renderLibrary(result){
     const intake=state.view==='intake';
     const projRow=state.projects.find(p=>p.project===state.project);
@@ -228,7 +231,7 @@
       fragments.addEventListener('toggle',()=>{state.fragmentsOpen=fragments.open;});
       const manager=document.createElement('div');manager.className='memory-manager';
       content.append(manager);content.append(fragments);
-      await EvolvMemory.render({mount:manager,doc:state.document,filters:memoryFilters.get(state.project),onFilters:v=>memoryFilters.set(v.project,v),projects:state.projects,api,esc,toast,lane:state.memoryLane,onLane:v=>{state.memoryLane=v;history.replaceState(null,'',hash());},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));},onChanged:render,onSource:detail,onDirty:v=>rulesDirty=v,onDirectory:async pane=>{
+      await EvolvMemory.render({mount:manager,doc:state.document,filters:memoryFilters.get(state.project),onFilters:v=>memoryFilters.set(v.project,v),projects:state.projects,api,esc,toast,lane:state.memoryLane,onLane:v=>{state.memoryLane=v;syncHash();},onBusy:v=>{actionBusy=v;mount.setAttribute('aria-busy',String(v));},onChanged:render,onSource:detail,onDirty:v=>rulesDirty=v,onDirectory:async pane=>{
         const project=state.document.project;
         if(!projectReaders.has(project))projectReaders.set(project,EvolvProjectKnowledge.create({mount:document.createElement('div'),project,api,esc,projects:state.projects}));
         const reader=projectReaders.get(project);pane.replaceChildren(reader.node);await reader.load();
@@ -330,19 +333,23 @@
   async function create(action){const p=$('#item-project').value;const row=await api('items',{title:$('#item-title').value,body:$('#item-body').value,source:$('#item-source').value,content_type:$('#item-type').value,project:p==='__global__'?'':p,scope:p==='__global__'?'global':'project',action});await afterSave(row.status==='active'?'资料已入库':row.status==='archived'?'资料未入库，已归档：'+row.ingestion_reason:'资料已保存到待确认');}
   ['archive','restore','publish','reject','delete'].forEach(action=>actions['item-'+action]=async()=>{if(action==='delete'&&!confirm('删除这份资料？删除后可在“已删除”筛选中找回。'))return;await api(`items/${editing.id}/transition`,{expected_revision:editing.revision,action});await afterSave('资料状态已更新');});
   mount.addEventListener('click',async event=>{const tab=event.target.closest('[data-view]');if(tab){event.preventDefault();route(tab.dataset.view,['library','intake'].includes(tab.dataset.view)?'__all__':undefined);return;}const b=event.target.closest('[data-action]');if(!b)return;event.preventDefault();const action=actions[b.dataset.action];if(!action||actionBusy)return;const locks=['classification-save','rules-save','skill-save','rule-reset','rule-preview','conversation','detail','item-save','assign','create-auto','create-draft','project-save','batch-assign-save','batch-publish','batch-archive','organize-selected','organize-page','organize-apply'].includes(b.dataset.action)||b.dataset.action.startsWith('item-');actionBusy=locks;mount.setAttribute('aria-busy',String(locks));const finish=EvolvUI.busy(b);try{await action(b);}catch(error){toast(error.message);}finally{actionBusy=false;mount.setAttribute('aria-busy','false');finish();}});
-  mount.addEventListener('change',async event=>{const e=event.target;try{if(e.id==='project-sort'){state.projectSort=e.value;filterProjects();}else if(e.id==='qa-sort'){state.qaSort=e.value;history.replaceState(null,'',hash());const f=$('#content').querySelector('#qa-category-filter,#qa-state-filter,#qa-project-filter');if(f)f.dispatchEvent(new Event('change',{bubbles:true}));}else if(e.dataset.select){e.checked?state.selected.add(Number(e.dataset.select)):state.selected.delete(Number(e.dataset.select));selection();}else if(e.id==='select-all'){state.selected=e.checked?new Set(state.rows.map(r=>r.id)):new Set();mount.querySelectorAll('[data-select]').forEach(x=>x.checked=e.checked);selection();}else if(e.id.startsWith('filter-')){state[({'filter-project':'project','filter-type':'type','filter-category':'category','filter-status':'status','filter-queue':'queue'})[e.id]]=e.value;state.page=1;await render();}else if(e.id==='import-file'&&e.files[0]){if(e.files[0].size>400000)throw new Error('文本文件过大，请使用不超过 100,000 字的资料。');$('#item-body').value=await e.files[0].text();if(!$('#item-title').value)$('#item-title').value=e.files[0].name.replace(/\.(txt|md|markdown)$/i,'');$('#item-source').value=e.files[0].name;}}catch(error){toast(error.message);}});
+  mount.addEventListener('change',async event=>{const e=event.target;try{if(e.id==='project-sort'){state.projectSort=e.value;filterProjects();}else if(e.id==='qa-sort'){state.qaSort=e.value;syncHash();const f=$('#content').querySelector('#qa-category-filter,#qa-state-filter,#qa-project-filter');if(f)f.dispatchEvent(new Event('change',{bubbles:true}));}else if(e.dataset.select){e.checked?state.selected.add(Number(e.dataset.select)):state.selected.delete(Number(e.dataset.select));selection();}else if(e.id==='select-all'){state.selected=e.checked?new Set(state.rows.map(r=>r.id)):new Set();mount.querySelectorAll('[data-select]').forEach(x=>x.checked=e.checked);selection();}else if(e.id.startsWith('filter-')){state[({'filter-project':'project','filter-type':'type','filter-category':'category','filter-status':'status','filter-queue':'queue'})[e.id]]=e.value;state.page=1;syncHash();await render();}else if(e.id==='import-file'&&e.files[0]){if(e.files[0].size>400000)throw new Error('文本文件过大，请使用不超过 100,000 字的资料。');$('#item-body').value=await e.files[0].text();if(!$('#item-title').value)$('#item-title').value=e.files[0].name.replace(/\.(txt|md|markdown)$/i,'');$('#item-source').value=e.files[0].name;}}catch(error){toast(error.message);}});
   mount.addEventListener('input',e=>{if(e.target.id==='project-search'){state.q=e.target.value;filterProjects();}if(e.target.id==='project-id'){const err=$('#project-id-error');if(err)err.hidden=true;}if(e.target.id==='search')state.q=e.target.value;if(['skill-text','min-confidence','require-source','min-chars','max-chars','ignore-keywords','ambiguous-names','project-overrides','rule-instructions'].includes(e.target.id))markRulesDirty();});
   mount.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='search')actions.search().catch(x=>toast(x.message));});
   $('#new-item').onclick=()=>newItem();
   mount.classList.toggle('readonly',!EvolvAuth.canWrite);$('#readonly').hidden=EvolvAuth.canWrite;
   window.addEventListener('beforeunload',e=>{if(rulesDirty||cleaningState.dirty||cleaningState.busy||[...projectReviews.values()].some(r=>r.busy)){e.preventDefault();e.returnValue='';}});
-  function hash(){const p=new URLSearchParams();if(state.view==='intake'&&state.intakeMode==='records')p.set('mode','records');if(state.view==='organization'&&organizationTab!=='review')p.set('tab',organizationTab);if(state.project!=='__all__')p.set('project',state.project);if(state.q)p.set('q',state.q);if(state.view==='projects'&&state.projectSort!=='recent')p.set('sort',state.projectSort);if(state.view==='qa'&&state.qaSort!=='recent')p.set('sort',state.qaSort);if(state.memoryLane!=='overview'&&state.view==='library')p.set('lane',state.memoryLane);return `#knowledge/${state.view}${p.size?'?'+p:''}`;}
+  // Embedded controllers may finish in the background after leaving a page.
+  function syncHash(){if(hooks.isActive&&!hooks.isActive())return;const value=hash();history.replaceState(null,'',value);hooks.routeChanged?.(value);}
+  function hash(){const p=new URLSearchParams();if(state.view==='intake'&&state.intakeMode==='records')p.set('mode','records');if(state.view==='organization'&&organizationTab!=='review')p.set('tab',organizationTab);if(state.view==='capabilities'&&capabilityTab!=='formal')p.set('tab',capabilityTab);if(state.project!=='__all__')p.set('project',state.project);if(state.q)p.set('q',state.q);if(state.view==='projects'&&state.projectSort!=='recent')p.set('sort',state.projectSort);if(state.view==='qa'&&state.qaSort!=='recent')p.set('sort',state.qaSort);if(state.memoryLane!=='overview'&&state.view==='library')p.set('lane',state.memoryLane);return `#knowledge/${state.view}${p.size?'?'+p:''}`;}
   return {
     kind:'memories', integrated:true,
     get project(){return state.project;}, set project(value){state.project=value||'__all__';state.q='';state.type='';state.category='';state.status='';state.queue='all';state.view='library';state.memoryLane='overview';state.fragmentsOpen=false;},
     get query(){return state.q;}, set query(value){state.q=value;state.view='library';state.memoryLane='overview';},
     set view(value){if(value!==state.view)$('#knowledge-receipt').hidden=true;if(['projects','unassigned','organization','cleaning','library','intake','rules','skill','learning','qa','capabilities','archives'].includes(value))state.view=value;},
     set organizationTab(value){organizationTab=['review','failed','completed','history','guidance','facts','equivalences','all'].includes(value)?value:'review';},
+    set capabilityTab(value){capabilityTab=['formal','intake','suggestions'].includes(value)?value:'formal';},
+    set intakeMode(value){state.intakeMode=value==='records'?'records':'groups';},
     hash,
     set projectSort(value){if(state.view==='qa'){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';return;}state.projectSort=Object.hasOwn(projectSorts,value)?value:'recent';},
     set qaSort(value){state.qaSort=Object.hasOwn(qaSorts,value)?value:'recent';},
@@ -351,7 +358,7 @@
     // so switching views never has to discard them.
     canLeave(){if(actionBusy){toast('正在处理，请稍候再切换。');return false;}if(!['cleaning','organization'].includes(state.view)&&rulesDirty&&!confirm('当前内容有未保存的修改。放弃修改并离开？'))return false;rulesDirty=false;return true;},
     draw(){},
-    load(){state.intakeMode=new URLSearchParams(location.hash.split('?')[1]||'').get('mode')||'groups';state.page=1;state.selected.clear();return loadView();},
+    load(){state.page=1;state.selected.clear();return loadView();},
   };
   }};
 })();

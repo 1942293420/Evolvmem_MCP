@@ -78,14 +78,16 @@
   function progressCard(row, kind) {
     return `<button class="ui-card" data-detail="${kind}" data-id="${esc(row.id ?? '')}" ${row.id==null?'disabled':''}><span class="ui-card-head">${badge(label(row.status),['ready','completed'].includes(row.status))}<span>${esc(shortDate(row.updated_at))}</span></span><h3 class="ui-card-title">${esc(kind==='summary'?name(row.project):bareSummary(row.summary))}</h3><p class="ui-card-copy">${esc(kind==='summary'?bareSummary(row.summary):name(row.project))}</p><span class="ui-card-foot"><span>${kind==='summary'?'项目的最近记录':'保存的任务断点'}</span><span>查看详情 ↗</span></span></button>`;
   }
-  function navigate(page, project, query, knowledgeView, replace=false) {
+  function navigate(page, project, query, knowledgeView, replace=false, routeSearch=undefined) {
     if(!state.ready) return;
-    if(!['home','memories','experiences','progress','principles'].includes(page)) return;
+    if(!['home','memories','experiences','progress','principles','history'].includes(page)) return;
     const current=[...browsers.values()].find(c=>c.kind===state.page);
     if(current?.canLeave&&!current.canLeave()) {
       history.replaceState(null,'',current.hash?.()||`#${state.page}`);
       return;
     }
+    // Remember the displayed controller only after its leave guard accepts.
+    window.EvolvRefresh?.rememberNavigation(current?.hash?.()||`#${state.page}`);
     state.page=page;
     document.body.dataset.activePage=page;
     $$('[data-page-panel]').forEach(el=>el.hidden=el.dataset.pagePanel!==page);
@@ -93,12 +95,21 @@
     $$('[data-page-link]').forEach(el=>{const current=el.dataset.pageLink===page&&(page!=='memories'||el.dataset.knowledgeView===navView)||(page==='experiences'&&el.dataset.knowledgeView==='qa');el.classList.toggle('active',current);el.setAttribute('aria-current',current?'page':'false');});
     if(page==='principles')EvolvPrinciples.render(document.querySelector('[data-slot=principles]'));
     let targetHash=`#${page}`;
+    if(page==='history') {
+      targetHash = location.hash.startsWith('#history') ? location.hash : '#history';
+      if(location.hash!==targetHash) history[replace?'replaceState':'pushState'](null,'',targetHash);
+      const slot=document.querySelector('[data-slot="history-library"]');
+      if(slot&&window.EvolvMemHistory) window.EvolvMemHistory.mount(slot);
+      window.EvolvRefresh?.syncNavigation(targetHash);
+      window.scrollTo({top:0,behavior:'instant'});
+      return;
+    }
     const mount=$(`[data-slot="${{memories:'memory-browser',experiences:'experience-browser',progress:'progress-browser'}[page]}"]`);
     if(mount) {
       let controller=browsers.get(mount);
       if(!controller) {
         if(page==='memories'&&window.EvolvKnowledge) {
-          controller=window.EvolvKnowledge.create(mount,{navigate:(view,project)=>navigate('memories',project,undefined,view),changed:()=>boot(false)});
+          controller=window.EvolvKnowledge.create(mount,{navigate:(view,project)=>navigate('memories',project,undefined,view),changed:()=>boot(false),isActive:()=>state.page==='memories',routeChanged:hash=>{if(state.page==='memories')window.EvolvRefresh?.syncNavigation(hash);}});
         } else if(page==='memories'&&document.body.dataset.design==='signal'&&window.EvolvOrganizer&&window.EvolvAuth.canWrite) {
           controller=window.EvolvOrganizer.create(mount,{
             get,esc,label,projectName:name,projects:()=>state.projects,
@@ -115,12 +126,18 @@
       }
       if(query!==undefined) controller.query=query;
       if(knowledgeView!==undefined)controller.view=knowledgeView;
-      if(knowledgeView==='organization'&&replace)controller.organizationTab=new URLSearchParams(location.hash.split('?')[1]||'').get('tab')||'review';
-      if(page==='memories'&&replace){const params=new URLSearchParams(location.hash.split('?')[1]||'');controller.lane=params.get('lane')||'overview';controller.projectSort=params.get('sort')||'recent';}
+      if(knowledgeView==='organization'&&(replace||routeSearch!==undefined))controller.organizationTab=new URLSearchParams(routeSearch??(location.hash.split('?')[1]||'')).get('tab')||'review';
+      if(page==='memories') {
+        const params=new URLSearchParams(routeSearch??(replace?(location.hash.split('?')[1]||''):''));
+        controller.intakeMode=params.get('mode');
+        controller.capabilityTab=params.get('tab');
+        if(replace||routeSearch!==undefined){controller.lane=params.get('lane')||'overview';controller.projectSort=params.get('sort')||'recent';}
+      }
       targetHash=controller.hash?.()||targetHash;
       controller.page=1;controller.draw();controller.load();
     }
     if(location.hash!==targetHash)history[replace?'replaceState':'pushState'](null,'',targetHash);
+    window.EvolvRefresh?.syncNavigation(targetHash);
     window.scrollTo({top:0,behavior:'instant'});
     if(page==='home') {requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));boot(false);}
   }
@@ -201,23 +218,23 @@
       if(refreshBrowser&&controller&&!controller.integrated){controller.draw();await controller.load();}
       return;
     }
-    const urls=['/api/stats','/api/insights','/api/projects','/api/memories?status=active&page_size=200&sort=access_count','/api/experiences?status=verified&page_size=3','/api/workstreams?status=unfinished&page_size=3','/api/memories?status=active&sort=created_at&order=desc&page_size=3','/api/knowledge/qa?state=active&page_size=1','/api/knowledge/projects'];
-    const needed=['[data-stat],[data-slot=metrics],[data-galaxy]','[data-stat],[data-slot=metrics]','[data-slot=project-list],[data-galaxy]','[data-galaxy]','[data-slot=featured-experiences]','[data-slot=task-list]','[data-slot=recent-memories]','[data-stat=qa_active]','[data-stat=pending_items]'];
+    const urls=['/api/stats','/api/insights','/api/projects','/api/memories?status=active&page_size=200&sort=access_count','/api/experiences?status=verified&page_size=3','/api/workstreams?status=unfinished&page_size=3','/api/memories?status=active&sort=created_at&order=desc&page_size=3','/api/knowledge/qa?state=active&page_size=1','/api/knowledge/projects','/api/project-archives?status=active&page_size=5&sort=recent'];
+    const needed=['[data-stat],[data-slot=metrics],[data-galaxy]','[data-stat],[data-slot=metrics]','[data-slot=project-list],[data-galaxy]','[data-galaxy]','[data-slot=featured-experiences]','[data-slot=task-list]','[data-slot=recent-memories]','[data-stat=qa_active]','[data-stat=pending_items]','[data-slot=project-list],[data-stat=project_count]'];
     const overview=refreshOrganizationMetrics(token,refreshBrowser);
     const responses=await Promise.allSettled(urls.map((url,i)=>$(needed[i])?get(url):Promise.resolve(null)));
     if(token!==state.boot) return;
-    const [stats,insights,projects,memories,experiences,tasks,recent,qa,knowledge]=responses.map(r=>r.status==='fulfilled'?r.value:null);
+    const [stats,insights,projects,memories,experiences,tasks,recent,qa,knowledge,archiveProjects]=responses.map(r=>r.status==='fulfilled'?r.value:null);
     state.stats=stats;state.insights=insights;state.projects=projects?.projects || insights?.projects || [];
     memories?.rows.forEach(row=>memoryCache.set(String(row.id),row));
     recent?.rows.forEach(row=>memoryCache.set(String(row.id),row));
-    const numbers={...stats,...insights,qa_active:qa?.total,pending_items:knowledge?.pending,project_count:projects?projects.projects.filter(p=>p.status==='active').length:undefined};
+    const numbers={...stats,...insights,qa_active:qa?.total,pending_items:knowledge?.pending,project_count:archiveProjects?.stats?.active};
     $$('[data-stat]').forEach(el=>countUp(el,numbers[el.dataset.stat]));
     $$('[data-slot=metrics]').forEach(el=>{
       el.innerHTML=[['total_active','活跃记忆'],['verified_experiences','已验证经验'],['ready_summaries','项目摘要'],['unfinished_workstreams','未完成任务']].map(([k,t])=>`<div class="ui-metric"><span class="metric-value" data-count="${k}">—</span><span class="metric-label">${t}</span></div>`).join('');
       $$('[data-count]',el).forEach(n=>countUp(n,numbers[n.dataset.count]));
     });
     $$('[data-slot=featured-experiences]').forEach(el=>{el.innerHTML=experiences?(experiences.rows.length?experiences.rows.map(caseCard).join(''):'<div class="ui-empty">验证过的经验会在这里积累。</div>'):errorBox();});
-    $$('[data-slot=project-list]').forEach(el=>{el.innerHTML=projects?projects.projects.filter(p=>p.status==='active').sort((a,b)=>b.active_items-a.active_items).slice(0,5).map((p,i)=>`<button class="ui-row" data-project="${esc(p.project)}"><span><span class="ui-row-title">${esc(p.display_name||p.project)}</span></span><span class="ui-row-meta">查看历史 →</span></button>`).join(''):errorBox();if(projects&&!el.innerHTML)el.innerHTML='<div class="ui-empty">暂无已归属项目的记忆。</div>';});
+    $$('[data-slot=project-list]').forEach(el=>{el.innerHTML=archiveProjects?archiveProjects.items.map(p=>`<button class="ui-row" data-archive-project="${esc(p.project)}"><span><span class="ui-row-title">${esc(p.display_name||p.project)}</span></span><span class="ui-row-meta">${p.has_archive?'查看历史 →':'尚无项目摘要 →'}</span></button>`).join(''):errorBox();if(archiveProjects&&!el.innerHTML)el.innerHTML='<div class="ui-empty">暂无活跃项目。</div>';});
     $$('[data-slot=recent-memories]').forEach(el=>{el.innerHTML=recent?recent.rows.map(row=>`<button class="ui-row" data-detail="memory" data-id="${row.id}"><span><span class="ui-row-title">${esc(row.value.slice(0,90))}</span><span class="ui-row-meta">${esc(name(row.project))} · ${esc(shortDate(row.created_at))}</span></span><span class="ui-row-arrow">↗</span></button>`).join(''):errorBox();if(recent&&!el.innerHTML)el.innerHTML='<div class="ui-empty">暂无活跃记忆。</div>';});
     $$('[data-slot=task-list]').forEach(el=>{el.innerHTML=tasks?(tasks.rows.length?tasks.rows.map(r=>progressCard(r,'workstream')).join(''):'<div class="ui-empty"><strong>当前没有未完成的任务</strong><button class="ui-button" data-page-link="progress">查看项目进展 ↗</button></div>'):errorBox();});
     $$('[data-galaxy]').forEach(el=>{
@@ -325,8 +342,17 @@
   }
   document.addEventListener('click',event=>{
     if(event.target.closest('.knowledge-workspace'))return;
-    const nav=event.target.closest('[data-page-link]');if(nav){event.preventDefault();navigate(nav.dataset.pageLink,nav.dataset.pageLink==='memories'?'__all__':undefined,undefined,nav.dataset.knowledgeView);return;}
+    const nav=event.target.closest('[data-page-link]');
+    if(nav){
+      event.preventDefault();
+      if(nav.dataset.navShell){
+        const search=nav.hash.split('?')[1]||'',params=new URLSearchParams(search);
+        navigate(nav.dataset.pageLink,nav.dataset.pageLink==='memories'?(params.get('project')||'__all__'):undefined,nav.dataset.pageLink==='memories'?(params.get('q')||''):undefined,nav.dataset.knowledgeView,false,search);
+      }else navigate(nav.dataset.pageLink,nav.dataset.pageLink==='memories'?'__all__':undefined,undefined,nav.dataset.knowledgeView);
+      return;
+    }
     const detail=event.target.closest('[data-detail]');if(detail&&!detail.disabled){openDetail(detail.dataset.detail,detail.dataset.id);return;}
+    const archiveProject=event.target.closest('[data-archive-project]');if(archiveProject){navigate('memories',archiveProject.dataset.archiveProject,undefined,'archives');return;}
     const project=event.target.closest('[data-project]');if(project){navigate('memories',project.dataset.project,undefined,'archives');return;}
     const current=[...browsers.values()].find(c=>c.kind===state.page);
     if(event.target.closest('[data-refresh]')) {
@@ -342,7 +368,7 @@
     const [route,search='']=location.hash.slice(1).split('?');const [page,view]=route.split('/');const params=new URLSearchParams(search);
     if(window.EvolvKnowledge&&['knowledge','projects','library','intake','rules','skill','learning','memories'].includes(page)) {
       navigate('memories',params.get('project')||'__all__',params.get('q')||undefined,page==='knowledge'?(view||'projects'):page==='memories'?'projects':page,true);
-    } else navigate(['memories','experiences','progress','principles'].includes(page)?page:'home',undefined,undefined,undefined,true);
+    } else navigate(['memories','experiences','progress','principles','history'].includes(page)?page:'home',undefined,undefined,undefined,true);
   }
   window.addEventListener('hashchange',navigateFromLocation);
   window.EvolvAuth.ready.then(()=>{

@@ -29,6 +29,7 @@ from urllib.parse import urlsplit
 from pathlib import Path
 
 from evolvmem.config import Config
+from evolvmem.product_policy import AIProcessingDisabled
 from evolvmem.extraction_policy import (
     contains_sensitive_text,
     evaluate_candidate,
@@ -356,7 +357,10 @@ def _call_llm(
     llm_config: LLMConfig,
     *,
     deadline: float | None = None,
+    task_history_grant=None,
 ) -> str:
+    from evolvmem.product_policy import require_ai_processing
+    require_ai_processing(task_history_grant=task_history_grant)
     request_body = {
         "model": llm_config.model,
         "messages": [{"role": "user", "content": prompt}],
@@ -423,6 +427,7 @@ def _call_llm(
                 raise ValueError()
         except (ValueError, KeyError, IndexError, TypeError):
             raise RetryableExtractionError("provider returned no usable response") from None
+    require_ai_processing(task_history_grant=task_history_grant)  # Recheck the current policy/source.
     return content
 
 
@@ -449,13 +454,20 @@ def _http_error_body(
 
 
 def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
-                         deadline: float | None = None) -> str:
+                         deadline: float | None = None, *, task_history_grant=None) -> str:
     """Try the primary briefly, then the backup within the original budget."""
+    from evolvmem.product_policy import require_ai_processing
+    require_ai_processing(task_history_grant=task_history_grant)
     def tracked(config, *, fallback=False, **kwargs):
+        if task_history_grant is not None:
+            kwargs["task_history_grant"] = task_history_grant
         call_id, started = uuid.uuid4().hex, time.monotonic()
         _report_provider(config, fallback=fallback, state='running', call_id=call_id)
         try:
             response = _call_single_provider_with_retry(prompt, config, **kwargs)
+        except AIProcessingDisabled:
+            _report_provider(config, fallback=fallback, state='paused', call_id=call_id)
+            raise
         except Exception:
             # Never persist exception messages: they may contain provider payloads.
             _report_provider(config, fallback=fallback, state='failed', call_id=call_id,
@@ -465,6 +477,10 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
                          elapsed_ms=max(0, round((time.monotonic()-started)*1000)))
         return response
 
+    # An explicit source grant authorizes one provider attempt. A lost response
+    # must not turn into another model call or a different provider.
+    if task_history_grant is not None:
+        return tracked(llm_config, deadline=deadline, max_attempts=1)
     backup = llm_config.fallback
     if backup is None:
         return tracked(llm_config, deadline=deadline)
@@ -491,7 +507,7 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
 
 def _call_single_provider_with_retry(prompt: str, llm_config: LLMConfig,
                                     deadline: float | None = None,
-                                    *, max_attempts: int = 3) -> str:
+                                    *, max_attempts: int = 3, task_history_grant=None) -> str:
     """Retry one provider without resetting the caller's remaining budget."""
     if deadline is None:
         deadline = time.monotonic() + _EXTRACTION_BUDGET_S
@@ -499,7 +515,8 @@ def _call_single_provider_with_retry(prompt: str, llm_config: LLMConfig,
         if time.monotonic() >= deadline:
             raise RetryableExtractionError("extraction retry budget exhausted")
         try:
-            content = _call_llm(prompt, llm_config, deadline=deadline)
+            content = _call_llm(prompt, llm_config, deadline=deadline,
+                                **({"task_history_grant": task_history_grant} if task_history_grant is not None else {}))
             if time.monotonic() >= deadline:
                 raise RetryableExtractionError(
                     "extraction retry budget exhausted"
@@ -558,8 +575,11 @@ def _call_single_provider_with_retry(prompt: str, llm_config: LLMConfig,
 def _llm_callable(llm_config: LLMConfig):
     """Adapt the existing provider call to ``callable(prompt) -> str | None``."""
     def llm_call(prompt: str) -> str | None:
+        from evolvmem.product_policy import AIProcessingDisabled
         try:
             return _call_llm_with_retry(prompt, llm_config)
+        except AIProcessingDisabled:
+            raise
         except Exception:
             return None
 
@@ -823,6 +843,18 @@ def session_end(payload: dict) -> ExtractionResult:
     except Exception as e:
         _log(f"conversation read failed: {e}")
         return ExtractionResult("retry", reason=f"conversation read failed: {e}")
+    from evolvmem.product_policy import load_policy
+    from evolvmem.raw_hook_archive import archive_hook_messages
+    config = Config.from_file()
+    project = _project_from_wire(wire, config.inject_project_aliases)
+    source_session = _canonical_session_id(session_id, wire)
+    archive_id = archive_hook_messages(config=config, project=project, adapter="kimi",
+                                      source_session=source_session, messages=messages)
+    if archive_id is None:
+        _log("raw session archive unavailable")
+    if not load_policy().ai_processing_enabled:
+        return ExtractionResult("paused" if archive_id is not None else "retry",
+                                reason="ai_processing_disabled" if archive_id is not None else "raw_archive_unavailable")
     conversation_chars = sum(len(m.get("content", "")) for m in messages)
     if conversation_chars < 200:
         _log("conversation too short, skip")
@@ -842,6 +874,8 @@ def session_end(payload: dict) -> ExtractionResult:
         config = Config.from_file()
         project = _project_from_wire(wire, config.inject_project_aliases)
         candidates = _extract_candidates(model_messages, llm_config, config=config, project=project)
+    except AIProcessingDisabled:
+        return ExtractionResult("paused", reason="ai_processing_disabled")
     except RetryableExtractionError as e:
         _log(f"extraction deferred: {e}")
         return ExtractionResult(
@@ -969,9 +1003,7 @@ def session_end(payload: dict) -> ExtractionResult:
         service.initialize(mode=resolved_mode, adapter="kimi")
         # 原始消息先落加密归档（本地证据，绝不外发）；归档不是提炼的前置，
         # 失败只记无正文日志，提炼以无来源链接的旧行为继续
-        archive_id = _archive_raw_session(
-            config, service, project, source_session, messages
-        )
+        # Raw evidence was archived before AI work, including intentional pauses.
         extraction = service.persist_legacy_extraction(
             LegacyExtractionRequest(
                 summary=LegacyExtractionItem(
@@ -1012,6 +1044,8 @@ def session_end(payload: dict) -> ExtractionResult:
         _run_consolidation_best_effort(
             service, resolved_mode, llm_config, engine
         )
+    except AIProcessingDisabled:
+        return ExtractionResult("paused", reason="ai_processing_disabled")
     except Exception as error:
         _log(f"persistence failed: {type(error).__name__}")
         return ExtractionResult("retry", reason="persistence failed")

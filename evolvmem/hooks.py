@@ -29,6 +29,9 @@ def _maybe_run_forgetting(config: Config,
     both mapped sides in compat/shadow/primary modes. Failures are swallowed
     — memory maintenance must never block session start.
     """
+    from evolvmem.product_policy import load_policy
+    if not load_policy().legacy_web_enabled:
+        return
     try:
         marker = _last_forget_path(config)
         interval_s = config.forget_auto_run_hours * 3600
@@ -58,6 +61,9 @@ def _maybe_run_consolidation(config: Config,
     onto both mapped sides. Failures are swallowed — maintenance must never
     block session start.
     """
+    from evolvmem.product_policy import load_policy
+    if not load_policy().legacy_web_enabled:
+        return
     if config.consolidate_auto_run_hours <= 0:
         return
     try:
@@ -290,6 +296,9 @@ def _maybe_sweep_archives(service: "ContextService", mode) -> None:
     content-free stderr line and never blocks the injection. legacy/compat
     modes skip it entirely.
     """
+    from evolvmem.product_policy import load_policy
+    if not load_policy().legacy_web_enabled:
+        return
     from evolvmem.context_models import ContextMode
 
     if mode not in (ContextMode.SHADOW, ContextMode.PRIMARY):

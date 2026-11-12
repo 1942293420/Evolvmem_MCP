@@ -1063,3 +1063,22 @@ def test_read_only_route_says_disabled_without_a_config(service, http_server):
     assert payload['ok'] is True and payload['enabled'] is False
     assert payload['configured'] is False and payload['active'] is False
     assert payload['archived_batches'] == 0
+
+
+def test_status_on_uninitialized_capture_does_not_write_schema(service):
+    conn = service.store._connection()
+    before = (conn.total_changes, conn.execute("PRAGMA schema_version").fetchone()[0])
+
+    result = capture.status(service.config, service.store)
+
+    assert result["ok"] and result["files"] == 0
+    assert (conn.total_changes, conn.execute("PRAGMA schema_version").fetchone()[0]) == before
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='local_capture_files'").fetchone() is None
+
+
+def test_status_accepts_query_only_snapshot_without_schema_creation(service):
+    from evolvmem.web_reads import snapshot
+    with snapshot(service.config, source=service) as reader:
+        result = capture.status(reader.config, reader.store)
+    assert result["ok"] and result["archived_batches"] == 0

@@ -6,7 +6,7 @@ import math
 import re
 
 from evolvmem.config import Config
-from evolvmem.context_layers import layers_from_legacy_value
+from evolvmem.context_layers import layers_from_legacy_value, l1_from_legacy_value
 from evolvmem.context_models import (
     ContextContentType,
     ContextItemDraft,
@@ -374,6 +374,12 @@ class LegacyMemoryMigrator:
         return layers_from_legacy_value(
             "[empty legacy value]",
             content_type=content_type,
+            config=self.config,
+        )
+
+    def l1_for(self, original_l2: str) -> str:
+        return l1_from_legacy_value(
+            original_l2 if original_l2.strip() else "[empty legacy value]",
             config=self.config,
         )
 

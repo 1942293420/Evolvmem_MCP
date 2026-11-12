@@ -48,7 +48,7 @@ def source_excluded(service, key, *, excluded=None):
     return bool(match) and int(match[1]) in (_excluded_archive_ids(service) if excluded is None else excluded)
 
 
-def _unassigned_archives(service, *, excluded=None):
+def _current_archives(service, *, excluded=None):
     """Deduplicate across all projects so assigning a head never exposes an old version.
 
     This stays the revision/visibility oracle for every source, including ones a
@@ -73,12 +73,15 @@ def _unassigned_archives(service, *, excluded=None):
         if identity in seen:
             continue
         seen.add(identity)
-        if not row['project']:
-            rows.append(dict(row))
+        rows.append(dict(row))
     return rows
 
 
-def _source_record(service, key, *, visible=None, excluded=None):
+def _unassigned_archives(service, *, excluded=None):
+    return [r for r in _current_archives(service, excluded=excluded) if not r['project']]
+
+
+def _source_record(service, key, *, visible=None, excluded=None, owner_governance=False):
     from evolvmem import conversation_tasks
     if source_excluded(service,key,excluded=excluded):raise ValueError('classification_source_changed')
     if conversation_tasks.is_conversation(key):
@@ -96,10 +99,18 @@ def _source_record(service, key, *, visible=None, excluded=None):
                 'expected_revision':row['revision'], 'created_at':row['created_at'],
                 'source':'来源资料', 'available':bool(row['body'])}
     row = service.store.get_session_archive(identity)
-    if not row or row['project']:
+    if not row:
         raise ValueError('classification_no_longer_unassigned')
+    if row['project']:
+        from evolvmem.governance_sources import allows
+        if not owner_governance or not allows(service, row, visible=visible):
+            raise ValueError('classification_no_longer_unassigned')
     if visible is None:
-        visible = {r['id'] for r in _unassigned_archives(service)}
+        if owner_governance:
+            from evolvmem.governance_sources import visible_ids
+            visible = visible_ids(service, excluded=excluded)
+        else:
+            visible = {r['id'] for r in _unassigned_archives(service)}
     if identity not in visible:
         raise ValueError('classification_source_changed')
     clean = conn.execute('SELECT body,content_hash FROM conversation_history WHERE archive_id=?', (identity,)).fetchone()

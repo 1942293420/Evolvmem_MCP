@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import math
 from evolvmem.request_trace import stage
+from evolvmem.context_retrieval_inputs import current_inputs
 import re
 
 import numpy as np
@@ -114,9 +115,9 @@ class ContextRetriever:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     @stage('retrieval')
-    def search(self, request: ContextSearchRequest, *, eligible_ids=None) -> tuple[ContextSearchResult, ...]:
+    def search(self, request: ContextSearchRequest, *, eligible_ids=None, allow_rerank=True) -> tuple[ContextSearchResult, ...]:
         """Return ranked results and project fact context without access-count writes."""
-        reranking = bool(getattr(self.embedding_engine, 'reranker_loaded', False))
+        reranking = bool(allow_rerank and getattr(self.embedding_engine, 'reranker_loaded', False))
         pool_size = max(50, request.top_k * _CANDIDATE_POOL_MULTIPLIER) if reranking else request.top_k * _CANDIDATE_POOL_MULTIPLIER
         moment = self._moment(request)
         # Superseded rows are always candidate material: an explicit ``as_of``
@@ -145,7 +146,7 @@ class ContextRetriever:
         for identifier in dict.fromkeys(identifiers[:8]):
             fts_hits.extend(self.store.search_fts(identifier, **fts_options))
         candidates = self._merge_candidates(
-            fts_hits, self._scoped_vector_candidates(request, pool_size, eligible_ids),
+            fts_hits, self._scoped_vector_candidates(request, pool_size, eligible_ids, reranking=reranking),
             min_similarity=min(.6, self.config.context_vector_min_similarity) if reranking else None,
         )
         if eligible_ids is not None:
@@ -155,7 +156,7 @@ class ContextRetriever:
             return ()
         records = {
             record.item.id: record
-            for record in self.store.get_retrieval_records(
+            for record in self._retrieval_records(
                 [candidate.item_id for candidate in candidates]
             )
         }
@@ -340,10 +341,16 @@ class ContextRetriever:
 
     # ---- candidate generation ----
 
+    def _retrieval_records(self, ids):
+        inputs = current_inputs(self.store)
+        return inputs.records(ids) if inputs is not None else self.store.get_retrieval_records(ids)
+
     @stage('vector')
-    def _scoped_vector_candidates(self, request, pool_size, eligible_ids=None):
-        if (getattr(self.embedding_engine, 'reranker_loaded', False)
-                and request.project and not request.cross_project):
+    def _scoped_vector_candidates(self, request, pool_size, eligible_ids=None, *, reranking=False):
+        # Prepared state belongs to this search only: expansion must not repeat
+        # health scans/encoding, nor share trust across requests or namespaces.
+        prepared = {}
+        if reranking and request.project and not request.cross_project:
             # Build the pool within the eligible business scope. Global policies
             # retain their own bounded lane, rather than exhausting the project's
             # candidates before the reranker can see their detailed evidence.
@@ -352,7 +359,7 @@ class ContextRetriever:
             def select(hits):
                 new_ids = [h['id'] for h in hits if h['id'] not in seen]
                 seen.update(new_ids)
-                records = self.store.get_retrieval_records(new_ids)
+                records = self._retrieval_records(new_ids)
                 valid.update({r.item.id: r.item for r in records
                               if (allowed is None or r.item.id in allowed) and self._eligible(r.item, request, self._now())})
                 scoped = [h for h in hits if h['id'] in valid]
@@ -361,10 +368,10 @@ class ContextRetriever:
                     global_hits = [h for h in scoped if request.project not in (valid[h['id']].projects or (valid[h['id']].project,))]
                     return local[:pool_size] + global_hits[:pool_size], len(local) >= pool_size
                 return scoped[:pool_size], len(scoped) >= pool_size
-            return self._vector_candidates(request.query, pool_size, select=select)
-        hits = self._vector_candidates(request.query, pool_size)
+            return self._vector_candidates(request.query, pool_size, select=select, prepared=prepared)
+        hits = self._vector_candidates(request.query, pool_size, prepared=prepared)
         while len(hits) == pool_size:
-            records = self.store.get_retrieval_records([hit["id"] for hit in hits])
+            records = self._retrieval_records([hit["id"] for hit in hits])
             if sum(self._eligible(r.item, request, self._now()) and
                    (eligible_ids is None or r.item.id in eligible_ids) for r in records) >= request.top_k:
                 break
@@ -375,18 +382,24 @@ class ContextRetriever:
             if pool_size >= total:
                 break
             pool_size = min(total, pool_size * 2)
-            hits = self._vector_candidates(request.query, pool_size)
+            hits = self._vector_candidates(request.query, pool_size, prepared=prepared)
         return hits
 
-    def _vector_candidates(self, query: str, pool_size: int, *, select=None) -> list[dict]:
+    def _vector_candidates(self, query: str, pool_size: int, *, select=None, prepared=None) -> list[dict]:
         """Return raw ANN neighbors, degrading to none on any vector failure."""
         from evolvmem.context_vector_health import inspect_context_vector
-        state = inspect_context_vector(self.config, self.store, self.vector_index)
+        if prepared is None:
+            prepared = {}
+        if 'state' not in prepared:
+            prepared['state'] = inspect_context_vector(self.config, self.store, self.vector_index)
+        state = prepared['state']
         if not state.available(self.embedding_engine):
             return []
         try:
-            with stage('embedding'):
-                embedding = np.asarray(self.embedding_engine.encode_query(query), dtype=np.float32)
+            if 'embedding' not in prepared:
+                with stage('embedding'):
+                    prepared['embedding'] = np.asarray(self.embedding_engine.encode_query(query), dtype=np.float32)
+            embedding = prepared['embedding']
             limit = pool_size
             while True:
                 hits = self.vector_index.search(embedding, limit)
@@ -459,7 +472,8 @@ class ContextRetriever:
         implicit_end: str | None = None,
     ) -> bool:
         from evolvmem.memory_eligibility import eligible
-        if not eligible(self.store, item.id):
+        inputs = current_inputs(self.store)
+        if not (inputs.eligible(item.id) if inputs is not None else eligible(self.store, item.id)):
             return False
         moment = request.as_of or now.strftime(_TIMESTAMP_FORMAT)
         if request.as_of is None:

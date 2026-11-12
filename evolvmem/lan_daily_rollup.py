@@ -37,6 +37,7 @@ Frozen rules (pinned by ``tests/test_lan_daily_rollup.py``):
 from __future__ import annotations
 
 import json
+from evolvmem.product_policy import AIProcessingDisabled
 import logging
 import os
 from pathlib import Path
@@ -107,10 +108,16 @@ class LanDailyRollup:
 
     def check(self) -> bool:
         """Run today's rollup once it is due; True when an attempt was made."""
+        from evolvmem.product_policy import load_policy
+        if not load_policy().ai_processing_enabled:
+            return False
         if not self._check_lock.acquire(blocking=False):
             return False
         try:
             return self._check_due()
+        except AIProcessingDisabled:
+            self._last_attempt_at = None
+            return False
         finally:
             self._check_lock.release()
 
@@ -165,6 +172,9 @@ class LanDailyRollup:
             )
             payload["status"] = _FAILED if failed else _COMPLETED
             payload["reason"] = _FAILED_REASON if failed else ""
+        from evolvmem.product_policy import load_policy
+        if not load_policy().ai_processing_enabled:
+            return payload  # Intentional pause does not record a failed/completed day.
         try:
             self._write_state(payload)
         except Exception:
@@ -183,6 +193,8 @@ class LanDailyRollup:
         try:
             with self.adapter.lock:
                 reports = server.context_service.rollup_projects(llm=unlocked)
+        except AIProcessingDisabled:
+            raise
         except Exception:
             # One project's exception aborts that user's batch; the day stays
             # incomplete so the hourly retry can pick the batch up again.

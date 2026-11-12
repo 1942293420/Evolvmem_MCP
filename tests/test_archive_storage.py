@@ -291,3 +291,79 @@ def test_compaction_does_not_lock_writers_or_overwrite_concurrent_update(env, mo
     assert archiver.read_payload(aid) == 'newer version'
     collect(archiver, grace_seconds=0)
     assert archiver.read_payload(aid) == 'newer version'
+
+
+def _old_history_candidate(env):
+    config, store, archiver = env
+    from evolvmem.lan_capture import LanCapture
+    capture = LanCapture(SimpleNamespace(config=config, context_service=SimpleNamespace(store=store)))
+    old = archiver.archive_session("proj", "codex", "old-cache", payload("old cache dialogue"))
+    head = archiver.archive_session("proj", "codex", "current-cache", payload("current dialogue"))
+    with store.transaction():
+        for digest, row in (("old", old), ("new", head)):
+            capture.conn.execute(
+                "INSERT INTO lan_session_uploads(device_id,session_id,sha256,project,declared_project,"
+                "received_at,total_bytes,received_bytes,archive_id,backfill_status) "
+                "VALUES('pc','maintenance-race',?,'proj','proj',0,1,1,?,'done')", (digest, row.id))
+        capture.conn.execute("INSERT INTO lan_session_heads VALUES('pc','maintenance-race','new',2)")
+    return old
+
+
+def test_cache_protection_scan_releases_writer_and_preserves_new_reference(env, monkeypatch):
+    import sqlite3
+    import evolvmem.archive_maintenance as maintenance
+    config, store, archiver = env
+    old = _old_history_candidate(env)
+    original = maintenance.protected_archive_ids
+    wrote = []
+    def concurrent_reference(scanned_store):
+        # Capture the old protected set before a genuine independent commit.
+        protected = original(scanned_store)
+        with sqlite3.connect(config.db_path, timeout=0.02) as writer:
+            writer.execute(
+                "INSERT INTO organization_tasks(source_key,source_revision,rule_revision,created_at,updated_at) "
+                "VALUES(?,'v1','r1','now','now')", (f"archive:{old.id}",))
+        wrote.append(True)
+        return protected
+    monkeypatch.setattr(maintenance, "protected_archive_ids", concurrent_reference)
+
+    result = maintenance.prune_history_cache(archiver)
+
+    assert wrote == [True]
+    assert result["pruned_history_caches"] == 0
+    assert store._connection().execute(
+        "SELECT 1 FROM conversation_history WHERE archive_id=?", (old.id,)).fetchone()
+    assert archiver.read_payload(old.id) == payload("old cache dialogue")
+
+
+def test_gc_manifest_scan_allows_new_archive_and_keeps_its_reused_blocks(env, monkeypatch):
+    import evolvmem.archive_maintenance as maintenance
+    config, store, archiver = env
+    original = archiver.archive_session("proj", "codex", "before-gc", payload(noise(90_000)))
+    storage = archiver._storage()
+    new_payload = payload(noise(120_000) + "new retained source")
+    # Old unreferenced blocks are precisely what GC might delete.
+    storage.pack(new_payload)
+    read_manifest = storage.manifest
+    saved = []
+    def concurrent_archive(blob):
+        if not saved:
+            other = ContextStore(config)
+            other.initialize(create_schema=False)
+            try:
+                other._connection().execute("PRAGMA busy_timeout=20")
+                row = SessionArchiver(config, other).archive_session(
+                    "proj", "codex", "during-gc", new_payload)
+                saved.append(row.id)
+            finally:
+                other.close()
+        return read_manifest(blob)
+    monkeypatch.setattr(storage, "manifest", concurrent_archive)
+    monkeypatch.setattr(archiver, "_storage", lambda: storage)
+
+    result = maintenance.collect(archiver, grace_seconds=0)
+
+    assert saved
+    assert result["removed_files"] == 0
+    assert archiver.read_payload(saved[0]) == new_payload
+    assert archiver.read_payload(original.id) == payload(noise(90_000))

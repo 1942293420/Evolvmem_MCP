@@ -1,11 +1,19 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('session-start', 'prompt-submit', 'snapshot', 'worker', 'upload', 'status', 'self-test')]
-    [string]$Action
+    [ValidateSet('session-start', 'prompt-submit', 'snapshot', 'worker', 'upload', 'status', 'self-test', 'discover-history')]
+    [string]$Action,
+    [ValidateRange(1, 10000)][int]$HistoricalLimit = 500
 )
 
 $ErrorActionPreference = 'Stop'
+# The native command hooks have a 12-second outer deadline. Account for all
+# hook work together and keep time for PowerShell startup and JSON delivery.
+$script:HookBudgetMilliseconds = 10500
+$script:HookOutputReserveMilliseconds = 300
+$script:HookBudgetWatch = if ($Action -in @('session-start', 'prompt-submit')) {
+    [Diagnostics.Stopwatch]::StartNew()
+} else { $null }
 $script:MaxContextChars = 8000
 $script:ConnectionMetadataReserveChars = 1600
 # Explicit project mentions get their own bounded slice of the prompt context.
@@ -22,6 +30,15 @@ $OutputEncoding = $script:Utf8NoBom
 $script:ActionToken = ''
 $script:IdentityValidated = $false
 $script:PreflightStatus = $null
+$script:WorkerBudgetMilliseconds = 450000
+$script:CaptureBudgetMilliseconds = 150000
+$script:WorkerBudgetWatch = $null
+
+function Test-WorkerBudget {
+    return $null -eq $script:WorkerBudgetWatch -or
+        $script:WorkerBudgetWatch.ElapsedMilliseconds -lt $script:WorkerBudgetMilliseconds
+}
+
 
 function Get-ClientHome {
     if ($env:EVOLVMEM_CLIENT_HOME) {
@@ -191,6 +208,12 @@ function Test-ArchiveCurrentConfirmation($Response, [int64]$Order, [string]$Sha)
     return $true
 }
 
+function Get-HookRemainingMilliseconds {
+    if ($null -eq $script:HookBudgetWatch) { return [double]::PositiveInfinity }
+    return [Math]::Max(0, $script:HookBudgetMilliseconds -
+        $script:HookOutputReserveMilliseconds - $script:HookBudgetWatch.ElapsedMilliseconds)
+}
+
 function Invoke-Rpc($Config, [string]$Method, $Parameters, [string]$RpcId) {
     $token = Get-ActionToken $Config
     $headers = @{
@@ -201,9 +224,30 @@ function Invoke-Rpc($Config, [string]$Method, $Parameters, [string]$RpcId) {
     $body = @{ jsonrpc = '2.0'; id = $RpcId; method = $Method; params = $Parameters } |
         ConvertTo-Json -Depth 20 -Compress
     $bodyBytes = [Text.Encoding]::UTF8.GetBytes($body)
+    $timeoutSeconds = $script:RpcTimeoutSeconds
+    if ($null -ne $script:HookBudgetWatch) {
+        # Bootstrap may use the remaining action budget. Healthy project and
+        # experience recall can cross three seconds, so share a five-second
+        # per-call cap within the same deadline. Authentication stays short;
+        # non-hook calls and the background worker retain their own timeout.
+        if ($Method -ceq 'tools/call' -and
+            [string](Get-RecordValue $Parameters 'name' '') -ceq 'context_session_start') {
+            $timeoutSeconds = 10
+        }
+        elseif ($Method -ceq 'tools/call' -and
+            @('context_project_recall', 'experience_recall') -ccontains
+                [string](Get-RecordValue $Parameters 'name' '')) {
+            $timeoutSeconds = 5
+        }
+        $timeoutSeconds = [Math]::Min($timeoutSeconds,
+            [int][Math]::Floor((Get-HookRemainingMilliseconds) / 1000))
+        if ($timeoutSeconds -lt 1) {
+            throw (New-ClientError 'hook_budget_exhausted' 'Hook request budget is exhausted')
+        }
+    }
     $response = Invoke-WebRequest -UseBasicParsing -Uri ([string]$Config.url) -Method Post `
         -ContentType 'application/json; charset=utf-8' -Headers $headers -Body $bodyBytes `
-        -TimeoutSec $script:RpcTimeoutSeconds
+        -TimeoutSec $timeoutSeconds
     # PS 5.1 decodes application/json without charset as Latin-1. MCP JSON
     # is UTF-8; read the response bytes so injected Chinese stays intact.
     $responseText = [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray())
@@ -241,7 +285,9 @@ function Convert-McpToolResult($Config, $Result) {
 
 function Confirm-RemoteIdentity($Config) {
     if ($script:IdentityValidated) { return }
-    $result = Invoke-Rpc $Config 'tools/call' @{ name = 'memory_status'; arguments = @{} } `
+    # Identity and revision require no content scan or readiness assertion.
+    # Actual context tools retain their server-side health gates.
+    $result = Invoke-Rpc $Config 'tools/call' @{ name = 'memory_status'; arguments = @{ detail = 'revision' } } `
         ([Guid]::NewGuid().ToString('N'))
     $script:PreflightStatus = Convert-McpToolResult $Config $result
     $script:IdentityValidated = $true
@@ -249,10 +295,16 @@ function Confirm-RemoteIdentity($Config) {
 
 function Invoke-McpTool($Config, [string]$Name, $Arguments, [string]$RpcId = '') {
     Confirm-RemoteIdentity $Config
-    if ($Name -eq 'memory_status') { return $script:PreflightStatus }
+    if ($Name -eq 'memory_status' -and [string](Get-RecordValue $Arguments 'detail' '') -eq 'revision') {
+        return $script:PreflightStatus
+    }
     if (-not $RpcId) { $RpcId = [Guid]::NewGuid().ToString('N') }
     $result = Invoke-Rpc $Config 'tools/call' @{ name = $Name; arguments = $Arguments } $RpcId
     return Convert-McpToolResult $Config $result
+}
+
+function Get-RemoteRevisionStatus($Config) {
+    return Invoke-McpTool $Config 'memory_status' @{ detail = 'revision' }
 }
 
 function Normalize-WorkspacePath([string]$Path) {
@@ -375,6 +427,49 @@ function Format-InjectionContext($Injection) {
     return Join-Context @($connection, $prefix, [string](Get-Value $Injection.Response 'block' ''))
 }
 
+
+function Open-TranscriptStream([string]$Path, [switch]$HeaderOnly) {
+    if ($Path -notmatch '\.jsonl\.zs(td|t)$') {
+        return New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    }
+    $python = [string](Get-Value (Get-Config) 'decoder_python' '')
+    if (-not $python -or -not [IO.File]::Exists($python)) {
+        throw (New-ClientError 'decoder_unavailable' 'Compressed transcript decoder is not configured')
+    }
+    $helper = [IO.Path]::Combine($PSScriptRoot, 'decode-transcript.py')
+    if (-not [IO.File]::Exists($helper)) { throw (New-ClientError 'decoder_unavailable' 'Compressed transcript helper is missing') }
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $python
+    $info.Arguments = '"' + $helper + '" "' + $Path + '"' + $(if ($HeaderOnly) { ' header' } else { '' })
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $info
+    $memory = New-Object IO.MemoryStream
+    try {
+        [void]$process.Start()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $process.StandardOutput.BaseStream.CopyTo($memory)
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw (New-ClientError 'compressed_decode_failed' 'Compressed transcript could not be decoded') }
+        $memory.Position = 0
+        return ,$memory
+    }
+    catch { $memory.Dispose(); throw }
+    finally { $process.Dispose() }
+}
+
+function Read-TranscriptHeader([string]$Path) {
+    $stream = Open-TranscriptStream $Path -HeaderOnly
+    try {
+        $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8, $true)
+        try { return $reader.ReadLine() } finally { $reader.Dispose() }
+    }
+    finally { $stream.Dispose() }
+}
+
 function Save-SessionRegistration($Config, $Event) {
     $sessionId = [string](Get-Value $Event 'session_id' '')
     if (-not $sessionId) { return }
@@ -382,12 +477,7 @@ function Save-SessionRegistration($Config, $Event) {
     $prior = Read-JsonFile $path
     $transcript = [string](Get-Value $Event 'transcript_path' (Get-Value $prior 'transcript_path' ''))
     if ($transcript -and [IO.File]::Exists($transcript)) {
-        $stream = New-Object IO.FileStream($transcript, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-        try {
-            $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8, $true)
-            try { $line = $reader.ReadLine() } finally { $reader.Dispose() }
-        }
-        finally { $stream.Dispose() }
+        $line = Read-TranscriptHeader $transcript
         $header = $null
         try { $header = $line | ConvertFrom-Json } catch { }
         if ([string](Get-Value $header 'type' '') -eq 'session_meta') {
@@ -404,6 +494,7 @@ function Save-SessionRegistration($Config, $Event) {
         workspace_path = [string](Get-Value $Event 'cwd' (Get-Value $prior 'workspace_path' ''))
         project = Resolve-Project $Config ([string](Get-Value $Event 'cwd' (Get-Value $prior 'workspace_path' '')))
         source_bytes = [int64](Get-Value $prior 'source_bytes' 0)
+        source_file_bytes = [int64](Get-Value $prior 'source_file_bytes' (Get-Value $prior 'source_bytes' 0))
         source_last_write_utc = [string](Get-Value $prior 'source_last_write_utc' '')
         cache_file = [string](Get-Value $prior 'cache_file' '')
         source_order = [int64](Get-Value $prior 'source_order' 0)
@@ -484,17 +575,43 @@ function Invoke-PromptSubmit($Config, $Event) {
     $receipt = Read-JsonFile $receiptPath
     $needsInjection = $null -eq $receipt -or [string](Get-Value $receipt 'status' '') -ne 'success'
     $injectionSatisfied = -not $needsInjection
+    $bootstrapRefreshed = $false
     $parts = New-Object Collections.Generic.List[object]
     $warnings = New-Object Collections.Generic.List[string]
+    # Authenticate once before any business request. A failed preflight must
+    # not be retried through each optional call or expose old context blocks.
     try {
+        $status = Get-RemoteRevisionStatus $Config
         if (-not $needsInjection) {
-            $status = Invoke-McpTool $Config 'memory_status' @{}
             $remoteRevision = Get-Value $status 'memory_revision'
             $localRevision = Get-Value $receipt 'memory_revision'
             if ($null -ne $remoteRevision -and [string]$remoteRevision -cne [string]$localRevision) {
                 $needsInjection = $true
             }
         }
+    }
+    catch {
+        $strict = [bool](Get-Value $Config 'strict_injection' $false)
+        if ($strict -and -not $injectionSatisfied) {
+            Write-OutputJson @{ decision = 'block'; reason = 'EvolvMem memory injection is unavailable for this session start. Retry the prompt after connectivity is restored.' }
+        }
+        else {
+            Write-OutputJson @{ systemMessage = 'EvolvMem memory refresh is unavailable for this turn; continuing with the last available context.' }
+        }
+        return
+    }
+    # Preserve independently retrieved project context even when a subsequent
+    # full bootstrap runs out of time. Empty memory IDs do not erase its block.
+    if ($prompt) {
+        try {
+            $projectRecallArgs = [ordered]@{ query = $prompt; max_chars = $script:ProjectRecallMaxChars }
+            $projectRecall = Invoke-McpTool $Config 'context_project_recall' $projectRecallArgs
+            $projectContext = Format-ProjectRecallContext $projectRecall
+            if ($projectContext) { $parts.Add($projectContext) }
+        }
+        catch { $warnings.Add('EvolvMem project mention recall is unavailable for this turn.') }
+    }
+    try {
         if ($needsInjection) {
             $projectReserve = if ($prompt) { $script:ProjectRecallMaxChars + 160 } else { 0 }
             $injection = Invoke-Injection $Config $Event ($(if ($prompt) { $prompt } else { 'Refresh memory for this Codex turn.' })) $projectReserve
@@ -518,6 +635,7 @@ function Invoke-PromptSubmit($Config, $Event) {
                 delivery_status = 'retrieved_for_hook'
             }
             $injectionSatisfied = $true
+            $bootstrapRefreshed = $true
         }
     }
     catch {
@@ -529,36 +647,28 @@ function Invoke-PromptSubmit($Config, $Event) {
         }
     }
     if ($prompt -and $injectionSatisfied) {
-        # Explicit project mentions are recalled first. A dedicated call and a
-        # dedicated catch keep this path isolated: an unavailable project tool
-        # only adds a short warning and never removes the memory or experience
-        # context already collected for this turn.
-        try {
-            $projectRecallArgs = [ordered]@{
-                query = $prompt
-                max_chars = $script:ProjectRecallMaxChars
+        if ((Get-HookRemainingMilliseconds) -lt 2000) {
+            $warnings.Add('EvolvMem related experience lookup was skipped because this hook time budget is nearly exhausted.')
+        }
+        else {
+            try {
+                $experienceArgs = [ordered]@{
+                    query = $prompt
+                    project = Resolve-Project $Config ([string](Get-Value $Event 'cwd' ''))
+                    mode = 'hook'
+                }
+                $experience = Invoke-McpTool $Config 'experience_recall' $experienceArgs
+                $experienceContext = Format-ExperienceContext $experience
+                if ($experienceContext) { $parts.Add($experienceContext) }
             }
-            $projectRecall = Invoke-McpTool $Config 'context_project_recall' $projectRecallArgs
-            $projectContext = Format-ProjectRecallContext $projectRecall
-            if ($projectContext) { $parts.Add($projectContext) }
-        }
-        catch {
-            $warnings.Add('EvolvMem project mention recall is unavailable for this turn.')
-        }
-        try {
-            $experienceArgs = [ordered]@{
-                query = $prompt
-                project = Resolve-Project $Config ([string](Get-Value $Event 'cwd' ''))
+            catch {
+                $warnings.Add('EvolvMem related experience lookup is unavailable for this turn.')
             }
-            $experience = Invoke-McpTool $Config 'experience_recall' $experienceArgs
-            $experienceContext = Format-ExperienceContext $experience
-            if ($experienceContext) { $parts.Add($experienceContext) }
-        }
-        catch {
-            $warnings.Add('EvolvMem related experience lookup is unavailable for this turn.')
         }
     }
-    if ($injectionSatisfied -and $null -ne $receipt) {
+    # A failed refresh must not advance the revision or mutate the prior
+    # successful receipt. A lifecycle start still records its own failed attempt.
+    if ($injectionSatisfied -and $null -ne $receipt -and (-not $needsInjection -or $bootstrapRefreshed)) {
         try {
             if ($receipt -isnot [Collections.IDictionary]) {
                 $copy = [ordered]@{}
@@ -605,7 +715,7 @@ function Unprotect-Bytes([byte[]]$Bytes) {
 }
 
 function Read-CompleteTail([string]$Path, [int64]$Offset) {
-    $stream = New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    $stream = Open-TranscriptStream $Path
     try {
         if ($Offset -lt 0 -or $Offset -gt $stream.Length) { $Offset = 0 }
         [void]$stream.Seek($Offset, [IO.SeekOrigin]::Begin)
@@ -633,7 +743,7 @@ function Read-CompleteTail([string]$Path, [int64]$Offset) {
 
 function Test-FilePrefix([string]$Path, [byte[]]$Expected) {
     if ($Expected.Length -eq 0) { return $true }
-    $stream = New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    $stream = Open-TranscriptStream $Path
     try {
         if ($stream.Length -lt $Expected.Length) { return $false }
         $buffer = New-Object byte[] 65536
@@ -668,13 +778,56 @@ function Save-ProtectedBytes([string]$Path, [byte[]]$Plaintext) {
     finally { if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
 }
 
-function Capture-Transcript($Config, $Event) {
+function Capture-Transcript($Config, $Event, [switch]$DeferInFlight) {
     $sessionId = [string](Get-Value $Event 'session_id' '')
     $transcriptPath = [string](Get-Value $Event 'transcript_path' '')
     if (-not $sessionId -or -not $transcriptPath -or -not [IO.File]::Exists($transcriptPath)) { return $false }
+    # Do this before registration/header decoding. Otherwise every unchanged
+    # compressed source starts Python twice on every scheduled tick.
+    $known = Read-JsonFile (Get-SessionPath $sessionId)
+    if ($null -ne $known -and (Normalize-WorkspacePath ([string]$known.transcript_path)) -ieq (Normalize-WorkspacePath $transcriptPath) -and [long]$known.source_bytes -gt 0 -and
+        [string](Get-Value $known 'current_sha256' '') -and [long](Get-Value $known 'source_order' 0) -gt 0) {
+        $info = New-Object IO.FileInfo($transcriptPath)
+        $knownCache = [string](Get-Value $known 'cache_file' '')
+        $cacheExists = $knownCache -and [IO.File]::Exists([IO.Path]::Combine($script:ClientHome, 'session-cache', $knownCache))
+        if ($info.Length -eq [long](Get-Value $known 'source_file_bytes' -1) -and
+            $info.LastWriteTimeUtc.ToString('o') -ceq [string]$known.source_last_write_utc -and
+            $cacheExists) { return $false }
+        if ($cacheExists -and ($transcriptPath -match '\.jsonl\.zs(td|t)$' -or $info.Length -eq [long]$known.source_bytes)) {
+            # A changed compressed container/mtime need not imply changed
+            # logical content. Decode/hash once before the slower cache-prefix
+            # path; the full immutable SHA also verifies the native header.
+            $logical = Open-TranscriptStream $transcriptPath
+            try {
+                if ($logical.Length -eq [long]$known.source_bytes) {
+                    $hasher = [Security.Cryptography.SHA256]::Create()
+                    try { $logicalSha = ([BitConverter]::ToString($hasher.ComputeHash($logical))).Replace('-', '').ToLowerInvariant() }
+                    finally { $hasher.Dispose() }
+                    if ($logicalSha -ceq [string]$known.current_sha256) {
+                        $observed = ConvertTo-OrderedRecord $known
+                        $observed['source_file_bytes'] = $info.Length
+                        $observed['source_last_write_utc'] = $info.LastWriteTimeUtc.ToString('o')
+                        Write-JsonAtomic (Get-SessionPath $sessionId) $observed
+                        return $false
+                    }
+                }
+            } finally { $logical.Dispose() }
+        }
+    }
     Save-SessionRegistration $Config $Event
     $sessionPath = Get-SessionPath $sessionId
     $session = ConvertTo-OrderedRecord (Read-JsonFile $sessionPath)
+    if ($DeferInFlight) {
+        # Freeze a current immutable snapshot until its complete receipt. A
+        # growing source stays on disk and is captured on the following tick;
+        # it must not turn every multi-tick upload into a historical version.
+        $current = [string](Get-RecordValue $session 'current_sha256' '')
+        if ($current) {
+            $stem = (Get-TextSha256 $sessionId).Substring(0, 16) + '-' + $current
+            $flight = Read-JsonFile ([IO.Path]::Combine($script:ClientHome, 'queue', $stem + '.json'))
+            if ($null -ne $flight -and [bool](Get-Value $flight 'upload_inflight' $false)) { return $false }
+        }
+    }
     # A legacy session without a source order or current anchor is migrated
     # once before its transcript is read, so the local current cache keeps a
     # strictly greater order than every old pending version.
@@ -688,7 +841,7 @@ function Capture-Transcript($Config, $Event) {
     $cacheName = (Get-TextSha256 $sessionId) + '.bin'
     $cachePath = [IO.Path]::Combine($script:ClientHome, 'session-cache', $cacheName)
     $file = New-Object IO.FileInfo($transcriptPath)
-    if ($sourceBytes -gt 0 -and $file.Length -eq $sourceBytes -and [IO.File]::Exists($cachePath) -and
+    if ($sourceBytes -gt 0 -and $file.Length -eq [int64](Get-RecordValue $session 'source_file_bytes' $sourceBytes) -and [IO.File]::Exists($cachePath) -and
         $file.LastWriteTimeUtc.ToString('o') -ceq [string](Get-RecordValue $session 'source_last_write_utc' '')) {
         return $false
     }
@@ -698,7 +851,7 @@ function Capture-Transcript($Config, $Event) {
         if ($prior.Length -ne $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@() }
     }
     elseif ($sourceBytes -gt 0) { $sourceBytes = 0 }
-    if ($file.Length -lt $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@() }
+    if ($transcriptPath -notmatch '\.jsonl\.zs(td|t)$' -and $file.Length -lt $sourceBytes) { $sourceBytes = 0; $prior = [byte[]]@() }
     elseif ($sourceBytes -gt 0 -and -not (Test-FilePrefix $transcriptPath $prior)) {
         # A rewritten or divergent transcript begins a new immutable content
         # version. Older unacknowledged queue entries remain untouched.
@@ -706,7 +859,18 @@ function Capture-Transcript($Config, $Event) {
         $prior = [byte[]]@()
     }
     $tail = Read-CompleteTail $transcriptPath $sourceBytes
-    if ($tail.Bytes.Length -eq 0) { return $false }
+    if ($tail.Bytes.Length -eq 0) {
+        # Compression or a metadata-only rewrite can change the physical file
+        # while its validated complete JSONL bytes are identical. Persist the
+        # observation, otherwise every tick decodes the same whole source.
+        if ($sourceBytes -gt 0 -and $sourceBytes -eq [long](Get-RecordValue $session 'source_bytes' 0)) {
+            $unchanged = ConvertTo-OrderedRecord $session
+            $unchanged['source_file_bytes'] = $file.Length
+            $unchanged['source_last_write_utc'] = $file.LastWriteTimeUtc.ToString('o')
+            Write-JsonAtomic $sessionPath $unchanged
+        }
+        return $false
+    }
     $combined = New-Object byte[] ($prior.Length + $tail.Bytes.Length)
     if ($prior.Length -gt 0) { [Array]::Copy($prior, 0, $combined, 0, $prior.Length) }
     [Array]::Copy($tail.Bytes, 0, $combined, $prior.Length, $tail.Bytes.Length)
@@ -749,6 +913,7 @@ function Capture-Transcript($Config, $Event) {
     Save-ProtectedBytes $cachePath $combined
     $updated = ConvertTo-OrderedRecord $session
     $updated['source_bytes'] = [int64]$tail.EndOffset
+    $updated['source_file_bytes'] = $file.Length
     $updated['source_last_write_utc'] = $file.LastWriteTimeUtc.ToString('o')
     $updated['cache_file'] = $cacheName
     $updated['last_seen_utc'] = [DateTime]::UtcNow.ToString('o')
@@ -773,7 +938,10 @@ function Capture-Transcript($Config, $Event) {
 function Invoke-Snapshot($Config, $Event) {
     try {
         $scope = Get-SessionLockScope ([string](Get-Value $Event 'session_id' ''))
-        [void](Invoke-WithClientLock { Capture-Transcript $Config $Event } 100 $scope)
+        # The outer native hook allows only three seconds. Persist discovery
+        # metadata here; the scheduled worker captures complete records without
+        # a hook deadline. Full DPAPI snapshots grow with the whole session.
+        [void](Invoke-WithClientLock { Save-SessionRegistration $Config $Event } 100 $scope)
         Write-OutputJson @{}
     }
     catch {
@@ -821,7 +989,10 @@ function ConvertTo-OrderedRecord($Object) {
     # properties. Copy every existing value into an ordered dictionary before
     # adding source ordering or anchor fields.
     $data = [ordered]@{}
-    if ($null -ne $Object) {
+    if ($Object -is [Collections.IDictionary]) {
+        foreach ($key in $Object.get_Keys()) { $data[$key] = $Object[$key] }
+    }
+    elseif ($null -ne $Object) {
         foreach ($property in $Object.PSObject.Properties) { $data[$property.Name] = $property.Value }
     }
     return $data
@@ -1014,6 +1185,17 @@ function Initialize-SessionSourceState($Config, [string]$SessionId) {
                     $state.Dirty = $true
                 }
             }
+            # Preparing a migration/rebuilt anchor may raise its order. Keep
+            # the registration in the same locked transaction so uploads can
+            # require both the current SHA and its exact order to agree.
+            if ($state.AnchorOrder -gt $state.SourceOrder -and $state.AnchorPath) {
+                $prepared = Read-JsonFile ([string]$state.AnchorPath)
+                if ([string](Get-Value $prepared 'sha256' '') -ceq $state.CurrentSha256) {
+                    $state.SourceOrder = [int64]$state.AnchorOrder
+                    if ($state.SourceOrder -gt $state.MaxOrder) { $state.MaxOrder = $state.SourceOrder }
+                    $state.Dirty = $true
+                }
+            }
         }
     }
     else {
@@ -1091,24 +1273,60 @@ function Get-SessionMigrationSummary([string]$SessionDir) {
     }
 }
 
-function Invoke-UploadQueue($Config) {
+function Get-ConfirmedCurrentArchive($Config, [string]$SessionId, [string]$Sha, [long]$Order, [long]$TotalBytes) {
+    $reply = Invoke-McpTool $Config 'session_archive_status' ([ordered]@{device_id=[string]$Config.device_id;session_id=$SessionId})
+    if ([string](Get-Value $reply 'status' '') -ceq 'archived' -and
+        [string](Get-Value $reply 'authenticated_user' '') -ceq [string]$Config.expected_user -and
+        [long](Get-Value $reply 'total_bytes' -1) -eq $TotalBytes -and
+        [long](Get-Value $reply 'next_offset' -1) -eq $TotalBytes -and
+        [string](Get-Value $reply 'source_format' '') -ceq 'codex-jsonl' -and
+        [string](Get-Value $reply 'payload_state' '') -ceq 'available' -and
+        (Test-ArchiveCurrentConfirmation $reply $Order $Sha)) { return $reply }
+    return $null
+}
+
+function New-LocalArchiveReceipt($Config, [string]$SessionId, [string]$Sha, [long]$Order, [long]$TotalBytes, $Response, [string]$Evidence = 'upload') {
+    return [ordered]@{
+        session_id=$SessionId;sha256=$Sha;device_id=[string]$Config.device_id;source_format='codex-jsonl'
+        total_bytes=$TotalBytes;source_order=$Order;current=[bool](Get-Value $Response 'current' $false)
+        archive_status=[string](Get-Value $Response 'status' '');archive_id=[string](Get-Value $Response 'archive_id' '')
+        extraction_status=[string](Get-Value $Response 'extraction_status' 'pending')
+        acknowledged_utc=[DateTime]::UtcNow.ToString('o');receipt_evidence=$Evidence
+    }
+}
+
+function Test-UncertainFinalRequest($ErrorRecord) {
+    $exception = $ErrorRecord.Exception
+    while ($null -ne $exception) {
+        if ($exception -is [TimeoutException]) { return $true }
+        if ($exception -is [Net.WebException] -and $exception.Status -in @(
+            [Net.WebExceptionStatus]::Timeout, [Net.WebExceptionStatus]::ReceiveFailure,
+            [Net.WebExceptionStatus]::ConnectionClosed, [Net.WebExceptionStatus]::KeepAliveFailure)) { return $true }
+        $exception = $exception.InnerException
+    }
+    return $false
+}
+
+function Invoke-UploadQueue($Config, [string]$OnlySessionId = '', [string]$OnlySha256 = '') {
     $queueDir = [IO.Path]::Combine($script:ClientHome, 'queue')
     $statusDir = [IO.Path]::Combine($script:ClientHome, 'archive-status')
     Ensure-Directory $queueDir
     Ensure-Directory $statusDir
     $uploaded = 0
     # Prepare every queued session's local source ordering and migration anchor
-    # before the first upload, so an old fork can never reach the server ahead
-    # of the local current snapshot.
+    # before the first upload, so every version retains its explicit order and
+    # the local current snapshot is registered even when history uploads first.
     $sessionIds = New-Object Collections.Generic.List[string]
     foreach ($manifestPath in @([IO.Directory]::GetFiles($queueDir, '*.json'))) {
         try {
             $sessionId = [string](Get-Value (Read-JsonFile $manifestPath) 'session_id' '')
+            if ($OnlySessionId -and $sessionId -cne $OnlySessionId) { continue }
             if ($sessionId -and -not $sessionIds.Contains($sessionId)) { $sessionIds.Add($sessionId) }
         }
         catch { }
     }
     foreach ($sessionId in $sessionIds) {
+        if (-not (Test-WorkerBudget)) { return $uploaded }
         try {
             [void](Invoke-WithClientLock {
                 Initialize-SessionSourceState $Config $sessionId
@@ -1116,14 +1334,15 @@ function Invoke-UploadQueue($Config) {
         }
         catch { }
     }
-    # Reload the prepared queue. A session's anchor uploads before its older
-    # versions; an unacknowledged anchor defers those older versions.
+    # Reload the prepared queue before selecting one version per session.
     $entries = New-Object Collections.Generic.List[object]
     foreach ($manifestPath in @([IO.Directory]::GetFiles($queueDir, '*.json'))) {
         try {
             $manifest = ConvertTo-QueueManifest (Read-JsonFile $manifestPath)
             $sessionId = [string](Get-RecordValue $manifest 'session_id' '')
             if (-not $sessionId) { continue }
+            if ($OnlySessionId -and $sessionId -cne $OnlySessionId) { continue }
+            if ($OnlySha256 -and [string](Get-RecordValue $manifest 'sha256' '') -cne $OnlySha256) { continue }
             $stem = [IO.Path]::GetFileNameWithoutExtension($manifestPath)
             $dataPath = [IO.Path]::Combine($queueDir, $stem + '.bin')
             if (-not [IO.File]::Exists($dataPath)) { continue }
@@ -1135,6 +1354,9 @@ function Invoke-UploadQueue($Config) {
                 Path = $manifestPath; Manifest = $manifest; DataPath = $dataPath
                 SessionId = $sessionId; SessionScope = (Get-SessionLockScope $sessionId)
                 TotalBytes = [int64](Get-RecordValue $manifest 'total_bytes' 0)
+                InFlight = [bool](Get-RecordValue $manifest 'upload_inflight' $false)
+                HadError = [bool](Get-Value (Read-JsonFile $manifestPath) 'last_error' '')
+                LastAttempt = [string](Get-RecordValue $manifest 'last_upload_attempt_utc' '')
                 IsAnchor = ($order -gt 0 -and $currentSha -and
                     ($currentSha -ceq [string](Get-RecordValue $manifest 'sha256' '')) -and
                     ($confirmed -cne $currentSha))
@@ -1142,11 +1364,29 @@ function Invoke-UploadQueue($Config) {
         }
         catch { }
     }
+    # One durable selection per session keeps a growing transcript from
+    # replacing its partially uploaded snapshot every tick. A failed historical
+    # flight yields to healthy work, while the unchanged current version still
+    # retries idempotently. Failure metadata changes priority, not eligibility.
+    # This is full-snapshot scheduling, not a delta-upload protocol.
+    $seenSessions = @{}
     $ordered = @($entries.ToArray() | Sort-Object `
-        @{ Expression = { if ($_.IsAnchor) { 0 } else { 1 } } }, `
-        @{ Expression = { [int64]$_.TotalBytes } })
+        @{ Expression = {
+            if ($_.InFlight -and -not $_.HadError) { 0 }
+            elseif ($_.IsAnchor -and -not $_.HadError) { 1 }
+            elseif ($_.IsAnchor) { 2 }
+            elseif (-not $_.HadError) { 3 }
+            elseif ($_.InFlight) { 4 }
+            else { 5 }
+        } }, `
+        @{ Expression = { [int64](Get-RecordValue $_.Manifest 'source_order' 0) } }, `
+        @{ Expression = { [string]$_.Path } } | Where-Object {
+            if ($seenSessions.ContainsKey($_.SessionId)) { $false }
+            else { $seenSessions[$_.SessionId] = $true; $true }
+        } | Sort-Object @{ Expression = { $_.LastAttempt } }, @{ Expression = { $_.TotalBytes } }, @{ Expression = { $_.Path } })
     $blocked = @{}
     foreach ($entry in $ordered) {
+        if (-not (Test-WorkerBudget)) { break }
         $sessionId = [string]$entry.SessionId
         if ($blocked.ContainsKey($sessionId)) { continue }
         $manifest = $entry.Manifest
@@ -1156,17 +1396,33 @@ function Invoke-UploadQueue($Config) {
         $sessionScope = [string]$entry.SessionScope
         $isAnchor = [bool]$entry.IsAnchor
         $acknowledged = $false
-        $failureStage = 'decrypt'
+        $failureStage = 'selection'
+        $order = [int64](Get-RecordValue $manifest 'source_order' 0)
         try {
+            $selected = Invoke-WithClientLock {
+                $fresh = Read-JsonFile $manifestPath
+                if ($null -eq $fresh) { return $null }
+                if ([string](Get-Value $fresh 'sha256' '') -cne [string](Get-RecordValue $manifest 'sha256' '') -or
+                    [int64](Get-Value $fresh 'total_bytes' 0) -ne $entry.TotalBytes) { throw 'upload_selection_changed' }
+                # Retain the previous error until a chunk is acknowledged.
+                $record = ConvertTo-OrderedRecord $fresh
+                $record['upload_inflight'] = $true
+                $record['last_upload_attempt_utc'] = [DateTime]::UtcNow.ToString('o')
+                Write-JsonAtomic $manifestPath $record
+                return $record
+            } 5000 $sessionScope
+            if ($null -eq $selected) { continue }
+            $manifest = $selected
+            $order = [int64](Get-RecordValue $manifest 'source_order' 0)
+            $failureStage = 'decrypt'
             $plain = Unprotect-Bytes ([IO.File]::ReadAllBytes($dataPath))
             $failureStage = 'checksum'
             $sha = [string](Get-RecordValue $manifest 'sha256' '')
             if ($plain.Length -ne [int64](Get-RecordValue $manifest 'total_bytes' 0) -or
                 (Get-Sha256Hex $plain) -cne $sha) {
-                # The local payload is unreadable: keep it queued and never let
-                # older versions of this session overtake it.
-                if ($isAnchor) { $blocked[$sessionId] = $true }
-                continue
+                # Retain the unreadable payload and diagnostic. On a later
+                # tick, healthy current work may proceed ahead of this entry.
+                throw 'upload_payload_checksum_mismatch'
             }
             # The current declaration comes from the locally persisted current
             # sha at upload time, never from the server or a queued version.
@@ -1178,7 +1434,22 @@ function Invoke-UploadQueue($Config) {
             $sentChunks = 0
             # A large historical version must not monopolize the whole worker.
             # Its confirmed offset is durable; the next tick continues it.
-            while ($offset -lt $plain.Length -and $sentChunks -lt 16) {
+            $chunkLimit = [Math]::Max(1, [Math]::Min(256, [int](Get-Value $Config 'upload_chunks_per_session' 16)))
+            while ($offset -lt $plain.Length -and $sentChunks -lt $chunkLimit -and (Test-WorkerBudget)) {
+                # Capture hooks may append or revisit the same immutable SHA
+                # between chunks. Read the current declaration and order again;
+                # an older selected snapshot is sent only as history.
+                $state = Invoke-WithClientLock {
+                    return [ordered]@{ Manifest = (Read-JsonFile $manifestPath); Session = (Read-JsonFile $sessionPath) }
+                } 5000 $sessionScope
+                if ($null -eq $state.Manifest -or
+                    [string](Get-Value $state.Manifest 'sha256' '') -cne $sha -or
+                    [int64](Get-Value $state.Manifest 'total_bytes' 0) -ne $plain.Length -or
+                    [int64](Get-Value $state.Manifest 'next_offset' 0) -ne $offset) { throw 'upload_progress_changed' }
+                $manifest = ConvertTo-QueueManifest $state.Manifest
+                $order = [int64](Get-RecordValue $manifest 'source_order' 0)
+                $claimsCurrent = $order -gt 0 -and [string](Get-Value $state.Session 'current_sha256' '') -ceq $sha -and
+                    [int64](Get-Value $state.Session 'source_order' 0) -eq $order
                 $length = [Math]::Min($script:ChunkBytes, $plain.Length - $offset)
                 $chunk = New-Object byte[] ([int]$length)
                 [Array]::Copy($plain, $offset, $chunk, 0, $length)
@@ -1190,13 +1461,60 @@ function Invoke-UploadQueue($Config) {
                     project = [string](Get-RecordValue $manifest 'project' ''); sha256 = $sha
                     total_bytes = [int64](Get-RecordValue $manifest 'total_bytes' 0); offset = $offset
                     content_b64 = [Convert]::ToBase64String($chunk)
-                    extract = [bool](Get-RecordValue $manifest 'extract' $false)
+                    extract = [bool](Get-RecordValue $manifest 'extract' $false) -and
+                        [bool](Get-Value $Config 'archive_extract_enabled' $true)
                     request_id = $requestId
                 }
                 if ($order -gt 0) { $arguments['source_order'] = [int64]$order }
                 if ($claimsCurrent) { $arguments['current_sha256'] = $sha }
                 $failureStage = 'upload'
-                $response = Invoke-McpTool $Config 'session_archive_upload' $arguments $requestId
+                $response = $null
+                $receiptEvidence = 'upload'
+                $isFinal = $offset + $length -eq $plain.Length
+                if ($isFinal -and [bool](Get-RecordValue $manifest 'awaiting_final_confirmation' $false) -and
+                    [long](Get-RecordValue $manifest 'final_attempt_source_order' 0) -eq $order) {
+                    # The server may commit after the HTTP client timed out.
+                    # Exact status evidence avoids re-parsing a huge final chunk.
+                    if ($claimsCurrent) { $response = Get-ConfirmedCurrentArchive $Config $sessionId $sha $order $plain.Length }
+                    if ($null -ne $response) { $receiptEvidence = 'status_readback' }
+                    else {
+                        $attempt = [DateTimeOffset]::MinValue
+                        $attemptText = [string](Get-RecordValue $manifest 'final_attempt_utc' '')
+                        if ([DateTimeOffset]::TryParse($attemptText, [ref]$attempt) -and
+                            ([DateTimeOffset]::UtcNow - $attempt).TotalSeconds -lt 600) {
+                            throw (New-ClientError 'archive_final_confirmation_pending' 'Waiting for exact final archive confirmation')
+                        }
+                    }
+                }
+                if ($null -eq $response) {
+                    if ($isFinal) {
+                        Invoke-WithClientLock {
+                            $intent = ConvertTo-OrderedRecord (Read-JsonFile $manifestPath)
+                            if ([string]$intent.sha256 -cne $sha -or [long]$intent.source_order -ne $order) { throw 'upload_progress_changed' }
+                            $intent['awaiting_final_confirmation'] = $true
+                            $intent['final_attempt_source_order'] = $order
+                            $intent['final_attempt_utc'] = [DateTime]::UtcNow.ToString('o')
+                            Write-JsonAtomic $manifestPath $intent
+                        } 5000 $sessionScope
+                    }
+                    $uncertainFinal = $false
+                    try { $response = Invoke-McpTool $Config 'session_archive_upload' $arguments $requestId }
+                    catch { $uncertainFinal = Test-UncertainFinalRequest $_; throw }
+                    finally {
+                        # A definitive response/error permits normal retries.
+                        # Only a lost response (or process crash before here)
+                        # leaves the durable final intent for status recovery.
+                        if ($isFinal -and -not $uncertainFinal) {
+                            Invoke-WithClientLock {
+                                $done = ConvertTo-OrderedRecord (Read-JsonFile $manifestPath)
+                                if ([string]$done.sha256 -ceq $sha -and [long]$done.source_order -eq $order) {
+                                    $done['awaiting_final_confirmation'] = $false
+                                    Write-JsonAtomic $manifestPath $done
+                                }
+                            } 5000 $sessionScope
+                        }
+                    }
+                }
                 $failureStage = 'receipt'
                 $sentChunks += 1
                 $remoteStatus = [string](Get-Value $response 'status' '')
@@ -1227,20 +1545,22 @@ function Invoke-UploadQueue($Config) {
                             throw (New-ClientError 'anchor_not_current' 'archive kept a different current snapshot')
                         }
                     }
-                    $receipt = [ordered]@{
-                        session_id = $sessionId; sha256 = $sha
-                        archive_status = $remoteStatus; archive_id = [string](Get-Value $response 'archive_id' '')
-                        extraction_status = [string](Get-Value $response 'extraction_status' 'pending')
-                        acknowledged_utc = [DateTime]::UtcNow.ToString('o')
-                    }
+                    $receipt = New-LocalArchiveReceipt $Config $sessionId $sha $order $plain.Length $response $receiptEvidence
                     $failureStage = 'local_commit'
-                    Invoke-WithClientLock {
+                    $committed = Invoke-WithClientLock {
+                        $latestManifest = Read-JsonFile $manifestPath
+                        # A -> B -> A may give the same SHA a newer order while
+                        # this RPC is in flight. Keep that newer queue entry;
+                        # its next tick must receive its own exact-order receipt.
+                        if ($null -eq $latestManifest -or [string](Get-Value $latestManifest 'sha256' '') -cne $sha -or
+                            [int64](Get-Value $latestManifest 'source_order' 0) -ne $order) { return $false }
                         Write-JsonAtomic ([IO.Path]::Combine($statusDir, ($sha + '.json'))) $receipt
                         if ($claimsCurrent) {
                             # The new protocol archived this version with its
                             # source order, so the one-time anchor is complete.
                             $latest = ConvertTo-OrderedRecord (Read-JsonFile $sessionPath)
-                            if ([string](Get-RecordValue $latest 'current_sha256' '') -ceq $sha) {
+                            if ([string](Get-RecordValue $latest 'current_sha256' '') -ceq $sha -and
+                                [int64](Get-RecordValue $latest 'source_order' 0) -eq $order) {
                                 $latest['anchor_confirmed_sha256'] = $sha
                                 $latest['anchor_confirmed_utc'] = [DateTime]::UtcNow.ToString('o')
                                 $latest['anchor_error'] = ''
@@ -1249,7 +1569,9 @@ function Invoke-UploadQueue($Config) {
                         }
                         [IO.File]::Delete($dataPath)
                         [IO.File]::Delete($manifestPath)
+                        return $true
                     } 5000 $sessionScope
+                    if (-not $committed) { break }
                     $uploaded += 1
                     $acknowledged = $true
                     break
@@ -1257,9 +1579,16 @@ function Invoke-UploadQueue($Config) {
                 if ($remoteStatus -ne 'receiving') { throw 'archive acknowledgement status is invalid' }
                 $next = [int64](Get-Value $response 'next_offset' -1)
                 if ($next -ne $offset + $length) { throw 'archive acknowledgement offset mismatch' }
+                Invoke-WithClientLock {
+                    $fresh = Read-JsonFile $manifestPath
+                    if ($null -eq $fresh -or [string](Get-Value $fresh 'sha256' '') -cne $sha -or
+                        [int64](Get-Value $fresh 'next_offset' 0) -ne $offset) { throw 'upload_progress_changed' }
+                    # Preserve capture-hook metadata, including a newer order.
+                    $progress = ConvertTo-QueueManifest $fresh
+                    $progress['next_offset'] = $next
+                    Write-JsonAtomic $manifestPath $progress
+                } 5000 $sessionScope
                 $offset = $next
-                $manifest['next_offset'] = $offset
-                Invoke-WithClientLock { Write-JsonAtomic $manifestPath $manifest } 5000 $sessionScope
             }
         }
         catch {
@@ -1272,7 +1601,15 @@ function Invoke-UploadQueue($Config) {
                     $manifest['last_error_utc'] = [DateTime]::UtcNow.ToString('o')
                     $manifest['last_error_stage'] = $failureStage
                     $manifest['last_error_type'] = $_.Exception.GetType().Name
-                    Invoke-WithClientLock { Write-JsonAtomic $manifestPath $manifest } 5000 $sessionScope
+                    Invoke-WithClientLock {
+                        $fresh = Read-JsonFile $manifestPath
+                        if ($null -ne $fresh -and [string](Get-Value $fresh 'sha256' '') -ceq [string](Get-RecordValue $manifest 'sha256' '') -and
+                            [int64](Get-Value $fresh 'source_order' 0) -eq $order) {
+                            $failure = ConvertTo-OrderedRecord $fresh
+                            foreach ($field in @('last_error','last_error_utc','last_error_stage','last_error_type')) { $failure[$field] = $manifest[$field] }
+                            Write-JsonAtomic $manifestPath $failure
+                        }
+                    } 5000 $sessionScope
                 }
             }
             catch { }
@@ -1290,28 +1627,37 @@ function Get-CodexRoot($Config) {
     return ''
 }
 
-function Find-LocalSessions($Config) {
+function Find-LocalSessions($Config, [switch]$Historical) {
+    $sources = New-Object Collections.Generic.List[object]
+    $errorCodes = New-Object Collections.Generic.List[string]
+    $truncated = $false
     $found = 0; $errors = 0
     $root = Get-CodexRoot $Config
     $sinceText = [string](Get-Value $Config 'capture_since_utc' '')
     # Upgrades set the cutoff explicitly. Older clients still capture their
     # registered sessions without silently importing unrelated history.
-    if (-not $root -or -not $sinceText) { return @{ Found = 0; Errors = 0 } }
-    $since = [DateTimeOffset]::Parse($sinceText).UtcDateTime
+    if (-not $root -or (-not $sinceText -and -not $Historical)) { return @{ Found = 0; Errors = 0 } }
+    $since = if ($sinceText) { [DateTimeOffset]::Parse($sinceText).UtcDateTime } else { [DateTime]::MinValue }
+    $registeredPaths = @{}
+    $registrations = [IO.Path]::Combine($script:ClientHome, 'sessions')
+    if (-not $Historical -and [IO.Directory]::Exists($registrations)) {
+        foreach ($recordPath in [IO.Directory]::GetFiles($registrations, '*.json')) {
+            try {
+                $record = Read-JsonFile $recordPath
+                $knownPath = [string](Get-Value $record 'transcript_path' '')
+                if ($knownPath) { $registeredPaths[(Normalize-WorkspacePath $knownPath)] = $true }
+            } catch { }
+        }
+    }
     foreach ($folder in @('sessions', 'archived_sessions')) {
         $directory = [IO.Path]::Combine($root, $folder)
         if (-not [IO.Directory]::Exists($directory)) { continue }
-        try { $paths = [IO.Directory]::GetFiles($directory, '*.jsonl', [IO.SearchOption]::AllDirectories) }
-        catch { $errors += 1; continue }
+        try { $paths = @([IO.Directory]::EnumerateFiles($directory, '*.jsonl*', [IO.SearchOption]::AllDirectories) | Where-Object { $_ -match '\.jsonl(\.zst|\.zstd)?$' }) }
+        catch { $errors += 1; if ('discovery_failed' -notin $errorCodes) { $errorCodes.Add('discovery_failed') }; continue }
         foreach ($path in $paths) {
+            if (-not $Historical -and $registeredPaths.ContainsKey((Normalize-WorkspacePath $path))) { continue }
             try {
-                $stream = New-Object IO.FileStream($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-                try {
-                    $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8, $true)
-                    try { $line = $reader.ReadLine() }
-                    finally { $reader.Dispose() }
-                }
-                finally { $stream.Dispose() }
+                $line = Read-TranscriptHeader $path
                 if (-not $line) { continue }
                 $header = $line | ConvertFrom-Json
                 if ([string](Get-Value $header 'type' '') -ne 'session_meta') { continue }
@@ -1320,26 +1666,54 @@ function Find-LocalSessions($Config) {
                 $cwd = [string](Get-Value $payload 'cwd' '')
                 if (-not $sessionId -or -not $cwd) { continue }
                 $registered = [IO.File]::Exists((Get-SessionPath $sessionId))
+                if ($Historical) {
+                    if ($sources.Count -ge $HistoricalLimit) { $truncated = $true; break }
+                    $sources.Add([ordered]@{ session_id=$sessionId; transcript_path=$path; workspace_path=$cwd; registered=$registered; source_last_write_utc=[IO.File]::GetLastWriteTimeUtc($path).ToString('o') })
+                    continue
+                }
                 if (-not $registered -and [IO.File]::GetLastWriteTimeUtc($path) -lt $since) { continue }
+                if (-not $registered -and $path -match '\.jsonl\.zs(td|t)$') {
+                    # Compression/migration can give July history an October
+                    # mtime. New compressed sources need a reliable source date;
+                    # older/undated history remains explicit inventory only.
+                    $sourceDate = [string](Get-Value $payload 'timestamp' (Get-Value $header 'timestamp' ''))
+                    $parsedDate = [DateTimeOffset]::MinValue
+                    if ($sourceDate -notmatch '(Z|[+-]\d{2}:\d{2})$' -or -not [DateTimeOffset]::TryParse($sourceDate, [ref]$parsedDate) -or $parsedDate.UtcDateTime -lt $since) { continue }
+                }
                 $event = [pscustomobject]@{ session_id = $sessionId; transcript_path = $path; cwd = $cwd }
                 [void](Invoke-WithClientLock { Save-SessionRegistration $Config $event } 1000 (Get-SessionLockScope $sessionId))
                 if (-not $registered) { $found += 1 }
             }
-            catch { $errors += 1 }
+            catch {
+                $errors += 1
+                $code = Get-ClientErrorCode $_ 'discovery_failed'
+                if ($code -notin $errorCodes) { $errorCodes.Add($code) }
+            }
         }
     }
-    return @{ Found = $found; Errors = $errors }
+    return @{ Found = $found; Errors = $errors; ErrorCodes = $errorCodes.ToArray(); Sources = $sources.ToArray(); Truncated = $truncated; ReadOnly = [bool]$Historical }
 }
 
 function Invoke-Worker($Config) {
     $started = [DateTime]::UtcNow.ToString('o')
+    $script:WorkerBudgetWatch = [Diagnostics.Stopwatch]::StartNew()
+    $workerStatusPath = [IO.Path]::Combine($script:ClientHome, 'worker-status.json')
+    $running = [ordered]@{worker_status='running'; worker_phase='discovering'; last_started_utc=$started; phase_started_utc=$started}
+    Write-JsonAtomic $workerStatusPath $running
     $scanned = 0
     $captureErrors = 0
+    $captureBudgetExhausted = $false
     $captureFailures = New-Object Collections.Generic.List[object]
     $sessionDir = [IO.Path]::Combine($script:ClientHome, 'sessions')
     Ensure-Directory $sessionDir
     $discovery = Find-LocalSessions $Config
+    $running['worker_phase']='capturing'; $running['phase_started_utc']=[DateTime]::UtcNow.ToString('o')
+    Write-JsonAtomic $workerStatusPath $running
+    $captureWatch = [Diagnostics.Stopwatch]::StartNew()
     foreach ($path in @([IO.Directory]::GetFiles($sessionDir, '*.json'))) {
+        if (-not (Test-WorkerBudget) -or $captureWatch.ElapsedMilliseconds -ge $script:CaptureBudgetMilliseconds) {
+            $captureBudgetExhausted = $true; break
+        }
         $session = $null
         try {
             $session = Read-JsonFile $path
@@ -1348,7 +1722,7 @@ function Invoke-Worker($Config) {
                 cwd = [string]$session.workspace_path
             }
             $scope = Get-SessionLockScope ([string]$session.session_id)
-            if (Invoke-WithClientLock { Capture-Transcript $Config $event } 5000 $scope) { $scanned += 1 }
+            if (Invoke-WithClientLock { Capture-Transcript $Config $event -DeferInFlight } 5000 $scope) { $scanned += 1 }
         }
         catch {
             $captureErrors += 1
@@ -1365,16 +1739,23 @@ function Invoke-Worker($Config) {
     }
     # Background work can wait for a large encrypted staging update; hooks
     # retain their short request timeout.
-    $script:RpcTimeoutSeconds = 30
+    $running['worker_phase']='uploading'; $running['phase_started_utc']=[DateTime]::UtcNow.ToString('o')
+    $running['captured_versions']=$scanned; $running['capture_errors']=$captureErrors
+    Write-JsonAtomic $workerStatusPath $running
+    $script:RpcTimeoutSeconds = [Math]::Max(30, [Math]::Min(120,
+        [int](Get-Value $Config 'upload_rpc_timeout_seconds' 30)))
     try { $acknowledged = Invoke-WithClientLock { Invoke-UploadQueue $Config } 100 'upload' }
     catch { $acknowledged = 0 }
     $pending = @([IO.Directory]::GetFiles([IO.Path]::Combine($script:ClientHome, 'queue'), '*.json')).Count
     $queueFailures = Get-QueueFailureSummary ([IO.Path]::Combine($script:ClientHome, 'queue'))
     $migration = Get-SessionMigrationSummary $sessionDir
     $status = [ordered]@{
-        worker_status = if ($pending -gt 0 -or $captureErrors -gt 0 -or $discovery.Errors -gt 0) { 'retry_pending' } else { 'idle' }
+        worker_status = if ($pending -gt 0 -or $captureErrors -gt 0 -or $discovery.Errors -gt 0 -or $captureBudgetExhausted) { 'retry_pending' } else { 'idle' }
+        worker_phase = 'finished'
+        capture_budget_exhausted = $captureBudgetExhausted
         last_started_utc = $started; last_finished_utc = [DateTime]::UtcNow.ToString('o')
         discovered_sessions = $discovery.Found; discovery_errors = $discovery.Errors; capture_errors = $captureErrors
+        discovery_error_codes = @($discovery.ErrorCodes)
         capture_failures = $captureFailures.ToArray()
         captured_versions = $scanned; acknowledged_versions = $acknowledged; pending_versions = $pending
         pending_failed_versions = $queueFailures.pending_failed_versions
@@ -1384,6 +1765,7 @@ function Invoke-Worker($Config) {
     }
     Write-JsonAtomic ([IO.Path]::Combine($script:ClientHome, 'worker-status.json')) $status
     Write-OutputJson $status
+    $script:WorkerBudgetWatch = $null
 }
 
 function Get-WorkerTaskStatus {
@@ -1776,6 +2158,7 @@ try {
         'prompt-submit' { Invoke-PromptSubmit $config (Get-EventInput) }
         'snapshot' { Invoke-Snapshot $config (Get-EventInput) }
         'worker' { Invoke-Worker $config }
+        'discover-history' { Write-OutputJson (Find-LocalSessions $config -Historical) }
         'upload' { Write-OutputJson @{ acknowledged_versions = (Invoke-WithClientLock { Invoke-UploadQueue $config } 100 'upload') } }
         'status' { Invoke-Status $config }
         'self-test' { Invoke-SelfTest $config }

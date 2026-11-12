@@ -8,6 +8,8 @@ def test_read_request_checks_health_once_and_next_request_checks_again(lan, monk
     runtime, adapter = lan
     add(adapter, 'kane')
     service = runtime.server_for('kane').context_service
+    from evolvmem.request_health import _entry
+    _entry(runtime.server_for('kane')).snapshot = None
     refresh = service._refresh_health
     evaluations = []
 

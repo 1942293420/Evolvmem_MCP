@@ -58,9 +58,21 @@ def discover_new(service, *, limit=DISCOVER_LIMIT):
     from evolvmem.auto_organization import (link_superseded_successors,
                                             reconcile_sources)
     reconcile = reconcile_sources(service)
-    keys = [ref['key'] for ref in _pending_sources(service)
+    from evolvmem import governance_sources
+    refs = {ref['key']: ref for ref in _pending_sources(service)}
+    refs.update({r['key']: r for r in governance_sources.pending_refs(service, include_unenrolled=True, after_id=current['baseline_id'])})
+    pending = sorted(refs.values(), key=lambda r: (r['created_at'], r['key']), reverse=True)
+    keys = [ref['key'] for ref in ordered_sources(pending)
             if ref['key'].startswith('archive:') and int(ref['key'].split(':')[1]) > current['baseline_id']]
-    result = enqueue(service, keys[:limit],expand=True) if keys else {'items': [], 'created': 0, 'duplicates': 0}
+    with service.store.transaction():
+        # Grant only this bounded, post-activation selection. A failed enqueue
+        # rolls its new grants back too; client project never assigns a unit.
+        if settings(service) != current:
+            raise ValueError('arrival_settings_revision_conflict')
+        prepared = governance_sources.build_plan(service.store._connection(), keys=keys[:limit], origin='auto_new')
+        if prepared['entries']:
+            governance_sources.apply_plan(service, prepared, limit=limit)
+        result = enqueue(service, keys[:limit],expand=True) if keys else {'items': [], 'created': 0, 'duplicates': 0}
     # A version retired moments before its successor's task existed is linked
     # inside the same bounded tick instead of waiting for the next one.
     reconcile['linked'] += link_superseded_successors(service)
@@ -85,7 +97,10 @@ def _pending_sources(service):
     over in line order (see :func:`ordered_sources`).
     """
     from evolvmem.history_organization import source_refs
-    return ordered_sources(source_refs(service))
+    from evolvmem.governance_sources import pending_refs
+    refs = source_refs(service) + pending_refs(service)
+    refs.sort(key=lambda r: (r['created_at'], r['key']), reverse=True)
+    return ordered_sources(refs)
 
 
 def ordered_sources(pending):

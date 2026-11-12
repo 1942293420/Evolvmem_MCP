@@ -70,12 +70,36 @@ _VERSION = 1
 # * ``B`` a retracted auto-organization summary: the exact unassign shape —
 #   ``session_summary``, empty project, a pending automatic ``unresolved``
 #   decision from ``auto-organization.v1``, an owning organization unit, and
-#   the matching organization source. Anything else (a plain
+#   a matching legacy or complete-task organization source. Anything else (a plain
 #   ``project-resolver.v1`` decision, a ``conflict``, an item without an
 #   organization origin, or a non-summary) is never repaired.
 
 _RESOLVER_VERSION = "auto-organization.v1"
-_EXTRACTION_VERSION = "auto-organization.v1"
+# Complete tasks preserve links to each native archive rather than adding a
+# synthetic conversation source. Accept that origin only when its complete
+# reference matches the owning unit and the archive is a conversation member.
+# Reuse this predicate in both discovery and the transaction-time CAS check.
+_ORGANIZATION_ORIGIN_SQL = """
+(
+    s.extraction_version = 'auto-organization.v1'
+    OR (
+        s.extraction_version = 'complete-task.v1'
+        AND EXISTS(
+            SELECT 1 FROM organization_units origin_unit
+            JOIN organization_tasks origin_task ON origin_task.id = origin_unit.task_id
+            JOIN organization_conversations origin_conversation
+              ON origin_conversation.source_key = origin_task.source_key
+            JOIN json_each(CASE WHEN json_valid(origin_conversation.members)
+                                THEN origin_conversation.members ELSE '[]' END) member
+              ON member.value = 'archive:' || s.archive_id
+            WHERE origin_unit.item_id = i.id
+              AND s.source_ref = origin_task.source_key || '#' || origin_unit.digest
+                  || '@' || origin_unit.source_start || '-' || origin_unit.source_end
+                  || '/archive:' || s.archive_id
+        )
+    )
+)
+"""
 
 _CLASSIFY_SQL = f"""
 SELECT
@@ -102,7 +126,7 @@ SELECT
             SELECT 1 FROM context_sources s
             WHERE s.item_id = i.id
               AND s.source_kind = 'organization'
-              AND s.extraction_version = '{_EXTRACTION_VERSION}'
+              AND {_ORGANIZATION_ORIGIN_SQL}
         )
         AND EXISTS(
             SELECT 1 FROM context_project_resolutions r
@@ -159,7 +183,7 @@ WHERE i.id = ?
                 SELECT 1 FROM context_sources s
                 WHERE s.item_id = i.id
                   AND s.source_kind = 'organization'
-                  AND s.extraction_version = '{_EXTRACTION_VERSION}'
+                  AND {_ORGANIZATION_ORIGIN_SQL}
             )
             AND EXISTS(
                 SELECT 1 FROM context_project_resolutions r
