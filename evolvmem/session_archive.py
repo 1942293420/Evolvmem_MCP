@@ -226,6 +226,10 @@ class SessionArchiver:
         Knowledge, review, holds, current uploads and pending work are
         protected. This explicit sweep is not used by automatic upkeep.
         """
+        from evolvmem.context_models import ContextServiceError
+        from evolvmem.product_policy import load_policy
+        if not load_policy().legacy_web_enabled:
+            raise ContextServiceError("context_not_enabled", "legacy_web_disabled")
         moment = _format_ts(_coerce_now(now))
         rows = self.store.list_expired_session_archives(moment)
         from evolvmem.archive_maintenance import protected_archive_ids
@@ -243,6 +247,10 @@ class SessionArchiver:
         Held archives (``session_archive_holds``) are skipped exactly like in
         the TTL sweep and reported as held.
         """
+        from evolvmem.context_models import ContextServiceError
+        from evolvmem.product_policy import load_policy
+        if not load_policy().legacy_web_enabled:
+            raise ContextServiceError("context_not_enabled", "legacy_web_disabled")
         rows = self.store.list_available_project_archives(project)
         return self._purge_rows(rows, purged_at=_format_ts(_coerce_now(None)))
 
