@@ -11,14 +11,30 @@ from .agent_identity import (
 from .migrations import apply_control_migrations, loopback_psycopg_connector
 from .pg_console_store import PgConsoleStore, PgControlConfig, PgControlUnavailableError
 from .pg_web_sessions import PgPersistentSessions
+from .reputation_policy import (
+    VALID_AGENT_TIERS,
+    ModelReputationSnapshot,
+    OperationDecision,
+    ProposalOperation,
+    ReputationCoordinator,
+    ReputationPolicyConfig,
+    TrustedChannel,
+)
 
 __all__ = [
     'AgentAttribution',
+    'ModelReputationSnapshot',
+    'OperationDecision',
     'PgAgentRegistry',
     'PgConsoleStore',
     'PgControlConfig',
     'PgControlUnavailableError',
     'PgPersistentSessions',
+    'ProposalOperation',
+    'ReputationCoordinator',
+    'ReputationPolicyConfig',
+    'TrustedChannel',
+    'VALID_AGENT_TIERS',
     'apply_control_migrations',
     'compute_agent_id',
     'loopback_psycopg_connector',
