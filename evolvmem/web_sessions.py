@@ -86,13 +86,17 @@ def revoke_identity(conn, open_id):
 
 
 class PersistentSessions:
-    def __init__(self, path, auth_scope, *, require_existing=False):
-        if (not isinstance(auth_scope, str) or not 1 <= len(auth_scope) <= 256
-                or any(ord(c) < 32 for c in auth_scope)):
+    def __init__(self, path, auth_scope, require_existing=False):
+        if not isinstance(auth_scope, str) or not 1 <= len(auth_scope) <= 8192:
             raise SessionStoreError('invalid_auth_scope')
-        self.path = Path(path).expanduser().resolve()
-        self.auth_scope = auth_scope
-        self.require_existing = bool(require_existing)
+        if type(require_existing) is not bool:
+            raise SessionStoreError()
+        try:
+            self.path = Path(path).expanduser().resolve()
+        except (TypeError, ValueError, OSError):
+            raise SessionStoreError() from None
+        self.auth_scope = hashlib.sha256(auth_scope.encode('utf-8')).hexdigest()
+        self.require_existing = require_existing
 
     @contextmanager
     def _connection(self, *, write=False):

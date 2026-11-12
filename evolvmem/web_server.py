@@ -1280,10 +1280,11 @@ def make_handler(service: ContextService):
     auth_lock = threading.RLock()
     console = None
     persistence_ready = not auth.enabled
+    enabling_persistence = False
 
     def ensure_control_plane_ready():
-        nonlocal console, persistence_ready
-        if console is not None and persistence_ready:
+        nonlocal console, persistence_ready, enabling_persistence
+        if console is not None and (persistence_ready or enabling_persistence):
             return console
         with auth_lock:
             if console is None:
@@ -1305,7 +1306,8 @@ def make_handler(service: ContextService):
                     if pg_mode or exc.code == 'pg_control_unavailable':
                         raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
                     raise
-            if not persistence_ready:
+            if not persistence_ready and not enabling_persistence:
+                enabling_persistence = True
                 try:
                     store_obj = configured_session_store(
                         console, auth.persistence_scope(),
@@ -1320,7 +1322,9 @@ def make_handler(service: ContextService):
                             console = None
                         raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
                     raise
-            elif pg_mode and load_policy().console_enabled:
+                finally:
+                    enabling_persistence = False
+            elif pg_mode and load_policy().console_enabled and not enabling_persistence:
                 try:
                     if not console.registry_ready():
                         console = None
