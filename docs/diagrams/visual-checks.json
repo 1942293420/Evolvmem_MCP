@@ -1,0 +1,93 @@
+{
+  "charts": [
+    {
+      "id": "usecases",
+      "nodeCount": 8,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "intake",
+      "nodeCount": 12,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "trial",
+      "nodeCount": 8,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "data-intake",
+      "nodeCount": 8,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "data-recall",
+      "nodeCount": 7,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "knowledge-state",
+      "nodeCount": 5,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "method-state",
+      "nodeCount": 4,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "continuity",
+      "nodeCount": 4,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    }
+  ],
+  "interactions": [
+    "8 张图的导航、全部节点详情及各图 SVG 导出通过",
+    "缩放、适合窗口、切图保留缩放、三条入库路径、前后步进与播放暂停通过",
+    "时序图按 7 条消息的时间顺序播放通过",
+    "深浅色模式及减少动画设置通过",
+    "1280 桌面及 390 窄屏无页面横向溢出，图纸可独立滚动查看"
+  ],
+  "errors": [],
+  "externalRequests": []
+}

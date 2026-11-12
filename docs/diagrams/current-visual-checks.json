@@ -1,0 +1,206 @@
+{
+  "charts": [
+    {
+      "id": "journey",
+      "nodeCount": 9,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "overview",
+      "nodeCount": 9,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "usecases",
+      "nodeCount": 8,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "intake",
+      "nodeCount": 9,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "intake-data",
+      "nodeCount": 9,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "manual",
+      "nodeCount": 7,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "recall-entries",
+      "nodeCount": 5,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "retrieval",
+      "nodeCount": 6,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "index",
+      "nodeCount": 6,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "continuity",
+      "nodeCount": 4,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "experience",
+      "nodeCount": 4,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "evolution",
+      "nodeCount": 10,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "correction",
+      "nodeCount": 6,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "data",
+      "nodeCount": 8,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "taskdata",
+      "nodeCount": 6,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "classes",
+      "nodeCount": 5,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "deployment",
+      "nodeCount": 7,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "sharing",
+      "nodeCount": 6,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    },
+    {
+      "id": "maintenance",
+      "nodeCount": 9,
+      "outside": [],
+      "textOverflow": [],
+      "labelOverlaps": [],
+      "edgeOverlaps": [],
+      "bodyOverflow": false,
+      "svgVisible": true
+    }
+  ],
+  "interactions": [
+    "19 张图的导航、全部节点详情及各图 SVG 导出通过",
+    "缩放、适合窗口、切图保留缩放、全部入库路径、前后步进与播放暂停通过",
+    "时序图按 7 条消息的时间顺序播放通过",
+    "深浅色模式及减少动画设置通过",
+    "1280 桌面及 390 窄屏无页面横向溢出，图纸可独立滚动查看",
+    "功能清单、接入边界、运行快照与 Archify 复核弹窗打开关闭通过",
+    "节点输入输出、连线交接、节点搜索、专题跳转、专注模式与 PNG 导出通过",
+    "定向动画只沿既有连线播放，暂停后清除；静态类图无数据传递动画；导出移除交互覆盖层"
+  ],
+  "errors": [],
+  "externalRequests": []
+}

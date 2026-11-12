@@ -1,0 +1,2301 @@
+[
+  {
+    "id": "usecases",
+    "title": "我能用 EvolvMem 做什么",
+    "kind": "用例图",
+    "question": "从用户目标看系统边界；连线表示参与，不表示先后。",
+    "width": 1240,
+    "height": 740,
+    "nodes": [
+      {
+        "id": "user",
+        "label": "你",
+        "x": 45,
+        "y": 290,
+        "w": 120,
+        "h": 125,
+        "shape": "actor",
+        "tone": "normal",
+        "detail": "本轮只服务你本人，暂不包含多人共享。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "client",
+        "label": "AI 客户端",
+        "x": 1060,
+        "y": 290,
+        "w": 140,
+        "h": 125,
+        "shape": "actor",
+        "tone": "normal",
+        "detail": "Codex、Claude Code、MiMo Code、Hermes、DeepSeek Harness。接入与续接是目标范围，实际能力仍需逐个核对。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "capture",
+        "label": "自动积累会话",
+        "x": 435,
+        "y": 113,
+        "w": 370,
+        "h": 64,
+        "shape": "usecase",
+        "tone": "normal",
+        "detail": "新增持续采集；五客户端尚未入库的历史分批补齐。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "paste",
+        "label": "手动补充资料",
+        "x": 435,
+        "y": 208,
+        "w": 370,
+        "h": 64,
+        "shape": "usecase",
+        "tone": "normal",
+        "detail": "只需粘贴文字；不把其他文件格式列为本轮必需功能。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "recall",
+        "label": "找回相关知识",
+        "x": 435,
+        "y": 303,
+        "w": 370,
+        "h": 64,
+        "shape": "usecase",
+        "tone": "normal",
+        "detail": "当前项目与通用记忆优先，必要时跨项目借鉴并核对适用条件。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "resume",
+        "label": "跨客户端继续任务",
+        "x": 435,
+        "y": 398,
+        "w": 370,
+        "h": 64,
+        "shape": "usecase",
+        "tone": "normal",
+        "detail": "取回已确认需求、已完成、未完成和下一步。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "review",
+        "label": "审核、纠正与追溯",
+        "x": 435,
+        "y": 493,
+        "w": 370,
+        "h": 64,
+        "shape": "usecase",
+        "tone": "normal",
+        "detail": "在管理页面核对出处、处理疑点并纠正资料。原文与旧版长期保留。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "evolve",
+        "label": "复用并改进开发经验",
+        "x": 435,
+        "y": 588,
+        "w": 370,
+        "h": 64,
+        "shape": "usecase",
+        "tone": "normal",
+        "detail": "避免重复踩坑，依据实际成败修正经验，提炼待独立验证的新方法。",
+        "inputs": "",
+        "outputs": ""
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "source": "user",
+        "target": "paste",
+        "points": [
+          [
+            165,
+            350
+          ],
+          [
+            435,
+            240
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "association"
+      },
+      {
+        "id": "e1",
+        "source": "user",
+        "target": "recall",
+        "points": [
+          [
+            165,
+            350
+          ],
+          [
+            435,
+            335
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "association"
+      },
+      {
+        "id": "e2",
+        "source": "user",
+        "target": "resume",
+        "points": [
+          [
+            165,
+            350
+          ],
+          [
+            435,
+            430
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "association"
+      },
+      {
+        "id": "e3",
+        "source": "user",
+        "target": "review",
+        "points": [
+          [
+            165,
+            350
+          ],
+          [
+            435,
+            525
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "association"
+      },
+      {
+        "id": "e4",
+        "source": "client",
+        "target": "capture",
+        "points": [
+          [
+            1060,
+            350
+          ],
+          [
+            805,
+            145
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "association"
+      },
+      {
+        "id": "e5",
+        "source": "client",
+        "target": "recall",
+        "points": [
+          [
+            1060,
+            350
+          ],
+          [
+            805,
+            335
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "association"
+      },
+      {
+        "id": "e6",
+        "source": "client",
+        "target": "resume",
+        "points": [
+          [
+            1060,
+            350
+          ],
+          [
+            805,
+            430
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "association"
+      },
+      {
+        "id": "e7",
+        "source": "client",
+        "target": "evolve",
+        "points": [
+          [
+            1060,
+            350
+          ],
+          [
+            805,
+            620
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "association"
+      }
+    ],
+    "routes": [
+      {
+        "label": "逐项查看目标",
+        "ids": [
+          "capture",
+          "paste",
+          "recall",
+          "resume",
+          "review",
+          "evolve"
+        ]
+      }
+    ],
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1240 740\" width=\"1240\" height=\"740\" role=\"img\" aria-labelledby=\"usecases-title\"><title id=\"usecases-title\">用例图：我能用 EvolvMem 做什么</title><style>\ntext{font-family:\"Noto Sans CJK SC\",\"Microsoft YaHei\",sans-serif;fill:var(--ink)}\n.node-label{font-size:22px;font-weight:500}.decision-label{font-size:19px}\n.shape,.store-bg{fill:var(--surface);stroke:var(--node-stroke);stroke-width:1.8}\n.store-bg{stroke:none}.store-line{fill:none;stroke:var(--node-stroke);stroke-width:2.5}\n.good .shape,.good .store-bg{fill:var(--good-bg)}.candidate .shape{fill:var(--candidate-bg)}.review .shape{fill:var(--review-bg)}\n.actor-line{fill:none;stroke:var(--ink);stroke-width:2.6;stroke-linecap:round}\n.start{fill:var(--ink)}.end-outer{fill:var(--surface);stroke:var(--ink);stroke-width:2}\n.boundary{fill:none;stroke:var(--node-stroke);stroke-width:1.5}.section{font-size:22px;font-weight:600}\n.lane{fill:var(--surface);stroke:var(--border);stroke-width:1.3}.lane-head{fill:var(--lane)}.lane-title{font-size:22px;font-weight:600;text-anchor:middle}\n.edge{fill:none;stroke:var(--edge);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}\n.edge.return{stroke-dasharray:7 5}.lifeline{fill:none;stroke:var(--node-stroke);stroke-dasharray:7 6;stroke-width:1.2}\n.edge-label{font-size:18px;paint-order:stroke;stroke:var(--surface);stroke-width:7px;stroke-linejoin:round}\n.node{cursor:pointer;outline:none}.node:hover .shape,.node:focus .shape,.node.selected .shape,.node.current .shape{stroke:var(--accent);stroke-width:3.5}\n.node.current .store-line,.node.selected .store-line{stroke:var(--accent);stroke-width:4}\n.node.current .actor-line{stroke:var(--accent);stroke-width:4}.node.current .node-label{fill:var(--accent);font-weight:700}\n.node.current .start{fill:var(--accent)}\n.edge.current{stroke:var(--accent);stroke-width:3.5;stroke-dasharray:12 7;animation:trace 1.2s linear infinite}\n@keyframes trace{to{stroke-dashoffset:-38}}@media(prefers-reduced-motion:reduce){.edge.current{animation:none}}\n</style><defs><marker id=\"usecases-arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10Z\" fill=\"var(--edge)\"/></marker><marker id=\"usecases-open\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto\"><path d=\"M1 1L9 5L1 9\" fill=\"none\" stroke=\"var(--edge)\" stroke-width=\"1.4\"/></marker></defs><rect class=\"boundary\" x=\"280\" y=\"55\" width=\"680\" height=\"630\" rx=\"12\"/><text class=\"section\" x=\"310\" y=\"92\">EvolvMem</text><path class=\"edge association\" data-edge=\"e0\" data-source=\"user\" data-target=\"paste\" d=\"M165 350L435 240\"/><path class=\"edge association\" data-edge=\"e1\" data-source=\"user\" data-target=\"recall\" d=\"M165 350L435 335\"/><path class=\"edge association\" data-edge=\"e2\" data-source=\"user\" data-target=\"resume\" d=\"M165 350L435 430\"/><path class=\"edge association\" data-edge=\"e3\" data-source=\"user\" data-target=\"review\" d=\"M165 350L435 525\"/><path class=\"edge association\" data-edge=\"e4\" data-source=\"client\" data-target=\"capture\" d=\"M1060 350L805 145\"/><path class=\"edge association\" data-edge=\"e5\" data-source=\"client\" data-target=\"recall\" d=\"M1060 350L805 335\"/><path class=\"edge association\" data-edge=\"e6\" data-source=\"client\" data-target=\"resume\" d=\"M1060 350L805 430\"/><path class=\"edge association\" data-edge=\"e7\" data-source=\"client\" data-target=\"evolve\" d=\"M1060 350L805 620\"/><g class=\"node normal\" data-node=\"user\" role=\"button\" tabindex=\"0\" aria-label=\"你\"><title>你</title><circle class=\"actor-line\" cx=\"105.0\" cy=\"308\" r=\"15\"/><path class=\"actor-line\" d=\"M105.0 323V367M60 341H150M105.0 367L72 394M105.0 367L138 394\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"105.0\" y=\"424.0\">你</tspan></text></g><g class=\"node normal\" data-node=\"client\" role=\"button\" tabindex=\"0\" aria-label=\"AI 客户端\"><title>AI 客户端</title><circle class=\"actor-line\" cx=\"1130.0\" cy=\"308\" r=\"15\"/><path class=\"actor-line\" d=\"M1130.0 323V367M1075 341H1185M1130.0 367L1087 394M1130.0 367L1173 394\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1130.0\" y=\"424.0\">AI 客户端</tspan></text></g><g class=\"node normal\" data-node=\"capture\" role=\"button\" tabindex=\"0\" aria-label=\"自动积累会话\"><title>自动积累会话</title><ellipse class=\"shape\" cx=\"620.0\" cy=\"145.0\" rx=\"185.0\" ry=\"32.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"620.0\" y=\"152.0\">自动积累会话</tspan></text></g><g class=\"node normal\" data-node=\"paste\" role=\"button\" tabindex=\"0\" aria-label=\"手动补充资料\"><title>手动补充资料</title><ellipse class=\"shape\" cx=\"620.0\" cy=\"240.0\" rx=\"185.0\" ry=\"32.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"620.0\" y=\"247.0\">手动补充资料</tspan></text></g><g class=\"node normal\" data-node=\"recall\" role=\"button\" tabindex=\"0\" aria-label=\"找回相关知识\"><title>找回相关知识</title><ellipse class=\"shape\" cx=\"620.0\" cy=\"335.0\" rx=\"185.0\" ry=\"32.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"620.0\" y=\"342.0\">找回相关知识</tspan></text></g><g class=\"node normal\" data-node=\"resume\" role=\"button\" tabindex=\"0\" aria-label=\"跨客户端继续任务\"><title>跨客户端继续任务</title><ellipse class=\"shape\" cx=\"620.0\" cy=\"430.0\" rx=\"185.0\" ry=\"32.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"620.0\" y=\"437.0\">跨客户端继续任务</tspan></text></g><g class=\"node normal\" data-node=\"review\" role=\"button\" tabindex=\"0\" aria-label=\"审核、纠正与追溯\"><title>审核、纠正与追溯</title><ellipse class=\"shape\" cx=\"620.0\" cy=\"525.0\" rx=\"185.0\" ry=\"32.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"620.0\" y=\"532.0\">审核、纠正与追溯</tspan></text></g><g class=\"node normal\" data-node=\"evolve\" role=\"button\" tabindex=\"0\" aria-label=\"复用并改进开发经验\"><title>复用并改进开发经验</title><ellipse class=\"shape\" cx=\"620.0\" cy=\"620.0\" rx=\"185.0\" ry=\"32.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"620.0\" y=\"627.0\">复用并改进开发经验</tspan></text></g></svg>"
+  },
+  {
+    "id": "intake",
+    "title": "资料怎样入库，何时需要我审核",
+    "kind": "泳道活动图",
+    "question": "从上向下推进：明确资料自动处理，只有疑点进入人工审核。",
+    "width": 1240,
+    "height": 740,
+    "nodes": [
+      {
+        "id": "start",
+        "label": "开始",
+        "x": 190,
+        "y": 110,
+        "w": 20,
+        "h": 20,
+        "shape": "start",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "send",
+        "label": "提交新增或历史会话",
+        "x": 70,
+        "y": 165,
+        "w": 260,
+        "h": 72,
+        "shape": "action",
+        "tone": "normal",
+        "detail": "包括开发、调研和日常讨论；重复与来源校验属于采集环节。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "paste",
+        "label": "粘贴补充资料",
+        "x": 900,
+        "y": 165,
+        "w": 230,
+        "h": 72,
+        "shape": "action",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "merge",
+        "label": "",
+        "x": 410,
+        "y": 190,
+        "w": 22,
+        "h": 22,
+        "shape": "merge",
+        "tone": "normal",
+        "detail": "任一资料入口均可触发处理，无需两个入口同时提交。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "save",
+        "label": "保存原文与来源",
+        "x": 465,
+        "y": 165,
+        "w": 250,
+        "h": 72,
+        "shape": "action",
+        "tone": "normal",
+        "detail": "保留原始资料；处理出的知识单独保存，并能追溯原文。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "organize",
+        "label": "整理内容、分别归属",
+        "x": 465,
+        "y": 300,
+        "w": 250,
+        "h": 72,
+        "shape": "action",
+        "tone": "normal",
+        "detail": "同一会话可以产生多条项目记忆和通用记忆；归属不明确不硬猜。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "eligible",
+        "label": "可直接参考？",
+        "x": 495,
+        "y": 410,
+        "w": 190,
+        "h": 94,
+        "shape": "decision",
+        "tone": "normal",
+        "detail": "来源清楚、归属明确且无冲突。可参考不等于某个方法已验证有效。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "review",
+        "label": "核对来源并审核纠正",
+        "x": 880,
+        "y": 415,
+        "w": 270,
+        "h": 80,
+        "shape": "action",
+        "tone": "review",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "resolved",
+        "label": "疑点已解决？",
+        "x": 920,
+        "y": 530,
+        "w": 190,
+        "h": 94,
+        "shape": "decision",
+        "tone": "review",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "publish",
+        "label": "保存为可参考资料",
+        "x": 465,
+        "y": 580,
+        "w": 250,
+        "h": 72,
+        "shape": "action",
+        "tone": "good",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "pending",
+        "label": "保留待审",
+        "x": 925,
+        "y": 665,
+        "w": 180,
+        "h": 44,
+        "shape": "action",
+        "tone": "review",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "end",
+        "label": "本次入库完成",
+        "x": 580,
+        "y": 685,
+        "w": 22,
+        "h": 22,
+        "shape": "end",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "source": "start",
+        "target": "send",
+        "points": [
+          [
+            200,
+            130
+          ],
+          [
+            200,
+            165
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e1",
+        "source": "send",
+        "target": "merge",
+        "points": [
+          [
+            330,
+            201
+          ],
+          [
+            410,
+            201
+          ]
+        ],
+        "label": "会话",
+        "lx": 370,
+        "ly": 180,
+        "kind": "arrow"
+      },
+      {
+        "id": "e2",
+        "source": "paste",
+        "target": "merge",
+        "points": [
+          [
+            900,
+            201
+          ],
+          [
+            855,
+            201
+          ],
+          [
+            855,
+            130
+          ],
+          [
+            421,
+            130
+          ],
+          [
+            421,
+            190
+          ]
+        ],
+        "label": "补充内容",
+        "lx": 730,
+        "ly": 111,
+        "kind": "arrow"
+      },
+      {
+        "id": "e3",
+        "source": "merge",
+        "target": "save",
+        "points": [
+          [
+            432,
+            201
+          ],
+          [
+            465,
+            201
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e4",
+        "source": "save",
+        "target": "organize",
+        "points": [
+          [
+            590,
+            237
+          ],
+          [
+            590,
+            300
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e5",
+        "source": "organize",
+        "target": "eligible",
+        "points": [
+          [
+            590,
+            372
+          ],
+          [
+            590,
+            410
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e6",
+        "source": "eligible",
+        "target": "publish",
+        "points": [
+          [
+            590,
+            504
+          ],
+          [
+            590,
+            580
+          ]
+        ],
+        "label": "[是]",
+        "lx": 623,
+        "ly": 548,
+        "kind": "arrow"
+      },
+      {
+        "id": "e7",
+        "source": "eligible",
+        "target": "review",
+        "points": [
+          [
+            685,
+            457
+          ],
+          [
+            880,
+            457
+          ]
+        ],
+        "label": "[有疑点]",
+        "lx": 780,
+        "ly": 436,
+        "kind": "arrow"
+      },
+      {
+        "id": "e8",
+        "source": "review",
+        "target": "resolved",
+        "points": [
+          [
+            1015,
+            495
+          ],
+          [
+            1015,
+            530
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e9",
+        "source": "resolved",
+        "target": "publish",
+        "points": [
+          [
+            920,
+            577
+          ],
+          [
+            810,
+            577
+          ],
+          [
+            810,
+            616
+          ],
+          [
+            715,
+            616
+          ]
+        ],
+        "label": "[是]",
+        "lx": 813,
+        "ly": 554,
+        "kind": "arrow"
+      },
+      {
+        "id": "e10",
+        "source": "resolved",
+        "target": "pending",
+        "points": [
+          [
+            1015,
+            624
+          ],
+          [
+            1015,
+            665
+          ]
+        ],
+        "label": "[否]",
+        "lx": 1060,
+        "ly": 657,
+        "kind": "arrow"
+      },
+      {
+        "id": "e11",
+        "source": "publish",
+        "target": "end",
+        "points": [
+          [
+            590,
+            652
+          ],
+          [
+            590,
+            685
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      }
+    ],
+    "routes": [
+      {
+        "label": "明确资料自动入库",
+        "ids": [
+          "start",
+          "send",
+          "merge",
+          "save",
+          "organize",
+          "eligible",
+          "publish",
+          "end"
+        ]
+      },
+      {
+        "label": "疑点经人工解决",
+        "ids": [
+          "send",
+          "merge",
+          "save",
+          "organize",
+          "eligible",
+          "review",
+          "resolved",
+          "publish",
+          "end"
+        ]
+      },
+      {
+        "label": "疑点暂未解决",
+        "ids": [
+          "send",
+          "merge",
+          "save",
+          "organize",
+          "eligible",
+          "review",
+          "resolved",
+          "pending"
+        ]
+      }
+    ],
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1240 740\" width=\"1240\" height=\"740\" role=\"img\" aria-labelledby=\"intake-title\"><title id=\"intake-title\">泳道活动图：资料怎样入库，何时需要我审核</title><style>\ntext{font-family:\"Noto Sans CJK SC\",\"Microsoft YaHei\",sans-serif;fill:var(--ink)}\n.node-label{font-size:22px;font-weight:500}.decision-label{font-size:19px}\n.shape,.store-bg{fill:var(--surface);stroke:var(--node-stroke);stroke-width:1.8}\n.store-bg{stroke:none}.store-line{fill:none;stroke:var(--node-stroke);stroke-width:2.5}\n.good .shape,.good .store-bg{fill:var(--good-bg)}.candidate .shape{fill:var(--candidate-bg)}.review .shape{fill:var(--review-bg)}\n.actor-line{fill:none;stroke:var(--ink);stroke-width:2.6;stroke-linecap:round}\n.start{fill:var(--ink)}.end-outer{fill:var(--surface);stroke:var(--ink);stroke-width:2}\n.boundary{fill:none;stroke:var(--node-stroke);stroke-width:1.5}.section{font-size:22px;font-weight:600}\n.lane{fill:var(--surface);stroke:var(--border);stroke-width:1.3}.lane-head{fill:var(--lane)}.lane-title{font-size:22px;font-weight:600;text-anchor:middle}\n.edge{fill:none;stroke:var(--edge);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}\n.edge.return{stroke-dasharray:7 5}.lifeline{fill:none;stroke:var(--node-stroke);stroke-dasharray:7 6;stroke-width:1.2}\n.edge-label{font-size:18px;paint-order:stroke;stroke:var(--surface);stroke-width:7px;stroke-linejoin:round}\n.node{cursor:pointer;outline:none}.node:hover .shape,.node:focus .shape,.node.selected .shape,.node.current .shape{stroke:var(--accent);stroke-width:3.5}\n.node.current .store-line,.node.selected .store-line{stroke:var(--accent);stroke-width:4}\n.node.current .actor-line{stroke:var(--accent);stroke-width:4}.node.current .node-label{fill:var(--accent);font-weight:700}\n.node.current .start{fill:var(--accent)}\n.edge.current{stroke:var(--accent);stroke-width:3.5;stroke-dasharray:12 7;animation:trace 1.2s linear infinite}\n@keyframes trace{to{stroke-dashoffset:-38}}@media(prefers-reduced-motion:reduce){.edge.current{animation:none}}\n</style><defs><marker id=\"intake-arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10Z\" fill=\"var(--edge)\"/></marker><marker id=\"intake-open\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto\"><path d=\"M1 1L9 5L1 9\" fill=\"none\" stroke=\"var(--edge)\" stroke-width=\"1.4\"/></marker></defs><rect class=\"lane\" x=\"30\" y=\"30\" width=\"340\" height=\"685\"/><rect class=\"lane-head\" x=\"30\" y=\"30\" width=\"340\" height=\"60\"/><text class=\"lane-title\" x=\"200.0\" y=\"69\">AI 客户端</text><rect class=\"lane\" x=\"370\" y=\"30\" width=\"440\" height=\"685\"/><rect class=\"lane-head\" x=\"370\" y=\"30\" width=\"440\" height=\"60\"/><text class=\"lane-title\" x=\"590.0\" y=\"69\">EvolvMem</text><rect class=\"lane\" x=\"810\" y=\"30\" width=\"400\" height=\"685\"/><rect class=\"lane-head\" x=\"810\" y=\"30\" width=\"400\" height=\"60\"/><text class=\"lane-title\" x=\"1010.0\" y=\"69\">你 · 管理页面</text><path class=\"edge arrow\" data-edge=\"e0\" data-source=\"start\" data-target=\"send\" d=\"M200 130L200 165\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e1\" data-source=\"send\" data-target=\"merge\" d=\"M330 201L410 201\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e2\" data-source=\"paste\" data-target=\"merge\" d=\"M900 201L855 201L855 130L421 130L421 190\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e3\" data-source=\"merge\" data-target=\"save\" d=\"M432 201L465 201\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e4\" data-source=\"save\" data-target=\"organize\" d=\"M590 237L590 300\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e5\" data-source=\"organize\" data-target=\"eligible\" d=\"M590 372L590 410\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e6\" data-source=\"eligible\" data-target=\"publish\" d=\"M590 504L590 580\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e7\" data-source=\"eligible\" data-target=\"review\" d=\"M685 457L880 457\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e8\" data-source=\"review\" data-target=\"resolved\" d=\"M1015 495L1015 530\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e9\" data-source=\"resolved\" data-target=\"publish\" d=\"M920 577L810 577L810 616L715 616\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e10\" data-source=\"resolved\" data-target=\"pending\" d=\"M1015 624L1015 665\" marker-end=\"url(#intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e11\" data-source=\"publish\" data-target=\"end\" d=\"M590 652L590 685\" marker-end=\"url(#intake-arrow)\"/><g class=\"node normal\" data-node=\"start\" role=\"button\" tabindex=\"0\" aria-label=\"开始\"><title>开始</title><circle class=\"start\" cx=\"200.0\" cy=\"120.0\" r=\"10.0\"/></g><g class=\"node normal\" data-node=\"send\" role=\"button\" tabindex=\"0\" aria-label=\"提交新增或历史会话\"><title>提交新增或历史会话</title><rect class=\"shape\" x=\"70\" y=\"165\" width=\"260\" height=\"72\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"200.0\" y=\"208.0\">提交新增或历史会话</tspan></text></g><g class=\"node normal\" data-node=\"paste\" role=\"button\" tabindex=\"0\" aria-label=\"粘贴补充资料\"><title>粘贴补充资料</title><rect class=\"shape\" x=\"900\" y=\"165\" width=\"230\" height=\"72\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1015.0\" y=\"208.0\">粘贴补充资料</tspan></text></g><g class=\"node normal\" data-node=\"merge\" role=\"button\" tabindex=\"0\" aria-label=\"分支判断\"><title></title><path class=\"shape\" d=\"M421.0 190L432 201.0L421.0 212L410 201.0Z\"/></g><g class=\"node normal\" data-node=\"save\" role=\"button\" tabindex=\"0\" aria-label=\"保存原文与来源\"><title>保存原文与来源</title><rect class=\"shape\" x=\"465\" y=\"165\" width=\"250\" height=\"72\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"590.0\" y=\"208.0\">保存原文与来源</tspan></text></g><g class=\"node normal\" data-node=\"organize\" role=\"button\" tabindex=\"0\" aria-label=\"整理内容、分别归属\"><title>整理内容、分别归属</title><rect class=\"shape\" x=\"465\" y=\"300\" width=\"250\" height=\"72\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"590.0\" y=\"343.0\">整理内容、分别归属</tspan></text></g><g class=\"node normal\" data-node=\"eligible\" role=\"button\" tabindex=\"0\" aria-label=\"可直接参考？\"><title>可直接参考？</title><path class=\"shape\" d=\"M590.0 410L685 457.0L590.0 504L495 457.0Z\"/><text class=\"node-label decision-label\" text-anchor=\"middle\"><tspan x=\"590.0\" y=\"464.0\">可直接参考？</tspan></text></g><g class=\"node review\" data-node=\"review\" role=\"button\" tabindex=\"0\" aria-label=\"核对来源并审核纠正\"><title>核对来源并审核纠正</title><rect class=\"shape\" x=\"880\" y=\"415\" width=\"270\" height=\"80\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1015.0\" y=\"462.0\">核对来源并审核纠正</tspan></text></g><g class=\"node review\" data-node=\"resolved\" role=\"button\" tabindex=\"0\" aria-label=\"疑点已解决？\"><title>疑点已解决？</title><path class=\"shape\" d=\"M1015.0 530L1110 577.0L1015.0 624L920 577.0Z\"/><text class=\"node-label decision-label\" text-anchor=\"middle\"><tspan x=\"1015.0\" y=\"584.0\">疑点已解决？</tspan></text></g><g class=\"node good\" data-node=\"publish\" role=\"button\" tabindex=\"0\" aria-label=\"保存为可参考资料\"><title>保存为可参考资料</title><rect class=\"shape\" x=\"465\" y=\"580\" width=\"250\" height=\"72\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"590.0\" y=\"623.0\">保存为可参考资料</tspan></text></g><g class=\"node review\" data-node=\"pending\" role=\"button\" tabindex=\"0\" aria-label=\"保留待审\"><title>保留待审</title><rect class=\"shape\" x=\"925\" y=\"665\" width=\"180\" height=\"44\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1015.0\" y=\"694.0\">保留待审</tspan></text></g><g class=\"node normal\" data-node=\"end\" role=\"button\" tabindex=\"0\" aria-label=\"本次入库完成\"><title>本次入库完成</title><circle class=\"end-outer\" cx=\"591.0\" cy=\"696.0\" r=\"11.0\"/><circle class=\"start\" cx=\"591.0\" cy=\"696.0\" r=\"6.0\"/></g><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"370\" y=\"180.0\">会话</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"730\" y=\"111.0\">补充内容</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"623\" y=\"548.0\">[是]</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"780\" y=\"436.0\">[有疑点]</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"813\" y=\"554.0\">[是]</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"1060\" y=\"657.0\">[否]</tspan></text></svg>"
+  },
+  {
+    "id": "trial",
+    "title": "新方法怎样获得验证机会",
+    "kind": "活动图",
+    "question": "这张图只画一次试用；是否成为可靠方法，见方法状态图。",
+    "width": 1240,
+    "height": 740,
+    "nodes": [
+      {
+        "id": "start",
+        "label": "开始",
+        "x": 610,
+        "y": 35,
+        "w": 20,
+        "h": 20,
+        "shape": "start",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "candidate",
+        "label": "从已有案例提炼新方法|标明待验证及来源",
+        "x": 455,
+        "y": 105,
+        "w": 330,
+        "h": 90,
+        "shape": "action",
+        "tone": "candidate",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "gate",
+        "label": "条件相符且|任务已有授权？",
+        "x": 500,
+        "y": 250,
+        "w": 240,
+        "h": 115,
+        "shape": "decision",
+        "tone": "normal",
+        "detail": "先核对适用条件和任务授权。候选方法与来源存疑的待审资料分开管理。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "hold",
+        "label": "本次暂不采用",
+        "x": 950,
+        "y": 270,
+        "w": 240,
+        "h": 76,
+        "shape": "action",
+        "tone": "review",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "end2",
+        "label": "本次不试用",
+        "x": 1060,
+        "y": 415,
+        "w": 22,
+        "h": 22,
+        "shape": "end",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "try",
+        "label": "AI 在当前任务中试用",
+        "x": 455,
+        "y": 425,
+        "w": 330,
+        "h": 76,
+        "shape": "action",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "evidence",
+        "label": "记录实际采用、结果与证据",
+        "x": 455,
+        "y": 565,
+        "w": 330,
+        "h": 80,
+        "shape": "action",
+        "tone": "normal",
+        "detail": "成功、失败、不适用、结果未知分别记录；助手自称完成不能充当验证证据。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "end",
+        "label": "进入结果核验",
+        "x": 610,
+        "y": 692,
+        "w": 22,
+        "h": 22,
+        "shape": "end",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "source": "start",
+        "target": "candidate",
+        "points": [
+          [
+            620,
+            55
+          ],
+          [
+            620,
+            105
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e1",
+        "source": "candidate",
+        "target": "gate",
+        "points": [
+          [
+            620,
+            195
+          ],
+          [
+            620,
+            250
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e2",
+        "source": "gate",
+        "target": "try",
+        "points": [
+          [
+            620,
+            365
+          ],
+          [
+            620,
+            425
+          ]
+        ],
+        "label": "[是]",
+        "lx": 660,
+        "ly": 400,
+        "kind": "arrow"
+      },
+      {
+        "id": "e3",
+        "source": "gate",
+        "target": "hold",
+        "points": [
+          [
+            740,
+            307
+          ],
+          [
+            950,
+            307
+          ]
+        ],
+        "label": "[否]",
+        "lx": 841,
+        "ly": 288,
+        "kind": "arrow"
+      },
+      {
+        "id": "e4",
+        "source": "hold",
+        "target": "end2",
+        "points": [
+          [
+            1070,
+            346
+          ],
+          [
+            1070,
+            415
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e5",
+        "source": "try",
+        "target": "evidence",
+        "points": [
+          [
+            620,
+            501
+          ],
+          [
+            620,
+            565
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e6",
+        "source": "evidence",
+        "target": "end",
+        "points": [
+          [
+            620,
+            645
+          ],
+          [
+            620,
+            692
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      }
+    ],
+    "routes": [
+      {
+        "label": "有条件试用",
+        "ids": [
+          "start",
+          "candidate",
+          "gate",
+          "try",
+          "evidence",
+          "end"
+        ]
+      },
+      {
+        "label": "不满足试用条件",
+        "ids": [
+          "candidate",
+          "gate",
+          "hold",
+          "end2"
+        ]
+      }
+    ],
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1240 740\" width=\"1240\" height=\"740\" role=\"img\" aria-labelledby=\"trial-title\"><title id=\"trial-title\">活动图：新方法怎样获得验证机会</title><style>\ntext{font-family:\"Noto Sans CJK SC\",\"Microsoft YaHei\",sans-serif;fill:var(--ink)}\n.node-label{font-size:22px;font-weight:500}.decision-label{font-size:19px}\n.shape,.store-bg{fill:var(--surface);stroke:var(--node-stroke);stroke-width:1.8}\n.store-bg{stroke:none}.store-line{fill:none;stroke:var(--node-stroke);stroke-width:2.5}\n.good .shape,.good .store-bg{fill:var(--good-bg)}.candidate .shape{fill:var(--candidate-bg)}.review .shape{fill:var(--review-bg)}\n.actor-line{fill:none;stroke:var(--ink);stroke-width:2.6;stroke-linecap:round}\n.start{fill:var(--ink)}.end-outer{fill:var(--surface);stroke:var(--ink);stroke-width:2}\n.boundary{fill:none;stroke:var(--node-stroke);stroke-width:1.5}.section{font-size:22px;font-weight:600}\n.lane{fill:var(--surface);stroke:var(--border);stroke-width:1.3}.lane-head{fill:var(--lane)}.lane-title{font-size:22px;font-weight:600;text-anchor:middle}\n.edge{fill:none;stroke:var(--edge);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}\n.edge.return{stroke-dasharray:7 5}.lifeline{fill:none;stroke:var(--node-stroke);stroke-dasharray:7 6;stroke-width:1.2}\n.edge-label{font-size:18px;paint-order:stroke;stroke:var(--surface);stroke-width:7px;stroke-linejoin:round}\n.node{cursor:pointer;outline:none}.node:hover .shape,.node:focus .shape,.node.selected .shape,.node.current .shape{stroke:var(--accent);stroke-width:3.5}\n.node.current .store-line,.node.selected .store-line{stroke:var(--accent);stroke-width:4}\n.node.current .actor-line{stroke:var(--accent);stroke-width:4}.node.current .node-label{fill:var(--accent);font-weight:700}\n.node.current .start{fill:var(--accent)}\n.edge.current{stroke:var(--accent);stroke-width:3.5;stroke-dasharray:12 7;animation:trace 1.2s linear infinite}\n@keyframes trace{to{stroke-dashoffset:-38}}@media(prefers-reduced-motion:reduce){.edge.current{animation:none}}\n</style><defs><marker id=\"trial-arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10Z\" fill=\"var(--edge)\"/></marker><marker id=\"trial-open\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto\"><path d=\"M1 1L9 5L1 9\" fill=\"none\" stroke=\"var(--edge)\" stroke-width=\"1.4\"/></marker></defs><path class=\"edge arrow\" data-edge=\"e0\" data-source=\"start\" data-target=\"candidate\" d=\"M620 55L620 105\" marker-end=\"url(#trial-arrow)\"/><path class=\"edge arrow\" data-edge=\"e1\" data-source=\"candidate\" data-target=\"gate\" d=\"M620 195L620 250\" marker-end=\"url(#trial-arrow)\"/><path class=\"edge arrow\" data-edge=\"e2\" data-source=\"gate\" data-target=\"try\" d=\"M620 365L620 425\" marker-end=\"url(#trial-arrow)\"/><path class=\"edge arrow\" data-edge=\"e3\" data-source=\"gate\" data-target=\"hold\" d=\"M740 307L950 307\" marker-end=\"url(#trial-arrow)\"/><path class=\"edge arrow\" data-edge=\"e4\" data-source=\"hold\" data-target=\"end2\" d=\"M1070 346L1070 415\" marker-end=\"url(#trial-arrow)\"/><path class=\"edge arrow\" data-edge=\"e5\" data-source=\"try\" data-target=\"evidence\" d=\"M620 501L620 565\" marker-end=\"url(#trial-arrow)\"/><path class=\"edge arrow\" data-edge=\"e6\" data-source=\"evidence\" data-target=\"end\" d=\"M620 645L620 692\" marker-end=\"url(#trial-arrow)\"/><g class=\"node normal\" data-node=\"start\" role=\"button\" tabindex=\"0\" aria-label=\"开始\"><title>开始</title><circle class=\"start\" cx=\"620.0\" cy=\"45.0\" r=\"10.0\"/></g><g class=\"node candidate\" data-node=\"candidate\" role=\"button\" tabindex=\"0\" aria-label=\"从已有案例提炼新方法，标明待验证及来源\"><title>从已有案例提炼新方法 标明待验证及来源</title><rect class=\"shape\" x=\"455\" y=\"105\" width=\"330\" height=\"90\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"620.0\" y=\"143.5\">从已有案例提炼新方法</tspan><tspan x=\"620.0\" y=\"170.5\">标明待验证及来源</tspan></text></g><g class=\"node normal\" data-node=\"gate\" role=\"button\" tabindex=\"0\" aria-label=\"条件相符且，任务已有授权？\"><title>条件相符且 任务已有授权？</title><path class=\"shape\" d=\"M620.0 250L740 307.5L620.0 365L500 307.5Z\"/><text class=\"node-label decision-label\" text-anchor=\"middle\"><tspan x=\"620.0\" y=\"301.0\">条件相符且</tspan><tspan x=\"620.0\" y=\"328.0\">任务已有授权？</tspan></text></g><g class=\"node review\" data-node=\"hold\" role=\"button\" tabindex=\"0\" aria-label=\"本次暂不采用\"><title>本次暂不采用</title><rect class=\"shape\" x=\"950\" y=\"270\" width=\"240\" height=\"76\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1070.0\" y=\"315.0\">本次暂不采用</tspan></text></g><g class=\"node normal\" data-node=\"end2\" role=\"button\" tabindex=\"0\" aria-label=\"本次不试用\"><title>本次不试用</title><circle class=\"end-outer\" cx=\"1071.0\" cy=\"426.0\" r=\"11.0\"/><circle class=\"start\" cx=\"1071.0\" cy=\"426.0\" r=\"6.0\"/></g><g class=\"node normal\" data-node=\"try\" role=\"button\" tabindex=\"0\" aria-label=\"AI 在当前任务中试用\"><title>AI 在当前任务中试用</title><rect class=\"shape\" x=\"455\" y=\"425\" width=\"330\" height=\"76\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"620.0\" y=\"470.0\">AI 在当前任务中试用</tspan></text></g><g class=\"node normal\" data-node=\"evidence\" role=\"button\" tabindex=\"0\" aria-label=\"记录实际采用、结果与证据\"><title>记录实际采用、结果与证据</title><rect class=\"shape\" x=\"455\" y=\"565\" width=\"330\" height=\"80\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"620.0\" y=\"612.0\">记录实际采用、结果与证据</tspan></text></g><g class=\"node normal\" data-node=\"end\" role=\"button\" tabindex=\"0\" aria-label=\"进入结果核验\"><title>进入结果核验</title><circle class=\"end-outer\" cx=\"621.0\" cy=\"703.0\" r=\"11.0\"/><circle class=\"start\" cx=\"621.0\" cy=\"703.0\" r=\"6.0\"/></g><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"660\" y=\"400.0\">[是]</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"841\" y=\"288.0\">[否]</tspan></text></svg>"
+  },
+  {
+    "id": "data-intake",
+    "title": "会话怎样变成有出处的知识",
+    "kind": "数据流图 · 入库",
+    "question": "箭头写明传递的数据；外部参与者、处理过程和资料存储分别绘制。",
+    "width": 1240,
+    "height": 740,
+    "nodes": [
+      {
+        "id": "source",
+        "label": "客户端会话|手动补充",
+        "x": 35,
+        "y": 220,
+        "w": 215,
+        "h": 90,
+        "shape": "external",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "collect",
+        "label": "采集|保存",
+        "x": 310,
+        "y": 200,
+        "w": 140,
+        "h": 140,
+        "shape": "process",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "archive",
+        "label": "原始记录与来源",
+        "x": 270,
+        "y": 500,
+        "w": 225,
+        "h": 74,
+        "shape": "store",
+        "tone": "normal",
+        "detail": "原文长期保留，只有用户明确清理时删除；不是把每句会话都当作可用知识。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "organize",
+        "label": "整理归属|判定入库",
+        "x": 595,
+        "y": 200,
+        "w": 140,
+        "h": 140,
+        "shape": "process",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "rules",
+        "label": "整理与入库规则",
+        "x": 550,
+        "y": 55,
+        "w": 230,
+        "h": 74,
+        "shape": "store",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "knowledge",
+        "label": "知识条目、版本|来源关联与状态",
+        "x": 950,
+        "y": 220,
+        "w": 250,
+        "h": 96,
+        "shape": "store",
+        "tone": "good",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "user",
+        "label": "你 · 管理页面",
+        "x": 575,
+        "y": 510,
+        "w": 260,
+        "h": 80,
+        "shape": "external",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "apply",
+        "label": "应用审核|及纠正",
+        "x": 1000,
+        "y": 495,
+        "w": 140,
+        "h": 140,
+        "shape": "process",
+        "tone": "review",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "source": "source",
+        "target": "collect",
+        "points": [
+          [
+            250,
+            265
+          ],
+          [
+            310,
+            265
+          ]
+        ],
+        "label": "资料",
+        "lx": 278,
+        "ly": 244,
+        "kind": "arrow"
+      },
+      {
+        "id": "e1",
+        "source": "collect",
+        "target": "archive",
+        "points": [
+          [
+            380,
+            340
+          ],
+          [
+            380,
+            500
+          ]
+        ],
+        "label": "原文及来源",
+        "lx": 300,
+        "ly": 426,
+        "kind": "arrow"
+      },
+      {
+        "id": "e2",
+        "source": "archive",
+        "target": "organize",
+        "points": [
+          [
+            495,
+            520
+          ],
+          [
+            530,
+            520
+          ],
+          [
+            530,
+            270
+          ],
+          [
+            595,
+            270
+          ]
+        ],
+        "label": "待整理原文",
+        "lx": 600,
+        "ly": 400,
+        "kind": "arrow"
+      },
+      {
+        "id": "e3",
+        "source": "rules",
+        "target": "organize",
+        "points": [
+          [
+            665,
+            129
+          ],
+          [
+            665,
+            200
+          ]
+        ],
+        "label": "整理规则",
+        "lx": 748,
+        "ly": 168,
+        "kind": "arrow"
+      },
+      {
+        "id": "e4",
+        "source": "organize",
+        "target": "knowledge",
+        "points": [
+          [
+            735,
+            270
+          ],
+          [
+            950,
+            270
+          ]
+        ],
+        "label": "条目、归属与状态",
+        "lx": 842,
+        "ly": 247,
+        "kind": "arrow"
+      },
+      {
+        "id": "e5",
+        "source": "knowledge",
+        "target": "user",
+        "points": [
+          [
+            1010,
+            316
+          ],
+          [
+            1010,
+            420
+          ],
+          [
+            705,
+            420
+          ],
+          [
+            705,
+            510
+          ]
+        ],
+        "label": "待审资料及出处",
+        "lx": 833,
+        "ly": 398,
+        "kind": "arrow"
+      },
+      {
+        "id": "e6",
+        "source": "archive",
+        "target": "user",
+        "points": [
+          [
+            495,
+            550
+          ],
+          [
+            575,
+            550
+          ]
+        ],
+        "label": "原文",
+        "lx": 535,
+        "ly": 580,
+        "kind": "arrow"
+      },
+      {
+        "id": "e7",
+        "source": "user",
+        "target": "apply",
+        "points": [
+          [
+            835,
+            550
+          ],
+          [
+            1000,
+            550
+          ]
+        ],
+        "label": "审核与纠正",
+        "lx": 915,
+        "ly": 529,
+        "kind": "arrow"
+      },
+      {
+        "id": "e8",
+        "source": "apply",
+        "target": "knowledge",
+        "points": [
+          [
+            1100,
+            500
+          ],
+          [
+            1140,
+            500
+          ],
+          [
+            1140,
+            316
+          ]
+        ],
+        "label": "新版本与状态",
+        "lx": 1101,
+        "ly": 440,
+        "kind": "arrow"
+      }
+    ],
+    "routes": [
+      {
+        "label": "从会话形成知识",
+        "ids": [
+          "source",
+          "collect",
+          "archive",
+          "organize",
+          "knowledge"
+        ]
+      },
+      {
+        "label": "审核资料并纠正",
+        "ids": [
+          "knowledge",
+          "user",
+          "apply",
+          "knowledge"
+        ]
+      },
+      {
+        "label": "核对来源原文",
+        "ids": [
+          "archive",
+          "user",
+          "apply",
+          "knowledge"
+        ]
+      }
+    ],
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1240 740\" width=\"1240\" height=\"740\" role=\"img\" aria-labelledby=\"data-intake-title\"><title id=\"data-intake-title\">数据流图 · 入库：会话怎样变成有出处的知识</title><style>\ntext{font-family:\"Noto Sans CJK SC\",\"Microsoft YaHei\",sans-serif;fill:var(--ink)}\n.node-label{font-size:22px;font-weight:500}.decision-label{font-size:19px}\n.shape,.store-bg{fill:var(--surface);stroke:var(--node-stroke);stroke-width:1.8}\n.store-bg{stroke:none}.store-line{fill:none;stroke:var(--node-stroke);stroke-width:2.5}\n.good .shape,.good .store-bg{fill:var(--good-bg)}.candidate .shape{fill:var(--candidate-bg)}.review .shape{fill:var(--review-bg)}\n.actor-line{fill:none;stroke:var(--ink);stroke-width:2.6;stroke-linecap:round}\n.start{fill:var(--ink)}.end-outer{fill:var(--surface);stroke:var(--ink);stroke-width:2}\n.boundary{fill:none;stroke:var(--node-stroke);stroke-width:1.5}.section{font-size:22px;font-weight:600}\n.lane{fill:var(--surface);stroke:var(--border);stroke-width:1.3}.lane-head{fill:var(--lane)}.lane-title{font-size:22px;font-weight:600;text-anchor:middle}\n.edge{fill:none;stroke:var(--edge);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}\n.edge.return{stroke-dasharray:7 5}.lifeline{fill:none;stroke:var(--node-stroke);stroke-dasharray:7 6;stroke-width:1.2}\n.edge-label{font-size:18px;paint-order:stroke;stroke:var(--surface);stroke-width:7px;stroke-linejoin:round}\n.node{cursor:pointer;outline:none}.node:hover .shape,.node:focus .shape,.node.selected .shape,.node.current .shape{stroke:var(--accent);stroke-width:3.5}\n.node.current .store-line,.node.selected .store-line{stroke:var(--accent);stroke-width:4}\n.node.current .actor-line{stroke:var(--accent);stroke-width:4}.node.current .node-label{fill:var(--accent);font-weight:700}\n.node.current .start{fill:var(--accent)}\n.edge.current{stroke:var(--accent);stroke-width:3.5;stroke-dasharray:12 7;animation:trace 1.2s linear infinite}\n@keyframes trace{to{stroke-dashoffset:-38}}@media(prefers-reduced-motion:reduce){.edge.current{animation:none}}\n</style><defs><marker id=\"data-intake-arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10Z\" fill=\"var(--edge)\"/></marker><marker id=\"data-intake-open\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto\"><path d=\"M1 1L9 5L1 9\" fill=\"none\" stroke=\"var(--edge)\" stroke-width=\"1.4\"/></marker></defs><path class=\"edge arrow\" data-edge=\"e0\" data-source=\"source\" data-target=\"collect\" d=\"M250 265L310 265\" marker-end=\"url(#data-intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e1\" data-source=\"collect\" data-target=\"archive\" d=\"M380 340L380 500\" marker-end=\"url(#data-intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e2\" data-source=\"archive\" data-target=\"organize\" d=\"M495 520L530 520L530 270L595 270\" marker-end=\"url(#data-intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e3\" data-source=\"rules\" data-target=\"organize\" d=\"M665 129L665 200\" marker-end=\"url(#data-intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e4\" data-source=\"organize\" data-target=\"knowledge\" d=\"M735 270L950 270\" marker-end=\"url(#data-intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e5\" data-source=\"knowledge\" data-target=\"user\" d=\"M1010 316L1010 420L705 420L705 510\" marker-end=\"url(#data-intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e6\" data-source=\"archive\" data-target=\"user\" d=\"M495 550L575 550\" marker-end=\"url(#data-intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e7\" data-source=\"user\" data-target=\"apply\" d=\"M835 550L1000 550\" marker-end=\"url(#data-intake-arrow)\"/><path class=\"edge arrow\" data-edge=\"e8\" data-source=\"apply\" data-target=\"knowledge\" d=\"M1100 500L1140 500L1140 316\" marker-end=\"url(#data-intake-arrow)\"/><g class=\"node normal\" data-node=\"source\" role=\"button\" tabindex=\"0\" aria-label=\"客户端会话，手动补充\"><title>客户端会话 手动补充</title><rect class=\"shape\" x=\"35\" y=\"220\" width=\"215\" height=\"90\" rx=\"0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"142.5\" y=\"258.5\">客户端会话</tspan><tspan x=\"142.5\" y=\"285.5\">手动补充</tspan></text></g><g class=\"node normal\" data-node=\"collect\" role=\"button\" tabindex=\"0\" aria-label=\"采集，保存\"><title>采集 保存</title><ellipse class=\"shape\" cx=\"380.0\" cy=\"270.0\" rx=\"70.0\" ry=\"70.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"380.0\" y=\"263.5\">采集</tspan><tspan x=\"380.0\" y=\"290.5\">保存</tspan></text></g><g class=\"node normal\" data-node=\"archive\" role=\"button\" tabindex=\"0\" aria-label=\"原始记录与来源\"><title>原始记录与来源</title><rect class=\"store-bg\" x=\"270\" y=\"500\" width=\"225\" height=\"74\"/><path class=\"store-line\" d=\"M270 500H495M270 574H495\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"382.5\" y=\"544.0\">原始记录与来源</tspan></text></g><g class=\"node normal\" data-node=\"organize\" role=\"button\" tabindex=\"0\" aria-label=\"整理归属，判定入库\"><title>整理归属 判定入库</title><ellipse class=\"shape\" cx=\"665.0\" cy=\"270.0\" rx=\"70.0\" ry=\"70.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"665.0\" y=\"263.5\">整理归属</tspan><tspan x=\"665.0\" y=\"290.5\">判定入库</tspan></text></g><g class=\"node normal\" data-node=\"rules\" role=\"button\" tabindex=\"0\" aria-label=\"整理与入库规则\"><title>整理与入库规则</title><rect class=\"store-bg\" x=\"550\" y=\"55\" width=\"230\" height=\"74\"/><path class=\"store-line\" d=\"M550 55H780M550 129H780\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"665.0\" y=\"99.0\">整理与入库规则</tspan></text></g><g class=\"node good\" data-node=\"knowledge\" role=\"button\" tabindex=\"0\" aria-label=\"知识条目、版本，来源关联与状态\"><title>知识条目、版本 来源关联与状态</title><rect class=\"store-bg\" x=\"950\" y=\"220\" width=\"250\" height=\"96\"/><path class=\"store-line\" d=\"M950 220H1200M950 316H1200\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1075.0\" y=\"261.5\">知识条目、版本</tspan><tspan x=\"1075.0\" y=\"288.5\">来源关联与状态</tspan></text></g><g class=\"node normal\" data-node=\"user\" role=\"button\" tabindex=\"0\" aria-label=\"你 · 管理页面\"><title>你 · 管理页面</title><rect class=\"shape\" x=\"575\" y=\"510\" width=\"260\" height=\"80\" rx=\"0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"705.0\" y=\"557.0\">你 · 管理页面</tspan></text></g><g class=\"node review\" data-node=\"apply\" role=\"button\" tabindex=\"0\" aria-label=\"应用审核，及纠正\"><title>应用审核 及纠正</title><ellipse class=\"shape\" cx=\"1070.0\" cy=\"565.0\" rx=\"70.0\" ry=\"70.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1070.0\" y=\"558.5\">应用审核</tspan><tspan x=\"1070.0\" y=\"585.5\">及纠正</tspan></text></g><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"278\" y=\"244.0\">资料</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"300\" y=\"426.0\">原文及来源</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"600\" y=\"400.0\">待整理原文</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"748\" y=\"168.0\">整理规则</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"842\" y=\"247.0\">条目、归属与状态</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"833\" y=\"398.0\">待审资料及出处</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"535\" y=\"580.0\">原文</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"915\" y=\"529.0\">审核与纠正</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"1101\" y=\"440.0\">新版本与状态</tspan></text></svg>"
+  },
+  {
+    "id": "data-recall",
+    "title": "知识怎样进入当前任务",
+    "kind": "数据流图 · 召回",
+    "question": "先保证资料与索引可用，再查找候选、比较相关性并返回出处。",
+    "width": 1240,
+    "height": 740,
+    "nodes": [
+      {
+        "id": "knowledge",
+        "label": "当前可用知识|案例、条件与来源",
+        "x": 45,
+        "y": 215,
+        "w": 255,
+        "h": 96,
+        "shape": "store",
+        "tone": "good",
+        "detail": "按资料状态、项目范围和案例适用条件确定可用内容。知识入库正确是检索的前提。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "sync",
+        "label": "维护|检索索引",
+        "x": 365,
+        "y": 195,
+        "w": 150,
+        "h": 150,
+        "shape": "process",
+        "tone": "normal",
+        "detail": "把可检索内容及版本变化同步到索引。尚未同步、失败或降级的显示和验收标准继续细化。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "index",
+        "label": "关键词索引|语义索引",
+        "x": 600,
+        "y": 215,
+        "w": 240,
+        "h": 96,
+        "shape": "store",
+        "tone": "normal",
+        "detail": "索引用来找候选，不替代原始资料与当前有效状态。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "question",
+        "label": "当前问题、项目|需要哪类记忆",
+        "x": 920,
+        "y": 35,
+        "w": 270,
+        "h": 86,
+        "shape": "external",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "retrieve",
+        "label": "按范围和|资格召回",
+        "x": 980,
+        "y": 195,
+        "w": 150,
+        "h": 150,
+        "shape": "process",
+        "tone": "normal",
+        "detail": "优先当前项目和通用记忆，必要时查其他项目。历史与问答入口 knowledge_recall；结构化案例入口 experience_recall。跨项目与候选试用的完整调用链待核对。",
+        "inputs": "问题、项目、知识类型、当前已知条件",
+        "outputs": "相关候选、来源、匹配信息"
+      },
+      {
+        "id": "rank",
+        "label": "比较相关性|重新排序",
+        "x": 980,
+        "y": 490,
+        "w": 150,
+        "h": 150,
+        "shape": "process",
+        "tone": "normal",
+        "detail": "重排比较问题与候选内容。不能用调整一个权重替代资料质量、索引覆盖与整条召回链路核对。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "result",
+        "label": "AI 客户端收到|内容、状态、条件与出处",
+        "x": 395,
+        "y": 515,
+        "w": 330,
+        "h": 96,
+        "shape": "external",
+        "tone": "normal",
+        "detail": "客户端仍需比较当前任务条件；必要时按引用读取原文。任务断点另按精确任务标识读取。",
+        "inputs": "",
+        "outputs": ""
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "source": "knowledge",
+        "target": "sync",
+        "points": [
+          [
+            300,
+            263
+          ],
+          [
+            365,
+            263
+          ]
+        ],
+        "label": "变更",
+        "lx": 332,
+        "ly": 241,
+        "kind": "arrow"
+      },
+      {
+        "id": "e1",
+        "source": "sync",
+        "target": "index",
+        "points": [
+          [
+            515,
+            263
+          ],
+          [
+            600,
+            263
+          ]
+        ],
+        "label": "索引条目",
+        "lx": 559,
+        "ly": 240,
+        "kind": "arrow"
+      },
+      {
+        "id": "e2",
+        "source": "index",
+        "target": "retrieve",
+        "points": [
+          [
+            840,
+            263
+          ],
+          [
+            980,
+            263
+          ]
+        ],
+        "label": "索引内容",
+        "lx": 910,
+        "ly": 241,
+        "kind": "arrow"
+      },
+      {
+        "id": "e3",
+        "source": "question",
+        "target": "retrieve",
+        "points": [
+          [
+            1055,
+            121
+          ],
+          [
+            1055,
+            195
+          ]
+        ],
+        "label": "问题及范围",
+        "lx": 1133,
+        "ly": 165,
+        "kind": "arrow"
+      },
+      {
+        "id": "e4",
+        "source": "retrieve",
+        "target": "rank",
+        "points": [
+          [
+            1055,
+            345
+          ],
+          [
+            1055,
+            490
+          ]
+        ],
+        "label": "相关候选",
+        "lx": 1120,
+        "ly": 420,
+        "kind": "arrow"
+      },
+      {
+        "id": "e5",
+        "source": "knowledge",
+        "target": "rank",
+        "points": [
+          [
+            175,
+            311
+          ],
+          [
+            175,
+            675
+          ],
+          [
+            1055,
+            675
+          ],
+          [
+            1055,
+            640
+          ]
+        ],
+        "label": "当前内容与有效状态",
+        "lx": 600,
+        "ly": 703,
+        "kind": "arrow"
+      },
+      {
+        "id": "e6",
+        "source": "rank",
+        "target": "result",
+        "points": [
+          [
+            980,
+            565
+          ],
+          [
+            725,
+            565
+          ]
+        ],
+        "label": "排序结果与出处",
+        "lx": 848,
+        "ly": 542,
+        "kind": "arrow"
+      }
+    ],
+    "routes": [
+      {
+        "label": "新资料进入检索",
+        "ids": [
+          "knowledge",
+          "sync",
+          "index",
+          "retrieve",
+          "rank",
+          "result"
+        ]
+      },
+      {
+        "label": "一次问题召回",
+        "ids": [
+          "question",
+          "retrieve",
+          "rank",
+          "result"
+        ]
+      }
+    ],
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1240 740\" width=\"1240\" height=\"740\" role=\"img\" aria-labelledby=\"data-recall-title\"><title id=\"data-recall-title\">数据流图 · 召回：知识怎样进入当前任务</title><style>\ntext{font-family:\"Noto Sans CJK SC\",\"Microsoft YaHei\",sans-serif;fill:var(--ink)}\n.node-label{font-size:22px;font-weight:500}.decision-label{font-size:19px}\n.shape,.store-bg{fill:var(--surface);stroke:var(--node-stroke);stroke-width:1.8}\n.store-bg{stroke:none}.store-line{fill:none;stroke:var(--node-stroke);stroke-width:2.5}\n.good .shape,.good .store-bg{fill:var(--good-bg)}.candidate .shape{fill:var(--candidate-bg)}.review .shape{fill:var(--review-bg)}\n.actor-line{fill:none;stroke:var(--ink);stroke-width:2.6;stroke-linecap:round}\n.start{fill:var(--ink)}.end-outer{fill:var(--surface);stroke:var(--ink);stroke-width:2}\n.boundary{fill:none;stroke:var(--node-stroke);stroke-width:1.5}.section{font-size:22px;font-weight:600}\n.lane{fill:var(--surface);stroke:var(--border);stroke-width:1.3}.lane-head{fill:var(--lane)}.lane-title{font-size:22px;font-weight:600;text-anchor:middle}\n.edge{fill:none;stroke:var(--edge);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}\n.edge.return{stroke-dasharray:7 5}.lifeline{fill:none;stroke:var(--node-stroke);stroke-dasharray:7 6;stroke-width:1.2}\n.edge-label{font-size:18px;paint-order:stroke;stroke:var(--surface);stroke-width:7px;stroke-linejoin:round}\n.node{cursor:pointer;outline:none}.node:hover .shape,.node:focus .shape,.node.selected .shape,.node.current .shape{stroke:var(--accent);stroke-width:3.5}\n.node.current .store-line,.node.selected .store-line{stroke:var(--accent);stroke-width:4}\n.node.current .actor-line{stroke:var(--accent);stroke-width:4}.node.current .node-label{fill:var(--accent);font-weight:700}\n.node.current .start{fill:var(--accent)}\n.edge.current{stroke:var(--accent);stroke-width:3.5;stroke-dasharray:12 7;animation:trace 1.2s linear infinite}\n@keyframes trace{to{stroke-dashoffset:-38}}@media(prefers-reduced-motion:reduce){.edge.current{animation:none}}\n</style><defs><marker id=\"data-recall-arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10Z\" fill=\"var(--edge)\"/></marker><marker id=\"data-recall-open\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto\"><path d=\"M1 1L9 5L1 9\" fill=\"none\" stroke=\"var(--edge)\" stroke-width=\"1.4\"/></marker></defs><path class=\"edge arrow\" data-edge=\"e0\" data-source=\"knowledge\" data-target=\"sync\" d=\"M300 263L365 263\" marker-end=\"url(#data-recall-arrow)\"/><path class=\"edge arrow\" data-edge=\"e1\" data-source=\"sync\" data-target=\"index\" d=\"M515 263L600 263\" marker-end=\"url(#data-recall-arrow)\"/><path class=\"edge arrow\" data-edge=\"e2\" data-source=\"index\" data-target=\"retrieve\" d=\"M840 263L980 263\" marker-end=\"url(#data-recall-arrow)\"/><path class=\"edge arrow\" data-edge=\"e3\" data-source=\"question\" data-target=\"retrieve\" d=\"M1055 121L1055 195\" marker-end=\"url(#data-recall-arrow)\"/><path class=\"edge arrow\" data-edge=\"e4\" data-source=\"retrieve\" data-target=\"rank\" d=\"M1055 345L1055 490\" marker-end=\"url(#data-recall-arrow)\"/><path class=\"edge arrow\" data-edge=\"e5\" data-source=\"knowledge\" data-target=\"rank\" d=\"M175 311L175 675L1055 675L1055 640\" marker-end=\"url(#data-recall-arrow)\"/><path class=\"edge arrow\" data-edge=\"e6\" data-source=\"rank\" data-target=\"result\" d=\"M980 565L725 565\" marker-end=\"url(#data-recall-arrow)\"/><g class=\"node good\" data-node=\"knowledge\" role=\"button\" tabindex=\"0\" aria-label=\"当前可用知识，案例、条件与来源\"><title>当前可用知识 案例、条件与来源</title><rect class=\"store-bg\" x=\"45\" y=\"215\" width=\"255\" height=\"96\"/><path class=\"store-line\" d=\"M45 215H300M45 311H300\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"172.5\" y=\"256.5\">当前可用知识</tspan><tspan x=\"172.5\" y=\"283.5\">案例、条件与来源</tspan></text></g><g class=\"node normal\" data-node=\"sync\" role=\"button\" tabindex=\"0\" aria-label=\"维护，检索索引\"><title>维护 检索索引</title><ellipse class=\"shape\" cx=\"440.0\" cy=\"270.0\" rx=\"75.0\" ry=\"75.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"440.0\" y=\"263.5\">维护</tspan><tspan x=\"440.0\" y=\"290.5\">检索索引</tspan></text></g><g class=\"node normal\" data-node=\"index\" role=\"button\" tabindex=\"0\" aria-label=\"关键词索引，语义索引\"><title>关键词索引 语义索引</title><rect class=\"store-bg\" x=\"600\" y=\"215\" width=\"240\" height=\"96\"/><path class=\"store-line\" d=\"M600 215H840M600 311H840\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"720.0\" y=\"256.5\">关键词索引</tspan><tspan x=\"720.0\" y=\"283.5\">语义索引</tspan></text></g><g class=\"node normal\" data-node=\"question\" role=\"button\" tabindex=\"0\" aria-label=\"当前问题、项目，需要哪类记忆\"><title>当前问题、项目 需要哪类记忆</title><rect class=\"shape\" x=\"920\" y=\"35\" width=\"270\" height=\"86\" rx=\"0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1055.0\" y=\"71.5\">当前问题、项目</tspan><tspan x=\"1055.0\" y=\"98.5\">需要哪类记忆</tspan></text></g><g class=\"node normal\" data-node=\"retrieve\" role=\"button\" tabindex=\"0\" aria-label=\"按范围和，资格召回\"><title>按范围和 资格召回</title><ellipse class=\"shape\" cx=\"1055.0\" cy=\"270.0\" rx=\"75.0\" ry=\"75.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1055.0\" y=\"263.5\">按范围和</tspan><tspan x=\"1055.0\" y=\"290.5\">资格召回</tspan></text></g><g class=\"node normal\" data-node=\"rank\" role=\"button\" tabindex=\"0\" aria-label=\"比较相关性，重新排序\"><title>比较相关性 重新排序</title><ellipse class=\"shape\" cx=\"1055.0\" cy=\"565.0\" rx=\"75.0\" ry=\"75.0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1055.0\" y=\"558.5\">比较相关性</tspan><tspan x=\"1055.0\" y=\"585.5\">重新排序</tspan></text></g><g class=\"node normal\" data-node=\"result\" role=\"button\" tabindex=\"0\" aria-label=\"AI 客户端收到，内容、状态、条件与出处\"><title>AI 客户端收到 内容、状态、条件与出处</title><rect class=\"shape\" x=\"395\" y=\"515\" width=\"330\" height=\"96\" rx=\"0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"560.0\" y=\"556.5\">AI 客户端收到</tspan><tspan x=\"560.0\" y=\"583.5\">内容、状态、条件与出处</tspan></text></g><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"332\" y=\"241.0\">变更</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"559\" y=\"240.0\">索引条目</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"910\" y=\"241.0\">索引内容</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"1133\" y=\"165.0\">问题及范围</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"1120\" y=\"420.0\">相关候选</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"600\" y=\"703.0\">当前内容与有效状态</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"848\" y=\"542.0\">排序结果与出处</tspan></text></svg>"
+  },
+  {
+    "id": "knowledge-state",
+    "title": "一条知识何时可用，何时暂停",
+    "kind": "状态图 · 普通知识",
+    "question": "只追踪一条知识的可用状态；原文和旧版本始终独立保留。",
+    "width": 1240,
+    "height": 740,
+    "nodes": [
+      {
+        "id": "initial",
+        "label": "开始判断",
+        "x": 610,
+        "y": 32,
+        "w": 20,
+        "h": 20,
+        "shape": "start",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "choose",
+        "label": "",
+        "x": 595,
+        "y": 100,
+        "w": 50,
+        "h": 50,
+        "shape": "decision",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "review",
+        "label": "待审",
+        "x": 185,
+        "y": 240,
+        "w": 290,
+        "h": 96,
+        "shape": "state",
+        "tone": "review",
+        "detail": "来源存疑、归属不明或同条件内容冲突时等待审核；保留疑点和来源。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "ready",
+        "label": "可供参考",
+        "x": 820,
+        "y": 240,
+        "w": 290,
+        "h": 96,
+        "shape": "state",
+        "tone": "good",
+        "detail": "来源和范围明确且无冲突，可作为任务参考；不代表开发方法已验证成功。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "paused",
+        "label": "暂停引用并复核",
+        "x": 820,
+        "y": 525,
+        "w": 290,
+        "h": 96,
+        "shape": "state",
+        "tone": "review",
+        "detail": "争议部分不再作为确定结论；错误资料影响到的相关内容暂缓推荐并重新核对。",
+        "inputs": "",
+        "outputs": ""
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "source": "initial",
+        "target": "choose",
+        "points": [
+          [
+            620,
+            52
+          ],
+          [
+            620,
+            100
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e1",
+        "source": "choose",
+        "target": "review",
+        "points": [
+          [
+            595,
+            125
+          ],
+          [
+            330,
+            125
+          ],
+          [
+            330,
+            240
+          ]
+        ],
+        "label": "有疑点",
+        "lx": 444,
+        "ly": 103,
+        "kind": "arrow"
+      },
+      {
+        "id": "e2",
+        "source": "choose",
+        "target": "ready",
+        "points": [
+          [
+            645,
+            125
+          ],
+          [
+            965,
+            125
+          ],
+          [
+            965,
+            240
+          ]
+        ],
+        "label": "满足可参考条件",
+        "lx": 805,
+        "ly": 103,
+        "kind": "arrow"
+      },
+      {
+        "id": "e3",
+        "source": "review",
+        "target": "ready",
+        "points": [
+          [
+            475,
+            288
+          ],
+          [
+            820,
+            288
+          ]
+        ],
+        "label": "审核解决疑点",
+        "lx": 646,
+        "ly": 264,
+        "kind": "arrow"
+      },
+      {
+        "id": "e4",
+        "source": "ready",
+        "target": "paused",
+        "points": [
+          [
+            965,
+            336
+          ],
+          [
+            965,
+            525
+          ]
+        ],
+        "label": "冲突未解／受纠正影响",
+        "lx": 819,
+        "ly": 434,
+        "kind": "arrow"
+      },
+      {
+        "id": "e5",
+        "source": "paused",
+        "target": "ready",
+        "points": [
+          [
+            1110,
+            573
+          ],
+          [
+            1180,
+            573
+          ],
+          [
+            1180,
+            288
+          ],
+          [
+            1110,
+            288
+          ]
+        ],
+        "label": "复核通过",
+        "lx": 1137,
+        "ly": 458,
+        "kind": "arrow"
+      },
+      {
+        "id": "e6",
+        "source": "paused",
+        "target": "review",
+        "points": [
+          [
+            820,
+            573
+          ],
+          [
+            330,
+            573
+          ],
+          [
+            330,
+            336
+          ]
+        ],
+        "label": "仍有疑点，交用户审核",
+        "lx": 561,
+        "ly": 550,
+        "kind": "arrow"
+      }
+    ],
+    "routes": [
+      {
+        "label": "明确内容直接可参考",
+        "ids": [
+          "initial",
+          "choose",
+          "ready"
+        ]
+      },
+      {
+        "label": "冲突与人工审核",
+        "ids": [
+          "ready",
+          "paused",
+          "review",
+          "ready"
+        ]
+      },
+      {
+        "label": "自动复核恢复",
+        "ids": [
+          "ready",
+          "paused",
+          "ready"
+        ]
+      }
+    ],
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1240 740\" width=\"1240\" height=\"740\" role=\"img\" aria-labelledby=\"knowledge-state-title\"><title id=\"knowledge-state-title\">状态图 · 普通知识：一条知识何时可用，何时暂停</title><style>\ntext{font-family:\"Noto Sans CJK SC\",\"Microsoft YaHei\",sans-serif;fill:var(--ink)}\n.node-label{font-size:22px;font-weight:500}.decision-label{font-size:19px}\n.shape,.store-bg{fill:var(--surface);stroke:var(--node-stroke);stroke-width:1.8}\n.store-bg{stroke:none}.store-line{fill:none;stroke:var(--node-stroke);stroke-width:2.5}\n.good .shape,.good .store-bg{fill:var(--good-bg)}.candidate .shape{fill:var(--candidate-bg)}.review .shape{fill:var(--review-bg)}\n.actor-line{fill:none;stroke:var(--ink);stroke-width:2.6;stroke-linecap:round}\n.start{fill:var(--ink)}.end-outer{fill:var(--surface);stroke:var(--ink);stroke-width:2}\n.boundary{fill:none;stroke:var(--node-stroke);stroke-width:1.5}.section{font-size:22px;font-weight:600}\n.lane{fill:var(--surface);stroke:var(--border);stroke-width:1.3}.lane-head{fill:var(--lane)}.lane-title{font-size:22px;font-weight:600;text-anchor:middle}\n.edge{fill:none;stroke:var(--edge);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}\n.edge.return{stroke-dasharray:7 5}.lifeline{fill:none;stroke:var(--node-stroke);stroke-dasharray:7 6;stroke-width:1.2}\n.edge-label{font-size:18px;paint-order:stroke;stroke:var(--surface);stroke-width:7px;stroke-linejoin:round}\n.node{cursor:pointer;outline:none}.node:hover .shape,.node:focus .shape,.node.selected .shape,.node.current .shape{stroke:var(--accent);stroke-width:3.5}\n.node.current .store-line,.node.selected .store-line{stroke:var(--accent);stroke-width:4}\n.node.current .actor-line{stroke:var(--accent);stroke-width:4}.node.current .node-label{fill:var(--accent);font-weight:700}\n.node.current .start{fill:var(--accent)}\n.edge.current{stroke:var(--accent);stroke-width:3.5;stroke-dasharray:12 7;animation:trace 1.2s linear infinite}\n@keyframes trace{to{stroke-dashoffset:-38}}@media(prefers-reduced-motion:reduce){.edge.current{animation:none}}\n</style><defs><marker id=\"knowledge-state-arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10Z\" fill=\"var(--edge)\"/></marker><marker id=\"knowledge-state-open\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto\"><path d=\"M1 1L9 5L1 9\" fill=\"none\" stroke=\"var(--edge)\" stroke-width=\"1.4\"/></marker></defs><path class=\"edge arrow\" data-edge=\"e0\" data-source=\"initial\" data-target=\"choose\" d=\"M620 52L620 100\" marker-end=\"url(#knowledge-state-arrow)\"/><path class=\"edge arrow\" data-edge=\"e1\" data-source=\"choose\" data-target=\"review\" d=\"M595 125L330 125L330 240\" marker-end=\"url(#knowledge-state-arrow)\"/><path class=\"edge arrow\" data-edge=\"e2\" data-source=\"choose\" data-target=\"ready\" d=\"M645 125L965 125L965 240\" marker-end=\"url(#knowledge-state-arrow)\"/><path class=\"edge arrow\" data-edge=\"e3\" data-source=\"review\" data-target=\"ready\" d=\"M475 288L820 288\" marker-end=\"url(#knowledge-state-arrow)\"/><path class=\"edge arrow\" data-edge=\"e4\" data-source=\"ready\" data-target=\"paused\" d=\"M965 336L965 525\" marker-end=\"url(#knowledge-state-arrow)\"/><path class=\"edge arrow\" data-edge=\"e5\" data-source=\"paused\" data-target=\"ready\" d=\"M1110 573L1180 573L1180 288L1110 288\" marker-end=\"url(#knowledge-state-arrow)\"/><path class=\"edge arrow\" data-edge=\"e6\" data-source=\"paused\" data-target=\"review\" d=\"M820 573L330 573L330 336\" marker-end=\"url(#knowledge-state-arrow)\"/><g class=\"node normal\" data-node=\"initial\" role=\"button\" tabindex=\"0\" aria-label=\"开始判断\"><title>开始判断</title><circle class=\"start\" cx=\"620.0\" cy=\"42.0\" r=\"10.0\"/></g><g class=\"node normal\" data-node=\"choose\" role=\"button\" tabindex=\"0\" aria-label=\"分支判断\"><title></title><path class=\"shape\" d=\"M620.0 100L645 125.0L620.0 150L595 125.0Z\"/></g><g class=\"node review\" data-node=\"review\" role=\"button\" tabindex=\"0\" aria-label=\"待审\"><title>待审</title><rect class=\"shape\" x=\"185\" y=\"240\" width=\"290\" height=\"96\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"330.0\" y=\"295.0\">待审</tspan></text></g><g class=\"node good\" data-node=\"ready\" role=\"button\" tabindex=\"0\" aria-label=\"可供参考\"><title>可供参考</title><rect class=\"shape\" x=\"820\" y=\"240\" width=\"290\" height=\"96\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"965.0\" y=\"295.0\">可供参考</tspan></text></g><g class=\"node review\" data-node=\"paused\" role=\"button\" tabindex=\"0\" aria-label=\"暂停引用并复核\"><title>暂停引用并复核</title><rect class=\"shape\" x=\"820\" y=\"525\" width=\"290\" height=\"96\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"965.0\" y=\"580.0\">暂停引用并复核</tspan></text></g><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"444\" y=\"103.0\">有疑点</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"805\" y=\"103.0\">满足可参考条件</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"646\" y=\"264.0\">审核解决疑点</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"819\" y=\"434.0\">冲突未解／受纠正影响</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"1137\" y=\"458.0\">复核通过</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"561\" y=\"550.0\">仍有疑点，交用户审核</tspan></text></svg>"
+  },
+  {
+    "id": "method-state",
+    "title": "新方法怎样成为可靠经验",
+    "kind": "状态图 · 方法",
+    "question": "待验证与待审分开；具体证据核验与适用范围判定仍需细化。",
+    "width": 1240,
+    "height": 740,
+    "nodes": [
+      {
+        "id": "initial",
+        "label": "生成方法",
+        "x": 330,
+        "y": 50,
+        "w": 20,
+        "h": 20,
+        "shape": "start",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "candidate",
+        "label": "待验证方法",
+        "x": 195,
+        "y": 230,
+        "w": 290,
+        "h": 96,
+        "shape": "state",
+        "tone": "candidate",
+        "detail": "保留来源案例、条件和例外。允许有条件试用，但不继承来源案例的成功计数。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "usable",
+        "label": "证据支持范围内|可复用的方法",
+        "x": 820,
+        "y": 230,
+        "w": 290,
+        "h": 96,
+        "shape": "state",
+        "tone": "good",
+        "detail": "结果必须与该方法、任务和适用条件相关。何种证据足够、何时扩展范围仍待逐项确认，不设未经确认的固定成功次数。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "paused",
+        "label": "暂停推荐与复核",
+        "x": 820,
+        "y": 530,
+        "w": 290,
+        "h": 96,
+        "shape": "state",
+        "tone": "review",
+        "detail": "当确定受错误知识影响时暂缓推荐，核对通过后恢复，仍有疑点交管理页面审核。",
+        "inputs": "",
+        "outputs": ""
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "source": "initial",
+        "target": "candidate",
+        "points": [
+          [
+            340,
+            70
+          ],
+          [
+            340,
+            230
+          ]
+        ],
+        "label": "",
+        "lx": null,
+        "ly": null,
+        "kind": "arrow"
+      },
+      {
+        "id": "e1",
+        "source": "candidate",
+        "target": "usable",
+        "points": [
+          [
+            485,
+            278
+          ],
+          [
+            820,
+            278
+          ]
+        ],
+        "label": "相关独立证据支持",
+        "lx": 650,
+        "ly": 252,
+        "kind": "arrow"
+      },
+      {
+        "id": "e2",
+        "source": "candidate",
+        "target": "candidate",
+        "points": [
+          [
+            340,
+            326
+          ],
+          [
+            340,
+            570
+          ],
+          [
+            100,
+            570
+          ],
+          [
+            100,
+            278
+          ],
+          [
+            195,
+            278
+          ]
+        ],
+        "label": "试用后仍不能确认有效",
+        "lx": 361,
+        "ly": 440,
+        "kind": "arrow"
+      },
+      {
+        "id": "e3",
+        "source": "usable",
+        "target": "paused",
+        "points": [
+          [
+            965,
+            326
+          ],
+          [
+            965,
+            530
+          ]
+        ],
+        "label": "确认受错误来源影响",
+        "lx": 818,
+        "ly": 428,
+        "kind": "arrow"
+      },
+      {
+        "id": "e4",
+        "source": "paused",
+        "target": "usable",
+        "points": [
+          [
+            1110,
+            578
+          ],
+          [
+            1180,
+            578
+          ],
+          [
+            1180,
+            278
+          ],
+          [
+            1110,
+            278
+          ]
+        ],
+        "label": "复核通过",
+        "lx": 1138,
+        "ly": 439,
+        "kind": "arrow"
+      }
+    ],
+    "routes": [
+      {
+        "label": "在条件内得到验证",
+        "ids": [
+          "initial",
+          "candidate",
+          "usable"
+        ]
+      },
+      {
+        "label": "试用结果不足",
+        "ids": [
+          "candidate",
+          "candidate"
+        ]
+      },
+      {
+        "label": "纠错后重新核对",
+        "ids": [
+          "usable",
+          "paused",
+          "usable"
+        ]
+      }
+    ],
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1240 740\" width=\"1240\" height=\"740\" role=\"img\" aria-labelledby=\"method-state-title\"><title id=\"method-state-title\">状态图 · 方法：新方法怎样成为可靠经验</title><style>\ntext{font-family:\"Noto Sans CJK SC\",\"Microsoft YaHei\",sans-serif;fill:var(--ink)}\n.node-label{font-size:22px;font-weight:500}.decision-label{font-size:19px}\n.shape,.store-bg{fill:var(--surface);stroke:var(--node-stroke);stroke-width:1.8}\n.store-bg{stroke:none}.store-line{fill:none;stroke:var(--node-stroke);stroke-width:2.5}\n.good .shape,.good .store-bg{fill:var(--good-bg)}.candidate .shape{fill:var(--candidate-bg)}.review .shape{fill:var(--review-bg)}\n.actor-line{fill:none;stroke:var(--ink);stroke-width:2.6;stroke-linecap:round}\n.start{fill:var(--ink)}.end-outer{fill:var(--surface);stroke:var(--ink);stroke-width:2}\n.boundary{fill:none;stroke:var(--node-stroke);stroke-width:1.5}.section{font-size:22px;font-weight:600}\n.lane{fill:var(--surface);stroke:var(--border);stroke-width:1.3}.lane-head{fill:var(--lane)}.lane-title{font-size:22px;font-weight:600;text-anchor:middle}\n.edge{fill:none;stroke:var(--edge);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}\n.edge.return{stroke-dasharray:7 5}.lifeline{fill:none;stroke:var(--node-stroke);stroke-dasharray:7 6;stroke-width:1.2}\n.edge-label{font-size:18px;paint-order:stroke;stroke:var(--surface);stroke-width:7px;stroke-linejoin:round}\n.node{cursor:pointer;outline:none}.node:hover .shape,.node:focus .shape,.node.selected .shape,.node.current .shape{stroke:var(--accent);stroke-width:3.5}\n.node.current .store-line,.node.selected .store-line{stroke:var(--accent);stroke-width:4}\n.node.current .actor-line{stroke:var(--accent);stroke-width:4}.node.current .node-label{fill:var(--accent);font-weight:700}\n.node.current .start{fill:var(--accent)}\n.edge.current{stroke:var(--accent);stroke-width:3.5;stroke-dasharray:12 7;animation:trace 1.2s linear infinite}\n@keyframes trace{to{stroke-dashoffset:-38}}@media(prefers-reduced-motion:reduce){.edge.current{animation:none}}\n</style><defs><marker id=\"method-state-arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10Z\" fill=\"var(--edge)\"/></marker><marker id=\"method-state-open\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto\"><path d=\"M1 1L9 5L1 9\" fill=\"none\" stroke=\"var(--edge)\" stroke-width=\"1.4\"/></marker></defs><path class=\"edge arrow\" data-edge=\"e0\" data-source=\"initial\" data-target=\"candidate\" d=\"M340 70L340 230\" marker-end=\"url(#method-state-arrow)\"/><path class=\"edge arrow\" data-edge=\"e1\" data-source=\"candidate\" data-target=\"usable\" d=\"M485 278L820 278\" marker-end=\"url(#method-state-arrow)\"/><path class=\"edge arrow\" data-edge=\"e2\" data-source=\"candidate\" data-target=\"candidate\" d=\"M340 326L340 570L100 570L100 278L195 278\" marker-end=\"url(#method-state-arrow)\"/><path class=\"edge arrow\" data-edge=\"e3\" data-source=\"usable\" data-target=\"paused\" d=\"M965 326L965 530\" marker-end=\"url(#method-state-arrow)\"/><path class=\"edge arrow\" data-edge=\"e4\" data-source=\"paused\" data-target=\"usable\" d=\"M1110 578L1180 578L1180 278L1110 278\" marker-end=\"url(#method-state-arrow)\"/><g class=\"node normal\" data-node=\"initial\" role=\"button\" tabindex=\"0\" aria-label=\"生成方法\"><title>生成方法</title><circle class=\"start\" cx=\"340.0\" cy=\"60.0\" r=\"10.0\"/></g><g class=\"node candidate\" data-node=\"candidate\" role=\"button\" tabindex=\"0\" aria-label=\"待验证方法\"><title>待验证方法</title><rect class=\"shape\" x=\"195\" y=\"230\" width=\"290\" height=\"96\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"340.0\" y=\"285.0\">待验证方法</tspan></text></g><g class=\"node good\" data-node=\"usable\" role=\"button\" tabindex=\"0\" aria-label=\"证据支持范围内，可复用的方法\"><title>证据支持范围内 可复用的方法</title><rect class=\"shape\" x=\"820\" y=\"230\" width=\"290\" height=\"96\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"965.0\" y=\"271.5\">证据支持范围内</tspan><tspan x=\"965.0\" y=\"298.5\">可复用的方法</tspan></text></g><g class=\"node review\" data-node=\"paused\" role=\"button\" tabindex=\"0\" aria-label=\"暂停推荐与复核\"><title>暂停推荐与复核</title><rect class=\"shape\" x=\"820\" y=\"530\" width=\"290\" height=\"96\" rx=\"18\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"965.0\" y=\"585.0\">暂停推荐与复核</tspan></text></g><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"650\" y=\"252.0\">相关独立证据支持</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"361\" y=\"440.0\">试用后仍不能确认有效</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"818\" y=\"428.0\">确认受错误来源影响</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"1138\" y=\"439.0\">复核通过</tspan></text></svg>"
+  },
+  {
+    "id": "continuity",
+    "title": "换个客户端，怎样接着同一任务做",
+    "kind": "时序图",
+    "question": "从上向下是时间；此图展示原任务可以明确定位时的续接。",
+    "width": 1240,
+    "height": 740,
+    "nodes": [
+      {
+        "id": "user",
+        "label": "你",
+        "x": 35,
+        "y": 40,
+        "w": 170,
+        "h": 64,
+        "shape": "participant",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "old",
+        "label": "原客户端",
+        "x": 340,
+        "y": 40,
+        "w": 170,
+        "h": 64,
+        "shape": "participant",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "memory",
+        "label": "EvolvMem",
+        "x": 650,
+        "y": 40,
+        "w": 170,
+        "h": 64,
+        "shape": "participant",
+        "tone": "normal",
+        "detail": "原任务无法唯一确定时，按已确认的续接规则先让用户选择，不猜测任务。",
+        "inputs": "",
+        "outputs": ""
+      },
+      {
+        "id": "new",
+        "label": "新客户端",
+        "x": 995,
+        "y": 40,
+        "w": 170,
+        "h": 64,
+        "shape": "participant",
+        "tone": "normal",
+        "detail": "",
+        "inputs": "",
+        "outputs": ""
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "source": "user",
+        "target": "old",
+        "points": [
+          [
+            120,
+            180
+          ],
+          [
+            425,
+            180
+          ]
+        ],
+        "label": "提出任务与确认要求",
+        "lx": 272.5,
+        "ly": 162,
+        "kind": "arrow"
+      },
+      {
+        "id": "e1",
+        "source": "old",
+        "target": "memory",
+        "points": [
+          [
+            425,
+            265
+          ],
+          [
+            735,
+            265
+          ]
+        ],
+        "label": "保存需求、进度、下一步",
+        "lx": 580.0,
+        "ly": 247,
+        "kind": "arrow"
+      },
+      {
+        "id": "e2",
+        "source": "memory",
+        "target": "old",
+        "points": [
+          [
+            735,
+            325
+          ],
+          [
+            425,
+            325
+          ]
+        ],
+        "label": "返回已保存的任务引用",
+        "lx": 580.0,
+        "ly": 307,
+        "kind": "return"
+      },
+      {
+        "id": "e3",
+        "source": "user",
+        "target": "new",
+        "points": [
+          [
+            120,
+            415
+          ],
+          [
+            1080,
+            415
+          ]
+        ],
+        "label": "切换客户端，继续原任务",
+        "lx": 600.0,
+        "ly": 397,
+        "kind": "arrow"
+      },
+      {
+        "id": "e4",
+        "source": "new",
+        "target": "memory",
+        "points": [
+          [
+            1080,
+            500
+          ],
+          [
+            735,
+            500
+          ]
+        ],
+        "label": "定位项目与原任务",
+        "lx": 907.5,
+        "ly": 482,
+        "kind": "arrow"
+      },
+      {
+        "id": "e5",
+        "source": "memory",
+        "target": "new",
+        "points": [
+          [
+            735,
+            575
+          ],
+          [
+            1080,
+            575
+          ]
+        ],
+        "label": "返回断点、版本及状态",
+        "lx": 907.5,
+        "ly": 557,
+        "kind": "return"
+      },
+      {
+        "id": "e6",
+        "source": "new",
+        "target": "user",
+        "points": [
+          [
+            1080,
+            660
+          ],
+          [
+            120,
+            660
+          ]
+        ],
+        "label": "核对当前状态并继续任务",
+        "lx": 600.0,
+        "ly": 642,
+        "kind": "return"
+      }
+    ],
+    "routes": [
+      {
+        "label": "跨客户端续接",
+        "ids": [
+          "user",
+          "old",
+          "memory",
+          "new"
+        ],
+        "edge_ids": [
+          "e0",
+          "e1",
+          "e2",
+          "e3",
+          "e4",
+          "e5",
+          "e6"
+        ]
+      }
+    ],
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1240 740\" width=\"1240\" height=\"740\" role=\"img\" aria-labelledby=\"continuity-title\"><title id=\"continuity-title\">时序图：换个客户端，怎样接着同一任务做</title><style>\ntext{font-family:\"Noto Sans CJK SC\",\"Microsoft YaHei\",sans-serif;fill:var(--ink)}\n.node-label{font-size:22px;font-weight:500}.decision-label{font-size:19px}\n.shape,.store-bg{fill:var(--surface);stroke:var(--node-stroke);stroke-width:1.8}\n.store-bg{stroke:none}.store-line{fill:none;stroke:var(--node-stroke);stroke-width:2.5}\n.good .shape,.good .store-bg{fill:var(--good-bg)}.candidate .shape{fill:var(--candidate-bg)}.review .shape{fill:var(--review-bg)}\n.actor-line{fill:none;stroke:var(--ink);stroke-width:2.6;stroke-linecap:round}\n.start{fill:var(--ink)}.end-outer{fill:var(--surface);stroke:var(--ink);stroke-width:2}\n.boundary{fill:none;stroke:var(--node-stroke);stroke-width:1.5}.section{font-size:22px;font-weight:600}\n.lane{fill:var(--surface);stroke:var(--border);stroke-width:1.3}.lane-head{fill:var(--lane)}.lane-title{font-size:22px;font-weight:600;text-anchor:middle}\n.edge{fill:none;stroke:var(--edge);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}\n.edge.return{stroke-dasharray:7 5}.lifeline{fill:none;stroke:var(--node-stroke);stroke-dasharray:7 6;stroke-width:1.2}\n.edge-label{font-size:18px;paint-order:stroke;stroke:var(--surface);stroke-width:7px;stroke-linejoin:round}\n.node{cursor:pointer;outline:none}.node:hover .shape,.node:focus .shape,.node.selected .shape,.node.current .shape{stroke:var(--accent);stroke-width:3.5}\n.node.current .store-line,.node.selected .store-line{stroke:var(--accent);stroke-width:4}\n.node.current .actor-line{stroke:var(--accent);stroke-width:4}.node.current .node-label{fill:var(--accent);font-weight:700}\n.node.current .start{fill:var(--accent)}\n.edge.current{stroke:var(--accent);stroke-width:3.5;stroke-dasharray:12 7;animation:trace 1.2s linear infinite}\n@keyframes trace{to{stroke-dashoffset:-38}}@media(prefers-reduced-motion:reduce){.edge.current{animation:none}}\n</style><defs><marker id=\"continuity-arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10Z\" fill=\"var(--edge)\"/></marker><marker id=\"continuity-open\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto\"><path d=\"M1 1L9 5L1 9\" fill=\"none\" stroke=\"var(--edge)\" stroke-width=\"1.4\"/></marker></defs><path class=\"lifeline\" d=\"M120 104V700\"/><path class=\"lifeline\" d=\"M425 104V700\"/><path class=\"lifeline\" d=\"M735 104V700\"/><path class=\"lifeline\" d=\"M1080 104V700\"/><path class=\"edge arrow\" data-edge=\"e0\" data-source=\"user\" data-target=\"old\" d=\"M120 180L425 180\" marker-end=\"url(#continuity-arrow)\"/><path class=\"edge arrow\" data-edge=\"e1\" data-source=\"old\" data-target=\"memory\" d=\"M425 265L735 265\" marker-end=\"url(#continuity-arrow)\"/><path class=\"edge return\" data-edge=\"e2\" data-source=\"memory\" data-target=\"old\" d=\"M735 325L425 325\" marker-end=\"url(#continuity-open)\"/><path class=\"edge arrow\" data-edge=\"e3\" data-source=\"user\" data-target=\"new\" d=\"M120 415L1080 415\" marker-end=\"url(#continuity-arrow)\"/><path class=\"edge arrow\" data-edge=\"e4\" data-source=\"new\" data-target=\"memory\" d=\"M1080 500L735 500\" marker-end=\"url(#continuity-arrow)\"/><path class=\"edge return\" data-edge=\"e5\" data-source=\"memory\" data-target=\"new\" d=\"M735 575L1080 575\" marker-end=\"url(#continuity-open)\"/><path class=\"edge return\" data-edge=\"e6\" data-source=\"new\" data-target=\"user\" d=\"M1080 660L120 660\" marker-end=\"url(#continuity-open)\"/><g class=\"node normal\" data-node=\"user\" role=\"button\" tabindex=\"0\" aria-label=\"你\"><title>你</title><rect class=\"shape\" x=\"35\" y=\"40\" width=\"170\" height=\"64\" rx=\"0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"120.0\" y=\"79.0\">你</tspan></text></g><g class=\"node normal\" data-node=\"old\" role=\"button\" tabindex=\"0\" aria-label=\"原客户端\"><title>原客户端</title><rect class=\"shape\" x=\"340\" y=\"40\" width=\"170\" height=\"64\" rx=\"0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"425.0\" y=\"79.0\">原客户端</tspan></text></g><g class=\"node normal\" data-node=\"memory\" role=\"button\" tabindex=\"0\" aria-label=\"EvolvMem\"><title>EvolvMem</title><rect class=\"shape\" x=\"650\" y=\"40\" width=\"170\" height=\"64\" rx=\"0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"735.0\" y=\"79.0\">EvolvMem</tspan></text></g><g class=\"node normal\" data-node=\"new\" role=\"button\" tabindex=\"0\" aria-label=\"新客户端\"><title>新客户端</title><rect class=\"shape\" x=\"995\" y=\"40\" width=\"170\" height=\"64\" rx=\"0\"/><text class=\"node-label\" text-anchor=\"middle\"><tspan x=\"1080.0\" y=\"79.0\">新客户端</tspan></text></g><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"272.5\" y=\"162.0\">提出任务与确认要求</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"580.0\" y=\"247.0\">保存需求、进度、下一步</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"580.0\" y=\"307.0\">返回已保存的任务引用</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"600.0\" y=\"397.0\">切换客户端，继续原任务</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"907.5\" y=\"482.0\">定位项目与原任务</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"907.5\" y=\"557.0\">返回断点、版本及状态</tspan></text><text class=\"edge-label\" text-anchor=\"middle\"><tspan x=\"600.0\" y=\"642.0\">核对当前状态并继续任务</tspan></text></svg>"
+  }
+]

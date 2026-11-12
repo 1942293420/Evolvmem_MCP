@@ -1,0 +1,773 @@
+/* Identity-bound console. No actor identity or source paths are supplied by UI. */
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const ROOT = '/api/knowledge-console';
+  const query = new URLSearchParams(location.search);
+  const inspect = query.get('inspect') === '1';
+  const state = {me:null,owner:null,users:[],pending:[],grants:[],ticket:0,edit:null,expPage:1,matrix:null,evoFilter:'all',selectedEvoId:''};
+  const experienceCategories=['前端经验','业务经验','系统环境经验'];
+  const errors = {login_required:'登录已失效，请重新登录。',account_not_bound:'此飞书身份尚未绑定用户，请联系管理员在“用户与权限”中绑定。',unbound_identity:'此飞书身份尚未绑定用户，请联系管理员。',user_disabled:'此账号已停用。',account_disabled:'此账号已停用。',access_denied:'没有读取这类知识的权限。',permission_denied:'没有读取这类知识的权限。',forbidden:'没有操作权限。',admin_required:'此操作需要管理员权限。',revision_conflict:'资料已被其他操作更新，请刷新后重试。',invalid_csrf:'登录校验已过期，请刷新页面。',console_not_initialized:'用户管理尚未初始化，请联系管理员。',legacy_web_disabled:'旧功能已关闭。',experience_revision_conflict:'这条经验已被其他操作更新，请刷新后再编辑。',experience_not_found:'经验已移动或删除，请刷新列表。',invalid_experience_category:'请选择正确的经验分类。',experience_management_forbidden:'只能管理自己的经验。',invalid_experience_text:'请检查填写的内容和字数。',experience_request_id_conflict:'本次请求内容已变化，请关闭后重新操作。'};
+  const inspectPath = path => inspect && path.startsWith(ROOT) ? `${path}${path.includes('?')?'&':'?'}inspect=1` : path;
+  async function api(path, body, options={}) {
+    const method = body === undefined ? 'GET' : 'POST';
+    const url = method === 'GET' && !options.normal ? inspectPath(path) : path;
+    let response;try{response=await fetch(url,{method,credentials:'same-origin',cache:'no-store',headers:body===undefined?{}:{'Content-Type':'application/json','X-CSRF-Token':state.me?.csrf_token||''},...(body===undefined?{}:{body:JSON.stringify(body)})});}catch(_){throw new Error(method==='POST'?'网络连接中断，操作结果尚未确认。请保留内容后重试。':'网络连接中断，请重试。');}
+    let data;try{data=await response.json();}catch(_){if(response.ok)throw new Error('服务器返回内容无法读取，操作结果尚未确认，请重试。');data={};}
+    if(!response.ok){const error=new Error(errors[data.error] || (response.status===403?'没有操作权限。':response.status===401?'请登录后继续。':response.status===409?'资料已更新，请刷新后重试。':method==='POST'?'保存未完成，请检查内容后重试。':'读取未完成，请刷新后重试。'));error.code=data.error;error.status=response.status;throw error;}
+    return data;
+  }
+  function notice(text,bad=false){const el=$('console-notice');el.hidden=!text;el.textContent=text;el.classList.toggle('error',bad);}
+  function heading(title,desc,action=''){return `<header class="page-head"><div><p class="eyebrow">EVOLVMEM / 知识管理</p><h1>${esc(title)}</h1><p class="muted">${esc(desc)}</p></div>${action}</header>`;}
+  function libraryURL(id,kind,inspection=inspect){return `/?user=${encodeURIComponent(id)}${inspection?'&inspect=1':''}#${kind}`;}
+  function sourceState(lib,kind){return !lib[`can_read_${kind}`]?'未授权':!lib[`${kind==='history'?'history':'experience'}_connected`]?'数据尚未接入':'已接入';}
+  function libraryBase(){return `${ROOT}/libraries/${encodeURIComponent(state.owner.id)}`;}
+  function ownerAllowed(kind){return Boolean(state.owner?.[`can_read_${kind}`]);}
+  function ownerConnected(kind){return Boolean(state.owner?.[`${kind==='history'?'history':'experience'}_connected`]);}
+  function fillContext(){
+    const me=state.me;
+    $('actor-name').textContent=me.current_user.display_name;
+    $('admin-nav').hidden=!me.current_user.is_admin;
+    $('skills-nav').hidden=!me.current_user.is_admin;
+    $('admin-nav').href='/?#users';
+    $('library-owner').textContent=state.owner?`当前查看：${state.owner.display_name}的知识库`:'当前查看：知识库不可用';
+    $('library-access').textContent=inspect?'管理员只读查看':state.owner?.id===me.current_user.id?'我的知识库':'已授权 · 只读';
+    const policy=me.policy||{};
+    $('runtime-status').textContent=policy.ai_processing_enabled===false?'AI 自动总结已暂停 · 原文保留':policy.ai_processing_enabled===true?'AI 自动总结运行中':'运行状态尚未确认';
+  }
+  function updateNavCounts(m){
+    if(!m||!m.stats)return;
+    const s=m.stats;
+    const setBadge=(id,txt)=>{const el=$(id);if(!el)return;el.textContent=txt;el.hidden=!txt;};
+    setBadge('nav-count-sync',`${s.onlineAgents}/${s.totalAgents}`);
+    setBadge('nav-count-evo',s.pendingEvolutionCount>0?String(s.pendingEvolutionCount):'');
+    setBadge('nav-count-exp',s.manualExperienceCount>0?String(s.manualExperienceCount):'');
+    setBadge('nav-count-skills',s.skillCatalogCount>0?String(s.skillCatalogCount):'');
+  }
+  async function ensureMatrix(force=false){
+    if(state.matrix&&!force)return state.matrix;
+    try{
+      state.matrix=await api(`${ROOT}/matrix`,undefined,{normal:true});
+      updateNavCounts(state.matrix);
+    }catch(_){
+      state.matrix=state.matrix||{stats:{onlineAgents:1,totalAgents:1,lanSessionHeads:0,lanUploads:0,lanWrites:0,continuityFocusCount:0,workstreamsCount:0,manualExperienceCount:0,historyExperienceCount:0,capabilityMemoryCount:0,coreMemoryCount:0,pendingEvolutionCount:0,candidateRulesCount:0,factConflictsCount:0,skillCatalogCount:0,activeRulesCount:0},agents:[],handoffs:[],writeReceipts:[],funnel:[],evolutionQueue:[],nebula:{memories:[],skills:[],nebulaLinks:[],evolutionQueue:[]}};
+    }
+    return state.matrix;
+  }
+  async function boot(){
+    try{
+      state.me=await api(`${ROOT}/me`);
+      state.owner=(state.me.libraries||[]).find(x=>x.id===(query.get('user')||state.me.current_user.id)) || null;
+      fillContext();
+      window.EvolvMemHistory.configure({api:state.owner?`${libraryBase()}/history`:'',attachmentBase:state.owner?`${libraryBase()}/history/attachment`:'',storageKey:`evolvmem.history.${state.me.current_user.id}.${state.owner?.id||'none'}.${inspect?'inspect':'normal'}.`,canManage:!!state.owner?.can_manage_history&&!inspect,inspect});
+      ensureMatrix().catch(()=>{});
+      await route();
+    }catch(e){$('actor-name').textContent='登录与绑定';$('library-context').hidden=true;$('runtime-status').textContent='';$('console-view').innerHTML=`${heading('暂时无法进入知识库','请核对登录和账号绑定状态。')}<div class="empty"><p role="alert">${esc(e.message)}</p><a class="button" href="/auth/login">重新登录</a></div>`;}
+  }
+  async function route(options={}){
+    if(!state.me)return;
+    state.routedURL=location.href;
+    let parts=location.hash.replace(/^#\/?/,'').split('/'),tab=parts[0]||'libraries';
+    if(!['history','experiences','libraries','sync','evolution','skills','users','principles'].includes(tab)){history.replaceState(null,'',`${location.pathname}${location.search}#libraries`);tab='libraries';}
+    const ticket=++state.ticket;
+    if(tab!=='libraries')window.EvolvMemNebula?.unmount();
+    if(tab!=='experiences')state.expView=null;
+    $('library-context').hidden=tab!=='history'&&tab!=='experiences';
+    document.querySelectorAll('[data-nav]').forEach(a=>{if(a.dataset.nav===tab)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+    const isHistory=tab==='history'&&ownerAllowed('history')&&ownerConnected('history');
+    $('history-view').hidden=!isHistory;$('console-view').hidden=isHistory;
+    if(isHistory){window.EvolvMemHistory.mount($('history-view'));return;}
+    if(tab==='history'||tab==='experiences'){
+      const kind=tab==='history'?'history':'experience';
+      if(!state.owner||!ownerAllowed(kind)){$('console-view').innerHTML=heading(kind==='history'?'历史资料':'项目经验','每位用户拥有独立的历史与经验。')+'<div class="empty">当前知识库或这类资料尚未获得访问授权。<a href="#libraries">查看可访问的知识库</a></div>';return;}
+      if(!ownerConnected(kind)){$('console-view').innerHTML=heading(kind==='history'?'历史资料':'项目经验','每位用户拥有独立的历史与经验。')+'<div class="empty">此用户的'+(kind==='history'?'历史资料':'经验数据')+'尚未接入。接入后会显示其自己的内容。</div>';return;}
+    }
+    if(tab!=='experiences')$('console-view').innerHTML='<p class="empty">正在读取…</p>';
+    try{
+      if(tab==='libraries')await libraries(ticket);
+      else if(tab==='sync')await syncView(ticket);
+      else if(tab==='evolution')await evolutionView(ticket);
+      else if(tab==='users')await users(parts[1]==='grants'?'grants':'accounts',ticket);
+      else if(tab==='experiences')await experiences(parts[1],ticket,options);
+      else if(tab==='skills'){await skills(ticket);}
+      else if(tab==='principles'){$('console-view').innerHTML=window.EvolvMemPrinciples.render(state.me.policy||{});}
+    }catch(e){if(ticket===state.ticket)$('console-view').innerHTML=heading('页面暂时无法读取','资料仍保留在原来的知识库中。')+`<p class="empty error" role="alert">${esc(e.message)}</p>`;}
+  }
+  async function skills(ticket) {
+    const base = ROOT + '/skills';
+    const options = {normal:true};
+    const sources = [['','全部来源'],['official','官方'],['windows','Windows']];
+    const formatSync = value => value ? new Date(value).toLocaleString('zh-CN') : '尚未同步';
+    const initial = await api(base, undefined, options);
+    if (ticket !== state.ticket) return;
+
+    $('console-view').innerHTML = heading('Skill 库','按用途查找 Skill，点击卡片查看中文说明和原文。') +
+      '<div id="skill-catalog"><form id="skill-filters" class="filters experience-filters">' +
+      '<label class="grow">查找 Skill<input name="q" type="search" maxlength="160" placeholder="搜索中文用途、原名或来源"></label>' +
+      '<label>来源<select name="source">' + sources.map(([key,label]) =>
+        '<option value="' + key + '">' + label + '</option>').join('') +
+      '</select></label><button type="submit" class="primary">查找</button>' +
+      '<button type="button" id="skill-reset">清除筛选</button></form>' +
+      '<section class="skill-category-section" aria-labelledby="skill-category-heading">' +
+      '<div class="skill-category-heading"><h2 id="skill-category-heading">用途分类</h2>' +
+      '<p class="muted">一项 Skill 可用于多个分类</p></div>' +
+      '<div id="skill-categories" class="skill-categories" role="group" aria-label="按用途筛选"></div></section>' +
+      '<div class="skill-results-head"><p id="skill-count" role="status"></p><p id="skill-sync" class="muted"></p></div>' +
+      '<div class="skill-grid" id="skill-results" aria-label="Skill 宫格"></div></div>' +
+      '<section class="skill-detail" id="skill-detail" aria-label="Skill 详情" hidden></section>';
+    $('skill-sync').textContent = '官方同步 ' + formatSync(initial.sync.official) +
+      ' · Windows 同步 ' + formatSync(initial.sync.windows);
+    let listRequest = 0, detailRequest = 0, fileRequest = 0, selected = '', gridScroll = 0;
+    const presentation = skill => skill.presentation || {};
+    const title = skill => presentation(skill).title_zh || skill.name;
+    const summary = skill => presentation(skill).summary_zh || skill.description;
+    const untranslated = skill => !presentation(skill).title_zh;
+    let filters = {q:'',source:'',category:''}, desiredCategory = '';
+    const categories = skill => skill.categories || [];
+    const categoryBadges = skill => '<span class="skill-card-categories">' +
+      categories(skill).map(item => '<span class="skill-category-badge">' + esc(item.label) + '</span>').join('') + '</span>';
+
+    function showCategories(data) {
+      const focused = document.activeElement?.dataset.skillCategory;
+      const choices = [{id:'',label:'全部',count:data.matched_total ?? data.rows.length},
+        ...(data.categories || []).filter(item => item.id !== 'uncategorized' || item.count > 0 || filters.category === item.id)];
+      $('skill-categories').innerHTML = choices.map(item =>
+        '<button type="button" class="skill-category" data-skill-category="' + esc(item.id) +
+        '" aria-pressed="' + String(filters.category === item.id) + '"><span>' + esc(item.label) +
+        '</span><span class="skill-category-count">' + esc(item.count) + '</span></button>'
+      ).join('');
+      document.querySelectorAll('[data-skill-category]').forEach(button =>
+        button.onclick = () => applyFilters(button.dataset.skillCategory));
+      if (focused !== undefined) Array.from(document.querySelectorAll('[data-skill-category]'))
+        .find(button => button.dataset.skillCategory === focused)?.focus({preventScroll:true});
+    }
+
+    function resetFilters() {
+      $('skill-filters').reset();
+      return applyFilters('');
+    }
+
+    function backToGrid() {
+      ++detailRequest;
+      ++fileRequest;
+      $('skill-detail').hidden = true;
+      $('skill-catalog').hidden = false;
+      const button = Array.from(document.querySelectorAll('[data-skill]')).find(el => el.dataset.skill === selected);
+      if (button) button.focus({preventScroll:true});
+      window.scrollTo({top:gridScroll,behavior:'instant'});
+    }
+
+    function rawContent(data) {
+      return data.base64 ? '<a class="button" download="' + esc(data.file.split('/').pop()) +
+        '" href="data:application/octet-stream;base64,' + esc(data.base64) + '">下载文件</a>'
+        : '<pre class="skill-text">' + esc(data.text) + '</pre>';
+    }
+
+    async function showFile(id, file) {
+      const request = ++fileRequest;
+      const target = $('skill-file-content');
+      const error = $('skill-file-error');
+      target.setAttribute('aria-busy','true');
+      error.textContent = '正在读取文件…';
+      try {
+        const data = await api(base + '?' + new URLSearchParams({id,file}), undefined, options);
+        if (ticket !== state.ticket || request !== fileRequest || $('skill-detail').hidden) return;
+        target.innerHTML = rawContent(data);
+        error.textContent = '';
+      } catch (failure) {
+        if (ticket !== state.ticket || request !== fileRequest) return;
+        target.innerHTML = '';
+        error.innerHTML = esc(failure.message) + ' <button type="button" id="skill-file-retry">重试</button>';
+        $('skill-file-retry').onclick = () => showFile(id,file);
+      } finally {
+        if (request === fileRequest) target.removeAttribute('aria-busy');
+      }
+    }
+
+    async function showDetail(id) {
+      const request = ++detailRequest;
+      ++fileRequest;
+      selected = id;
+      if (!$('skill-catalog').hidden) gridScroll = window.scrollY;
+      $('skill-catalog').hidden = true;
+      const box = $('skill-detail');
+      box.hidden = false;
+      box.innerHTML = '<button type="button" id="skill-back" class="skill-back">← 返回宫格</button>' +
+        '<div class="panel skill-detail-body" id="skill-detail-body" aria-busy="true"><p role="status">正在读取 Skill…</p></div>';
+      $('skill-back').onclick = backToGrid;
+      box.scrollIntoView({block:'start',behavior:'instant'});
+      $('skill-back').focus({preventScroll:true});
+      try {
+        const data = await api(base + '?' + new URLSearchParams({id}), undefined, options);
+        if (ticket !== state.ticket || request !== detailRequest) return;
+        const skill = data.skill;
+        const info = presentation(skill);
+        $('skill-detail-body').innerHTML = '<div class="skill-detail-heading"><span class="badge">' +
+          esc(skill.origin) + '</span>' + categoryBadges(skill) + '<h2 id="skill-title" tabindex="-1">' + esc(title(skill)) +
+          '</h2><p class="skill-original-name">' + esc(skill.name) + '</p></div>' +
+          '<section class="skill-description"><h3>中文用途说明</h3>' +
+          (untranslated(skill) ? '<p class="muted">中文说明待更新，以下为原始用途。</p>' : '') +
+          '<p class="skill-summary">' + esc(summary(skill)) + '</p>' +
+          (info.content_zh ? '<p class="skill-explanation">' + esc(info.content_zh) + '</p>' : '') + '</section>' +
+          '<details class="skill-original"><summary>查看原文与文件</summary>' +
+          '<p class="muted">此处为同步的原始文件。中文说明单独保存，不修改原生 Skill。</p>' +
+          '<p class="muted skill-version">版本 ' + esc(skill.version) + '</p>' +
+          (skill.url ? '<p><a target="_blank" rel="noopener noreferrer" href="' +
+            esc(skill.url) + '">查看官方版本</a></p>' : '') +
+          '<label class="skill-file-label">文件 <select id="skill-file">' + data.files.map(path =>
+            '<option value="' + esc(path) + '"' + (path === data.file ? ' selected' : '') + '>' +
+            esc(path) + '</option>').join('') + '</select></label>' +
+          '<p id="skill-file-error" class="muted" role="status"></p>' +
+          '<div id="skill-file-content">' + rawContent(data) + '</div></details>';
+        $('skill-detail-body').removeAttribute('aria-busy');
+        $('skill-file').onchange = event => showFile(id,event.target.value);
+        // Keep keyboard focus on the persistent Back control if the user has moved it.
+        if (document.activeElement === $('skill-back')) $('skill-title').focus({preventScroll:true});
+      } catch (error) {
+        if (ticket !== state.ticket || request !== detailRequest) return;
+        $('skill-detail-body').innerHTML = '<p class="error" role="alert">' + esc(error.message) +
+          '</p><button type="button" id="skill-detail-retry">重新读取</button>';
+        $('skill-detail-body').removeAttribute('aria-busy');
+        $('skill-detail-retry').onclick = () => showDetail(id);
+      }
+    }
+
+    function showRows(data) {
+      const label = (data.categories || []).find(item => item.id === filters.category)?.label;
+      $('skill-count').textContent = (label ? label + ' · ' : '') + data.rows.length + ' 条 Skill';
+      showCategories(data);
+      $('skill-results').innerHTML = data.rows.map(skill =>
+        '<button class="skill-card" type="button" data-skill="' + esc(skill.id) + '">' +
+        categoryBadges(skill) + '<span class="skill-card-source">' + esc(skill.origin) + '</span>' +
+        '<strong class="skill-card-title">' + esc(title(skill)) + '</strong>' +
+        '<span class="skill-card-name">' + esc(skill.name) + '</span>' +
+        '<span class="skill-card-summary">' + esc(summary(skill)) + '</span>' +
+        '<span class="skill-card-footer">' + (untranslated(skill) ? '中文说明待更新' : '查看详情') +
+        '<span aria-hidden="true"> →</span></span></button>'
+      ).join('') || '<div class="empty"><p>没有符合条件的 Skill。</p><button type="button" id="skill-clear">清除筛选</button></div>';
+      document.querySelectorAll('[data-skill]').forEach(button =>
+        button.onclick = () => showDetail(button.dataset.skill));
+      if ($('skill-clear')) $('skill-clear').onclick = resetFilters;
+    }
+
+    async function applyFilters(category = desiredCategory) {
+      desiredCategory = category;
+      const request = ++listRequest;
+      const form = $('skill-filters');
+      const submit = form.querySelector('[type=submit]');
+      const next = {q:form.elements.q.value,source:form.elements.source.value,category};
+      const params = new URLSearchParams(next);
+      submit.disabled = true;
+      submit.textContent = '正在查找…';
+      $('skill-results').setAttribute('aria-busy','true');
+      $('skill-categories').setAttribute('aria-busy','true');
+      notice('');
+      try {
+        const data = await api(base + '?' + params, undefined, options);
+        if (ticket === state.ticket && request === listRequest) {
+          filters = next;
+          showRows(data);
+        }
+      } catch (error) {
+        if (ticket === state.ticket && request === listRequest) {
+          desiredCategory = filters.category;
+          form.elements.q.value = filters.q;
+          form.elements.source.value = filters.source;
+          notice(error.message + '；筛选未生效，仍显示上次结果。',true);
+        }
+      } finally {
+        if (ticket === state.ticket && request === listRequest) {
+          submit.disabled = false;
+          submit.textContent = '查找';
+          $('skill-results').removeAttribute('aria-busy');
+          $('skill-categories').removeAttribute('aria-busy');
+        }
+      }
+    }
+    showRows(initial);
+    $('skill-filters').onsubmit = event => { event.preventDefault(); applyFilters(); };
+    $('skill-filters').elements.source.onchange = () => applyFilters();
+    $('skill-reset').onclick = resetFilters;
+  }
+
+  function renderTopologyHTML(agents, compact=false){
+    const left=agents.filter((_,i)=>i%2===0),right=agents.filter((_,i)=>i%2===1);
+    const nodeCard=a=>`<div class="agent-node" style="cursor:default"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px"><strong style="font-size:13.5px">${esc(a.name)}</strong><span class="badge badge-ok">ONLINE</span></div><div style="font-size:12px;color:var(--ink-secondary)">${esc(a.role)}</div><div class="meta-row mono" style="margin-top:6px;font-size:12px"><span>会话头 <b>${esc(a.sessionsSynced)}</b></span><span>脉搏 ${esc(a.lastPulse)}</span></div></div>`;
+    return `<div class="topology-wrap"><svg class="neural-wires" viewBox="0 0 800 260" preserveAspectRatio="none" aria-hidden="true"><path class="wire-base" d="M190,65 C300,65 310,130 400,130"/><path class="wire-flow" d="M190,65 C300,65 310,130 400,130"/><path class="wire-base" d="M190,195 C300,195 310,130 400,130"/><path class="wire-flow" d="M190,195 C300,195 310,130 400,130"/><path class="wire-base" d="M610,65 C500,65 490,130 400,130"/><path class="wire-flow" d="M610,65 C500,65 490,130 400,130"/><path class="wire-base" d="M610,195 C500,195 490,130 400,130"/><path class="wire-flow" d="M610,195 C500,195 490,130 400,130"/></svg><div class="agent-col">${left.slice(0,compact?2:4).map(nodeCard).join('')}</div><div class="core-hub" style="text-align:center;position:relative;z-index:1;padding:16px 10px;background:var(--surface-raised);border:1px solid var(--brand-border);border-radius:var(--radius-md);box-shadow:var(--brand-glow)"><div class="mono" style="font-size:12px;color:var(--brand);font-weight:700">LAN_CAS :9378</div><strong style="display:block;font-size:15px;margin:4px 0">神经记忆同步中枢</strong><div style="font-size:12px;color:var(--ink-muted)">SHA-256 幂等回执</div></div><div class="agent-col">${(right.length?right:left.slice(0,1)).slice(0,compact?2:4).map(nodeCard).join('')}</div></div>`;
+  }
+
+  function renderFunnelHTML(funnel){
+    const maxC=Math.max(1,...funnel.map(f=>Number(f.count)||0));
+    return `<div style="display:flex;flex-direction:column;gap:10px">${funnel.map((f,idx)=>{
+      const pct=Math.max(12,Math.round((Math.log10((f.count||0)+1)/Math.log10(maxC+1))*100));
+      const color=idx===4?'var(--evolve)':idx===3?'var(--warn)':idx===2?'var(--ok)':'var(--brand)';
+      return `<div style="padding:10px 13px;background:var(--bg-subtle);border:1px solid var(--line);border-radius:var(--radius-sm)"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px"><strong style="font-size:13.5px">${esc(f.stage)}</strong><span class="mono" style="font-weight:700;color:${color}">${esc(f.count)}</span></div><div style="height:6px;background:rgba(148,163,184,0.18);border-radius:999px;overflow:hidden;margin-bottom:5px"><div style="height:100%;width:${pct}%;background:${color};border-radius:999px"></div></div><div style="font-size:12px;color:var(--ink-muted)">${esc(f.desc)}</div></div>`;
+    }).join('')}</div>`;
+  }
+
+  function promoteEvolutionToExperience(ev){
+    const selfLib=(state.me.libraries||[]).find(x=>x.id===state.me.current_user.id);
+    if(!selfLib||!selfLib.can_manage_experience||inspect){
+      notice('当前处于只读模式，返回本人知识库后可将演化项沉淀为正式经验。',true);
+      return;
+    }
+    state.owner=selfLib;
+    fillContext();
+    const cat=experienceCategories.includes(ev.categorySuggest)?ev.categorySuggest:'系统环境经验';
+    experienceEditor(null,cat);
+    const form=$('experience-form');
+    form.elements.category.value=cat;
+    form.elements.problem.value=`${ev.title}${ev.beforeText?'（'+ev.beforeText+'）':''}`.slice(0,980);
+    form.elements.solution.value=(ev.afterText||ev.summary||'').slice(0,7800);
+    form.elements.reusable_experience.value=(ev.summary&&ev.summary!==ev.afterText?`${ev.afterText}\n\n适用依据：${ev.summary}`:ev.afterText||'').slice(0,7800);
+    $('experience-dialog-title').textContent='采纳演化项并沉淀为正式经验';
+  }
+
+  async function syncView(ticket){
+    const m=await ensureMatrix();
+    if(ticket!==state.ticket)return;
+    const s=m.stats||{};
+    $('console-view').innerHTML=
+      `<header class="page-head"><div><p class="eyebrow">EVOLVMEM // MULTI-AGENT SYNC BUS</p><h1>多智能体记忆同步中枢</h1><p class="muted">实时观测跨终端 Codex / DSH / Hermes 增量会话归档、SHA-256 断点续接证明与幂等写入回执。</p></div><a class="btn btn-primary btn-sm" href="#evolution">前往记忆进化工坊 →</a></header>`+
+      `<section class="panel"><div class="panel-head"><div><h2>1. 多端神经同步总线拓扑</h2><p>已同步会话头 <b>${esc(s.lanSessionHeads)}</b> 个 · 增量上传块 <b>${esc(s.lanUploads)}</b> 份 · 幂等 MCP 写入 <b>${esc(s.lanWrites)}</b> 次</p></div><span class="badge badge-ok mono">LAN :9378 ACTIVE</span></div>${renderTopologyHTML(m.agents||[],false)}</section>`+
+      `<div class="grid-2" style="display:grid;grid-template-columns:1.25fr 1fr;gap:18px;align-items:start">`+
+      `<section class="panel"><div class="panel-head"><div><h2>2. 跨端项目断点续接焦点 (Continuity Focus)</h2><p>共 <b>${esc(s.continuityFocusCount)}</b> 个活跃项目焦点 · <b>${esc(s.workstreamsCount)}</b> 条工作流</p></div></div>`+
+      `<div class="table-scroll"><table><thead><tr><th>项目名称</th><th>工作流 ID</th><th>修订号</th><th>工作区指纹</th><th>最近同步</th></tr></thead><tbody>`+
+      ((m.handoffs||[]).map(h=>`<tr><td><b>${esc(h.project)}</b></td><td class="mono">${esc(h.workstreamId)}</td><td><span class="badge badge-brand mono">rev #${esc(h.revision)}</span></td><td class="mono" style="font-size:12px;color:var(--ink-muted)">${esc(h.fingerprint)}</td><td class="mono" style="font-size:12px">${esc(h.updatedAt)}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">暂无活跃断点焦点记录。</td></tr>')+
+      `</tbody></table></div></section>`+
+      `<section class="panel"><div class="panel-head"><div><h2>3. 最近 MCP 幂等写入回执</h2><p>基于 request_id 与 SHA-256 载荷哈希防重复写入</p></div></div>`+
+      `<div style="display:flex;flex-direction:column;gap:9px">${(m.writeReceipts||[]).map(r=>`<div style="padding:10px 12px;background:var(--bg-subtle);border:1px solid var(--line);border-radius:var(--radius-sm)"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="badge badge-brand mono">${esc(r.tool)}</span><span class="mono" style="font-size:12px;color:var(--ok)">SHA256: ${esc(r.payloadHash)}</span></div><div class="mono" style="font-size:12px;margin-top:5px;color:var(--ink);overflow-wrap:anywhere">${esc(r.requestId)}</div><div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${esc(r.meta)}</div></div>`).join('')||'<p class="muted">暂无近期 MCP 写入记录。</p>'}</div></section></div>`;
+  }
+
+  async function evolutionView(ticket){
+    const m=await ensureMatrix();
+    if(ticket!==state.ticket)return;
+    const allItems=m.evolutionQueue||[];
+    const renderEvo=()=>{
+      const filtered=allItems.filter(it=>state.evoFilter==='all'?true:it.type===state.evoFilter);
+      const active=filtered.find(it=>it.id===state.selectedEvoId)||filtered[0]||null;
+      if(active)state.selectedEvoId=active.id;
+      const canPromote=!inspect&&(state.me.libraries||[]).some(l=>l.id===state.me.current_user.id&&l.can_manage_experience);
+      $('console-view').innerHTML=
+        `<header class="page-head"><div><p class="eyebrow">EVOLVMEM // MEMORY EVOLUTION WORKSHOP</p><h1>记忆进化工坊</h1><p class="muted">汇总真实库中的多版本事实冲突、跨会话候选规则与 Skill 升华提案；核定后可一键沉淀为正式结构化经验。</p></div><a class="btn btn-sm" href="#experiences">打开正式经验库 →</a></header>`+
+        `<section class="panel"><div class="panel-head"><div><h2>五阶段记忆进化漏斗 (L0 → L4)</h2><p>从原始会话归档到证据核验经验与多端共享 Skill 的全链路实时分布</p></div></div>${renderFunnelHTML(m.funnel||[])}</section>`+
+        `<section class="panel"><div class="panel-head" style="flex-wrap:wrap;gap:10px"><div><h2>待裁决演化与冲突队列 (${filtered.length})</h2><p>选择左侧条目核对前后版本差异，确认无误后可直接写入个人正式经验库</p></div>`+
+        `<div class="subtabs" style="margin:0">`+
+        [['all','全部事项'],['conflict','事实冲突'],['candidate','候选规则'],['promote','Skill 提案']].map(([k,lbl])=>`<button type="button" class="subtab ${state.evoFilter===k?'active':''}" data-evo-filter="${k}">${lbl}</button>`).join('')+
+        `</div></div>`+
+        `<div class="experience-layout" style="margin-top:12px"><div class="experience-list" style="max-height:540px">`+
+        (filtered.map(it=>`<button type="button" class="experience-entry" data-evo-item="${esc(it.id)}" aria-current="${String(active?.id===it.id)}"><div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px"><span class="badge ${it.type==='conflict'?'badge-warn':it.type==='promote'?'badge-evolve':'badge-brand'}">${esc(it.typeLabel)}</span><span class="mono" style="font-size:12px;color:var(--ink-muted)">${esc(it.updatedAt)}</span></div><strong>${esc(it.title)}</strong><small>${esc(it.summary||it.rationale)}</small></button>`).join('')||'<div class="empty">当前分类下暂无演化事项。</div>')+
+        `</div><div class="panel" style="margin:0">`+
+        (active?`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px"><div><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="badge ${active.type==='conflict'?'badge-warn':'badge-evolve'}">${esc(active.typeLabel)}</span><span class="badge mono">推荐归类：${esc(active.categorySuggest)}</span></div><h3 style="margin:0;font-size:18px">${esc(active.title)}</h3></div>${canPromote?`<button type="button" class="btn btn-primary" id="btn-promote-evo">⚡ 采纳并沉淀为正式经验</button>`:''}</div>`+
+        `<p style="color:var(--ink-secondary);margin-bottom:14px">${esc(active.summary)}</p>`+
+        `<div class="diff-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px"><div style="padding:12px;border-radius:var(--radius-sm);background:var(--warn-soft);border:1px solid var(--warn-border)"><div style="font-size:12px;font-weight:700;color:var(--warn);margin-bottom:6px">历史版本 / 触发上下文</div><div class="experience-text" style="font-size:13.5px">${esc(active.beforeText||'—')}</div></div><div style="padding:12px;border-radius:var(--radius-sm);background:var(--ok-soft);border:1px solid var(--ok-border)"><div style="font-size:12px;font-weight:700;color:var(--ok);margin-bottom:6px">演化结论 / 建议准则</div><div class="experience-text" style="font-size:13.5px">${esc(active.afterText||'—')}</div></div></div>`+
+        `<div style="padding:10px 12px;background:var(--bg-subtle);border:1px solid var(--line);border-radius:var(--radius-sm);font-size:12.5px;color:var(--ink-secondary)"><strong>溯源依据：</strong>${esc(active.rationale)}</div>`:'<p class="muted">请从左侧选择一条演化事件。</p>')+
+        `</div></div></section>`;
+      document.querySelectorAll('[data-evo-filter]').forEach(b=>b.onclick=()=>{state.evoFilter=b.dataset.evoFilter;renderEvo();});
+      document.querySelectorAll('[data-evo-item]').forEach(b=>b.onclick=()=>{state.selectedEvoId=b.dataset.evoItem;renderEvo();});
+      if($('btn-promote-evo')&&active)$('btn-promote-evo').onclick=()=>promoteEvolutionToExperience(active);
+    };
+    renderEvo();
+  }
+
+  async function libraries(ticket){
+    const admin=state.me.current_user.is_admin;
+    // All-user inspection is explicit, never grants ordinary cross-user access.
+    const [data,m]=await Promise.all([
+      api(`${ROOT}/libraries${admin?'?inspect=1':''}`,undefined,{normal:true}),
+      ensureMatrix()
+    ]);
+    if(ticket!==state.ticket)return;
+    window.EvolvMemNebula?.unmount();
+    const s=m.stats||{};
+    const kpis=[
+      ['SYS.01 // NODE_MESH','接入协同节点',`${s.onlineAgents} / ${s.totalAgents}`,'LAN :9378','badge-ok',`已同步 ${s.lanSessionHeads} 个会话头 · ${s.lanUploads} 份增量块`],
+      ['SYS.02 // HANDOFF_PROOF','跨端续接焦点',`${s.continuityFocusCount} 项`,'Continuity','badge-brand',`覆盖 ${s.workstreamsCount} 条活跃工作流 · SHA-256 核验`],
+      ['SYS.03 // VERIFIED_CORE','已沉淀有效经验',`${s.manualExperienceCount} 条`,'精炼经验','badge-ok',`另含 ${s.capabilityMemoryCount} 条工具证据能力记忆`],
+      ['SYS.04 // EVO_DELTA','待确认进化事项',`${s.pendingEvolutionCount} 项`,'Evolution','badge-evolve',`含 ${s.factConflictsCount} 项事实冲突 · ${s.candidateRulesCount} 条候选规则`],
+      ['SYS.05 // SKILL_DIST','多端共享 Skill',`${s.skillCatalogCount} 个`,'Skill Hub','badge-brand',`另含 ${s.activeRulesCount} 条已生效项目提取准则`]
+    ];
+    const heroHTML=`<div class="page-head" style="margin-bottom:14px;flex-wrap:wrap"><div style="min-width:0"><p class="eyebrow">// EVOLVMEM NEXT · CONTROL PLANE</p><h2 style="font-size:23px;margin:0 0 4px;letter-spacing:-0.3px">多智能体记忆同步与进化中枢</h2><p class="muted">统一观测跨设备 Agent 实时归档回执、无损断点接力，以及从候选经验到共享 Skill 的五阶段闭环进化。</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-sm" href="#sync">查看同步拓扑详情 →</a><a class="btn btn-evolve btn-sm" href="#evolution">处理 ${esc(s.pendingEvolutionCount)} 项记忆进化 →</a></div></div>`;
+    const kpiHTML=`<section class="kpi-grid" aria-label="核心态势指标">${kpis.map(([code,label,val,tag,cls,sub])=>`<article class="kpi-card"><div class="kpi-top"><span class="mono" style="font-size:12px;color:var(--ink-muted)">${esc(code)}</span></div><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:4px 0"><span style="font-size:13px;color:var(--ink-secondary)">${esc(label)}</span><span class="badge ${cls}">${esc(tag)}</span></div><strong class="kpi-val">${esc(val)}</strong><div class="kpi-bar"><div class="kpi-bar-fill" style="width:78%"></div></div><div class="kpi-sub">${esc(sub)}</div></article>`).join('')}</section>`;
+    const nebulaHTML=window.EvolvMemNebula?window.EvolvMemNebula.renderSectionHTML(m.nebula):'';
+    const libHTML=`<section class="panel" style="margin-top:18px">`+heading('用户知识库',admin?'从这里选择要查看的知识库。自己的资料可正常管理；查看其他用户时为管理员只读模式。':'从这里选择自己的知识库，或已授权给你的知识库。查看资料不会改变登录账号。')+`<div class="library-grid">${data.libraries.map(lib=>{
+      const inspection=admin&&lib.id!==state.me.current_user.id;
+      return `<article class="library-card" data-library-id="${esc(lib.id)}"><div class="section-head"><div><h2>${esc(lib.display_name)}${lib.id===state.me.current_user.id?' <span class="badge">我的</span>':''}</h2><span class="library-id">${esc(lib.id)}</span></div><span class="badge ${lib.enabled?'good':'disabled'}">${lib.enabled?'已启用':'已停用'}</span></div><div class="library-kinds">${[['history','历史','history_count','段有问答原文'],['experience','经验','experience_count','条经验']].map(([kind,name,count,unit])=>`<div class="kind"><span>${name}</span><strong>${lib[`can_read_${kind}`]?esc(lib[count]??0):'—'}</strong><p>${esc(sourceState(lib,kind))}${lib[`can_read_${kind}`]?' · '+unit:''}</p>${lib[`can_read_${kind}`]?`<a class="button" href="${libraryURL(lib.id,kind==='history'?'history':'experiences',inspection)}">${inspection?'管理员查看（只读）':'打开'+name}</a>`:'<span class="muted">未开放</span>'}</div>`).join('')}</div></article>`;
+    }).join('')||'<p class="empty">暂时没有可访问的知识库。</p>'}</div></section>`;
+    const bottomOverviewHTML=`<div class="grid-2" style="display:grid;grid-template-columns:1.15fr 1fr;gap:18px;margin-top:18px;align-items:start"><section class="panel" style="margin:0"><div class="panel-head"><div><h2>1. 多智能体实时神经同步拓扑</h2><p>跨端增量会话与 LAN :9378 CAS 归档总线</p></div><a class="badge badge-brand" href="#sync">详情 →</a></div>${renderTopologyHTML(m.agents||[],true)}</section><section class="panel" style="margin:0"><div class="panel-head"><div><h2>2. 记忆五阶段进化漏斗 (L0 → L4)</h2><p>真实数据库各层级沉淀规模</p></div><a class="badge badge-evolve" href="#evolution">进入工坊 →</a></div>${renderFunnelHTML(m.funnel||[])}</section></div>`;
+
+    $('console-view').innerHTML=heroHTML+kpiHTML+nebulaHTML+libHTML+bottomOverviewHTML;
+
+    if(window.EvolvMemNebula){
+      window.EvolvMemNebula.mount(m.nebula,{
+        onJumpMemory(raw){
+          if(raw&&raw.manualId){
+            const catParam=raw.category?`&category=${encodeURIComponent(raw.category)}`:'';
+            location.href=`/?user=${encodeURIComponent(state.me.current_user.id)}${catParam}#experiences/${encodeURIComponent(raw.manualId)}`;
+          }else{
+            if(raw&&raw.evoId)state.selectedEvoId=raw.evoId;
+            location.hash='#evolution';
+          }
+        },
+        onJumpSkill(){
+          if(state.me.current_user.is_admin)location.href='/?#skills';
+          else location.hash='#evolution';
+        },
+        onJumpEvolution(evoId){
+          if(evoId)state.selectedEvoId=evoId;
+          location.hash='#evolution';
+        }
+      });
+    }
+  }
+  const adminTabs=tab=>`<nav class="tabs" aria-label="用户管理"><a href="#users" class="${tab==='accounts'?'active':''}">用户账号</a><a href="#users/grants" class="${tab==='grants'?'active':''}">交叉访问权限</a></nav>`;
+  async function users(tab,ticket){
+    if(!state.me.current_user.is_admin)throw new Error('用户与权限仅对管理员开放。');
+    const data=await api(`${ROOT}/users`,undefined,{normal:true});state.users=data.users;state.pending=data.pending;
+    if(ticket!==state.ticket)return;
+    if(tab==='grants'){const grants=await api(`${ROOT}/grants`,undefined,{normal:true});state.grants=grants.rows;if(ticket!==state.ticket)return;}
+    $('console-view').innerHTML=heading('用户与权限',tab==='accounts'?'管理账号、飞书登录绑定和启停状态。':'分别设置“谁能看谁”。历史与经验分别授权，每个方向独立生效。',tab==='accounts'?'<button class="primary" type="button" id="add-user">添加用户</button>':'')+adminTabs(tab)+(tab==='accounts'?accountTable():grantTable());
+    $('add-user')?.addEventListener('click',()=>editUser(null));
+    document.querySelectorAll('[data-edit-user]').forEach(b=>b.onclick=()=>editUser(state.users.find(u=>u.id===b.dataset.editUser)));
+    document.querySelectorAll('[data-save-grant]').forEach(b=>b.onclick=()=>saveGrant(b));
+  }
+  function accountTable(){return `<section class="panel table-scroll"><table><thead><tr><th>用户</th><th>登录身份</th><th>数据接入</th><th>CLI 接入</th><th>状态</th><th>操作</th></tr></thead><tbody>${state.users.map(u=>`<tr><td><b>${esc(u.display_name)}</b>${u.is_admin?' <span class="badge">管理员</span>':''}<small>${esc(u.id)}</small></td><td>${u.login_bound?'已绑定飞书':'尚未绑定'}</td><td>历史：${u.history_connected?'已接入':'未接入'}<small>经验：${u.experience_connected?'已接入':'未接入'}</small></td><td>${u.lan_state==='existing_identity'?'已有接入身份':'尚未配置'}</td><td><span class="badge ${u.enabled?'good':'disabled'}">${u.enabled?'已启用':'已停用'}</span></td><td><button type="button" data-edit-user="${esc(u.id)}">编辑</button></td></tr>`).join('')}</tbody></table></section><section class="panel"><h2>等待绑定的飞书登录</h2><p class="muted">用户先通过飞书登录后会出现在这里。绑定账号之前无法读取知识。</p>${state.pending.length?`<ul>${state.pending.map(p=>`<li>${esc(p.name)} <span class="muted">最近登录 ${esc(p.last_seen)}</span></li>`).join('')}</ul>`:'<p class="muted">暂无等待绑定的登录。</p>'}</section>`;}
+  function grantTable(){
+    const pairs=[];for(const viewer of state.users)for(const owner of state.users)if(viewer.id!==owner.id){const old=state.grants.find(r=>r.viewer_id===viewer.id&&r.owner_id===owner.id)||{revision:0,history_read:false,experience_read:false};pairs.push({viewer,owner,...old});}
+    return `<div class="notice">自己的知识始终可读。开启 A → B 不会开启 B → A。普通浏览（包括管理员）遵循这里的授权；“用户知识库”中的管理员查看是单独的只读管理入口。</div><section class="panel table-scroll"><table><thead><tr><th>访问方向</th><th>允许看历史</th><th>允许看经验</th><th>操作</th></tr></thead><tbody>${pairs.map((p,i)=>`<tr data-grant-row="${i}" data-viewer="${esc(p.viewer.id)}" data-owner="${esc(p.owner.id)}" data-revision="${esc(p.revision)}"><td><div class="grant-direction"><b>${esc(p.viewer.display_name)}</b><span class="grant-arrow">→</span><b>${esc(p.owner.display_name)}</b></div><small>${esc(p.viewer.id)} → ${esc(p.owner.id)}</small></td><td><label class="check"><input type="checkbox" data-grant-history ${p.history_read?'checked':''} aria-label="${esc(p.viewer.display_name)}可看${esc(p.owner.display_name)}的历史">历史</label></td><td><label class="check"><input type="checkbox" data-grant-experience ${p.experience_read?'checked':''} aria-label="${esc(p.viewer.display_name)}可看${esc(p.owner.display_name)}的经验">经验</label></td><td><button class="grant-save" type="button" data-save-grant>保存</button></td></tr>`).join('')}</tbody></table></section>`;
+  }
+  async function saveGrant(button){const row=button.closest('tr');button.disabled=true;button.textContent='保存中…';try{const result=await api(`${ROOT}/grants`,{viewer_id:row.dataset.viewer,owner_id:row.dataset.owner,history_read:row.querySelector('[data-grant-history]').checked,experience_read:row.querySelector('[data-grant-experience]').checked,revision:Number(row.dataset.revision)});row.dataset.revision=String(result.row.revision);button.textContent='已保存';notice('有向授权已保存；反方向的设置保持独立。');}catch(e){button.textContent='重试';notice(e.message,true);}finally{button.disabled=false;}}
+  function editUser(user){
+    state.edit=user;const form=$('user-form');form.reset();form.elements.id.value=user?.id||'';form.elements.id.disabled=!!user;form.elements.display_name.value=user?.display_name||'';form.elements.enabled.checked=user?user.enabled:true;form.elements.enabled.disabled=!!user?.is_admin;
+    $('user-dialog-title').textContent=user?'编辑用户':'添加用户';$('user-form-error').textContent='';
+    const identities=[...(user?.open_id?[{open_id:user.open_id,name:'当前绑定身份'}]:[]),...state.pending.filter(p=>p.open_id!==user?.open_id)];
+    $('login-binding').innerHTML='<option value="">暂不绑定</option>'+identities.map(p=>`<option value="${esc(p.open_id)}">${esc(p.name)} · ${esc(p.open_id.slice(-8))}</option>`).join('');
+    form.elements.open_id.value=user?.open_id||'';form.elements.open_id.disabled=!!user?.is_admin;$('user-dialog').showModal();
+  }
+  $('user-form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('[type=submit]');button.disabled=true;const user=state.edit;const body={display_name:form.elements.display_name.value.trim(),enabled:form.elements.enabled.checked};if(!user){body.id=form.elements.id.value.trim();if(form.elements.open_id.value)body.open_id=form.elements.open_id.value;}else{body.revision=user.revision;if(!user.is_admin)body.open_id=form.elements.open_id.value||null;}
+    try{await api(`${ROOT}/users${user?'/'+encodeURIComponent(user.id):''}`,body);$('user-dialog').close();notice('用户设置已保存。');await route();}catch(e){$('user-form-error').textContent=e.message;}finally{button.disabled=false;}};
+  document.querySelectorAll('[data-close-user]').forEach(b=>b.onclick=()=>$('user-dialog').close());
+  function asText(value){return typeof value==='string'?value:JSON.stringify(value,null,2);}
+  function detailSection(title,value){if(value===null||value===undefined||value===''||Array.isArray(value)&&!value.length)return '';return `<section><h3>${esc(title)}</h3>${Array.isArray(value)?`<ol>${value.map(x=>`<li class="experience-text">${esc(asText(x))}</li>`).join('')}</ol>`:`<div class="experience-text">${esc(asText(value))}</div>`}</section>`;}
+  function experienceURL(values={},itemId){
+    const url=new URL(location.href);
+    for(const name of ['origin','review','status','project'])url.searchParams.delete(name);
+    for(const [name,value] of Object.entries(values)){if(value!==''&&value!==null&&value!==undefined)url.searchParams.set(name,String(value));else url.searchParams.delete(name);}
+    url.hash=itemId ? 'experiences/'+encodeURIComponent(itemId) : 'experiences';return url.href;
+  }
+  function experienceNavigate(values={},options={}){
+    const next=experienceURL(values,options.itemId);
+    if(next!==location.href)history[options.replace?'replaceState':'pushState'](null,'',next);
+    return route(options);
+  }
+  function requestId(){if(typeof crypto?.randomUUID==='function')return crypto.randomUUID();const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return 'manual-'+Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');}
+  function experienceCanManage(){return !inspect&&state.owner?.id===state.me.current_user.id&&state.owner?.can_manage_experience!==false;}
+  function experienceDate(value){const date=new Date(value);return isNaN(date)?'':date.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
+  const experienceFields=['category','problem','solution','reusable_experience'];
+  function experienceDraft(){
+    const fields=$('experience-form').elements;
+    return JSON.stringify(experienceFields.map(name=>fields[name].value));
+  }
+  function requestExperienceClose(){
+    if(state.expSaving)return;
+    if(state.expDraft===experienceDraft()){$('experience-dialog').close();return;}
+    state.expDraftFocus=document.activeElement;
+    $('experience-discard').hidden=false;
+    $('experience-keep-editing').focus();
+  }
+  function keepEditingExperience(){
+    $('experience-discard').hidden=true;
+    (state.expDraftFocus || $('experience-form').elements.problem).focus();
+  }
+  function experienceEditor(record=null,category=experienceCategories[0]){
+    if(!experienceCanManage())return;
+    const form=$('experience-form');state.expEdit=record;state.expRequest=null;form.reset();
+    $('experience-dialog-title').textContent=record?'编辑经验':'新增经验';
+    form.elements.category.value=record?.category||category;
+    for(const name of ['problem','solution','reusable_experience'])form.elements[name].value=record?.[name]||'';
+    state.expEditorTrigger=document.activeElement;
+    state.expDraft=experienceDraft();
+    state.expDraftFocus=null;
+    $('experience-discard').hidden=true;
+    $('experience-form-error').textContent='';$('experience-dialog').showModal();form.elements.problem.focus();
+  }
+  $('experience-form').onsubmit=async event=>{
+    event.preventDefault();if(!experienceCanManage())return;
+    const form=event.currentTarget,button=form.querySelector('[type=submit]');if(button.disabled)return;
+    const record=state.expEdit,body={action:record?'update':'create'};
+    if(record){body.id=record.id;body.revision=record.revision;}
+    for(const key of experienceFields)body[key]=form.elements[key].value.trim();
+    if(['problem','solution','reusable_experience'].some(key=>!body[key])){$('experience-form-error').textContent='请填写问题、解决办法和可复用经验。';return;}
+    const signature=JSON.stringify(body);if(state.expRequest?.signature!==signature)state.expRequest={signature,id:requestId()};
+    state.expSaving=true;for(const control of form.elements)control.disabled=true;button.textContent='正在保存…';$('experience-form-error').textContent='';
+    try{
+      const result=await api(`${libraryBase()}/experiences`,{...body,request_id:state.expRequest.id});
+      state.matrix=null;
+      $('experience-dialog').close();state.expEdit=null;state.expRequest=null;
+      notice('经验已保存。');await experienceNavigate({category:result.experience.category,q:'',page:'',deleted:''},{refreshExperience:true});
+    }catch(e){$('experience-form-error').textContent=e.message||'保存未确认，请保留内容后重试。';}
+    finally{state.expSaving=false;for(const control of form.elements)control.disabled=false;button.textContent='保存经验';}
+  };
+  document.querySelectorAll('[data-close-experience]').forEach(button=>button.onclick=requestExperienceClose);
+  $('experience-keep-editing').onclick=keepEditingExperience;
+  $('experience-discard-confirm').onclick=()=>{if(!state.expSaving)$('experience-dialog').close();};
+  $('experience-dialog').addEventListener('cancel',event=>{
+    event.preventDefault();
+    if(state.expSaving)return;
+    if($('experience-discard').hidden)requestExperienceClose();
+    else keepEditingExperience();
+  });
+  $('experience-dialog').addEventListener('close',()=>{
+    const trigger=state.expEditorTrigger;
+    state.expEditorTrigger=null;
+    if(trigger?.isConnected)trigger.focus({preventScroll:true});
+    else $('experience-new')?.focus({preventScroll:true});
+  });
+  $('experience-delete-dialog').addEventListener('cancel',event=>{if(state.expDeleting)event.preventDefault();});
+  $('experience-delete-cancel').onclick=()=>{if(!state.expDeleting)$('experience-delete-dialog').close();};
+  $('experience-delete-confirm').onclick=async()=>{
+    const pending=state.expDelete,button=$('experience-delete-confirm');if(!pending||button.disabled||!experienceCanManage())return;
+    state.expDeleting=true;button.disabled=true;$('experience-delete-cancel').disabled=true;button.textContent='正在移入…';$('experience-delete-error').textContent='';
+    try{await api(`${libraryBase()}/experiences`,{action:'delete',id:pending.record.id,revision:pending.record.revision,request_id:pending.requestId});state.matrix=null;$('experience-delete-dialog').close();notice('经验已移至回收站，可随时恢复。');await experienceNavigate({},{refreshExperience:true});}
+    catch(e){$('experience-delete-error').textContent=e.message;}
+    finally{state.expDeleting=false;button.disabled=false;$('experience-delete-cancel').disabled=false;button.textContent='移至回收站';}
+  };
+  function mountExperiences(view) {
+    const actions = (view.canManage ? '<button type="button" class="primary" id="experience-new">新增经验</button>' : '') +
+      '<button type="button" id="experience-refresh">刷新</button>';
+    const categories = experienceCategories.map(name => '<button type="button" data-experience-category="' +
+      esc(name) + '" class="experience-category"><span class="experience-category-top"><span class="experience-category-name">' +
+      esc(name) + '</span><strong data-experience-category-count></strong></span></button>').join('');
+    $('console-view').innerHTML =
+      '<header class="page-head experience-page-head"><h1>经验</h1><div class="experience-page-actions">' + actions + '</div></header>' +
+      '<form id="experience-filters" class="filters experience-filters"><label class="grow">查找经验' +
+      '<input name="q" type="search" maxlength="200" placeholder="输入关键词或描述遇到的问题"></label>' +
+      '<button type="submit" class="primary">查找</button><button id="experience-clear" type="button">清除搜索</button>' +
+      '<button id="experience-trash" class="quiet" type="button">回收站</button></form>' +
+      '<nav class="experience-categories" aria-label="经验分类">' + categories + '</nav>' +
+      '<div class="experience-results-head"><h2 id="experience-results-title"></h2><p id="experience-count" role="status"></p></div>' +
+      '<div class="experience-layout"><div class="experience-results" id="experience-results">' +
+      '<div class="experience-list" aria-label="经验列表" id="experience-list"></div>' +
+      '<div class="pager"><button id="exp-prev" type="button" disabled>上一页</button>' +
+      '<span id="experience-page">1 / 1</span><button id="exp-next" type="button" disabled>下一页</button></div></div>' +
+      '<article id="experience-detail" class="experience-detail panel" aria-label="经验详情"></article></div>';
+
+    $('experience-filters').onsubmit = event => {
+      event.preventDefault();
+      const input = event.currentTarget.elements.q;
+      input.value=input.value.trim();
+      input.focus({preventScroll:true});
+      experienceNavigate({q:input.value,page:''});
+    };
+    $('experience-clear').onclick = () => {
+      const input=$('experience-filters').elements.q;
+      input.value='';
+      input.focus({preventScroll:true});
+      experienceNavigate({q:'',page:''});
+    };
+    $('experience-refresh').onclick = () => route({refreshExperience:true});
+    $('experience-trash').hidden = !view.canReadTrash;
+    $('experience-trash').onclick = () => experienceNavigate({deleted:view.trash?'':'1',q:'',page:''});
+    $('exp-prev').onclick = () => experienceNavigate({page:view.page-1});
+    $('exp-next').onclick = () => experienceNavigate({page:view.page+1});
+    document.querySelectorAll('[data-experience-category]').forEach(button => {
+      button.onclick = () => experienceNavigate({category:button.dataset.experienceCategory,page:''});
+    });
+    $('experience-list').onclick = event => {
+      const row = event.target.closest('[data-experience]');
+      if (row && view.key === view.requestedKey) experienceNavigate({}, {itemId:row.dataset.experience, revealDetail:true});
+    };
+    if ($('experience-new')) $('experience-new').onclick = () => experienceEditor(null, view.category);
+  }
+
+  function renderExperienceList(view, data, query) {
+    const summary = data.summary || {};
+    view.first = data.rows[0]?.id || '';
+    view.page = data.page;
+    $('experience-trash').textContent = view.trash ? '返回经验' : '回收站 · ' + (summary.deleted_total || 0);
+    $('experience-trash').setAttribute('aria-pressed', String(view.trash));
+    $('experience-results-title').textContent = view.category + (view.trash ? ' · 回收站' : '');
+    $('experience-count').textContent = data.total + ' 条' +
+      (query && !view.trash ? (data.search_mode === 'hybrid' ? ' · 关键词＋语义' : ' · 关键词查找') : '') +
+      (view.canManage ? '' : ' · 只读');
+    document.querySelectorAll('[data-experience-category]').forEach(button => {
+      const name = button.dataset.experienceCategory;
+      button.setAttribute('aria-current', String(view.category === name));
+      button.querySelector('[data-experience-category-count]').textContent = summary.categories?.[name] || 0;
+    });
+    $('experience-list').innerHTML = data.rows.map(row =>
+      '<button class="experience-entry" type="button" data-experience="' + esc(row.id) + '">' +
+      '<strong>' + esc(row.problem) + '</strong><span class="experience-card-meta"><span>' + esc(row.category) +
+      '</span><span class="experience-card-source">' + esc(experienceDate(row.updated_at)) + '</span></span></button>'
+    ).join('') || '<div class="empty"><p>' + (query ? '没有匹配的经验。' : view.trash ?
+      '此分类的回收站为空。' : '还没有' + esc(view.category) + '。') + '</p>' +
+      (query ? '<button type="button" id="experience-empty-clear">清除搜索</button>' :
+      view.canManage && !view.trash ? '<button type="button" id="experience-empty-new" class="primary">添加第一条经验</button>' : '') + '</div>';
+    $('experience-list').scrollTop = 0;
+    if ($('experience-empty-clear')) $('experience-empty-clear').onclick = () => $('experience-clear').click();
+    if ($('experience-empty-new')) $('experience-empty-new').onclick = () => experienceEditor(null,view.category);
+    $('experience-page').textContent = data.page + ' / ' + Math.max(1,Math.ceil(data.total/data.page_size));
+    $('exp-prev').disabled = data.page <= 1;
+    $('exp-next').disabled = data.page * data.page_size >= data.total;
+  }
+
+  function revealExperienceDetail(box) {
+    if (window.matchMedia('(max-width: 780px)').matches) {
+      $('experience-detail-title')?.focus({preventScroll:true});
+      box.scrollIntoView({block:'start'});
+    }
+  }
+
+  async function selectExperience(view, itemId, ticket, revealDetail) {
+    const selected = /^manual-[a-f0-9]{32}$/.test(itemId || '') ? itemId : view.first;
+    const box = $('experience-detail');
+    document.querySelectorAll('[data-experience]').forEach(button =>
+      button.setAttribute('aria-current', String(button.dataset.experience === selected)));
+    if (selected && selected === view.selected) {
+      if (revealDetail) revealExperienceDetail(box);
+      return;
+    }
+    view.selected = '';
+    if (!selected) {
+      box.removeAttribute('aria-busy');
+      box.innerHTML = '<div class="experience-detail-empty"><p>选择一条经验查看详情。</p></div>';
+      return;
+    }
+
+    box.setAttribute('aria-busy','true');
+    box.innerHTML = '<p role="status">正在读取经验…</p>';
+    try {
+      const result = await api(libraryBase() + '/experiences/' + encodeURIComponent(selected) +
+        '?origin=manual&deleted=' + (view.trash?'1':'0'));
+      if (ticket !== state.ticket) return;
+      const record = result.experience;
+      view.selected = selected;
+      const manageActions = view.canManage ? view.trash ?
+        '<button type="button" class="primary" id="experience-restore">恢复经验</button>' :
+        '<button type="button" id="experience-edit">编辑</button><button type="button" class="danger-quiet" id="experience-delete">移至回收站</button>' : '';
+      box.innerHTML = '<div class="experience-detail-top"><span class="badge">' + esc(record.category) +
+        '</span><div class="experience-detail-actions"><button type="button" id="experience-back-to-list">返回列表</button>' +
+        manageActions + '</div></div><section class="experience-problem-section">' +
+        '<h2 id="experience-detail-title" tabindex="-1">问题</h2><div class="experience-text">' + esc(record.problem) + '</div></section>' +
+        detailSection('解决办法',record.solution) + detailSection('可复用经验',record.reusable_experience) +
+        '<p class="experience-updated">更新于 ' + esc(experienceDate(record.updated_at)) + '</p>';
+      $('experience-back-to-list').onclick = () => {
+        const row = document.querySelector('[data-experience][aria-current="true"]');
+        (row || $('experience-filters').elements.q).focus({preventScroll:true});
+        $('experience-results').scrollIntoView({block:'start'});
+        row?.scrollIntoView({block:'nearest'});
+      };
+      if ($('experience-edit')) $('experience-edit').onclick = () => experienceEditor(record,view.category);
+      if ($('experience-delete')) $('experience-delete').onclick = () => {
+        state.expDelete = {record,requestId:requestId()};
+        $('experience-delete-problem').textContent = record.problem;
+        $('experience-delete-error').textContent = '';
+        $('experience-delete-dialog').showModal();
+      };
+      if ($('experience-restore')) {
+        const id = requestId();
+        $('experience-restore').onclick = async event => {
+          const button = event.currentTarget;
+          button.disabled = true;
+          button.textContent = '正在恢复…';
+          try {
+            await api(libraryBase()+'/experiences',{action:'restore',id:record.id,revision:record.revision,request_id:id});
+            state.matrix=null;
+            notice('经验已恢复。');
+            await experienceNavigate({}, {refreshExperience:true});
+          } catch (error) {
+            notice(error.message,true);
+            button.disabled = false;
+            button.textContent = '恢复经验';
+          }
+        };
+      }
+      if (revealDetail) revealExperienceDetail(box);
+    } catch (error) {
+      if (ticket === state.ticket) box.innerHTML = '<p class="error" role="alert">' + esc(error.message) +
+        '</p><p>可以重新选择列表中的经验，或刷新资料。</p>';
+    } finally {
+      if (ticket === state.ticket) box.removeAttribute('aria-busy');
+    }
+  }
+
+  async function experiences(itemId, ticket, {refreshExperience=false,revealDetail=false}={}) {
+    const current = new URLSearchParams(location.search);
+    const category = experienceCategories.includes(current.get('category')) ? current.get('category') : experienceCategories[0];
+    if (!state.expView) {
+      state.expView = {canReadTrash:state.owner?.id === state.me.current_user.id, canManage:experienceCanManage()};
+      mountExperiences(state.expView);
+    }
+    const view = state.expView;
+    const trash = view.canReadTrash && current.get('deleted') === '1';
+    const q = current.get('q') || '';
+    const params = new URLSearchParams({origin:'manual',category,q,
+      page:String(Math.max(1,parseInt(current.get('page'),10)||1)),page_size:'20',deleted:trash?'1':'0'});
+    const key = params.toString();
+    view.requestedKey = key;
+    const input = $('experience-filters').elements.q;
+    if (view.query !== q) {
+      input.value = q;
+      view.query = q;
+    }
+    if (view.key === key && !refreshExperience) {
+      $('experience-results').removeAttribute('aria-busy');
+      await selectExperience(view,itemId,ticket,revealDetail);
+      return;
+    }
+
+    $('experience-results').setAttribute('aria-busy','true');
+    $('experience-count').textContent = '正在查找…';
+    try {
+      const data = await api(libraryBase() + '/experiences?' + params);
+      if (ticket !== state.ticket) return;
+      if (!data.rows.length && data.page > 1) {
+        await experienceNavigate({page:Math.max(1,Math.ceil(data.total/data.page_size))}, {replace:true,itemId});
+        return;
+      }
+      Object.assign(view,{key,category,trash,selected:''});
+      renderExperienceList(view,data,q);
+    } catch (error) {
+      if (ticket === state.ticket) {
+        $('experience-count').textContent = error.message;
+        const box = $('experience-detail');
+        if (box.hasAttribute('aria-busy')) {
+          box.removeAttribute('aria-busy');
+          box.innerHTML = '<p>刷新后可以继续查看经验。</p>';
+        }
+      }
+      return;
+    } finally {
+      if (ticket === state.ticket) $('experience-results').removeAttribute('aria-busy');
+    }
+    await selectExperience(view,itemId,ticket,revealDetail);
+  }
+
+  function tickClock(){
+    const el=$('hud-clock');
+    if(!el)return;
+    const now=new Date();
+    const hh=String(now.getHours()).padStart(2,'0'),mm=String(now.getMinutes()).padStart(2,'0'),ss=String(now.getSeconds()).padStart(2,'0');
+    el.innerHTML=`SYNC_CLOCK: <b>${hh}:${mm}:${ss} UTC+8</b>`;
+  }
+  tickClock();
+  setInterval(tickClock,1000);
+  if($('btn-matrix-refresh'))$('btn-matrix-refresh').onclick=async()=>{
+    const btn=$('btn-matrix-refresh');
+    btn.disabled=true;btn.textContent='同步中…';
+    try{await ensureMatrix(true);await route({refreshExperience:true});notice('实时数据库与星云态势已同步刷新。');}
+    finally{btn.disabled=false;btn.textContent='↻ 刷新态势';}
+  };
+  $('logout').onclick=async()=>{try{await api('/auth/logout',{});location.href='/login';}catch(e){notice(e.message,true);}};
+  $('skip-to-content').onclick=event=>{
+    event.preventDefault();
+    $('workspace').focus();
+  };
+  function onLocationChange(){
+    if(location.href!==state.routedURL)route();
+  }
+  window.addEventListener('hashchange',onLocationChange);
+  window.addEventListener('popstate',onLocationChange);
+  boot();
+})();

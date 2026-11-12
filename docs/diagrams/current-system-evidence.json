@@ -1,0 +1,250 @@
+{
+  "date": "2026-10-12",
+  "status": {
+    "mode": "primary",
+    "adapter": "codex",
+    "ready": true,
+    "status_counts": {
+      "active": 2256,
+      "archived": 1777,
+      "candidate": 2178,
+      "deleted": 2,
+      "superseded": 2854
+    },
+    "mapping_count": 6391,
+    "projection_lag": 0,
+    "context_vector_ready": true,
+    "context_vector_dirty": true,
+    "vector_sync": {
+      "state": "pending",
+      "document_count": 1680,
+      "indexed_count": 1680,
+      "searchable_count": 1680,
+      "pending_count": 0,
+      "obsolete_count": 0,
+      "last_recovery": {
+        "status": "staged",
+        "occurred_at": "2026-10-11 16:31:10",
+        "document_count": 1680,
+        "encoded_operations": 2,
+        "duration_ms": 1098.5574959777296,
+        "pending_ms": 26617.16103553772
+      }
+    },
+    "legacy_vector_ready": false,
+    "legacy_vector_dirty": true,
+    "reason_codes": [
+      "context_vector_partial"
+    ],
+    "space": "personal",
+    "authenticated_user": "jiangli",
+    "memory_revision": "43715.0"
+  },
+  "sections": [
+    {
+      "title": "功能覆盖清单",
+      "rows": [
+        [
+          "范围",
+          "本图册对应专题",
+          "核对结果"
+        ],
+        [
+          "会话采集、原文归档、历史积压",
+          "功能总览／自动整理／部署",
+          "已有代码；Linux、Windows、Kimi、DSH 采用不同接入链路"
+        ],
+        [
+          "自动分段、归属、历史和经验提取",
+          "自动整理泳道／索引数据流",
+          "明确单元先写历史；待审和提取失败各有状态"
+        ],
+        [
+          "人工清洗、项目分类、粘贴资料",
+          "旧资料流程",
+          "预览和保存分开，归属与内容准入分开"
+        ],
+        [
+          "项目名称、别名、目录绑定与项目摘要",
+          "功能总览／任务数据关系／维护",
+          "现有管理入口及存储已核对"
+        ],
+        [
+          "问答、通用搜索、验证案例、精确续接",
+          "检索入口／召回流程／时序图",
+          "四类入口职责不同，不能统一称为 knowledge_recall"
+        ],
+        [
+          "关键词、向量、重排与索引恢复",
+          "召回流程／索引数据流",
+          "已核对资格过滤、增量更新、恢复与降级分支"
+        ],
+        [
+          "方法证据、状态变化与候选归纳",
+          "方法状态／方法归纳活动",
+          "已核对来源、事件去重、条件与降级；不承诺自动独立执行评测"
+        ],
+        [
+          "纠正与已知依赖传播",
+          "纠错数据流／知识 E-R",
+          "已存在来源和单元依赖传播，不泛化为完整语义影响分析"
+        ],
+        [
+          "任务保存、续接、查找、焦点与看板",
+          "续接时序／任务 E-R／维护",
+          "精确续接独立于向量；看板当前配置未实测"
+        ],
+        [
+          "规则版本、样例预览、Skill 导出",
+          "功能总览／维护",
+          "三个有效环节；旧独立协作学习写入停用"
+        ],
+        [
+          "个人空间、公共摘要发布与撤回",
+          "共享数据流／部署",
+          "LAN 现有能力；本轮未发布资料"
+        ],
+        [
+          "归档恢复、删除、保留与迁移维护",
+          "维护／知识 E-R",
+          "存在 TTL/清理逻辑；不能写成已经实现长期保留"
+        ]
+      ]
+    },
+    {
+      "title": "客户端接入的实际核对边界",
+      "rows": [
+        [
+          "客户端",
+          "本轮确认到的事实",
+          "不能据此断言"
+        ],
+        [
+          "Linux Codex",
+          "当前配置 adapter=codex、primary；本会话 Core 工具可用；代码含持续增量采集",
+          "所有历史已补齐"
+        ],
+        [
+          "Windows Codex",
+          "有独立采集器、分块上传、续传和工作区绑定代码；Windows SSH 可达",
+          "每个 Windows 会话均已完整提炼"
+        ],
+        [
+          "Kimi",
+          "本机配置 adapter=kimi、primary；库中存在 kimi 归档",
+          "与用户提及的 MiMo 是同一个客户端"
+        ],
+        [
+          "DeepSeek Harness / DSH",
+          "仓库含 MCP、注入、提取和闲置补扫 bundle，Core 注册表支持 dsh",
+          "本轮已实际运行 DSH 全链路"
+        ],
+        [
+          "Claude Code",
+          "仓库有基础 MCP 与 SessionStart 样例；原生 claude adapter 不在 Core 适配器集合，本机主目录 MCP 配置未指定 adapter",
+          "所有 Claude 实际启动范围都使用同一配置或已完整自动采集"
+        ],
+        [
+          "MiMo Code / Hermes",
+          "本机有客户端目录；本仓库未核实出与 Codex 同等的完整专用采集链路",
+          "不存在任何外部插件或转接；本轮未逐客户端验收"
+        ]
+      ]
+    },
+    {
+      "title": "只读运行快照",
+      "rows": [
+        [
+          "检查项",
+          "观察结果",
+          "解释"
+        ],
+        [
+          "Linux 服务",
+          "evolvmem-web 与 evolvmem-lan-mcp 均 active/running",
+          "现有端口 9377 / 9378；本轮未重启"
+        ],
+        [
+          "Web 读取",
+          "首页 HTTP 200 为登录页；受保护 API HTTP 401",
+          "本轮无浏览器登录态，未把受保护 API 当作正常业务响应"
+        ],
+        [
+          "当前 MCP",
+          "mode=primary，adapter=codex，ready=true",
+          "此快照来自本会话 context_status"
+        ],
+        [
+          "向量状态",
+          "context_vector_ready=true；dirty=true；state=pending；reason=context_vector_partial",
+          "document/indexed/searchable=1680；pending_count=0。状态组合仍需解释，不能据此声称完全同步或语义完全失效"
+        ],
+        [
+          "正式库归档",
+          "codex 3511，kimi 80",
+          "adapter 是存储分类，不证明覆盖所有客户端或所有历史"
+        ],
+        [
+          "自动整理",
+          "新增自动发现已开启；completed 562、review 617、failed 3、superseded 142",
+          "待审不等于系统错误；失败原因本轮未改动"
+        ],
+        [
+          "方法与归纳",
+          "experience：active 20、candidate 458、archived 34；playbook：candidate 30",
+          "有机制与候选，不等于生产中自动进化闭环已得到验证"
+        ],
+        [
+          "本地模型配置",
+          "bge-base-zh-v1.5.f16.gguf，768维；mMarco 重排目录",
+          "不是本轮更换模型；仅核对当前配置"
+        ],
+        [
+          "原文长期保留",
+          "配置未覆盖默认 TTL；源码默认原文 30 天、摘要 30 天/最近10条",
+          "仍有保护与清理触发条件；与之前确认的目标存在差距，本轮未执行清理"
+        ]
+      ]
+    },
+    {
+      "title": "Archify 能力复核",
+      "rows": [
+        [
+          "需要的图",
+          "核实结论",
+          "证据范围"
+        ],
+        [
+          "业务泳道工作流",
+          "原生支持 lanes，之前称完全不支持不准确",
+          "本机 2.13 示例工作流校验通过；官方 3.0.1 schema 仍含 lanes"
+        ],
+        [
+          "架构、工作流、时序、数据流、生命周期",
+          "五类原生渲染模式",
+          "本机 CLI 和官方类型列表一致"
+        ],
+        [
+          "完整 UML 活动图",
+          "不完整；工作流不能声明 decision/fork/join/initial/final 类型",
+          "本机 schema 实测拒绝；lifecycle 有 decision，但仍不等于完整活动图"
+        ],
+        [
+          "用例图、类图、E-R 图",
+          "没有原生图种及关系语义，需其他绘制方式",
+          "官方图种、schema 集合与节点枚举核对"
+        ],
+        [
+          "EvolvMem 业务正确性",
+          "绘图器负责呈现，不替代代码与运行核对",
+          "这份图册每个关键节点保存本轮已读源码依据"
+        ],
+        [
+          "版本与来源",
+          "本机 2.13.0；官方 main package 3.0.1",
+          "https://github.com/tt-a1i/archify；https://raw.githubusercontent.com/tt-a1i/archify/main/archify/schemas/workflow.schema.json"
+        ]
+      ]
+    }
+  ]
+}
