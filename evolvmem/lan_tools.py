@@ -715,16 +715,17 @@ class LanTools:
                     merged[k] = client_hint[k]
         return merged or None
 
-    def _resolve_or_record_attr(self, user, client_info):
+    def _resolve_or_record_attr(self, user, client_info, *, meta=None):
         from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
         dev_id = self._device_resolver(user) if callable(self._device_resolver) else None
         if self._agent_registry is not None:
-            return self._agent_registry.record_seen(actor=user, client_info=client_info, device_id=dev_id)
-        return resolve_mcp_client_info(client_info, actor=user, device_id=dev_id)
+            return self._agent_registry.record_seen(actor=user, client_info=client_info, device_id=dev_id, meta=meta)
+        return resolve_mcp_client_info(client_info, actor=user, device_id=dev_id, meta=meta)
 
     def _record_initialize_client(self, user, params, *, session_id=None, client_hint=None):
         raw_info = params.get('clientInfo') if isinstance(params, dict) else None
-        attr = self._resolve_or_record_attr(user, self._merge_client_info(raw_info, client_hint))
+        meta_info = params.get('_meta') if isinstance(params, dict) else None
+        attr = self._resolve_or_record_attr(user, self._merge_client_info(raw_info, client_hint), meta=meta_info)
         sess_key = str(session_id) if session_id else '__default__'
         with self._attribution_lock:
             if len(self._attributions) >= 4096:

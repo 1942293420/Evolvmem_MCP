@@ -34,8 +34,29 @@ _UNSAFE_MODEL_RE = re.compile(r'[\x00-\x1f\x7f]')
 SPOOFABLE_CLIENT_INFO_KEYS = frozenset({
     'actor', 'actor_id', 'user', 'user_id', 'owner', 'owner_id',
     'principal', 'principal_id', 'is_admin', 'role', 'tier',
-    'permission_tier', 'quota', 'quota_per_session',
+    'permission_tier', 'quota', 'quota_per_session', 'admin', 'superuser',
 })
+_CANONICAL_SPOOF_KEYS = frozenset(
+    re.sub(r'[^a-z0-9]+', '', key.lower()) for key in SPOOFABLE_CLIENT_INFO_KEYS
+)
+
+
+def _contains_spoofable_keys(payload: object, *, _depth: int = 0) -> bool:
+    if _depth > 6:
+        return True
+    if isinstance(payload, dict):
+        for raw_key, value in payload.items():
+            if isinstance(raw_key, str):
+                canonical = re.sub(r'[^a-z0-9]+', '', raw_key.lower())
+                if canonical in _CANONICAL_SPOOF_KEYS:
+                    return True
+            if isinstance(value, (dict, list, tuple)) and _contains_spoofable_keys(value, _depth=_depth + 1):
+                return True
+    elif isinstance(payload, (list, tuple)):
+        for item in payload:
+            if isinstance(item, (dict, list, tuple)) and _contains_spoofable_keys(item, _depth=_depth + 1):
+                return True
+    return False
 _RESERVED_CLI_SUBCOMMANDS = frozenset({
     'session-start', 'session-end', 'heartbeat', 'stop',
     'inject', 'recall', 'extract', 'status', 'self-test',
@@ -109,21 +130,21 @@ def resolve_mcp_client_info(
     device_id: str | None = None,
     default_client: str = 'unknown',
     default_model: str = 'unknown',
+    meta: object = None,
 ) -> AgentAttribution:
     """Resolve (actor, agent, model) from MCP initialize params.clientInfo.
 
     Actor comes strictly from server-side authentication, NEVER from clientInfo.
-    Any privilege/tier/actor override keys inside clientInfo are stripped and flagged.
+    Any privilege/tier/actor override keys inside clientInfo or params._meta
+    (regardless of snake_case / camelCase / nested structure) are stripped and flagged.
     """
     if not isinstance(actor, str) or not actor.strip():
         raise ValueError('authenticated server actor is required')
-    spoofed = False
+    spoofed = _contains_spoofable_keys(client_info) or _contains_spoofable_keys(meta)
     raw_name: object = None
     raw_model: object = None
     version = ''
     if isinstance(client_info, dict):
-        if SPOOFABLE_CLIENT_INFO_KEYS.intersection(client_info):
-            spoofed = True
         raw_name = client_info.get('name')
         raw_model = client_info.get('model')
         raw_ver = client_info.get('version')
@@ -254,6 +275,7 @@ class PgAgentRegistry:
         device_id: str | None = None,
         default_client: str = 'unknown',
         default_model: str = 'unknown',
+        meta: object = None,
     ) -> AgentAttribution:
         attr = resolve_mcp_client_info(
             client_info,
@@ -261,6 +283,7 @@ class PgAgentRegistry:
             device_id=device_id,
             default_client=default_client,
             default_model=default_model,
+            meta=meta,
         )
         return self.record_attribution(attr)
 

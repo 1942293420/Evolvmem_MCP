@@ -1967,15 +1967,16 @@ class MemoryMCPServer:
             from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
             actor_val = self._actor_id or "local"
             client_info = params.get("clientInfo")
+            meta_info = params.get("_meta")
             if self._agent_registry is not None:
                 attr = self._agent_registry.record_seen(
                     actor=actor_val, client_info=client_info, device_id=self._device_id,
-                    default_client=self.adapter or "unknown",
+                    default_client=self.adapter or "unknown", meta=meta_info,
                 )
             else:
                 attr = resolve_mcp_client_info(
                     client_info, actor=actor_val, device_id=self._device_id,
-                    default_client=self.adapter or "unknown",
+                    default_client=self.adapter or "unknown", meta=meta_info,
                 )
             with self._attribution_lock:
                 self._current_attribution = attr

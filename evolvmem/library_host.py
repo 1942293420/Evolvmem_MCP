@@ -934,10 +934,11 @@ class LibraryHost:
                         if not c_info.get(k) and client_hint.get(k):
                             c_info[k] = client_hint[k]
                 merged_info = c_info or None
+                meta_info = params.get('_meta')
                 if self._agent_registry is not None:
-                    attr = self._agent_registry.record_seen(actor=actor_id, client_info=merged_info, device_id=identity.device_id)
+                    attr = self._agent_registry.record_seen(actor=actor_id, client_info=merged_info, device_id=identity.device_id, meta=meta_info)
                 else:
-                    attr = resolve_mcp_client_info(merged_info, actor=actor_id, device_id=identity.device_id)
+                    attr = resolve_mcp_client_info(merged_info, actor=actor_id, device_id=identity.device_id, meta=meta_info)
                 sess_key = str(session_id) if session_id else '__default__'
                 with self._attribution_lock:
                     if len(self._attributions) >= 4096:
