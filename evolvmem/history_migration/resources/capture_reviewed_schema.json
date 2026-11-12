@@ -1,0 +1,1168 @@
+{
+  "status": "design_only_no_data_read_no_implementation",
+  "metadata_sha256": "f36051b843be978baa56b78c2ca7fee98a8d10bdfc4442832cb4dc711f6eb924",
+  "metadata_at_utc": "2026-11-01T01:43:11.592726+00:00",
+  "metadata_complete": true,
+  "cross_database_snapshot": false,
+  "namespaces": {
+    "owner": {
+      "lan_session_uploads": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "sha256",
+            "not_null": true,
+            "pk_position": 3,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "declared_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "attribution_reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "received_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 7,
+            "default_sql": "'pending'",
+            "name": "backfill_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'{}'",
+            "name": "backfill_result",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "total_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "0",
+            "name": "received_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'not_requested'",
+            "name": "extraction_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "'{}'",
+            "name": "extraction_result",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": "''",
+            "name": "error",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "name": "source_order",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 16,
+            "default_sql": null,
+            "name": "extracted_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "sha256",
+            "not_null": true,
+            "pk_position": 3,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "declared_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "attribution_reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "received_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 7,
+            "default_sql": "'pending'",
+            "hidden": 0,
+            "name": "backfill_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'{}'",
+            "hidden": 0,
+            "name": "backfill_result",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "total_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "received_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'not_requested'",
+            "hidden": 0,
+            "name": "extraction_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "'{}'",
+            "hidden": 0,
+            "name": "extraction_result",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "error",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_order",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 16,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "extracted_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_session_uploads (\n                device_id TEXT NOT NULL, session_id TEXT NOT NULL, sha256 TEXT NOT NULL,\n                project TEXT NOT NULL, declared_project TEXT NOT NULL,\n                attribution_reason TEXT NOT NULL DEFAULT '', received_at REAL NOT NULL,\n                backfill_status TEXT NOT NULL DEFAULT 'pending', backfill_result TEXT NOT NULL DEFAULT '{}',\n                total_bytes INTEGER NOT NULL, received_bytes INTEGER NOT NULL DEFAULT 0,\n                archive_id INTEGER REFERENCES session_archives(id),\n                extraction_status TEXT NOT NULL DEFAULT 'not_requested',\n                extraction_result TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '', source_order INTEGER, extracted_at TEXT,\n                PRIMARY KEY(device_id, session_id, sha256))",
+        "ddl_sha256": "a13b1fbc922e721d966be404cf7c8df573bce7c9353b91833812dbbc2d3d78d5",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 12,
+                "name": "extraction_status",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_lan_uploads_status ON lan_session_uploads(extraction_status)",
+            "ddl_sha256": "836c0d798e487927d38dd4ec05cf02d14f989691eebad09f2fda5b4a6d3abd2d",
+            "name": "idx_lan_uploads_status",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 11,
+                "name": "archive_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_lan_session_uploads_archive_id ON lan_session_uploads(archive_id)",
+            "ddl_sha256": "f2f8af80726c4b936eb3f0b11e2adb96ad362de04926b681e6c27a57668e26da",
+            "name": "idx_lan_session_uploads_archive_id",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "device_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "session_id",
+                "sequence": 1
+              },
+              {
+                "cid": 2,
+                "name": "sha256",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_lan_session_uploads_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "lan_session_uploads"
+      },
+      "lan_session_heads": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "sha256",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_order",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "sha256",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_order",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_session_heads (\n                device_id TEXT NOT NULL, session_id TEXT NOT NULL,\n                sha256 TEXT, source_order INTEGER,\n                PRIMARY KEY(device_id, session_id))",
+        "ddl_sha256": "1f5ce753e79c008d6191fab3e4ea1bb6b96658b3f92532fbd352abd44947271b",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "device_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "session_id",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_lan_session_heads_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "lan_session_heads"
+      },
+      "lan_session_backfills": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "0",
+            "name": "applied_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": "''",
+            "name": "workstream_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "applied_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "workstream_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_session_backfills (\n                device_id TEXT NOT NULL, session_id TEXT NOT NULL,\n                applied_revision INTEGER NOT NULL DEFAULT 0, workstream_id TEXT NOT NULL DEFAULT '',\n                PRIMARY KEY(device_id, session_id))",
+        "ddl_sha256": "898ad697d545bdfed26ca0f87710e1752e56b2f7f2eb01c4e06a315a95d18396",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "device_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "session_id",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_lan_session_backfills_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "lan_session_backfills"
+      }
+    },
+    "kane": {
+      "lan_session_uploads": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "sha256",
+            "not_null": true,
+            "pk_position": 3,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "declared_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "attribution_reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "received_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 7,
+            "default_sql": "'pending'",
+            "name": "backfill_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'{}'",
+            "name": "backfill_result",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "total_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "0",
+            "name": "received_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'not_requested'",
+            "name": "extraction_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "'{}'",
+            "name": "extraction_result",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": "''",
+            "name": "error",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "name": "source_order",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 16,
+            "default_sql": null,
+            "name": "extracted_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "sha256",
+            "not_null": true,
+            "pk_position": 3,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "declared_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "attribution_reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "received_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 7,
+            "default_sql": "'pending'",
+            "hidden": 0,
+            "name": "backfill_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'{}'",
+            "hidden": 0,
+            "name": "backfill_result",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "total_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "received_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'not_requested'",
+            "hidden": 0,
+            "name": "extraction_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "'{}'",
+            "hidden": 0,
+            "name": "extraction_result",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "error",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_order",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 16,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "extracted_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_session_uploads (\n                device_id TEXT NOT NULL, session_id TEXT NOT NULL, sha256 TEXT NOT NULL,\n                project TEXT NOT NULL, declared_project TEXT NOT NULL,\n                attribution_reason TEXT NOT NULL DEFAULT '', received_at REAL NOT NULL,\n                backfill_status TEXT NOT NULL DEFAULT 'pending', backfill_result TEXT NOT NULL DEFAULT '{}',\n                total_bytes INTEGER NOT NULL, received_bytes INTEGER NOT NULL DEFAULT 0,\n                archive_id INTEGER REFERENCES session_archives(id),\n                extraction_status TEXT NOT NULL DEFAULT 'not_requested',\n                extraction_result TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '', source_order INTEGER, extracted_at TEXT,\n                PRIMARY KEY(device_id, session_id, sha256))",
+        "ddl_sha256": "a13b1fbc922e721d966be404cf7c8df573bce7c9353b91833812dbbc2d3d78d5",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 12,
+                "name": "extraction_status",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_lan_uploads_status ON lan_session_uploads(extraction_status)",
+            "ddl_sha256": "836c0d798e487927d38dd4ec05cf02d14f989691eebad09f2fda5b4a6d3abd2d",
+            "name": "idx_lan_uploads_status",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 11,
+                "name": "archive_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_lan_session_uploads_archive_id ON lan_session_uploads(archive_id)",
+            "ddl_sha256": "f2f8af80726c4b936eb3f0b11e2adb96ad362de04926b681e6c27a57668e26da",
+            "name": "idx_lan_session_uploads_archive_id",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "device_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "session_id",
+                "sequence": 1
+              },
+              {
+                "cid": 2,
+                "name": "sha256",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_lan_session_uploads_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "lan_session_uploads"
+      },
+      "lan_session_heads": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "sha256",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_order",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "sha256",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_order",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_session_heads (\n                device_id TEXT NOT NULL, session_id TEXT NOT NULL,\n                sha256 TEXT, source_order INTEGER,\n                PRIMARY KEY(device_id, session_id))",
+        "ddl_sha256": "1f5ce753e79c008d6191fab3e4ea1bb6b96658b3f92532fbd352abd44947271b",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "device_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "session_id",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_lan_session_heads_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "lan_session_heads"
+      },
+      "lan_session_backfills": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "0",
+            "name": "applied_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": "''",
+            "name": "workstream_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "device_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "applied_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "workstream_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_session_backfills (\n                device_id TEXT NOT NULL, session_id TEXT NOT NULL,\n                applied_revision INTEGER NOT NULL DEFAULT 0, workstream_id TEXT NOT NULL DEFAULT '',\n                PRIMARY KEY(device_id, session_id))",
+        "ddl_sha256": "898ad697d545bdfed26ca0f87710e1752e56b2f7f2eb01c4e06a315a95d18396",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "device_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "session_id",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_lan_session_backfills_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "lan_session_backfills"
+      }
+    },
+    "public": {
+      "lan_session_uploads": null,
+      "lan_session_heads": null,
+      "lan_session_backfills": null
+    }
+  }
+}

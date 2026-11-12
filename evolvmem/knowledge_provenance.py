@@ -3,25 +3,20 @@ import json
 
 
 def unconfirmed_rule(store, item_id, category, payload):
-    """Known old inference is not an instruction; unknown legacy rows stay intact."""
-    if category not in ('habit', 'project_convention', 'task_requirement') or not payload:
-        return False
-    try:
-        data = json.loads(payload)
-    except (TypeError, ValueError):
-        return False
-    if not isinstance(data, dict):
-        return False
-    evidence = data.get('evidence', [])
-    if (data.get('basis') != 'inferred' or not evidence
-            or not isinstance(evidence, list)
-            or any(not isinstance(e, dict) or e.get('role') not in ('assistant', 'tool') for e in evidence)):
-        return False
-    conn = store._connection()
-    protected = conn.execute("SELECT 1 FROM context_project_resolutions WHERE item_id=? "
-                             "AND decision_source='human' AND review_state='accepted'", (item_id,)).fetchone()
-    manual = conn.execute("SELECT 1 FROM context_sources WHERE item_id=? AND source_kind='manual'", (item_id,)).fetchone()
-    return not (protected or manual)
+    """Known old inference is not an instruction; storage-independent verdict."""
+    from evolvmem.source_qualification import unconfirmed_rule as decide
+    conn = None
+    def connection():
+        nonlocal conn
+        if conn is None:
+            conn = store._connection()
+        return conn
+    def protected():
+        return connection().execute("SELECT 1 FROM context_project_resolutions WHERE item_id=? "
+            "AND decision_source='human' AND review_state='accepted'", (item_id,)).fetchone()
+    def manual():
+        return connection().execute("SELECT 1 FROM context_sources WHERE item_id=? AND source_kind='manual'", (item_id,)).fetchone()
+    return decide(category, payload, protected, manual)
 
 
 def repair_unconfirmed_rules(service, *, after_id=0, limit=100, apply=False):

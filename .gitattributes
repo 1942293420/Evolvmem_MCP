@@ -1,0 +1,2 @@
+# Preserve pinned bytes, including reviewed CRLF schema/resources.
+evolvmem/history_migration/** -text

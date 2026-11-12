@@ -1,0 +1,4645 @@
+{
+  "namespaces": {
+    "kane": {
+      "continuity_events": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "before_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "after_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "before_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "after_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "name": "error_code",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "before_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "after_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "before_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "after_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "error_code",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE continuity_events(\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        workstream_id TEXT,\n        event_type TEXT NOT NULL,\n        before_revision INTEGER,\n        after_revision INTEGER,\n        before_state_version INTEGER,\n        after_state_version INTEGER,\n        error_code TEXT NOT NULL DEFAULT '',\n        created_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "bfc1f342c243b8b86ea8883290ff9001fc51dbe6ef0b47fac9fcb6018cd3f4fb",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "continuity_events",
+        "rowid_alias": "id"
+      },
+      "continuity_focus": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "0",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE continuity_focus(\n        project TEXT NOT NULL,\n        workspace_fingerprint TEXT NOT NULL,\n        workstream_id TEXT REFERENCES continuity_workstreams(id),\n        revision INTEGER NOT NULL DEFAULT 0,\n        updated_at TEXT NOT NULL,\n        PRIMARY KEY(project, workspace_fingerprint)\n    )",
+        "ddl_sha256": "7b30d49c6785638fe81347d9bcaf773848e3a33f84c5a115233852ee9a401a57",
+        "foreign_keys": [
+          {
+            "from_column": "workstream_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "continuity_workstreams",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "project",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "workspace_fingerprint",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_continuity_focus_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "continuity_focus",
+        "rowid_alias": null
+      },
+      "continuity_workstreams": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "parent_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "current_context_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "checkpoint_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "state_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'non_git'",
+            "name": "repo_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "name": "repo_branch",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "''",
+            "name": "repo_root_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "''",
+            "name": "repo_head_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "completed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "parent_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "current_context_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "checkpoint_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "state_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'non_git'",
+            "hidden": 0,
+            "name": "repo_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "repo_branch",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "repo_root_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "repo_head_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "completed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE continuity_workstreams(\n        id TEXT PRIMARY KEY,\n        project TEXT NOT NULL,\n        workspace_fingerprint TEXT NOT NULL,\n        parent_id TEXT REFERENCES continuity_workstreams(id),\n        current_context_id INTEGER NOT NULL REFERENCES context_items(id),\n        checkpoint_revision INTEGER NOT NULL,\n        state_version INTEGER NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('open','paused','blocked','completed','cancelled')),\n        repo_kind TEXT NOT NULL DEFAULT 'non_git' CHECK(repo_kind IN ('git','non_git')),\n        repo_branch TEXT NOT NULL DEFAULT '',\n        repo_root_commit TEXT NOT NULL DEFAULT '',\n        repo_head_commit TEXT NOT NULL DEFAULT '',\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        completed_at TEXT\n    )",
+        "ddl_sha256": "44348605e6bc69f800bb3b9b630114d70512f91999f47259419d9cc449d4cb55",
+        "foreign_keys": [
+          {
+            "from_column": "current_context_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          },
+          {
+            "from_column": "parent_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "continuity_workstreams",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "id",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_continuity_workstreams_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "continuity_workstreams",
+        "rowid_alias": null
+      },
+      "project_archives": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": "''",
+            "name": "display_name",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "''",
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "started_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "ended_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "'active'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_watermark",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "display_name",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "started_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "ended_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_watermark",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_archives(\n        project TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '',\n        summary TEXT NOT NULL DEFAULT '', started_at TEXT, ended_at TEXT,\n        status TEXT NOT NULL DEFAULT 'active', source_watermark TEXT NOT NULL DEFAULT '',\n        revision INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "74f53b5da25561121e0f02a9ffd0c68d1398b1cc146ffacae5a2346e09a2440f",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "project",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_archives_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "project_archives",
+        "rowid_alias": null
+      },
+      "project_event_sources": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "event_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "binding_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'[]'",
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'project'",
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "'unverified'",
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "binding_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'project'",
+            "hidden": 0,
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "'unverified'",
+            "hidden": 0,
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_event_sources(\n        source_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        event_id INTEGER NOT NULL REFERENCES project_events(event_id),\n        binding_key TEXT NOT NULL, source_kind TEXT NOT NULL, source_key TEXT NOT NULL,\n        source_ref TEXT NOT NULL, source_revision TEXT NOT NULL DEFAULT '',\n        context_item_id INTEGER, task_id INTEGER, unit_digest TEXT NOT NULL DEFAULT '',\n        unit_revision INTEGER, projects TEXT NOT NULL DEFAULT '[]',\n        knowledge_scope TEXT NOT NULL DEFAULT 'project', evidence_status TEXT NOT NULL DEFAULT 'unverified',\n        created_at TEXT NOT NULL, UNIQUE(event_id,binding_key))",
+        "ddl_sha256": "ef0e5f33bf40097befdd6e9b41ba01edec4fa1d82311e6b5d90540fda3ad29c7",
+        "foreign_keys": [
+          {
+            "from_column": "event_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "project_events",
+            "to_column": "event_id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "event_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_project_event_sources_event ON project_event_sources(event_id)",
+            "ddl_sha256": "f7f8fdd6294ef481a6afaad3fd2ec211cb7fe332dc1a1be281e14a9d83ae2f45",
+            "name": "idx_project_event_sources_event",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "event_id",
+                "sequence": 0
+              },
+              {
+                "cid": 2,
+                "name": "binding_key",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_event_sources_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          }
+        ],
+        "name": "project_event_sources",
+        "rowid_alias": "source_id"
+      },
+      "project_events": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "event_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "recorded_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "recorded_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_events(\n        event_id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL,\n        event_type TEXT NOT NULL CHECK(event_type IN ('major_change','feature','problem','milestone')),\n        occurred_at TEXT, recorded_at TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,\n        source_ref TEXT NOT NULL DEFAULT '', fingerprint TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','corrected','ignored')),\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "3d74f8ce151fbea715196176de5b76bfe545a07d591c68dcaa29da41889bd54f",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "project",
+                "sequence": 0
+              },
+              {
+                "cid": 3,
+                "name": "occurred_at",
+                "sequence": 1
+              },
+              {
+                "cid": 0,
+                "name": "event_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_project_events_timeline\n        ON project_events(project,occurred_at,event_id)",
+            "ddl_sha256": "a5c07c36ce919ecff367ccfed0db5bfefb02c5e4b9dc413bd68466e03520bc57",
+            "name": "idx_project_events_timeline",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 8,
+                "name": "fingerprint",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_events_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          }
+        ],
+        "name": "project_events",
+        "rowid_alias": "event_id"
+      },
+      "project_memory_documents": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_ids",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_ids",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_memory_documents (\n        project TEXT PRIMARY KEY, summary TEXT NOT NULL, body TEXT NOT NULL,\n        source_ids TEXT NOT NULL, revision TEXT NOT NULL, updated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "0be9cc78fb80c2034e4aff358483b32ecedb0f2ae70fb13edf47cad2f50dae9c",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "project",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_memory_documents_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "project_memory_documents",
+        "rowid_alias": null
+      }
+    },
+    "owner": {
+      "continuity_events": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "before_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "after_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "before_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "after_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "name": "error_code",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "before_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "after_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "before_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "after_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "error_code",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE continuity_events(\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        workstream_id TEXT,\n        event_type TEXT NOT NULL,\n        before_revision INTEGER,\n        after_revision INTEGER,\n        before_state_version INTEGER,\n        after_state_version INTEGER,\n        error_code TEXT NOT NULL DEFAULT '',\n        created_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "bfc1f342c243b8b86ea8883290ff9001fc51dbe6ef0b47fac9fcb6018cd3f4fb",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "continuity_events",
+        "rowid_alias": "id"
+      },
+      "continuity_focus": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "0",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE continuity_focus(\n        project TEXT NOT NULL,\n        workspace_fingerprint TEXT NOT NULL,\n        workstream_id TEXT REFERENCES continuity_workstreams(id),\n        revision INTEGER NOT NULL DEFAULT 0,\n        updated_at TEXT NOT NULL,\n        PRIMARY KEY(project, workspace_fingerprint)\n    )",
+        "ddl_sha256": "7b30d49c6785638fe81347d9bcaf773848e3a33f84c5a115233852ee9a401a57",
+        "foreign_keys": [
+          {
+            "from_column": "workstream_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "continuity_workstreams",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "project",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "workspace_fingerprint",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_continuity_focus_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "continuity_focus",
+        "rowid_alias": null
+      },
+      "continuity_workstreams": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "parent_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "current_context_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "checkpoint_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "state_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'non_git'",
+            "name": "repo_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "name": "repo_branch",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "''",
+            "name": "repo_root_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "''",
+            "name": "repo_head_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "completed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "parent_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "current_context_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "checkpoint_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "state_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'non_git'",
+            "hidden": 0,
+            "name": "repo_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "repo_branch",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "repo_root_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "repo_head_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "completed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE continuity_workstreams(\n        id TEXT PRIMARY KEY,\n        project TEXT NOT NULL,\n        workspace_fingerprint TEXT NOT NULL,\n        parent_id TEXT REFERENCES continuity_workstreams(id),\n        current_context_id INTEGER NOT NULL REFERENCES context_items(id),\n        checkpoint_revision INTEGER NOT NULL,\n        state_version INTEGER NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('open','paused','blocked','completed','cancelled')),\n        repo_kind TEXT NOT NULL DEFAULT 'non_git' CHECK(repo_kind IN ('git','non_git')),\n        repo_branch TEXT NOT NULL DEFAULT '',\n        repo_root_commit TEXT NOT NULL DEFAULT '',\n        repo_head_commit TEXT NOT NULL DEFAULT '',\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        completed_at TEXT\n    )",
+        "ddl_sha256": "44348605e6bc69f800bb3b9b630114d70512f91999f47259419d9cc449d4cb55",
+        "foreign_keys": [
+          {
+            "from_column": "current_context_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          },
+          {
+            "from_column": "parent_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "continuity_workstreams",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "id",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_continuity_workstreams_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "continuity_workstreams",
+        "rowid_alias": null
+      },
+      "project_archives": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": "''",
+            "name": "display_name",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "''",
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "started_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "ended_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "'active'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_watermark",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "display_name",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "started_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "ended_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_watermark",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_archives(\n        project TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '',\n        summary TEXT NOT NULL DEFAULT '', started_at TEXT, ended_at TEXT,\n        status TEXT NOT NULL DEFAULT 'active', source_watermark TEXT NOT NULL DEFAULT '',\n        revision INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "74f53b5da25561121e0f02a9ffd0c68d1398b1cc146ffacae5a2346e09a2440f",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "project",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_archives_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "project_archives",
+        "rowid_alias": null
+      },
+      "project_event_sources": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "event_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "binding_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'[]'",
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'project'",
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "'unverified'",
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "binding_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'project'",
+            "hidden": 0,
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "'unverified'",
+            "hidden": 0,
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_event_sources(\n        source_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        event_id INTEGER NOT NULL REFERENCES project_events(event_id),\n        binding_key TEXT NOT NULL, source_kind TEXT NOT NULL, source_key TEXT NOT NULL,\n        source_ref TEXT NOT NULL, source_revision TEXT NOT NULL DEFAULT '',\n        context_item_id INTEGER, task_id INTEGER, unit_digest TEXT NOT NULL DEFAULT '',\n        unit_revision INTEGER, projects TEXT NOT NULL DEFAULT '[]',\n        knowledge_scope TEXT NOT NULL DEFAULT 'project', evidence_status TEXT NOT NULL DEFAULT 'unverified',\n        created_at TEXT NOT NULL, UNIQUE(event_id,binding_key))",
+        "ddl_sha256": "ef0e5f33bf40097befdd6e9b41ba01edec4fa1d82311e6b5d90540fda3ad29c7",
+        "foreign_keys": [
+          {
+            "from_column": "event_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "project_events",
+            "to_column": "event_id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "event_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_project_event_sources_event ON project_event_sources(event_id)",
+            "ddl_sha256": "f7f8fdd6294ef481a6afaad3fd2ec211cb7fe332dc1a1be281e14a9d83ae2f45",
+            "name": "idx_project_event_sources_event",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "event_id",
+                "sequence": 0
+              },
+              {
+                "cid": 2,
+                "name": "binding_key",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_event_sources_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          }
+        ],
+        "name": "project_event_sources",
+        "rowid_alias": "source_id"
+      },
+      "project_events": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "event_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "recorded_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "recorded_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_events(\n        event_id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL,\n        event_type TEXT NOT NULL CHECK(event_type IN ('major_change','feature','problem','milestone')),\n        occurred_at TEXT, recorded_at TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,\n        source_ref TEXT NOT NULL DEFAULT '', fingerprint TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','corrected','ignored')),\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "3d74f8ce151fbea715196176de5b76bfe545a07d591c68dcaa29da41889bd54f",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "project",
+                "sequence": 0
+              },
+              {
+                "cid": 3,
+                "name": "occurred_at",
+                "sequence": 1
+              },
+              {
+                "cid": 0,
+                "name": "event_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_project_events_timeline\n        ON project_events(project,occurred_at,event_id)",
+            "ddl_sha256": "a5c07c36ce919ecff367ccfed0db5bfefb02c5e4b9dc413bd68466e03520bc57",
+            "name": "idx_project_events_timeline",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 8,
+                "name": "fingerprint",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_events_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          }
+        ],
+        "name": "project_events",
+        "rowid_alias": "event_id"
+      },
+      "project_history_date_repairs": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "plan_sha256",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "applied_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "plan_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "plan_sha256",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "applied_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "plan_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_history_date_repairs(plan_sha256 TEXT PRIMARY KEY,project TEXT NOT NULL,applied_at TEXT NOT NULL,plan_json TEXT NOT NULL)",
+        "ddl_sha256": "a9f97b18c84fa696f29a90701fcfc6e72a9b13642837206c684e863d88730e89",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "plan_sha256",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_history_date_repairs_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "project_history_date_repairs",
+        "rowid_alias": null
+      },
+      "project_memory_documents": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_ids",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_ids",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_memory_documents (\n        project TEXT PRIMARY KEY, summary TEXT NOT NULL, body TEXT NOT NULL,\n        source_ids TEXT NOT NULL, revision TEXT NOT NULL, updated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "0be9cc78fb80c2034e4aff358483b32ecedb0f2ae70fb13edf47cad2f50dae9c",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "project",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_memory_documents_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "project_memory_documents",
+        "rowid_alias": null
+      }
+    },
+    "public": {
+      "continuity_events": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "before_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "after_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "before_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "after_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "name": "error_code",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "before_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "after_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "before_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "after_state_version",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "error_code",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE continuity_events(\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        workstream_id TEXT,\n        event_type TEXT NOT NULL,\n        before_revision INTEGER,\n        after_revision INTEGER,\n        before_state_version INTEGER,\n        after_state_version INTEGER,\n        error_code TEXT NOT NULL DEFAULT '',\n        created_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "bfc1f342c243b8b86ea8883290ff9001fc51dbe6ef0b47fac9fcb6018cd3f4fb",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "continuity_events",
+        "rowid_alias": "id"
+      },
+      "continuity_focus": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "0",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workstream_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE continuity_focus(\n        project TEXT NOT NULL,\n        workspace_fingerprint TEXT NOT NULL,\n        workstream_id TEXT REFERENCES continuity_workstreams(id),\n        revision INTEGER NOT NULL DEFAULT 0,\n        updated_at TEXT NOT NULL,\n        PRIMARY KEY(project, workspace_fingerprint)\n    )",
+        "ddl_sha256": "7b30d49c6785638fe81347d9bcaf773848e3a33f84c5a115233852ee9a401a57",
+        "foreign_keys": [
+          {
+            "from_column": "workstream_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "continuity_workstreams",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "project",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "workspace_fingerprint",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_continuity_focus_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "continuity_focus",
+        "rowid_alias": null
+      },
+      "continuity_workstreams": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "parent_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "current_context_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "checkpoint_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "state_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'non_git'",
+            "name": "repo_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "name": "repo_branch",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "''",
+            "name": "repo_root_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "''",
+            "name": "repo_head_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "completed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workspace_fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "parent_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "current_context_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "checkpoint_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "state_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'non_git'",
+            "hidden": 0,
+            "name": "repo_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "repo_branch",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "repo_root_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "repo_head_commit",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "completed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE continuity_workstreams(\n        id TEXT PRIMARY KEY,\n        project TEXT NOT NULL,\n        workspace_fingerprint TEXT NOT NULL,\n        parent_id TEXT REFERENCES continuity_workstreams(id),\n        current_context_id INTEGER NOT NULL REFERENCES context_items(id),\n        checkpoint_revision INTEGER NOT NULL,\n        state_version INTEGER NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('open','paused','blocked','completed','cancelled')),\n        repo_kind TEXT NOT NULL DEFAULT 'non_git' CHECK(repo_kind IN ('git','non_git')),\n        repo_branch TEXT NOT NULL DEFAULT '',\n        repo_root_commit TEXT NOT NULL DEFAULT '',\n        repo_head_commit TEXT NOT NULL DEFAULT '',\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        completed_at TEXT\n    )",
+        "ddl_sha256": "44348605e6bc69f800bb3b9b630114d70512f91999f47259419d9cc449d4cb55",
+        "foreign_keys": [
+          {
+            "from_column": "current_context_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          },
+          {
+            "from_column": "parent_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "continuity_workstreams",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "id",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_continuity_workstreams_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "continuity_workstreams",
+        "rowid_alias": null
+      },
+      "project_archives": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": "''",
+            "name": "display_name",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "''",
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "started_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "ended_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "'active'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_watermark",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "display_name",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "started_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "ended_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_watermark",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_archives(\n        project TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '',\n        summary TEXT NOT NULL DEFAULT '', started_at TEXT, ended_at TEXT,\n        status TEXT NOT NULL DEFAULT 'active', source_watermark TEXT NOT NULL DEFAULT '',\n        revision INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "74f53b5da25561121e0f02a9ffd0c68d1398b1cc146ffacae5a2346e09a2440f",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "project",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_archives_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "project_archives",
+        "rowid_alias": null
+      },
+      "project_event_sources": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "event_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "binding_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'[]'",
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'project'",
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "'unverified'",
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "binding_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'project'",
+            "hidden": 0,
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "'unverified'",
+            "hidden": 0,
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_event_sources(\n        source_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        event_id INTEGER NOT NULL REFERENCES project_events(event_id),\n        binding_key TEXT NOT NULL, source_kind TEXT NOT NULL, source_key TEXT NOT NULL,\n        source_ref TEXT NOT NULL, source_revision TEXT NOT NULL DEFAULT '',\n        context_item_id INTEGER, task_id INTEGER, unit_digest TEXT NOT NULL DEFAULT '',\n        unit_revision INTEGER, projects TEXT NOT NULL DEFAULT '[]',\n        knowledge_scope TEXT NOT NULL DEFAULT 'project', evidence_status TEXT NOT NULL DEFAULT 'unverified',\n        created_at TEXT NOT NULL, UNIQUE(event_id,binding_key))",
+        "ddl_sha256": "ef0e5f33bf40097befdd6e9b41ba01edec4fa1d82311e6b5d90540fda3ad29c7",
+        "foreign_keys": [
+          {
+            "from_column": "event_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "project_events",
+            "to_column": "event_id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "event_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_project_event_sources_event ON project_event_sources(event_id)",
+            "ddl_sha256": "f7f8fdd6294ef481a6afaad3fd2ec211cb7fe332dc1a1be281e14a9d83ae2f45",
+            "name": "idx_project_event_sources_event",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "event_id",
+                "sequence": 0
+              },
+              {
+                "cid": 2,
+                "name": "binding_key",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_event_sources_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          }
+        ],
+        "name": "project_event_sources",
+        "rowid_alias": "source_id"
+      },
+      "project_events": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "event_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "recorded_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "event_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "recorded_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_events(\n        event_id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL,\n        event_type TEXT NOT NULL CHECK(event_type IN ('major_change','feature','problem','milestone')),\n        occurred_at TEXT, recorded_at TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,\n        source_ref TEXT NOT NULL DEFAULT '', fingerprint TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','corrected','ignored')),\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "3d74f8ce151fbea715196176de5b76bfe545a07d591c68dcaa29da41889bd54f",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "project",
+                "sequence": 0
+              },
+              {
+                "cid": 3,
+                "name": "occurred_at",
+                "sequence": 1
+              },
+              {
+                "cid": 0,
+                "name": "event_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_project_events_timeline\n        ON project_events(project,occurred_at,event_id)",
+            "ddl_sha256": "a5c07c36ce919ecff367ccfed0db5bfefb02c5e4b9dc413bd68466e03520bc57",
+            "name": "idx_project_events_timeline",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 8,
+                "name": "fingerprint",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_events_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          }
+        ],
+        "name": "project_events",
+        "rowid_alias": "event_id"
+      },
+      "project_memory_documents": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_ids",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_ids",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE project_memory_documents (\n        project TEXT PRIMARY KEY, summary TEXT NOT NULL, body TEXT NOT NULL,\n        source_ids TEXT NOT NULL, revision TEXT NOT NULL, updated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "0be9cc78fb80c2034e4aff358483b32ecedb0f2ae70fb13edf47cad2f50dae9c",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "project",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_project_memory_documents_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "project_memory_documents",
+        "rowid_alias": null
+      }
+    }
+  },
+  "source_sha256": "f36051b843be978baa56b78c2ca7fee98a8d10bdfc4442832cb4dc711f6eb924"
+}

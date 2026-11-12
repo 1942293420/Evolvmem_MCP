@@ -145,8 +145,18 @@ class ContextRetriever:
         identifiers = re.findall(r'(?<!\d)\d{4,}(?!\d)|[A-Za-z][A-Za-z0-9]*[_-][A-Za-z0-9_-]+', request.query)
         for identifier in dict.fromkeys(identifiers[:8]):
             fts_hits.extend(self.store.search_fts(identifier, **fts_options))
+        return self.rank_candidates(
+            request, fts_hits,
+            self._scoped_vector_candidates(request, pool_size, eligible_ids, reranking=reranking),
+            eligible_ids=eligible_ids, allow_rerank=allow_rerank, _reranking=reranking,
+        )
+
+    def rank_candidates(self, request, fts_hits, vector_hits, *, eligible_ids=None, allow_rerank=True, _reranking=None):
+        """Rank trusted prepared candidates; this does not generate a search pool."""
+        reranking = (bool(allow_rerank and getattr(self.embedding_engine, 'reranker_loaded', False))
+                     if _reranking is None else _reranking)
         candidates = self._merge_candidates(
-            fts_hits, self._scoped_vector_candidates(request, pool_size, eligible_ids, reranking=reranking),
+            fts_hits, vector_hits,
             min_similarity=min(.6, self.config.context_vector_min_similarity) if reranking else None,
         )
         if eligible_ids is not None:
@@ -228,6 +238,9 @@ class ContextRetriever:
             [result for _, result in scored], request, now
         )
         results = self._deduplicate(ranked)[: request.top_k]
+        return self._project_results(results, request)
+
+    def _project_results(self, results, request):
         if request.project and not request.cross_project and results:
             from evolvmem.project_knowledge import directory, describe
             data = directory(self.store, request.project, at=(request.as_of or '')[:10],
@@ -463,6 +476,11 @@ class ContextRetriever:
 
     # ---- metadata filters ----
 
+    def _backing_allows(self, item_id):
+        from evolvmem.memory_eligibility import eligible
+        inputs = current_inputs(self.store)
+        return inputs.eligible(item_id) if inputs is not None else eligible(self.store, item_id)
+
     def _eligible(
         self,
         item: ContextItem,
@@ -471,9 +489,7 @@ class ContextRetriever:
         *,
         implicit_end: str | None = None,
     ) -> bool:
-        from evolvmem.memory_eligibility import eligible
-        inputs = current_inputs(self.store)
-        if not (inputs.eligible(item.id) if inputs is not None else eligible(self.store, item.id)):
+        if not self._backing_allows(item.id):
             return False
         moment = request.as_of or now.strftime(_TIMESTAMP_FORMAT)
         if request.as_of is None:

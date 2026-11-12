@@ -1,0 +1,2207 @@
+{
+  "metadata_sha256": "f36051b843be978baa56b78c2ca7fee98a8d10bdfc4442832cb4dc711f6eb924",
+  "namespaces": {
+    "owner": {
+      "context_project_registry": {
+        "ddl": "CREATE TABLE context_project_registry(\n        project TEXT PRIMARY KEY,\n        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),\n        revision INTEGER NOT NULL DEFAULT 1,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    , display_name TEXT NOT NULL DEFAULT '')",
+        "ddl_sha256": "2632e51340382c9a76cd2ea8f32a060884a0e48745007b389f8d36652e1467d9",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "display_name",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": false,
+        "rowid_alias": null
+      },
+      "memories": {
+        "ddl": "CREATE TABLE memories (\n            id              INTEGER PRIMARY KEY AUTOINCREMENT,\n            key             TEXT NOT NULL,\n            value           TEXT NOT NULL,\n            status          TEXT NOT NULL DEFAULT 'active',\n            attribute        TEXT DEFAULT '',\n            tags            TEXT DEFAULT '',\n            source_session  TEXT DEFAULT '',\n            access_count    INTEGER DEFAULT 0,\n            last_accessed   TEXT DEFAULT NULL,\n            supersedes      INTEGER REFERENCES memories(id),\n            superseded_by   INTEGER REFERENCES memories(id),\n            created_at      TEXT NOT NULL,\n            updated_at      TEXT NOT NULL\n        , importance REAL NOT NULL DEFAULT 5.0, tier TEXT NOT NULL DEFAULT 'normal', expires_at TEXT DEFAULT NULL)",
+        "ddl_sha256": "20016f7f0e25c485227bd7b919ccbb07b62f0b02c126d8bb29c4a3739dfd4079",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "value",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "attribute",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "tags",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_session",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "access_count",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "NULL",
+            "hidden": 0,
+            "name": "last_accessed",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "supersedes",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "superseded_by",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "5.0",
+            "hidden": 0,
+            "name": "importance",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 14,
+            "default_sql": "'normal'",
+            "hidden": 0,
+            "name": "tier",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "NULL",
+            "hidden": 0,
+            "name": "expires_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": true,
+        "rowid_alias": "id"
+      },
+      "context_items": {
+        "ddl": "CREATE TABLE context_items (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        identity_key TEXT NOT NULL,\n        content_type TEXT NOT NULL,\n        project TEXT NOT NULL DEFAULT '',\n        scope TEXT NOT NULL DEFAULT 'project',\n        status TEXT NOT NULL DEFAULT 'candidate',\n        tier TEXT NOT NULL DEFAULT 'normal',\n        tags TEXT NOT NULL DEFAULT '',\n        importance REAL NOT NULL DEFAULT 5.0,\n        confidence REAL NOT NULL DEFAULT 0.5,\n        source_state TEXT NOT NULL DEFAULT 'none',\n        source_count INTEGER NOT NULL DEFAULT 0,\n        success_count INTEGER NOT NULL DEFAULT 0,\n        failure_count INTEGER NOT NULL DEFAULT 0,\n        access_count INTEGER NOT NULL DEFAULT 0,\n        last_accessed TEXT,\n        last_verified_at TEXT,\n        expires_at TEXT,\n        supersedes INTEGER REFERENCES context_items(id),\n        superseded_by INTEGER REFERENCES context_items(id),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    , experience_payload TEXT NOT NULL DEFAULT '', effective_from TEXT, effective_until TEXT, occurred_at TEXT, mentioned_at TEXT, projects TEXT NOT NULL DEFAULT '[]', personal_general INTEGER NOT NULL DEFAULT 0)",
+        "ddl_sha256": "b74d3c5e8f7cfc678b40196733a99d2cc1354d2ec9a0bf827fdd729dc4cc63a1",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "identity_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'project'",
+            "hidden": 0,
+            "name": "scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "'candidate'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'normal'",
+            "hidden": 0,
+            "name": "tier",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "tags",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "5.0",
+            "hidden": 0,
+            "name": "importance",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 9,
+            "default_sql": "0.5",
+            "hidden": 0,
+            "name": "confidence",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'none'",
+            "hidden": 0,
+            "name": "source_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "source_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "success_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 13,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "failure_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 14,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "access_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "last_accessed",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 16,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "last_verified_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 17,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "expires_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 18,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "supersedes",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 19,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "superseded_by",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 20,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 21,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 22,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "experience_payload",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 23,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "effective_from",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 24,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "effective_until",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 25,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 26,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "mentioned_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 27,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 28,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "personal_general",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "autoincrement": true,
+        "rowid_alias": "id"
+      },
+      "context_layers": {
+        "ddl": "CREATE TABLE context_layers (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,\n        layer TEXT NOT NULL CHECK (layer IN ('l0', 'l1', 'l2')),\n        content TEXT NOT NULL,\n        content_hash TEXT NOT NULL,\n        generator TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        UNIQUE(item_id, layer)\n    )",
+        "ddl_sha256": "7ed08da43cece04435074ca46afa717648e717eac18f503b9b2a1f1b73962c8b",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "layer",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "generator",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": true,
+        "rowid_alias": "id"
+      },
+      "legacy_memory_migrations": {
+        "ddl": "CREATE TABLE legacy_memory_migrations (\n        legacy_memory_id INTEGER PRIMARY KEY,\n        context_item_id INTEGER NOT NULL REFERENCES context_items(id),\n        migrated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "6e48c41e4f8ae04ad1f53118a808ed035cc626a3fe37fad7430ef9e90360516c",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "legacy_memory_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "context_item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "migrated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": false,
+        "rowid_alias": "legacy_memory_id"
+      },
+      "context_project_resolutions": {
+        "ddl": "CREATE TABLE context_project_resolutions(\n        item_id INTEGER PRIMARY KEY REFERENCES context_items(id),\n        resolution_state TEXT NOT NULL CHECK(resolution_state IN ('resolved','conflict','unresolved','global','ignored')),\n        decision_source TEXT NOT NULL DEFAULT 'none' CHECK(decision_source IN ('automatic','human','none')),\n        review_state TEXT NOT NULL DEFAULT 'not_required' CHECK(review_state IN ('not_required','pending','accepted','rejected')),\n        proposed_project TEXT NOT NULL DEFAULT '',\n        resolved_project TEXT NOT NULL DEFAULT '',\n        confidence TEXT NOT NULL DEFAULT 'none' CHECK(confidence IN ('high','medium','none')),\n        method TEXT NOT NULL DEFAULT '',\n        evidence_json TEXT NOT NULL DEFAULT '[]',\n        resolver_version TEXT NOT NULL DEFAULT '',\n        revision INTEGER NOT NULL DEFAULT 1,\n        reviewed_at TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "dccaab1d14745c0911b4e3d5da2bad6b23e5563b35d8316585bffdd5739e77f5",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "resolution_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "'none'",
+            "hidden": 0,
+            "name": "decision_source",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'not_required'",
+            "hidden": 0,
+            "name": "review_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "proposed_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "resolved_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'none'",
+            "hidden": 0,
+            "name": "confidence",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "method",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "evidence_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "resolver_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reviewed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": false,
+        "rowid_alias": "item_id"
+      }
+    },
+    "kane": {
+      "context_project_registry": {
+        "ddl": "CREATE TABLE context_project_registry(\n        project TEXT PRIMARY KEY,\n        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),\n        display_name TEXT NOT NULL DEFAULT '',\n        revision INTEGER NOT NULL DEFAULT 1,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "476e1638525a843541cb1ef06edf9e38bc9c61ccb248e0b97e35d1cc0f223353",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "display_name",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": false,
+        "rowid_alias": null
+      },
+      "memories": {
+        "ddl": "CREATE TABLE memories (\n            id              INTEGER PRIMARY KEY AUTOINCREMENT,\n            key             TEXT NOT NULL,\n            value           TEXT NOT NULL,\n            status          TEXT NOT NULL DEFAULT 'active',\n            attribute        TEXT DEFAULT '',\n            tags            TEXT DEFAULT '',\n            source_session  TEXT DEFAULT '',\n            access_count    INTEGER DEFAULT 0,\n            last_accessed   TEXT DEFAULT NULL,\n            supersedes      INTEGER REFERENCES memories(id),\n            superseded_by   INTEGER REFERENCES memories(id),\n            created_at      TEXT NOT NULL,\n            updated_at      TEXT NOT NULL\n        , importance REAL NOT NULL DEFAULT 5.0, tier TEXT NOT NULL DEFAULT 'normal', expires_at TEXT DEFAULT NULL)",
+        "ddl_sha256": "20016f7f0e25c485227bd7b919ccbb07b62f0b02c126d8bb29c4a3739dfd4079",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "value",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "attribute",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "tags",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_session",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "access_count",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "NULL",
+            "hidden": 0,
+            "name": "last_accessed",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "supersedes",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "superseded_by",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "5.0",
+            "hidden": 0,
+            "name": "importance",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 14,
+            "default_sql": "'normal'",
+            "hidden": 0,
+            "name": "tier",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "NULL",
+            "hidden": 0,
+            "name": "expires_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": true,
+        "rowid_alias": "id"
+      },
+      "context_items": {
+        "ddl": "CREATE TABLE context_items (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        identity_key TEXT NOT NULL,\n        content_type TEXT NOT NULL,\n        project TEXT NOT NULL DEFAULT '',\n        scope TEXT NOT NULL DEFAULT 'project',\n        status TEXT NOT NULL DEFAULT 'candidate',\n        tier TEXT NOT NULL DEFAULT 'normal',\n        tags TEXT NOT NULL DEFAULT '',\n        importance REAL NOT NULL DEFAULT 5.0,\n        confidence REAL NOT NULL DEFAULT 0.5,\n        source_state TEXT NOT NULL DEFAULT 'none',\n        source_count INTEGER NOT NULL DEFAULT 0,\n        success_count INTEGER NOT NULL DEFAULT 0,\n        failure_count INTEGER NOT NULL DEFAULT 0,\n        access_count INTEGER NOT NULL DEFAULT 0,\n        last_accessed TEXT,\n        last_verified_at TEXT,\n        expires_at TEXT,\n        supersedes INTEGER REFERENCES context_items(id),\n        superseded_by INTEGER REFERENCES context_items(id),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    , experience_payload TEXT NOT NULL DEFAULT '', effective_from TEXT, effective_until TEXT, occurred_at TEXT, mentioned_at TEXT, personal_general INTEGER NOT NULL DEFAULT 0, projects TEXT NOT NULL DEFAULT '[]')",
+        "ddl_sha256": "426be32cf7db02dc8be5c90aa7c453926fb7d944c945d76a9b59cdd65b3586db",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "identity_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'project'",
+            "hidden": 0,
+            "name": "scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "'candidate'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'normal'",
+            "hidden": 0,
+            "name": "tier",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "tags",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "5.0",
+            "hidden": 0,
+            "name": "importance",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 9,
+            "default_sql": "0.5",
+            "hidden": 0,
+            "name": "confidence",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'none'",
+            "hidden": 0,
+            "name": "source_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "source_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "success_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 13,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "failure_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 14,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "access_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "last_accessed",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 16,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "last_verified_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 17,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "expires_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 18,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "supersedes",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 19,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "superseded_by",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 20,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 21,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 22,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "experience_payload",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 23,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "effective_from",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 24,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "effective_until",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 25,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 26,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "mentioned_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 27,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "personal_general",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 28,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": true,
+        "rowid_alias": "id"
+      },
+      "context_layers": {
+        "ddl": "CREATE TABLE context_layers (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,\n        layer TEXT NOT NULL CHECK (layer IN ('l0', 'l1', 'l2')),\n        content TEXT NOT NULL,\n        content_hash TEXT NOT NULL,\n        generator TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        UNIQUE(item_id, layer)\n    )",
+        "ddl_sha256": "7ed08da43cece04435074ca46afa717648e717eac18f503b9b2a1f1b73962c8b",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "layer",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "generator",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": true,
+        "rowid_alias": "id"
+      },
+      "legacy_memory_migrations": {
+        "ddl": "CREATE TABLE legacy_memory_migrations (\n        legacy_memory_id INTEGER PRIMARY KEY,\n        context_item_id INTEGER NOT NULL REFERENCES context_items(id),\n        migrated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "6e48c41e4f8ae04ad1f53118a808ed035cc626a3fe37fad7430ef9e90360516c",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "legacy_memory_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "context_item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "migrated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": false,
+        "rowid_alias": "legacy_memory_id"
+      },
+      "context_project_resolutions": {
+        "ddl": "CREATE TABLE context_project_resolutions(\n        item_id INTEGER PRIMARY KEY REFERENCES context_items(id),\n        resolution_state TEXT NOT NULL CHECK(resolution_state IN ('resolved','conflict','unresolved','global','ignored')),\n        decision_source TEXT NOT NULL DEFAULT 'none' CHECK(decision_source IN ('automatic','human','none')),\n        review_state TEXT NOT NULL DEFAULT 'not_required' CHECK(review_state IN ('not_required','pending','accepted','rejected')),\n        proposed_project TEXT NOT NULL DEFAULT '',\n        resolved_project TEXT NOT NULL DEFAULT '',\n        confidence TEXT NOT NULL DEFAULT 'none' CHECK(confidence IN ('high','medium','none')),\n        method TEXT NOT NULL DEFAULT '',\n        evidence_json TEXT NOT NULL DEFAULT '[]',\n        resolver_version TEXT NOT NULL DEFAULT '',\n        revision INTEGER NOT NULL DEFAULT 1,\n        reviewed_at TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "dccaab1d14745c0911b4e3d5da2bad6b23e5563b35d8316585bffdd5739e77f5",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "resolution_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "'none'",
+            "hidden": 0,
+            "name": "decision_source",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'not_required'",
+            "hidden": 0,
+            "name": "review_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "proposed_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "resolved_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'none'",
+            "hidden": 0,
+            "name": "confidence",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "method",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "evidence_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "resolver_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reviewed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": false,
+        "rowid_alias": "item_id"
+      }
+    },
+    "public": {
+      "context_project_registry": {
+        "ddl": "CREATE TABLE context_project_registry(\n        project TEXT PRIMARY KEY,\n        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),\n        display_name TEXT NOT NULL DEFAULT '',\n        revision INTEGER NOT NULL DEFAULT 1,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "476e1638525a843541cb1ef06edf9e38bc9c61ccb248e0b97e35d1cc0f223353",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "display_name",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": false,
+        "rowid_alias": null
+      },
+      "memories": {
+        "ddl": "CREATE TABLE memories (\n            id              INTEGER PRIMARY KEY AUTOINCREMENT,\n            key             TEXT NOT NULL,\n            value           TEXT NOT NULL,\n            status          TEXT NOT NULL DEFAULT 'active',\n            attribute        TEXT DEFAULT '',\n            tags            TEXT DEFAULT '',\n            source_session  TEXT DEFAULT '',\n            access_count    INTEGER DEFAULT 0,\n            last_accessed   TEXT DEFAULT NULL,\n            supersedes      INTEGER REFERENCES memories(id),\n            superseded_by   INTEGER REFERENCES memories(id),\n            created_at      TEXT NOT NULL,\n            updated_at      TEXT NOT NULL\n        , importance REAL NOT NULL DEFAULT 5.0, tier TEXT NOT NULL DEFAULT 'normal', expires_at TEXT DEFAULT NULL)",
+        "ddl_sha256": "20016f7f0e25c485227bd7b919ccbb07b62f0b02c126d8bb29c4a3739dfd4079",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "value",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "attribute",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "tags",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_session",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "access_count",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "NULL",
+            "hidden": 0,
+            "name": "last_accessed",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "supersedes",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "superseded_by",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "5.0",
+            "hidden": 0,
+            "name": "importance",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 14,
+            "default_sql": "'normal'",
+            "hidden": 0,
+            "name": "tier",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "NULL",
+            "hidden": 0,
+            "name": "expires_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": true,
+        "rowid_alias": "id"
+      },
+      "context_items": {
+        "ddl": "CREATE TABLE context_items (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        identity_key TEXT NOT NULL,\n        content_type TEXT NOT NULL,\n        project TEXT NOT NULL DEFAULT '',\n        scope TEXT NOT NULL DEFAULT 'project',\n        status TEXT NOT NULL DEFAULT 'candidate',\n        tier TEXT NOT NULL DEFAULT 'normal',\n        tags TEXT NOT NULL DEFAULT '',\n        importance REAL NOT NULL DEFAULT 5.0,\n        confidence REAL NOT NULL DEFAULT 0.5,\n        source_state TEXT NOT NULL DEFAULT 'none',\n        source_count INTEGER NOT NULL DEFAULT 0,\n        success_count INTEGER NOT NULL DEFAULT 0,\n        failure_count INTEGER NOT NULL DEFAULT 0,\n        access_count INTEGER NOT NULL DEFAULT 0,\n        last_accessed TEXT,\n        last_verified_at TEXT,\n        expires_at TEXT,\n        supersedes INTEGER REFERENCES context_items(id),\n        superseded_by INTEGER REFERENCES context_items(id),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    , experience_payload TEXT NOT NULL DEFAULT '', effective_from TEXT, effective_until TEXT, occurred_at TEXT, mentioned_at TEXT, personal_general INTEGER NOT NULL DEFAULT 0, projects TEXT NOT NULL DEFAULT '[]')",
+        "ddl_sha256": "426be32cf7db02dc8be5c90aa7c453926fb7d944c945d76a9b59cdd65b3586db",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "identity_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_type",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'project'",
+            "hidden": 0,
+            "name": "scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "'candidate'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'normal'",
+            "hidden": 0,
+            "name": "tier",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "tags",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "5.0",
+            "hidden": 0,
+            "name": "importance",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 9,
+            "default_sql": "0.5",
+            "hidden": 0,
+            "name": "confidence",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'none'",
+            "hidden": 0,
+            "name": "source_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "source_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "success_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 13,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "failure_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 14,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "access_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "last_accessed",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 16,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "last_verified_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 17,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "expires_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 18,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "supersedes",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 19,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "superseded_by",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 20,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 21,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 22,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "experience_payload",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 23,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "effective_from",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 24,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "effective_until",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 25,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 26,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "mentioned_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 27,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "personal_general",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 28,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": true,
+        "rowid_alias": "id"
+      },
+      "context_layers": {
+        "ddl": "CREATE TABLE context_layers (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,\n        layer TEXT NOT NULL CHECK (layer IN ('l0', 'l1', 'l2')),\n        content TEXT NOT NULL,\n        content_hash TEXT NOT NULL,\n        generator TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        UNIQUE(item_id, layer)\n    )",
+        "ddl_sha256": "7ed08da43cece04435074ca46afa717648e717eac18f503b9b2a1f1b73962c8b",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "layer",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "generator",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": true,
+        "rowid_alias": "id"
+      },
+      "legacy_memory_migrations": {
+        "ddl": "CREATE TABLE legacy_memory_migrations (\n        legacy_memory_id INTEGER PRIMARY KEY,\n        context_item_id INTEGER NOT NULL REFERENCES context_items(id),\n        migrated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "6e48c41e4f8ae04ad1f53118a808ed035cc626a3fe37fad7430ef9e90360516c",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "legacy_memory_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "context_item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "migrated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": false,
+        "rowid_alias": "legacy_memory_id"
+      },
+      "context_project_resolutions": {
+        "ddl": "CREATE TABLE context_project_resolutions(\n        item_id INTEGER PRIMARY KEY REFERENCES context_items(id),\n        resolution_state TEXT NOT NULL CHECK(resolution_state IN ('resolved','conflict','unresolved','global','ignored')),\n        decision_source TEXT NOT NULL DEFAULT 'none' CHECK(decision_source IN ('automatic','human','none')),\n        review_state TEXT NOT NULL DEFAULT 'not_required' CHECK(review_state IN ('not_required','pending','accepted','rejected')),\n        proposed_project TEXT NOT NULL DEFAULT '',\n        resolved_project TEXT NOT NULL DEFAULT '',\n        confidence TEXT NOT NULL DEFAULT 'none' CHECK(confidence IN ('high','medium','none')),\n        method TEXT NOT NULL DEFAULT '',\n        evidence_json TEXT NOT NULL DEFAULT '[]',\n        resolver_version TEXT NOT NULL DEFAULT '',\n        revision INTEGER NOT NULL DEFAULT 1,\n        reviewed_at TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "dccaab1d14745c0911b4e3d5da2bad6b23e5563b35d8316585bffdd5739e77f5",
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "resolution_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "'none'",
+            "hidden": 0,
+            "name": "decision_source",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'not_required'",
+            "hidden": 0,
+            "name": "review_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "proposed_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "resolved_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'none'",
+            "hidden": 0,
+            "name": "confidence",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "method",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "evidence_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "resolver_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reviewed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "autoincrement": false,
+        "rowid_alias": "item_id"
+      }
+    }
+  }
+}

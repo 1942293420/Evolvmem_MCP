@@ -1,0 +1,4697 @@
+{
+  "format": "reviewed-capability-7-v1",
+  "namespaces": {
+    "kane": {
+      "capability_assessments": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "assessment_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_binding_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "unit_text_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "policy_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "assessment_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "value",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'unverified'",
+            "name": "verification_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "score",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "details",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "0",
+            "name": "legacy_active_preserved",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "assessment_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_binding_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_text_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "policy_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "assessment_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "value",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'unverified'",
+            "hidden": 0,
+            "name": "verification_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "score",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "details",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "legacy_active_preserved",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_assessments(\n        assessment_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        memory_id INTEGER NOT NULL REFERENCES capability_memories(memory_id),\n        source_id INTEGER NOT NULL, source_binding_revision INTEGER NOT NULL,\n        source_revision TEXT NOT NULL, unit_revision INTEGER, unit_text_hash TEXT NOT NULL,\n        policy_version TEXT NOT NULL, assessment_key TEXT NOT NULL,\n        value TEXT NOT NULL CHECK(value IN ('reusable','reference','review','ignore')),\n        verification_status TEXT NOT NULL DEFAULT 'unverified' CHECK(verification_status='unverified'),\n        score INTEGER NOT NULL, details TEXT NOT NULL,\n        legacy_active_preserved INTEGER NOT NULL DEFAULT 0,\n        revision INTEGER NOT NULL, created_at TEXT NOT NULL,\n        UNIQUE(source_id,assessment_key), UNIQUE(source_id,revision))",
+        "ddl_sha256": "ccd27537e386897321366fc5320a219e09e9862987016e79bb64310f1083f3c1",
+        "foreign_keys": [
+          {
+            "from_column": "memory_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "capability_memories",
+            "to_column": "memory_id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "memory_id",
+                "sequence": 0
+              },
+              {
+                "cid": 2,
+                "name": "source_id",
+                "sequence": 1
+              },
+              {
+                "cid": 0,
+                "name": "assessment_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_capability_assessment_memory\n        ON capability_assessments(memory_id,source_id,assessment_id)",
+            "ddl_sha256": "334ee54577ab4b5733ff88e4e9acaafe7e801f8476337cc2e70c136ecd178108",
+            "name": "idx_capability_assessment_memory",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "source_id",
+                "sequence": 0
+              },
+              {
+                "cid": 14,
+                "name": "revision",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_assessments_2",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          },
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "source_id",
+                "sequence": 0
+              },
+              {
+                "cid": 8,
+                "name": "assessment_key",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_assessments_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "capability_assessments",
+        "rowid_alias": "assessment_id"
+      },
+      "capability_categories": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "1",
+            "name": "enabled",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "enabled",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_categories(\n        id TEXT PRIMARY KEY, label TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,\n        revision INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "fea437ba90c294efc836ba0c0af6146182af6eec879ed1496a4799fefe2c0d3a",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "id",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_categories_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "capability_categories",
+        "rowid_alias": null
+      },
+      "capability_category_suggestions": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "suggestion_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_memory_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'pending'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "reviewed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "suggestion_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_memory_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'pending'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reviewed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_category_suggestions(\n        suggestion_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        label TEXT NOT NULL, reason TEXT NOT NULL, source_memory_id INTEGER,\n        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted','rejected')),\n        created_at TEXT NOT NULL, reviewed_at TEXT)",
+        "ddl_sha256": "98bd2d9f9530be78a53bfa25b51d50eca979a627e8e07834348471bd53daedbb",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "capability_category_suggestions",
+        "rowid_alias": "suggestion_id"
+      },
+      "capability_intake": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "intake_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'[]'",
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "name": "suggested_category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'pending'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "intake_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "suggested_category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'pending'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_intake(\n        intake_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        title TEXT NOT NULL, content TEXT NOT NULL, keywords TEXT NOT NULL DEFAULT '[]',\n        suggested_category TEXT NOT NULL DEFAULT '', source_project TEXT NOT NULL DEFAULT '',\n        source_ref TEXT NOT NULL DEFAULT '', occurred_at TEXT, fingerprint TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','assigned','ignored')),\n        revision INTEGER NOT NULL DEFAULT 1,\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "87c9e40c31aa424c54e5f476251813445d12259a05acb860ca4f531700459709",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 8,
+                "name": "fingerprint",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_intake_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "capability_intake",
+        "rowid_alias": "intake_id"
+      },
+      "capability_memories": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "memory_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'[]'",
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "memory_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_memories(\n        memory_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        category TEXT NOT NULL REFERENCES capability_categories(id),\n        title TEXT NOT NULL, content TEXT NOT NULL, keywords TEXT NOT NULL DEFAULT '[]',\n        source_project TEXT NOT NULL DEFAULT '', source_ref TEXT NOT NULL DEFAULT '',\n        occurred_at TEXT, fingerprint TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL DEFAULT 'active'\n            CHECK(status IN ('active','pending','ignored','archived')),\n        revision INTEGER NOT NULL DEFAULT 1,\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "1f5261807d5ddc3335c7c01a8aa366280a99af6978c2270b57c221020f387125",
+        "foreign_keys": [
+          {
+            "from_column": "category",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "capability_categories",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "category",
+                "sequence": 0
+              },
+              {
+                "cid": 9,
+                "name": "status",
+                "sequence": 1
+              },
+              {
+                "cid": 0,
+                "name": "memory_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_capability_recall\n        ON capability_memories(category,status,memory_id)",
+            "ddl_sha256": "5e9b06684307dd38b4af3eb2cbe2d95a9b367bc847547b552c3d4524b0d140a9",
+            "name": "idx_capability_recall",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 8,
+                "name": "fingerprint",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_memories_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          }
+        ],
+        "name": "capability_memories",
+        "rowid_alias": "memory_id"
+      },
+      "capability_sources": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'[]'",
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'project'",
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'unverified'",
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'project'",
+            "hidden": 0,
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'unverified'",
+            "hidden": 0,
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_sources(\n        source_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        memory_id INTEGER NOT NULL REFERENCES capability_memories(memory_id),\n        source_kind TEXT NOT NULL CHECK(source_kind IN ('context','unit','reference','manual')),\n        source_key TEXT NOT NULL, source_ref TEXT NOT NULL,\n        source_revision TEXT NOT NULL DEFAULT '', context_item_id INTEGER, task_id INTEGER,\n        unit_digest TEXT NOT NULL DEFAULT '', unit_revision INTEGER,\n        projects TEXT NOT NULL DEFAULT '[]', knowledge_scope TEXT NOT NULL DEFAULT 'project',\n        evidence_status TEXT NOT NULL DEFAULT 'unverified',\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,\n        revision INTEGER NOT NULL DEFAULT 1,\n        UNIQUE(memory_id,source_kind,source_key))",
+        "ddl_sha256": "6a3783894ef16b1852042cfd8930ea1e2f6c90402fbc0d691f1e691425ddfdb3",
+        "foreign_keys": [
+          {
+            "from_column": "memory_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "capability_memories",
+            "to_column": "memory_id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "memory_id",
+                "sequence": 0
+              },
+              {
+                "cid": 2,
+                "name": "source_kind",
+                "sequence": 1
+              },
+              {
+                "cid": 3,
+                "name": "source_key",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_sources_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "capability_sources",
+        "rowid_alias": "source_id"
+      }
+    },
+    "owner": {
+      "capability_assessments": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "assessment_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_binding_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "unit_text_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "policy_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "assessment_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "value",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'unverified'",
+            "name": "verification_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "score",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "details",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "0",
+            "name": "legacy_active_preserved",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "assessment_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_binding_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_text_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "policy_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "assessment_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "value",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'unverified'",
+            "hidden": 0,
+            "name": "verification_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "score",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "details",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "legacy_active_preserved",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_assessments(\n        assessment_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        memory_id INTEGER NOT NULL REFERENCES capability_memories(memory_id),\n        source_id INTEGER NOT NULL, source_binding_revision INTEGER NOT NULL,\n        source_revision TEXT NOT NULL, unit_revision INTEGER, unit_text_hash TEXT NOT NULL,\n        policy_version TEXT NOT NULL, assessment_key TEXT NOT NULL,\n        value TEXT NOT NULL CHECK(value IN ('reusable','reference','review','ignore')),\n        verification_status TEXT NOT NULL DEFAULT 'unverified' CHECK(verification_status='unverified'),\n        score INTEGER NOT NULL, details TEXT NOT NULL,\n        legacy_active_preserved INTEGER NOT NULL DEFAULT 0,\n        revision INTEGER NOT NULL, created_at TEXT NOT NULL,\n        UNIQUE(source_id,assessment_key), UNIQUE(source_id,revision))",
+        "ddl_sha256": "ccd27537e386897321366fc5320a219e09e9862987016e79bb64310f1083f3c1",
+        "foreign_keys": [
+          {
+            "from_column": "memory_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "capability_memories",
+            "to_column": "memory_id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "memory_id",
+                "sequence": 0
+              },
+              {
+                "cid": 2,
+                "name": "source_id",
+                "sequence": 1
+              },
+              {
+                "cid": 0,
+                "name": "assessment_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_capability_assessment_memory\n        ON capability_assessments(memory_id,source_id,assessment_id)",
+            "ddl_sha256": "334ee54577ab4b5733ff88e4e9acaafe7e801f8476337cc2e70c136ecd178108",
+            "name": "idx_capability_assessment_memory",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "source_id",
+                "sequence": 0
+              },
+              {
+                "cid": 14,
+                "name": "revision",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_assessments_2",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          },
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "source_id",
+                "sequence": 0
+              },
+              {
+                "cid": 8,
+                "name": "assessment_key",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_assessments_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "capability_assessments",
+        "rowid_alias": "assessment_id"
+      },
+      "capability_categories": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "1",
+            "name": "enabled",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "enabled",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_categories(\n        id TEXT PRIMARY KEY, label TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,\n        revision INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "fea437ba90c294efc836ba0c0af6146182af6eec879ed1496a4799fefe2c0d3a",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "id",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_categories_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "capability_categories",
+        "rowid_alias": null
+      },
+      "capability_category_suggestions": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "suggestion_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_memory_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'pending'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "reviewed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "suggestion_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_memory_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'pending'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reviewed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_category_suggestions(\n        suggestion_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        label TEXT NOT NULL, reason TEXT NOT NULL, source_memory_id INTEGER,\n        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted','rejected')),\n        created_at TEXT NOT NULL, reviewed_at TEXT)",
+        "ddl_sha256": "98bd2d9f9530be78a53bfa25b51d50eca979a627e8e07834348471bd53daedbb",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "capability_category_suggestions",
+        "rowid_alias": "suggestion_id"
+      },
+      "capability_intake": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "intake_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'[]'",
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "name": "suggested_category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'pending'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "intake_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "suggested_category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'pending'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_intake(\n        intake_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        title TEXT NOT NULL, content TEXT NOT NULL, keywords TEXT NOT NULL DEFAULT '[]',\n        suggested_category TEXT NOT NULL DEFAULT '', source_project TEXT NOT NULL DEFAULT '',\n        source_ref TEXT NOT NULL DEFAULT '', occurred_at TEXT, fingerprint TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','assigned','ignored')),\n        revision INTEGER NOT NULL DEFAULT 1,\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "87c9e40c31aa424c54e5f476251813445d12259a05acb860ca4f531700459709",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 8,
+                "name": "fingerprint",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_intake_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "capability_intake",
+        "rowid_alias": "intake_id"
+      },
+      "capability_memories": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "memory_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'[]'",
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "memory_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_memories(\n        memory_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        category TEXT NOT NULL REFERENCES capability_categories(id),\n        title TEXT NOT NULL, content TEXT NOT NULL, keywords TEXT NOT NULL DEFAULT '[]',\n        source_project TEXT NOT NULL DEFAULT '', source_ref TEXT NOT NULL DEFAULT '',\n        occurred_at TEXT, fingerprint TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL DEFAULT 'active'\n            CHECK(status IN ('active','pending','ignored','archived')),\n        revision INTEGER NOT NULL DEFAULT 1,\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "1f5261807d5ddc3335c7c01a8aa366280a99af6978c2270b57c221020f387125",
+        "foreign_keys": [
+          {
+            "from_column": "category",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "capability_categories",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "category",
+                "sequence": 0
+              },
+              {
+                "cid": 9,
+                "name": "status",
+                "sequence": 1
+              },
+              {
+                "cid": 0,
+                "name": "memory_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_capability_recall\n        ON capability_memories(category,status,memory_id)",
+            "ddl_sha256": "5e9b06684307dd38b4af3eb2cbe2d95a9b367bc847547b552c3d4524b0d140a9",
+            "name": "idx_capability_recall",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 8,
+                "name": "fingerprint",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_memories_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          }
+        ],
+        "name": "capability_memories",
+        "rowid_alias": "memory_id"
+      },
+      "capability_sources": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'[]'",
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'project'",
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'unverified'",
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'project'",
+            "hidden": 0,
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'unverified'",
+            "hidden": 0,
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_sources(\n        source_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        memory_id INTEGER NOT NULL REFERENCES capability_memories(memory_id),\n        source_kind TEXT NOT NULL CHECK(source_kind IN ('context','unit','reference','manual')),\n        source_key TEXT NOT NULL, source_ref TEXT NOT NULL,\n        source_revision TEXT NOT NULL DEFAULT '', context_item_id INTEGER, task_id INTEGER,\n        unit_digest TEXT NOT NULL DEFAULT '', unit_revision INTEGER,\n        projects TEXT NOT NULL DEFAULT '[]', knowledge_scope TEXT NOT NULL DEFAULT 'project',\n        evidence_status TEXT NOT NULL DEFAULT 'unverified',\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,\n        revision INTEGER NOT NULL DEFAULT 1,\n        UNIQUE(memory_id,source_kind,source_key))",
+        "ddl_sha256": "6a3783894ef16b1852042cfd8930ea1e2f6c90402fbc0d691f1e691425ddfdb3",
+        "foreign_keys": [
+          {
+            "from_column": "memory_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "capability_memories",
+            "to_column": "memory_id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "memory_id",
+                "sequence": 0
+              },
+              {
+                "cid": 2,
+                "name": "source_kind",
+                "sequence": 1
+              },
+              {
+                "cid": 3,
+                "name": "source_key",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_sources_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "capability_sources",
+        "rowid_alias": "source_id"
+      },
+      "existing_capability_assessment_runs": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "plan_sha256",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": true,
+            "pk_position": 3,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "name": "lease_token",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "0",
+            "name": "lease_until",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "assessment_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "name": "result_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "plan_sha256",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": true,
+            "pk_position": 3,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "lease_token",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "lease_until",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "assessment_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "result_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE existing_capability_assessment_runs(\n        plan_sha256 TEXT NOT NULL,memory_id INTEGER NOT NULL,source_id INTEGER NOT NULL,\n        state TEXT NOT NULL,lease_token TEXT NOT NULL DEFAULT '',lease_until REAL NOT NULL DEFAULT 0,\n        assessment_id INTEGER,result_hash TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL,\n        PRIMARY KEY(plan_sha256,memory_id,source_id))",
+        "ddl_sha256": "867d946906dbd0b7abe784450792bd5bc891e24174aef5c97dcd956bb07a47e0",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "plan_sha256",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "memory_id",
+                "sequence": 1
+              },
+              {
+                "cid": 2,
+                "name": "source_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_existing_capability_assessment_runs_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "existing_capability_assessment_runs",
+        "rowid_alias": null
+      }
+    },
+    "public": {
+      "capability_assessments": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "assessment_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_binding_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "unit_text_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "policy_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "assessment_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "value",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'unverified'",
+            "name": "verification_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "score",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "details",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "0",
+            "name": "legacy_active_preserved",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "assessment_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_binding_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_text_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "policy_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "assessment_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "value",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'unverified'",
+            "hidden": 0,
+            "name": "verification_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "score",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "details",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "legacy_active_preserved",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 15,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_assessments(\n        assessment_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        memory_id INTEGER NOT NULL REFERENCES capability_memories(memory_id),\n        source_id INTEGER NOT NULL, source_binding_revision INTEGER NOT NULL,\n        source_revision TEXT NOT NULL, unit_revision INTEGER, unit_text_hash TEXT NOT NULL,\n        policy_version TEXT NOT NULL, assessment_key TEXT NOT NULL,\n        value TEXT NOT NULL CHECK(value IN ('reusable','reference','review','ignore')),\n        verification_status TEXT NOT NULL DEFAULT 'unverified' CHECK(verification_status='unverified'),\n        score INTEGER NOT NULL, details TEXT NOT NULL,\n        legacy_active_preserved INTEGER NOT NULL DEFAULT 0,\n        revision INTEGER NOT NULL, created_at TEXT NOT NULL,\n        UNIQUE(source_id,assessment_key), UNIQUE(source_id,revision))",
+        "ddl_sha256": "ccd27537e386897321366fc5320a219e09e9862987016e79bb64310f1083f3c1",
+        "foreign_keys": [
+          {
+            "from_column": "memory_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "capability_memories",
+            "to_column": "memory_id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "memory_id",
+                "sequence": 0
+              },
+              {
+                "cid": 2,
+                "name": "source_id",
+                "sequence": 1
+              },
+              {
+                "cid": 0,
+                "name": "assessment_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_capability_assessment_memory\n        ON capability_assessments(memory_id,source_id,assessment_id)",
+            "ddl_sha256": "334ee54577ab4b5733ff88e4e9acaafe7e801f8476337cc2e70c136ecd178108",
+            "name": "idx_capability_assessment_memory",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "source_id",
+                "sequence": 0
+              },
+              {
+                "cid": 14,
+                "name": "revision",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_assessments_2",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          },
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "source_id",
+                "sequence": 0
+              },
+              {
+                "cid": 8,
+                "name": "assessment_key",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_assessments_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "capability_assessments",
+        "rowid_alias": "assessment_id"
+      },
+      "capability_categories": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "1",
+            "name": "enabled",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "enabled",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_categories(\n        id TEXT PRIMARY KEY, label TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,\n        revision INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "fea437ba90c294efc836ba0c0af6146182af6eec879ed1496a4799fefe2c0d3a",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "id",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_categories_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "capability_categories",
+        "rowid_alias": null
+      },
+      "capability_category_suggestions": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "suggestion_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_memory_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'pending'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "reviewed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "suggestion_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "label",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_memory_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'pending'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reviewed_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_category_suggestions(\n        suggestion_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        label TEXT NOT NULL, reason TEXT NOT NULL, source_memory_id INTEGER,\n        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted','rejected')),\n        created_at TEXT NOT NULL, reviewed_at TEXT)",
+        "ddl_sha256": "98bd2d9f9530be78a53bfa25b51d50eca979a627e8e07834348471bd53daedbb",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "capability_category_suggestions",
+        "rowid_alias": "suggestion_id"
+      },
+      "capability_intake": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "intake_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'[]'",
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "name": "suggested_category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'pending'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "intake_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "suggested_category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'pending'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_intake(\n        intake_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        title TEXT NOT NULL, content TEXT NOT NULL, keywords TEXT NOT NULL DEFAULT '[]',\n        suggested_category TEXT NOT NULL DEFAULT '', source_project TEXT NOT NULL DEFAULT '',\n        source_ref TEXT NOT NULL DEFAULT '', occurred_at TEXT, fingerprint TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','assigned','ignored')),\n        revision INTEGER NOT NULL DEFAULT 1,\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "87c9e40c31aa424c54e5f476251813445d12259a05acb860ca4f531700459709",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 8,
+                "name": "fingerprint",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_intake_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "capability_intake",
+        "rowid_alias": "intake_id"
+      },
+      "capability_memories": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "memory_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'[]'",
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "memory_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "category",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "keywords",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "occurred_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "'active'",
+            "hidden": 0,
+            "name": "status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_memories(\n        memory_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        category TEXT NOT NULL REFERENCES capability_categories(id),\n        title TEXT NOT NULL, content TEXT NOT NULL, keywords TEXT NOT NULL DEFAULT '[]',\n        source_project TEXT NOT NULL DEFAULT '', source_ref TEXT NOT NULL DEFAULT '',\n        occurred_at TEXT, fingerprint TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL DEFAULT 'active'\n            CHECK(status IN ('active','pending','ignored','archived')),\n        revision INTEGER NOT NULL DEFAULT 1,\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        "ddl_sha256": "1f5261807d5ddc3335c7c01a8aa366280a99af6978c2270b57c221020f387125",
+        "foreign_keys": [
+          {
+            "from_column": "category",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "capability_categories",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "category",
+                "sequence": 0
+              },
+              {
+                "cid": 9,
+                "name": "status",
+                "sequence": 1
+              },
+              {
+                "cid": 0,
+                "name": "memory_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_capability_recall\n        ON capability_memories(category,status,memory_id)",
+            "ddl_sha256": "5e9b06684307dd38b4af3eb2cbe2d95a9b367bc847547b552c3d4524b0d140a9",
+            "name": "idx_capability_recall",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 8,
+                "name": "fingerprint",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_memories_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 1,
+            "unique": true
+          }
+        ],
+        "name": "capability_memories",
+        "rowid_alias": "memory_id"
+      },
+      "capability_sources": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'[]'",
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'project'",
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'unverified'",
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "memory_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "context_item_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "task_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "unit_digest",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "unit_revision",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'[]'",
+            "hidden": 0,
+            "name": "projects",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "'project'",
+            "hidden": 0,
+            "name": "knowledge_scope",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 12,
+            "default_sql": "'unverified'",
+            "hidden": 0,
+            "name": "evidence_status",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 13,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE capability_sources(\n        source_id INTEGER PRIMARY KEY AUTOINCREMENT,\n        memory_id INTEGER NOT NULL REFERENCES capability_memories(memory_id),\n        source_kind TEXT NOT NULL CHECK(source_kind IN ('context','unit','reference','manual')),\n        source_key TEXT NOT NULL, source_ref TEXT NOT NULL,\n        source_revision TEXT NOT NULL DEFAULT '', context_item_id INTEGER, task_id INTEGER,\n        unit_digest TEXT NOT NULL DEFAULT '', unit_revision INTEGER,\n        projects TEXT NOT NULL DEFAULT '[]', knowledge_scope TEXT NOT NULL DEFAULT 'project',\n        evidence_status TEXT NOT NULL DEFAULT 'unverified',\n        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,\n        revision INTEGER NOT NULL DEFAULT 1,\n        UNIQUE(memory_id,source_kind,source_key))",
+        "ddl_sha256": "6a3783894ef16b1852042cfd8930ea1e2f6c90402fbc0d691f1e691425ddfdb3",
+        "foreign_keys": [
+          {
+            "from_column": "memory_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "capability_memories",
+            "to_column": "memory_id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "memory_id",
+                "sequence": 0
+              },
+              {
+                "cid": 2,
+                "name": "source_kind",
+                "sequence": 1
+              },
+              {
+                "cid": 3,
+                "name": "source_key",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_capability_sources_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "capability_sources",
+        "rowid_alias": "source_id"
+      }
+    }
+  },
+  "source_sha256": "f36051b843be978baa56b78c2ca7fee98a8d10bdfc4442832cb4dc711f6eb924"
+}

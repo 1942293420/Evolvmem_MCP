@@ -17,6 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+postgres = [
+    "psycopg[binary]>=3.3.6,<4",
+]
 reranking = [
     "onnxruntime>=1.20,<2",
     "tokenizers>=0.20,<1",
@@ -25,6 +28,7 @@ embedding = [
     "llama-cpp-python>=0.3.0",
 ]
 dev = [
+    "psycopg[binary]>=3.3.6,<4",
     "pytest>=8.0",
     "setuptools>=68.0",
 ]
@@ -37,10 +41,18 @@ license-files = ["LICENSES/*.txt", "THIRD_PARTY_NOTICES.md"]
 include = ["evolvmem*"]
 
 [tool.setuptools.package-data]
+"evolvmem.history_migration" = ["resources/*.json", "sql/*.sql"]
 evolvmem = [
+    "library_foundation/sql/*.sql",
+    "library_foundation/sql/*.sql.in",
+    "library_catalog/sql/*.sql",
+    "library_project_acl/sql/*.sql",
+    "pg_business_core/sql/*.sql",
+    "pg_vector_port/sql/*.sql",
     "web_static/*.html",
     "web_static/*.css",
     "web_static/*.js",
+    "web_static/redesign/*.html",
     "web_static/designs/*.html",
     "web_static/designs/*.css",
     "web_static/designs/*.js",

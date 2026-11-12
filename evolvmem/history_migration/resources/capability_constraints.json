@@ -1,0 +1,220 @@
+[
+  [
+    "capability_categories",
+    "p",
+    [
+      "library_id",
+      "source_rowid"
+    ]
+  ],
+  [
+    "capability_categories",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "capability_memories",
+    "p",
+    [
+      "library_id",
+      "source_rowid"
+    ]
+  ],
+  [
+    "capability_memories",
+    "c",
+    "status IN ('active','pending','ignored','archived')"
+  ],
+  [
+    "capability_memories",
+    "u",
+    [
+      "memory_id"
+    ]
+  ],
+  [
+    "capability_memories",
+    "u",
+    [
+      "fingerprint"
+    ]
+  ],
+  [
+    "capability_sources",
+    "p",
+    [
+      "library_id",
+      "source_rowid"
+    ]
+  ],
+  [
+    "capability_sources",
+    "c",
+    "source_kind IN ('context','unit','reference','manual')"
+  ],
+  [
+    "capability_sources",
+    "u",
+    [
+      "source_id"
+    ]
+  ],
+  [
+    "capability_sources",
+    "u",
+    [
+      "memory_id",
+      "source_kind",
+      "source_key"
+    ]
+  ],
+  [
+    "capability_assessments",
+    "p",
+    [
+      "library_id",
+      "source_rowid"
+    ]
+  ],
+  [
+    "capability_assessments",
+    "c",
+    "value IN ('reusable','reference','review','ignore')"
+  ],
+  [
+    "capability_assessments",
+    "c",
+    "verification_status='unverified'"
+  ],
+  [
+    "capability_assessments",
+    "u",
+    [
+      "assessment_id"
+    ]
+  ],
+  [
+    "capability_assessments",
+    "u",
+    [
+      "source_id",
+      "revision"
+    ]
+  ],
+  [
+    "capability_assessments",
+    "u",
+    [
+      "source_id",
+      "assessment_key"
+    ]
+  ],
+  [
+    "capability_category_suggestions",
+    "p",
+    [
+      "library_id",
+      "source_rowid"
+    ]
+  ],
+  [
+    "capability_category_suggestions",
+    "c",
+    "status IN ('pending','accepted','rejected')"
+  ],
+  [
+    "capability_category_suggestions",
+    "u",
+    [
+      "suggestion_id"
+    ]
+  ],
+  [
+    "capability_intake",
+    "p",
+    [
+      "library_id",
+      "source_rowid"
+    ]
+  ],
+  [
+    "capability_intake",
+    "c",
+    "status IN ('pending','assigned','ignored')"
+  ],
+  [
+    "capability_intake",
+    "u",
+    [
+      "intake_id"
+    ]
+  ],
+  [
+    "capability_intake",
+    "u",
+    [
+      "fingerprint"
+    ]
+  ],
+  [
+    "existing_capability_assessment_runs",
+    "p",
+    [
+      "library_id",
+      "source_rowid"
+    ]
+  ],
+  [
+    "existing_capability_assessment_runs",
+    "u",
+    [
+      "plan_sha256",
+      "memory_id",
+      "source_id"
+    ]
+  ],
+  [
+    "capability_memories",
+    "f",
+    {
+      "from_column": "category",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "capability_categories",
+      "to_column": "id"
+    }
+  ],
+  [
+    "capability_sources",
+    "f",
+    {
+      "from_column": "memory_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "capability_memories",
+      "to_column": "memory_id"
+    }
+  ],
+  [
+    "capability_assessments",
+    "f",
+    {
+      "from_column": "memory_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "capability_memories",
+      "to_column": "memory_id"
+    }
+  ]
+]
