@@ -39,6 +39,9 @@ class ForgettingEngine:
 
     def archive(self, mem_id: int) -> None:
         """Downgrade the specified memory to archived."""
+        from evolvmem.product_policy import load_policy
+        if not load_policy().legacy_web_enabled:
+            return
         self.store.archive(mem_id)
 
     def run(self) -> int:
@@ -48,6 +51,9 @@ class ForgettingEngine:
         access-decay rules run on the rest. Session summaries are excluded
         from both paths because SummaryRetention owns their coverage gate.
         """
+        from evolvmem.product_policy import load_policy
+        if not load_policy().legacy_web_enabled:
+            return 0
         expired = self._expired_ids()
         for mem_id in expired:
             self.store.archive(mem_id)

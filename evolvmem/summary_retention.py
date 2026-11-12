@@ -99,6 +99,9 @@ class SummaryRetention:
         """Archive covered summaries beyond keep; hold expired uncovered ones."""
         if not isinstance(now, str) or not now.strip():
             raise ContextValidationError("now must be a non-empty string")
+        from evolvmem.product_policy import load_policy
+        if not load_policy().legacy_web_enabled:
+            return SummaryRetentionReport()
         store = self._store
         conn = store._connection()
         projects = [

@@ -85,6 +85,14 @@ class Consolidator:
     def consolidate(self, dry_run: bool = True,
                     threshold: float | None = None) -> dict:
         """Merge near-duplicates. dry_run=True only reports."""
+        from evolvmem.product_policy import load_policy
+        if not load_policy().legacy_web_enabled:
+            return {
+                "dry_run": bool(dry_run),
+                "pairs": [],
+                "merged": 0,
+                "disabled": "legacy_web_disabled",
+            }
         pairs = self.find_candidates(threshold)
         if dry_run:
             return {"dry_run": True, "pairs": pairs, "merged": 0}
