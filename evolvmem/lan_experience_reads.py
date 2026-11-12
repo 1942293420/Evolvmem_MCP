@@ -41,7 +41,7 @@ class ExperienceReader:
         self.runtime,self.sharing=runtime,sharing
         self._paths=RevisionReader(runtime.settings)._paths
         self._files={name:file_identity(path) for name,path in self._paths.items()}
-        self._servers={name:runtime.server_for('jiangli','public') if name=='public'
+        self._servers={name:runtime.server_for(runtime.owner_user,'public') if name=='public'
                        else runtime.server_for(name) for name in self._paths}
         self._residents={name:server.context_service for name,server in self._servers.items()}
         self._configs={name:deepcopy(server.config) for name,server in self._servers.items()}
@@ -57,7 +57,7 @@ class ExperienceReader:
     def _check(self,names):
         if self.runtime._closed:raise ExperienceReadError('experience_read_closed')
         for name in names:
-            server=self.runtime.server_for('jiangli','public') if name=='public' else self.runtime.server_for(name)
+            server=self.runtime.server_for(self.runtime.owner_user,'public') if name=='public' else self.runtime.server_for(name)
             if _config_state(server.config)!=self._config_states[name]:
                 raise ExperienceReadError('health_boundary_changed')
             if (server is not self._servers[name] or server.context_service is not self._residents[name]
@@ -66,7 +66,7 @@ class ExperienceReader:
                 raise ExperienceReadError('experience_read_changed')
 
     def read(self,user,args,space):
-        if user not in ('jiangli','kane') or space not in ('personal','public','both'):
+        if user not in self.runtime.users or space not in ('personal','public','both'):
             raise LanError('invalid_arguments')
         names=(() if space=='public' else (user,))+(() if space=='personal' else ('public',))
         if not self._slots.acquire(timeout=.1):raise LanError('experience_read_busy')

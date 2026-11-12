@@ -129,14 +129,18 @@ class LanTools:
             runtime._lan_dispatch_lock = threading.RLock()
         self.lock = runtime._lan_dispatch_lock
         self.captures = getattr(runtime, '_lan_captures', None)
+        users = runtime.users
+        owner_user = runtime.owner_user
         with self.lock:
             self.sharing = LanSharing(runtime)
-            for user in ('jiangli', 'kane'):
+            for user in users:
                 prepare_bindings(runtime.server_for(user))
                 prepare_memory_revision(runtime.server_for(user))
-            prepare_memory_revision(runtime.server_for('jiangli', 'public'))
+            prepare_memory_revision(runtime.server_for(owner_user, 'public'))
             if self.captures is None:
-                self.captures = {u: LanCapture(runtime.server_for(u)) for u in ('jiangli', 'kane')}
+                self.captures = {u: LanCapture(runtime.server_for(u)) for u in users}
+                for cap in self.captures.values():
+                    cap.owner_user = owner_user
                 runtime._lan_captures = self.captures
                 for capture in self.captures.values():
                     with capture.store.transaction():
@@ -148,10 +152,12 @@ class LanTools:
             # This owner-only table must exist before schema-bound health is
             # prepared. No request may introduce DDL behind that baseline.
             from evolvmem.task_history_processing import prepare_schema as prepare_task_history_schema
-            prepare_task_history_schema(self.captures['jiangli'])
+            self.captures[owner_user].owner_user = owner_user
+            prepare_task_history_schema(self.captures[owner_user])
             from evolvmem.health_generation import prepare as prepare_health_generation
-            for user, space in (('jiangli', 'personal'), ('kane', 'personal'), ('jiangli', 'public')):
-                prepare_health_generation(runtime.server_for(user, space).context_service.store)
+            for user in users:
+                prepare_health_generation(runtime.server_for(user, 'personal').context_service.store)
+            prepare_health_generation(runtime.server_for(owner_user, 'public').context_service.store)
 
         # Explicit startup preparation, after the revision schema exists and
         # before this adapter is published to the HTTP server. No request calls
@@ -162,18 +168,16 @@ class LanTools:
         self._experience_reader = ExperienceReader(runtime,self.sharing)
         if not hasattr(runtime, '_background_health'):
             from evolvmem.background_health import BackgroundHealth
-            runtime._background_health = BackgroundHealth({
-                'jiangli': runtime.server_for('jiangli'),
-                'kane': runtime.server_for('kane'),
-                'public': runtime.server_for('jiangli', 'public'),
-            }, start=False)
+            health_servers = {u: runtime.server_for(u) for u in users}
+            health_servers['public'] = runtime.server_for(owner_user, 'public')
+            runtime._background_health = BackgroundHealth(health_servers, start=False)
 
         # Clients may cache tools/list for the entire session. Discovery must
         # describe supported schemas, never fluctuate with lock/readiness state.
         # Business calls retain live gates; capability uses its explicit hard baseline and current candidate proofs.
         self._catalog_specs = {
             (user, owner): self._specs(user, owner=owner, catalog=True)
-            for user in ('jiangli', 'kane') for owner in (False, True)
+            for user in users for owner in (False, True)
         }
 
     def _memory_revision(self, user):
@@ -189,7 +193,7 @@ class LanTools:
             state = getattr(self, '_local_capture_state', None)
             if state is None:
                 self._local_capture_state = state = {}
-            return capture_once(self.runtime.server_for('jiangli').context_service, state,
+            return capture_once(self.runtime.server_for(self.runtime.owner_user).context_service, state,
                                 arrival_required=False)
 
     def process_backfills(self, *, now=None):
@@ -322,11 +326,11 @@ class LanTools:
             if name != 'memory_unpublish':
                 props.update(title={'type': 'string', 'minLength': 1, 'maxLength': 200}, summary={'type': 'string', 'minLength': 1, 'maxLength': 4000})
             required = [k for k in props if k != 'project']
-            result[name] = {'name': name, 'description': 'Explicit curated public sharing; author or jiangli maintainer may update/withdraw.',
+            result[name] = {'name': name, 'description': 'Explicit curated public sharing; author or owner maintainer may update/withdraw.',
                             'inputSchema': {'type': 'object', 'properties': props, 'required': required, 'additionalProperties': False}, 'annotations': {}}
         result['continuity_bind'] = {'name': 'continuity_bind', 'description': 'Bind this device to the selected task workspace, preserving its existing focus. Inspect target_focused and focused_workstream_id; when needed use the returned continuity_checkpoint switch_focus CAS step before resuming the selected task.', 'annotations': {}, 'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {k: {'type': 'string'} for k in ('workspace_path', 'device_id', 'project', 'workstream_id', 'request_id')} | {'repo_snapshot': {'type': 'object'}}, 'required': ['workspace_path', 'device_id', 'project', 'workstream_id', 'request_id', 'repo_snapshot']}}
         result.update(capture_specs())
-        if not owner or user != 'jiangli':
+        if not owner or user != self.runtime.owner_user:
             result.pop('session_archive_process_history', None)
         if owner:
             result.pop('continuity_bind', None)
@@ -404,9 +408,9 @@ class LanTools:
                 return {'error': 'request_indeterminate' if isinstance(arguments, dict) and arguments.get('request_id') else 'remote_tool_failed'}
 
     def _call_tool(self, user, name, arguments, *, owner=False, independent_capability=False, independent_experience=False):
-        if owner and user != "jiangli":
-            raise LanError("owner_forbidden")
-        if user not in ('jiangli', 'kane'):
+        if owner and user != self.runtime.owner_user:
+            raise LanError('owner_forbidden')
+        if user not in self.runtime.users:
             raise LanError('unauthorized')
         if not isinstance(arguments, dict) or not isinstance(name, str):
             raise LanError('invalid_arguments')
@@ -711,7 +715,7 @@ class LanTools:
 
     @traced_rpc
     def handle_request(self, user, request, *, owner=False):
-        if user not in ('jiangli', 'kane'):
+        if user not in self.runtime.users:
             return self._rpc_error(None, -32600, 'Unauthorized')
         if (not isinstance(request, dict) or request.get('jsonrpc') != '2.0'
                 or not isinstance(request.get('method'), str)
@@ -734,7 +738,11 @@ class LanTools:
         elif method == 'ping':
             result = {}
         elif method == 'tools/list':
-            specs = deepcopy(self._catalog_specs[(user, owner)])
+            cached_specs = self._catalog_specs.get((user, owner))
+            if cached_specs is None:
+                cached_specs = self._specs(user, owner=owner, catalog=True)
+                self._catalog_specs[(user, owner)] = cached_specs
+            specs = deepcopy(cached_specs)
             result = {'tools': list(specs.values())}
         elif method == 'initialize':
             self._record_initialize_client(user, params)

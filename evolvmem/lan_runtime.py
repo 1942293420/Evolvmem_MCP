@@ -19,7 +19,6 @@ from evolvmem.workspace_identity import WorkspaceIdentityProvider
 from evolvmem.vector_index import VectorIndex
 
 
-_USERS = frozenset({"jiangli", "kane"})
 _SPACES = frozenset({"personal", "public"})
 _CAPTURE_POLL_SECONDS = 5.0
 _RECOVERY_POLL_SECONDS = 5.0
@@ -106,6 +105,8 @@ class LanRuntime:
         if not isinstance(settings, LanSettings):
             raise TypeError("settings must be a LanSettings instance")
         self.settings = settings
+        self.users = settings.users
+        self.owner_user = settings.owner_user
         self._provided_engine = embedding_engine
         self._shared_engine = None
         self._base_config: Config | None = None
@@ -154,9 +155,9 @@ class LanRuntime:
                 pass
         else:
             self._shared_engine = _UnavailableEmbeddingEngine()
-        for user, space in (("jiangli", "personal"), ("kane", "personal"),
-                            ("jiangli", "public")):
-            self._server_for(user, space)
+        for user in self.users:
+            self._server_for(user, "personal")
+        self._server_for(self.owner_user, "public")
         # A stuck Context vector cache must recover on its own, without the
         # operator restarting anything and without delaying capture work.
         self.start_recovery_worker()
@@ -165,7 +166,7 @@ class LanRuntime:
     def server_for(self, user: str, space: str = "personal") -> MemoryMCPServer:
         if self._closed:
             raise RuntimeError("LAN runtime is closed")
-        if user not in _USERS:
+        if user not in self.users:
             raise ValueError("unknown LAN user")
         if space not in _SPACES:
             raise ValueError("unknown LAN space")
@@ -430,9 +431,9 @@ class LanRuntime:
     def _namespace_for(self, user: str, space: str):
         if space == "public":
             return self.settings.data_dir / "public"
-        if user == "jiangli":
+        if user == self.owner_user:
             return self.settings.owner_data_dir
-        return self.settings.data_dir / "users" / "kane"
+        return self.settings.data_dir / "users" / user
 
     @staticmethod
     def _bootstrap_workspace_key(data_dir) -> None:
@@ -460,13 +461,10 @@ class LanRuntime:
         return config
 
     def _validate_namespace_databases(self) -> None:
+        expected = [(user, "personal") for user in self.users] + [(self.owner_user, "public")]
         paths = {
             (Path(self._namespace_for(user, space)) / "memory.db").resolve()
-            for user, space in (
-                ("jiangli", "personal"),
-                ("kane", "personal"),
-                ("jiangli", "public"),
-            )
+            for user, space in expected
         }
-        if len(paths) != 3:
+        if len(paths) != len(expected):
             raise ValueError("LAN database directories must be distinct")

@@ -33,16 +33,16 @@ def validate_request_id(value):
 class LanSharing:
     def __init__(self, runtime):
         self.runtime = runtime
-        self.server = runtime.server_for('jiangli', 'public')
+        self.server = runtime.server_for(runtime.owner_user, 'public')
         self.service = self.server.context_service
         self.store = self.service.store
         with self.store.transaction():
             self.conn.execute('''CREATE TABLE IF NOT EXISTS lan_publications (
                 context_id INTEGER PRIMARY KEY REFERENCES context_items(id),
-                author TEXT NOT NULL CHECK(author IN ('jiangli','kane')),
+                author TEXT NOT NULL CHECK(length(author) > 0),
                 active INTEGER NOT NULL CHECK(active IN (0,1)),
                 title TEXT NOT NULL, summary TEXT NOT NULL, project TEXT NOT NULL)''')
-        for user in ('jiangli', 'kane'):
+        for user in runtime.users:
             personal = runtime.server_for(user).context_service.store
             with personal.transaction():
                 personal._connection().execute('''CREATE TABLE IF NOT EXISTS lan_write_requests (
@@ -117,7 +117,7 @@ class LanSharing:
         row = self.conn.execute('SELECT * FROM lan_publications WHERE context_id=?', (item_id,)).fetchone()
         if not row:
             raise LanError('not_found')
-        if row['author'] != user and user != 'jiangli':
+        if row['author'] != user and user != self.runtime.owner_user:
             raise LanError('publication_forbidden')
         return row
 

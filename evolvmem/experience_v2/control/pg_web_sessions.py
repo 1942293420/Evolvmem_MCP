@@ -57,7 +57,7 @@ class PgPersistentSessions:
     def initialize(self) -> None:
         """Verify PG control schema v7 session RPC readiness without implicit DDL."""
         try:
-            if self.console_mode and self.expected_owner_id:
+            if self.console_mode:
                 if not self.store.registry_ready(self.expected_owner_id):
                     raise SessionStoreError('pg_control_unavailable', message='PG 不可用')
             else:

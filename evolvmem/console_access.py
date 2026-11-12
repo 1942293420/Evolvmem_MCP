@@ -6,6 +6,7 @@ while preserving legacy SQLite mode when PG control is not configured.
 """
 from __future__ import annotations
 
+import getpass
 import os
 from pathlib import Path
 
@@ -36,7 +37,7 @@ def load_pg_control_store(environ=None) -> PgConsoleStore:
 
 def configured_console(*, owner_data_dir=None, lan_data_dir=None, history_environ=None, experience_search=None):
     """Build from trusted server configuration; never falls back to SQLite in PG mode."""
-    owner = os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID', 'jiangli')
+    explicit_owner = (os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID') or '').strip() or None
     lan = Path(os.environ.get('EVOLVMEM_LAN_DATA_DIR') or lan_data_dir or
                Path.home() / '.local/share/evolvmem-lan').expanduser()
     personal = Path(owner_data_dir or Path.home() / '.claude/evolvmem').expanduser()
@@ -48,11 +49,12 @@ def configured_console(*, owner_data_dir=None, lan_data_dir=None, history_enviro
         except PgControlUnavailableError:
             raise ConsoleError('pg_control_unavailable', 503, message='PG 不可用') from None
         return ConsoleService(
-            registry, owner, personal, lan, history_environ or {},
+            registry, explicit_owner, personal, lan, history_environ or {},
             experience_search=experience_search, pg_control=store,
         )
+    legacy_owner = explicit_owner or getpass.getuser()
     return ConsoleService(
-        registry, owner, personal, lan, history_environ or {},
+        registry, legacy_owner, personal, lan, history_environ or {},
         experience_search=experience_search,
     )
 
@@ -63,7 +65,7 @@ def configured_session_store(console: ConsoleService, auth_scope: str, *, consol
         return PgPersistentSessions(
             console._pg_store,
             auth_scope,
-            expected_owner_id=console.owner_id,
+            expected_owner_id=console._expected_owner_id,
             console_mode=console_sessions,
         )
     session_path = console.registry_path if console_sessions else fallback_sqlite_path

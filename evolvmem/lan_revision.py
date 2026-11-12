@@ -25,12 +25,16 @@ class RevisionReader:
 
     def __init__(self, settings):
         self._paths = {
-            'jiangli': Path(settings.owner_data_dir) / 'memory.db',
-            'kane': Path(settings.data_dir) / 'users' / 'kane' / 'memory.db',
-            'public': Path(settings.data_dir) / 'public' / 'memory.db',
+            user: (
+                Path(settings.owner_data_dir) / 'memory.db'
+                if user == settings.owner_user
+                else Path(settings.data_dir) / 'users' / user / 'memory.db'
+            )
+            for user in settings.users
         }
+        self._paths['public'] = Path(settings.data_dir) / 'public' / 'memory.db'
         self._identities = {key: self._identity(path) for key, path in self._paths.items()}
-        if len({identity[1:] for identity in self._identities.values()}) != 3:
+        if len({identity[1:] for identity in self._identities.values()}) != len(self._paths):
             raise RuntimeError('LAN database directories must be distinct')
 
     @staticmethod
@@ -98,7 +102,7 @@ class RevisionPool(RevisionReader):
         self._condition = threading.Condition()
         self._closed = False
         self._runtime_closed = closed
-        self._idle = {'jiangli': [], 'kane': []}
+        self._idle = {user: [] for user in settings.users}
         self._leased = set()
         super().__init__(settings)
         self._permissions = {key: self._permission(path) for key, path in self._paths.items()}

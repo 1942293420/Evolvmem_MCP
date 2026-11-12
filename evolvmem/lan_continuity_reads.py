@@ -20,7 +20,7 @@ class ContinuityReader:
     def __init__(self,runtime):
         self.runtime=runtime
         self._files=RevisionReader(runtime.settings)
-        self._configs={user:deepcopy(runtime.server_for(user).config) for user in ('jiangli','kane')}
+        self._configs={user:deepcopy(runtime.server_for(user).config) for user in runtime.users}
         # These handlers accept an explicit domain service. They only validate
         # and render; no resident identity, store or lazy service is accessed.
         self._handlers={user:{name:getattr(runtime.server_for(user),'_'+name) for name in READ_TOOLS}

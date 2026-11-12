@@ -79,9 +79,10 @@ def background_read_scope(health, tool, servers):
     if tool != 'experience_recall' or _background_read.get() is not None:
         raise BackgroundReadDenied('health_boundary_unavailable')
     names = tuple(name for name, _ in servers)
+    personal_names = [n for n in names if n != 'public']
     if (not names or len(names) > 2 or len(set(names)) != len(names)
-            or not set(names) <= {'jiangli', 'kane', 'public'}
-            or {'jiangli', 'kane'} <= set(names)):
+            or any(not isinstance(n, str) or not n for n in names)
+            or len(personal_names) > 1):
         raise BackgroundReadDenied('health_boundary_unavailable')
     bindings = tuple((name, server, server.context_service,
                       server.context_mode, server.adapter) for name, server in servers)
