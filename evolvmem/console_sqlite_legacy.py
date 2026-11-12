@@ -7,7 +7,21 @@ from pathlib import Path
 import re
 import sqlite3
 
-from .console_sources import JSON_MIME as JSON, clean_history_env
+from evolvmem.experience_v2.control.console_sources import JSON_MIME as JSON, clean_history_env
+
+
+def legacy_member_ids(lan_data_dir: Path, owner_id: str = '') -> tuple[str, ...]:
+    configured = (os.environ.get('EVOLVMEM_CONSOLE_LEGACY_MEMBERS') or '').strip()
+    if configured:
+        items = [part.strip() for part in configured.split(',') if part.strip()]
+    else:
+        from evolvmem.history_migration.sqlite_source import FIXED_PATHS
+        items = [k for k in FIXED_PATHS if k not in ('owner', 'public')]
+    seen: list[str] = []
+    for item in items:
+        if item != owner_id and item not in seen:
+            seen.append(item)
+    return tuple(seen)
 
 SQLITE_SCHEMA = '''
 CREATE TABLE IF NOT EXISTS console_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -44,16 +58,18 @@ def bootstrap_sqlite(svc, owner_open_id: str, owner_name: str, now_fn, json_fn) 
             raise ValueError('configured owner identity cannot be rebound')
         conn.execute("INSERT OR IGNORE INTO console_meta VALUES('owner_id',?)", (svc.owner_id,))
         conn.execute("INSERT OR IGNORE INTO console_meta VALUES('version','1')")
-        for user_id, name, openid, admin in ((svc.owner_id, owner_name, owner_open_id, 1), ('kane', 'kane', None, 0)):
+        members = legacy_member_ids(svc.lan_data_dir, svc.owner_id)
+        user_rows = [(svc.owner_id, owner_name, owner_open_id, 1)] + [(m, m, None, 0) for m in members]
+        for user_id, name, openid, admin in user_rows:
             conn.execute(
                 'INSERT OR IGNORE INTO console_users '
                 '(id,display_name,enabled,is_admin,open_id,lan_enabled,created_at,updated_at) VALUES(?,?,1,?,?,1,?,?)',
                 (user_id, name, admin, openid, now_fn(), now_fn()),
             )
-        for user_id, data_dir, env in (
-            (svc.owner_id, svc.owner_data_dir, svc.history_environ),
-            ('kane', svc.lan_data_dir / 'users' / 'kane', {}),
-        ):
+        lib_rows = [(svc.owner_id, svc.owner_data_dir, svc.history_environ)] + [
+            (m, svc.lan_data_dir / 'users' / m, {}) for m in members
+        ]
+        for user_id, data_dir, env in lib_rows:
             conn.execute(
                 'INSERT OR IGNORE INTO console_libraries(user_id,data_dir,history_environ) VALUES(?,?,?)',
                 (user_id, str(data_dir), json_fn(svc._source_env(user_id, env))),

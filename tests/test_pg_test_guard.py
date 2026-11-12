@@ -82,3 +82,14 @@ def test_pytest_autouse_psycopg_guard_blocks_port_55432() -> None:
 
     with pytest.raises(ProductionPostgresGuardError, match="55432"):
         psycopg.connect(host="127.0.0.1", port=55432, dbname="postgres", user="postgres")
+
+
+def test_psycopg_connection_class_connect_is_guarded(monkeypatch):
+    import psycopg
+    monkeypatch.setattr(
+        psycopg.Connection,
+        "_connect_gen",
+        classmethod(lambda cls, *a, **kw: (_ for _ in ()).throw(AssertionError("unblocked socket connect to 55432"))),
+    )
+    with pytest.raises(RuntimeError, match="55432"):
+        psycopg.Connection.connect("postgresql://127.0.0.1:55432/postgres")

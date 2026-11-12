@@ -1270,37 +1270,77 @@ def make_handler(service: ContextService):
     from evolvmem.knowledge_console import ConsoleError, ConsoleService
     from evolvmem.manual_experience_search import configured_search
     from evolvmem.web_sessions import PersistentSessions, SessionStoreError
+    import getpass
     pg_mode = is_pg_control_configured()
-    pg_startup_error = None
+    console_sessions = load_policy().console_enabled
+    # Browser preconnects may open a socket without sending an HTTP request.
+    # Parse those sockets independently, but retain serialized use of this
+    # service's shared SQLite connections and transaction state.
+    business_lock = threading.RLock()
+    auth_lock = threading.RLock()
     console = None
-    try:
-        if pg_mode:
-            console = configured_console(
-                owner_data_dir=service.config.data_dir,
-                history_environ=dict(os.environ),
-                experience_search=configured_search(service.config),
-            )
-        else:
-            console = ConsoleService(
-                os.environ.get('EVOLVMEM_CONSOLE_REGISTRY', str(Path.home()/'.config/evolvmem-console/users.db')),
-                os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID', 'jiangli'), service.config.data_dir,
-                os.environ.get('EVOLVMEM_LAN_DATA_DIR', str(Path.home()/'.local/share/evolvmem-lan')),
-                dict(os.environ), experience_search=configured_search(service.config))
-    except ConsoleError as exc:
-        if pg_mode or exc.code == 'pg_control_unavailable':
-            pg_startup_error = SessionStoreError('pg_control_unavailable', message='PG 不可用')
-        else:
-            raise
+    persistence_ready = not auth.enabled
+
+    def ensure_control_plane_ready():
+        nonlocal console, persistence_ready
+        if console is not None and persistence_ready:
+            return console
+        with auth_lock:
+            if console is None:
+                try:
+                    if pg_mode:
+                        console = configured_console(
+                            owner_data_dir=service.config.data_dir,
+                            history_environ=dict(os.environ),
+                            experience_search=configured_search(service.config),
+                        )
+                    else:
+                        console = ConsoleService(
+                            os.environ.get('EVOLVMEM_CONSOLE_REGISTRY', str(Path.home()/'.config/evolvmem-console/users.db')),
+                            (os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID') or '').strip() or getpass.getuser(),
+                            service.config.data_dir,
+                            os.environ.get('EVOLVMEM_LAN_DATA_DIR', str(Path.home()/'.local/share/evolvmem-lan')),
+                            dict(os.environ), experience_search=configured_search(service.config))
+                except ConsoleError as exc:
+                    if pg_mode or exc.code == 'pg_control_unavailable':
+                        raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+                    raise
+            if not persistence_ready:
+                try:
+                    store_obj = configured_session_store(
+                        console, auth.persistence_scope(),
+                        console_sessions=console_sessions,
+                        fallback_sqlite_path=service.config.data_dir/'web-sessions.db',
+                    )
+                    auth.enable_persistence(store_obj)
+                    persistence_ready = True
+                except SessionStoreError as exc:
+                    if pg_mode or exc.code == 'pg_control_unavailable':
+                        if pg_mode:
+                            console = None
+                        raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+                    raise
+            elif pg_mode and load_policy().console_enabled:
+                try:
+                    if not console.registry_ready():
+                        console = None
+                        raise SessionStoreError('pg_control_unavailable', message='PG 不可用')
+                except ConsoleError:
+                    console = None
+                    raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+            return console
+
     def observe_console_login(open_id, name):
         if load_policy().console_enabled:
-            console.observe_login(open_id, name)
+            ensure_control_plane_ready().observe_login(open_id, name)
     auth.login_observer = observe_console_login
-    console_sessions = load_policy().console_enabled
     def session_identity_allowed(open_id):
         try:
             if load_policy().console_enabled != console_sessions:
                 raise SessionStoreError()
-            return console.login_allowed(open_id) if console_sessions else True
+            return ensure_control_plane_ready().login_allowed(open_id) if console_sessions else True
+        except SessionStoreError:
+            raise
         except ConsoleError as exc:
             if pg_mode or exc.code == 'pg_control_unavailable':
                 raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
@@ -1312,27 +1352,16 @@ def make_handler(service: ContextService):
     def session_write_allowed(conn, open_id):
         if load_policy().console_enabled != console_sessions:
             raise SessionStoreError()
-        return console.login_allowed_in_transaction(conn, open_id) if console_sessions else True
+        return ensure_control_plane_ready().login_allowed_in_transaction(conn, open_id) if console_sessions else True
     auth.session_validator = session_identity_allowed
     auth.session_write_validator = session_write_allowed
-    if auth.enabled and pg_startup_error is None:
-        try:
-            store_obj = configured_session_store(
-                console, auth.persistence_scope(),
-                console_sessions=console_sessions,
-                fallback_sqlite_path=service.config.data_dir/'web-sessions.db',
-            )
-            auth.enable_persistence(store_obj)
-        except SessionStoreError as exc:
-            if pg_mode or exc.code == 'pg_control_unavailable':
-                pg_startup_error = SessionStoreError('pg_control_unavailable', message='PG 不可用')
-            else:
-                raise
-    # Browser preconnects may open a socket without sending an HTTP request.
-    # Parse those sockets independently, but retain serialized use of this
-    # service's shared SQLite connections and transaction state.
-    business_lock = threading.RLock()
-    auth_lock = threading.RLock()
+    try:
+        ensure_control_plane_ready()
+    except SessionStoreError as exc:
+        if pg_mode and exc.code == 'pg_control_unavailable':
+            _LOG.warning('PostgreSQL control plane unavailable at startup; requests will fail closed (503) and retry automatically')
+        else:
+            raise
 
     def serialized(method):
         @wraps(method)
@@ -1376,7 +1405,7 @@ def make_handler(service: ContextService):
                             return
                         body = {**body, 'inspect':'1'}
                     params = body
-                status, content_type, body = console.dispatch(self.command,
+                status, content_type, body = ensure_control_plane_ready().dispatch(self.command,
                     unquote(parsed.path[len('/api/knowledge-console'):] or '/'), params, session)
                 if isinstance(body, dict):
                     if parsed.path.endswith('/me') and status == 200:
@@ -1493,8 +1522,8 @@ def make_handler(service: ContextService):
         @wraps(method)
         def guarded_call(self, *args, **kwargs):
             try:
-                if pg_startup_error is not None:
-                    raise pg_startup_error
+                if pg_mode:
+                    ensure_control_plane_ready()
                 return call(self, *args, **kwargs)
             except SessionStoreError as exc:
                 self.close_connection = True

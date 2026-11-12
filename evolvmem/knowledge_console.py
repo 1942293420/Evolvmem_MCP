@@ -23,10 +23,11 @@ from evolvmem.experience_v2.control.console_sources import (
     read_or_manage_history,
     validate_history_paths,
 )
-from evolvmem.experience_v2.control.console_sqlite_legacy import (
+from evolvmem.console_sqlite_legacy import (
     bootstrap_sqlite,
     configure_sqlite_library,
     dispatch_sqlite_metadata,
+    legacy_member_ids,
 )
 from evolvmem.experience_v2.control.pg_console_store import (
     PgConsoleStore,
@@ -88,23 +89,44 @@ class ConsoleService:
                  *, experience_search=None, pg_control=None):
         self.experience_search = experience_search
         self.registry_path = Path(registry_path).expanduser().resolve()
-        self.owner_id = _slug(owner_id)
         self._pg_store = None
         if pg_control is not None:
             self._pg_store = pg_control if isinstance(pg_control, PgConsoleStore) else PgConsoleStore(pg_control)
-        elif self.owner_id == 'kane':
-            raise ValueError('configured owner and existing member must be distinct')
+            self._expected_owner_id = _slug(owner_id) if owner_id is not None else None
+        else:
+            self._expected_owner_id = _slug(owner_id)
+        self._resolved_owner_id = self._expected_owner_id
         self.owner_data_dir = Path(owner_data_dir).expanduser().resolve()
         self.lan_data_dir = Path(lan_data_dir).expanduser().resolve()
         self.history_environ = clean_history_env(history_environ)
         if self._pg_store is None:
-            sources = [self.owner_data_dir / 'memory.db', self.lan_data_dir / 'users' / 'kane' / 'memory.db',
-                       self.lan_data_dir / 'public' / 'memory.db']
+            members = legacy_member_ids(self.lan_data_dir, '')
+            if self._expected_owner_id in members:
+                raise ValueError('configured owner and existing member must be distinct')
+            sources = [
+                self.owner_data_dir / 'memory.db',
+                *(self.lan_data_dir / 'users' / m / 'memory.db' for m in members),
+                self.lan_data_dir / 'public' / 'memory.db',
+            ]
             if any(self.registry_path == p.resolve() for p in sources):
                 raise ValueError('metadata must be separate from source databases')
             validate_history_paths(self.history_environ, self.registry_path)
         else:
             validate_history_paths(self.history_environ, None)
+
+    @property
+    def owner_id(self) -> str | None:
+        if self._resolved_owner_id is not None:
+            return self._resolved_owner_id
+        if self._pg_store is not None:
+            try:
+                resolved = self._pg_store.try_resolve_owner_id(self._expected_owner_id)
+            except PgControlUnavailableError:
+                raise _pg_unavailable() from None
+            if resolved is not None:
+                self._resolved_owner_id = resolved
+            return resolved
+        return self._expected_owner_id
 
     @property
     def pg_mode(self) -> bool:
@@ -155,13 +177,17 @@ class ConsoleService:
         validate_history_paths(env, None if self.pg_mode else self.registry_path)
         return env
 
-    def bootstrap(self, owner_open_id, owner_name='管理员'):
+    def bootstrap(self, owner_open_id, owner_name='管理员', *, owner_id=None):
         owner_open_id, owner_name = _open_id(owner_open_id), _text(owner_name)
         if self.pg_mode:
+            target_owner = _slug(owner_id) if owner_id is not None else self._expected_owner_id
+            if target_owner is None:
+                raise ValueError('owner_id is required for initial bootstrap')
+            self._resolved_owner_id = target_owner
             try:
                 return self._pg_store.bootstrap(
-                    self.owner_id, owner_open_id, owner_name,
-                    str(self.owner_data_dir), self._source_env(self.owner_id, self.history_environ),
+                    target_owner, owner_open_id, owner_name,
+                    str(self.owner_data_dir), self._source_env(target_owner, self.history_environ),
                 )
             except PgControlUnavailableError:
                 raise _pg_unavailable() from None
@@ -171,7 +197,7 @@ class ConsoleService:
         open_id, name = _open_id(open_id), _text(name)
         if self.pg_mode:
             try:
-                return self._pg_store.observe_login(self.owner_id, open_id, name)
+                return self._pg_store.observe_login(self._expected_owner_id, open_id, name)
             except PgControlUnavailableError:
                 raise _pg_unavailable() from None
         with self._db(write=True) as conn:
@@ -189,7 +215,7 @@ class ConsoleService:
             except ConsoleError:
                 return False
             try:
-                return self._pg_store.user_enabled(self.owner_id, user_id)
+                return self._pg_store.user_enabled(self._expected_owner_id, user_id)
             except PgControlUnavailableError:
                 raise _pg_unavailable() from None
         try:
@@ -204,7 +230,7 @@ class ConsoleService:
         user_id = _slug(user_id)
         if self.pg_mode:
             try:
-                row = self._pg_store.get_user_source(self.owner_id, user_id)
+                row = self._pg_store.get_user_source(self._expected_owner_id, user_id)
             except PgControlUnavailableError:
                 raise _pg_unavailable() from None
             if not row or not row['enabled']:
@@ -238,7 +264,7 @@ class ConsoleService:
         open_id = _open_id(open_id)
         if self.pg_mode:
             try:
-                return self._pg_store.login_allowed(self.owner_id, open_id)
+                return self._pg_store.login_allowed(self._expected_owner_id, open_id)
             except PgControlUnavailableError:
                 raise _pg_unavailable() from None
         with self._db() as conn:
@@ -247,7 +273,7 @@ class ConsoleService:
     def registry_ready(self):
         if self.pg_mode:
             try:
-                return self._pg_store.registry_ready(self.owner_id)
+                return self._pg_store.registry_ready(self._expected_owner_id)
             except PgControlUnavailableError:
                 raise _pg_unavailable() from None
         try:
@@ -264,7 +290,9 @@ class ConsoleService:
         if not self.pg_mode:
             return configure_sqlite_library(self, user_id, data_dir=data_dir, history_environ=history_environ, json_fn=_json)
         try:
-            users = self._pg_store.list_users(self.owner_id)
+            actor_owner = self._pg_store.resolve_owner_id(self._expected_owner_id)
+            self._resolved_owner_id = actor_owner
+            users = self._pg_store.list_users(self._expected_owner_id)
         except PgControlUnavailableError:
             raise _pg_unavailable() from None
         row = next((u for u in users if u['id'] == user_id), None)
@@ -283,7 +311,7 @@ class ConsoleService:
             if cand and other_cand and Path(cand).resolve() == Path(other_cand).resolve():
                 raise ValueError('history source belongs to another user')
         try:
-            self._pg_store.configure_library(self.owner_id, self.owner_id, user_id, data_dir=source, history_environ=env)
+            self._pg_store.configure_library(self._expected_owner_id, actor_owner, user_id, data_dir=source, history_environ=env)
         except PgControlUnavailableError:
             raise _pg_unavailable() from None
         return {'ok': True}
@@ -392,11 +420,11 @@ class ConsoleService:
         return viewer, owner
 
     def _dispatch_pg_metadata(self, method, path, body, session, inspect):
-        if not self._pg_store.registry_ready(self.owner_id):
+        if not self._pg_store.registry_ready(self._expected_owner_id):
             raise ConsoleError('console_not_initialized', 503)
         if not isinstance(session, dict) or not session.get('open_id'):
             raise ConsoleError('login_required', 401)
-        users = self._pg_store.list_users(self.owner_id)
+        users = self._pg_store.list_users(self._expected_owner_id)
         actor = self._actor_from_row(next((u for u in users if u['open_id'] == session['open_id']), None))
         if method not in ('GET', 'POST'):
             raise ConsoleError('method_not_allowed', 405)
@@ -408,18 +436,18 @@ class ConsoleService:
             if path == '/grants':
                 viewer, owner = self._validate_grant_body(actor, body)
                 return actor, '', '', (200, JSON, self._pg_store.set_grant(
-                    self.owner_id, actor['id'], viewer_id=viewer, owner_id=owner,
+                    self._expected_owner_id, actor['id'], viewer_id=viewer, owner_id=owner,
                     history_read=body['history_read'], experience_read=body['experience_read'], revision=body['revision']))
             create = path == '/users'
             old = None if create else next((u for u in users if u['id'] == _slug(path.split('/')[-1])), None)
             target, name, openid, enabled = self._validate_user_mutation_inputs(actor, path.split('/')[-1], body, create=create, old=old)
             cur = self._pg_store.upsert_user(
-                self.owner_id, actor['id'], target, display_name=name, open_id=openid,
+                self._expected_owner_id, actor['id'], target, display_name=name, open_id=openid,
                 enabled=enabled, revision=body.get('revision'), create=create)
             return actor, '', '', (201 if create else 200, JSON, {'ok': True, 'user': cur})
         if IDENTITY_INPUTS.intersection(body):
             raise ConsoleError('identity_override_forbidden')
-        grants = {(g['viewer_id'], g['owner_id']): g for g in self._pg_store.list_grants(self.owner_id)}
+        grants = {(g['viewer_id'], g['owner_id']): g for g in self._pg_store.list_grants(self._expected_owner_id)}
 
         def perms(owner):
             if actor['id'] == owner['id'] or inspect and actor['is_admin']:
@@ -452,7 +480,7 @@ class ConsoleService:
             out = [{**self._account(r), **self._library_view(actor, r, r, (True, True), inspect=True, search=self.experience_search),
                     'login_bound': bool(r['open_id']), 'lan_state': 'existing_identity' if r['lan_enabled'] else 'not_provisioned'}
                    for r in users]
-            return actor, '', '', (200, JSON, {'ok': True, 'users': out, 'pending': self._pg_store.list_pending(self.owner_id)})
+            return actor, '', '', (200, JSON, {'ok': True, 'users': out, 'pending': self._pg_store.list_pending(self._expected_owner_id)})
         if path == '/grants' and method == 'GET':
             self._admin(actor)
             uids = [u['id'] for u in users]

@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import getpass
 import json
 import ipaddress
+import os
 from pathlib import Path
 
 from evolvmem.lan_config import LanSettings
@@ -18,9 +20,10 @@ from evolvmem.library_host import LibraryHost, PROTOCOLS, _rpc_error
 MAX_BODY_BYTES = 1024 * 1024
 
 
-def owner_peer_allowed(peer, user):
+def owner_peer_allowed(peer, user, owner_user=None):
+    expected_owner = owner_user or (os.environ.get("EVOLVMEM_CONSOLE_OWNER_ID") or "").strip() or getpass.getuser()
     try:
-        return user == "jiangli" and ipaddress.ip_address(peer).is_loopback
+        return user == expected_owner and ipaddress.ip_address(peer).is_loopback
     except ValueError:
         return False
 
@@ -156,7 +159,8 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
             if self._library_request and self.path not in ('/mcp','/library/mcp'):
                 self._reply(403, {'error': 'library_endpoint_forbidden'})
                 return None
-            if self.path == '/owner/mcp' and not owner_peer_allowed(self.client_address[0], user):
+            expected_owner = runtime.owner_user if runtime is not None else None
+            if self.path == '/owner/mcp' and not owner_peer_allowed(self.client_address[0], user, owner_user=expected_owner):
                 self._reply(403, {'error': 'owner_forbidden'})
                 return None
             if self.path not in ('/mcp', '/library/mcp', '/owner/mcp', '/embedding', '/embedding/status', '/rerank'):

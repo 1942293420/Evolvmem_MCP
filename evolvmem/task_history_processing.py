@@ -118,7 +118,9 @@ def completed_grant(conn, receipt, task, project):
 
 
 def process_history(capture, args, request_id, *, authenticated_user, owner):
-    if authenticated_user != 'jiangli' or owner is not True:
+    import getpass, os
+    expected_owner = getattr(capture, 'owner_user', None) or (os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID') or '').strip() or getpass.getuser()
+    if authenticated_user != expected_owner or owner is not True:
         raise LanError('owner_forbidden')
     from evolvmem.lan_sharing import validate_request_id
     validate_request_id(request_id)

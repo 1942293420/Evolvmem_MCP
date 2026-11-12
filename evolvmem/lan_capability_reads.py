@@ -18,7 +18,7 @@ class CapabilityReader:
     def __init__(self,runtime):
         self.runtime=runtime
         self._files=RevisionReader(runtime.settings)
-        self._configs={user:deepcopy(runtime.server_for(user).config) for user in ('jiangli','kane')}
+        self._configs={user:deepcopy(runtime.server_for(user).config) for user in runtime.users}
         self._engines={user:runtime.server_for(user).context_service.embedding_engine for user in self._configs}
         self._handlers={user:runtime.server_for(user)._capability_search for user in self._configs}
         with runtime._resources_lock:

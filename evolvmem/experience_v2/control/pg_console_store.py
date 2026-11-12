@@ -219,7 +219,26 @@ class PgConsoleStore:
         )
         return {'ok': True}
 
-    def registry_ready(self, expected_owner_id: str) -> bool:
+    def try_resolve_owner_id(self, expected_owner_id: str | None = None) -> str | None:
+        rows = self.query('SELECT * FROM em_control.console_status(%s)', (expected_owner_id,))
+        if not rows or not rows[0].get('owner_id'):
+            return None
+        resolved = str(rows[0]['owner_id'])
+        if expected_owner_id is not None and resolved != expected_owner_id:
+            return None
+        return resolved
+
+    def resolve_owner_id(self, expected_owner_id: str | None = None) -> str:
+        from evolvmem.knowledge_console import ConsoleError
+        rows = self.query('SELECT * FROM em_control.console_status(%s)', (expected_owner_id,))
+        if not rows or not rows[0].get('owner_id'):
+            raise ConsoleError('console_not_initialized', 503)
+        resolved = str(rows[0]['owner_id'])
+        if expected_owner_id is not None and resolved != expected_owner_id:
+            raise ConsoleError('invalid_console_registry', 503)
+        return resolved
+
+    def registry_ready(self, expected_owner_id: str | None) -> bool:
         rows = self.query('SELECT * FROM em_control.console_status(%s)', (expected_owner_id,))
         return bool(rows and rows[0]['ready'])
 
