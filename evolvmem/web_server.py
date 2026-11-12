@@ -1926,6 +1926,8 @@ def make_handler(service: ContextService):
                     self._send_json({"ok": False, "error": _bounded_error(exc)},
                                     500)
                     return
+                if result.get("ok"):
+                    _read_cache_clear()
                 self._send_json(result, 200 if result.get("ok") else 400)
                 return
             self._send_json({"ok": False,
@@ -2000,6 +2002,8 @@ def make_handler(service: ContextService):
                 self._send_json({"ok": False, "error": _bounded_error(exc)},
                                 500)
                 return
+            if result.get("ok"):
+                _read_cache_clear()
             self._send_json(result,
                             200 if result.get("ok") else 400)
 

@@ -117,9 +117,10 @@ def test_pg_web_sessions_8h_ttl_restart_sso_no_oauth_tokens_and_atomic_disable(p
     monkeypatch.setenv('EVOLVMEM_CONSOLE_OWNER_ID', 'admin_owner')
     policy_path = tmp_path / 'policy.json'
     policy_path.write_text(
-        json.dumps({'version': 1, 'console_enabled': True, 'legacy_web_enabled': False}), encoding='utf-8'
+        json.dumps({'console_enabled': True, 'legacy_web_enabled': False, 'ai_processing_enabled': False}),
+        encoding='utf-8',
     )
-    monkeypatch.setenv('EVOLVMEM_PRODUCT_POLICY', str(policy_path))
+    monkeypatch.setenv('EVOLVMEM_PRODUCT_POLICY_FILE', str(policy_path))
     lan_settings = SimpleNamespace(
         data_dir=tmp_path / 'lan',
         owner_data_dir=tmp_path / 'sources' / 'admin_owner',
@@ -352,10 +353,11 @@ def test_transitional_sqlite_content_routing_and_fail_closed_pg_unavailable(pg_c
 
     policy_file = tmp_path / 'policy.json'
     policy_file.write_text(
-        json.dumps({'version': 1, 'console_enabled': True, 'legacy_web_enabled': False}), encoding='utf-8'
+        json.dumps({'console_enabled': True, 'legacy_web_enabled': False, 'ai_processing_enabled': False}),
+        encoding='utf-8',
     )
 
-    monkeypatch.setenv('EVOLVMEM_PRODUCT_POLICY', str(policy_file))
+    monkeypatch.setenv('EVOLVMEM_PRODUCT_POLICY_FILE', str(policy_file))
     monkeypatch.setenv('EVOLVMEM_CONSOLE_REGISTRY', str(decoy_sqlite))
     monkeypatch.setenv('EVOLVMEM_CONSOLE_OWNER_ID', 'admin_owner')
     monkeypatch.setenv('EVOLVMEM_CONTROL_BACKEND', 'postgres')
