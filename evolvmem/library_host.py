@@ -106,7 +106,7 @@ class LibraryHost:
                  semantic_merge_enabled=True, enabled=False, max_requests=2,
                  timeout_seconds=30, acl_control_binding=None, acl_projection_targets=(),
                  recall_enabled=False, embedding_provider=None,
-                 control_request_reuse=False):
+                 control_request_reuse=False, agent_registry=None, actor_resolver=None):
         if (type(enabled) is not bool or type(semantic_merge_enabled) is not bool
                 or type(control_request_reuse) is not bool
                 or type(max_requests) is not int or not 1 <= max_requests <= 32
@@ -154,6 +154,12 @@ class LibraryHost:
         self._active = 0
         self._closed = self._unhealthy = False
         self._request = ContextVar('evolvmem_library_host_request', default=None)
+        self._agent_registry = agent_registry
+        self._actor_resolver = actor_resolver
+        self._attributions = {}
+
+    def last_attribution(self, device_id):
+        return self._attributions.get(str(device_id))
 
     @property
     def active_requests(self):
@@ -908,6 +914,14 @@ class LibraryHost:
                 protocol = params.get('protocolVersion')
                 if protocol not in PROTOCOLS:
                     raise FoundationError('unsupported_protocol_version')
+                from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
+                actor_id = self._actor_resolver(identity.principal_id) if callable(self._actor_resolver) else identity.principal_id
+                c_info = params.get('clientInfo')
+                if self._agent_registry is not None:
+                    attr = self._agent_registry.record_seen(actor=actor_id, client_info=c_info, device_id=identity.device_id)
+                else:
+                    attr = resolve_mcp_client_info(c_info, actor=actor_id, device_id=identity.device_id)
+                self._attributions[str(identity.device_id)] = attr
                 result = {'protocolVersion': protocol, 'capabilities': {'tools': {}},
                     'serverInfo': {'name': 'evolvmem-library-host', 'version': '0.1'},
                     'instructions': 'Select an authorized library_id and registered project_key. '

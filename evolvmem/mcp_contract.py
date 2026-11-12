@@ -40,7 +40,7 @@ CODEX_ADAPTER = "codex"
 KIMI_ADAPTER = "kimi"
 
 # 已完成 Context Core 切换、shadow/primary 下暴露 context_* 工具的 adapter
-CONTEXT_CORE_ADAPTERS = frozenset({CODEX_ADAPTER, KIMI_ADAPTER, "dsh"})
+CONTEXT_CORE_ADAPTERS = frozenset({CODEX_ADAPTER, KIMI_ADAPTER, "dsh", "lan"})
 
 _READ_ONLY: dict[str, object] = {"readOnlyHint": True}
 _WRITE_TOOL_ANNOTATIONS: dict[str, object] = {}
@@ -968,7 +968,7 @@ def initialization_instructions(
         if health is not None and health.ready:
             if adapter == CODEX_ADAPTER:
                 return _PRIMARY_INSTRUCTIONS
-            if adapter in (KIMI_ADAPTER, "dsh"):
+            if adapter in (KIMI_ADAPTER, "dsh", "lan"):
                 return _PRIMARY_INSTRUCTIONS_KIMI
             return None
         return _DIAGNOSTIC_INSTRUCTIONS

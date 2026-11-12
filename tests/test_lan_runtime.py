@@ -170,7 +170,7 @@ def test_runtime_keeps_personal_and_public_mcp_data_isolated_despite_environment
                     public_from_jiangli.config.db_path}) == 3
         for server in (jiangli, kane, public_from_jiangli):
             assert server.config.context_mode == "primary"
-            assert server.config.adapter == "codex"
+            assert server.config.adapter == "lan"
             assert server.config.context_vectors_required is False
 
         _add(jiangli, "project:lan:fact:jiangli", "jiangli personal marker is private")

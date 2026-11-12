@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('session-start', 'prompt-submit', 'snapshot', 'worker', 'upload', 'status', 'self-test', 'discover-history')]
     [string]$Action,
-    [ValidateRange(1, 10000)][int]$HistoricalLimit = 500
+    [ValidateRange(1, 10000)][int]$HistoricalLimit = 500,
+    [string]$Agent = 'codex',
+    [string]$Model = ''
 )
 
 $ErrorActionPreference = 'Stop'

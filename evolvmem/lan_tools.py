@@ -118,8 +118,11 @@ def _schema_valid(value, schema):
 
 
 class LanTools:
-    def __init__(self, runtime):
+    def __init__(self, runtime, *, agent_registry=None, device_resolver=None):
         self.runtime = runtime
+        self._agent_registry = agent_registry
+        self._device_resolver = device_resolver
+        self._attributions = {}
         # Share the same lock even when more than one HTTP/direct adapter wraps
         # this runtime. Runtime creation itself precedes serving requests.
         if not hasattr(runtime, '_lan_dispatch_lock'):
@@ -692,6 +695,20 @@ class LanTools:
             result['space'] = space
         return result
 
+    def attribution_for(self, user):
+        return self._attributions.get(user)
+
+    def _record_initialize_client(self, user, params):
+        from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
+        dev_id = self._device_resolver(user) if callable(self._device_resolver) else None
+        client_info = params.get('clientInfo') if isinstance(params, dict) else None
+        if self._agent_registry is not None:
+            attr = self._agent_registry.record_seen(actor=user, client_info=client_info, device_id=dev_id)
+        else:
+            attr = resolve_mcp_client_info(client_info, actor=user, device_id=dev_id)
+        self._attributions[user] = attr
+        return attr
+
     @traced_rpc
     def handle_request(self, user, request, *, owner=False):
         if user not in ('jiangli', 'kane'):
@@ -709,6 +726,7 @@ class LanTools:
         if IDENTITY_FIELDS.intersection(params):
             return self._rpc_error(ident, -32600, 'Identity override forbidden')
         if method == 'initialize' and not owner:
+            self._record_initialize_client(user, params)
             requested = params.get('protocolVersion')
             result = {'protocolVersion': requested if requested in PROTOCOLS else PROTOCOLS[0],
                       'capabilities': {'tools': {}}, 'serverInfo': {'name': 'evolvmem-lan', 'version': '0.1.0'},
@@ -719,6 +737,7 @@ class LanTools:
             specs = deepcopy(self._catalog_specs[(user, owner)])
             result = {'tools': list(specs.values())}
         elif method == 'initialize':
+            self._record_initialize_client(user, params)
             # Owner instructions derive from live Context readiness, unlike
             # remote transport negotiation. Keep their store access serialized.
             with timed_lock(self.lock):
