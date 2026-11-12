@@ -1,4 +1,5 @@
 """Authenticated revision checks never imply that Context is healthy."""
+from tests.test_project_archive_store import save_manual_event
 import pytest
 from tests.test_lan_sharing import lan, add
 
@@ -76,7 +77,7 @@ def test_primary_archive_and_capability_changes_invalidate_revision(lan):
         return adapter.call_tool("kane", "memory_status", {"detail": "revision"})["memory_revision"]
     before = revision()
     archives = ProjectArchiveStore(store)
-    event_id = archives.record_event(ProjectEventDraft(project="probe", event_type="feature", title="new event", content="new project history"))
+    event_id = save_manual_event(archives, ProjectEventDraft(project="probe", event_type="feature", title="new event", content="new project history"))
     after_event = revision()
     assert after_event != before
     archives.rebuild("probe")

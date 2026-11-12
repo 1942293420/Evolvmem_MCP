@@ -1,4 +1,5 @@
 """Historical date regressions: use source dates, never migration timestamps."""
+from tests.test_project_archive_store import save_manual_event
 from types import SimpleNamespace
 import pytest
 from evolvmem.context_models import ContextContentType, ContextItemDraft, ContextLayers, ContextStatus
@@ -8,12 +9,19 @@ from evolvmem.project_archive_store import ProjectArchiveStore, ProjectEventDraf
 
 
 def legacy(store, tag, project='ai_purchase', occurred_at=None):
-    return store.create_item(ContextItemDraft(
+    item = store.create_item(ContextItemDraft(
         identity_key=f'project:jiangli:progress:log:{tag}',
         content_type=ContextContentType.SESSION_SUMMARY,
         layers=ContextLayers(l0=tag, l1=tag, l2=tag, generator='test'),
         project=project, occurred_at=occurred_at, status=ContextStatus.ACTIVE,
-    )).id
+    ))
+    with store.transaction():
+        store._connection().execute(
+            "INSERT OR IGNORE INTO context_project_registry(project,created_at,updated_at) VALUES(?,'now','now')", (project,))
+        store._connection().execute(
+            "INSERT INTO context_project_resolutions(item_id,resolution_state,decision_source,review_state,resolved_project,created_at,updated_at) "
+            "VALUES(?,'resolved','human','accepted',?,'now','now')", (item.id, project))
+    return item.id
 
 
 def register(store):
@@ -50,7 +58,7 @@ def test_migration_keeps_literal_source_day_without_inventing_timezone(test_conf
 def test_unknown_occurrence_does_not_claim_import_date_is_project_start(test_config):
     with ContextStore(test_config) as store:
         archives = ProjectArchiveStore(store)
-        archives.record_event(ProjectEventDraft(project='unknown', event_type='milestone', title='旧摘要', content='日期不明'))
+        save_manual_event(archives, ProjectEventDraft(project='unknown', event_type='milestone', title='旧摘要', content='日期不明'))
         archive = archives.rebuild('unknown')
         assert archive['started_at'] is None
         assert archive['development_days'] is None
@@ -64,7 +72,7 @@ def test_get_corrects_stale_derived_dates_without_writing(test_config):
     with ContextStore(test_config) as store:
         register(store)
         archives = ProjectArchiveStore(store)
-        archives.record_event(ProjectEventDraft(project='ai_purchase', event_type='milestone', title='旧摘要', content='日期不明'))
+        save_manual_event(archives, ProjectEventDraft(project='ai_purchase', event_type='milestone', title='旧摘要', content='日期不明'))
         archives.rebuild('ai_purchase')
         with store.transaction():
             store._connection().execute("UPDATE project_archives SET started_at='2026-10-28',display_name='ai_purchase',summary='开始时间：2026-10-28'")

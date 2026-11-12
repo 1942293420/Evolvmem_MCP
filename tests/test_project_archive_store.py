@@ -5,6 +5,20 @@ from evolvmem.context_store import ContextStore
 from evolvmem.project_archive_store import ProjectArchiveStore, ProjectEventDraft
 
 
+
+def save_manual_event(archives, draft):
+    """Explicit human-origin event fixture, never inferred from a missing source."""
+    from evolvmem.project_archive_store import ProjectEventSourceDraft
+    with archives.context_store.transaction():
+        archives.conn.execute(
+            "INSERT OR IGNORE INTO context_project_registry(project,created_at,updated_at) VALUES(?,'now','now')",
+            (draft.project,))
+    return archives.record_event(draft, source=ProjectEventSourceDraft(
+        source_kind="manual", source_key="test:manual:" + draft.fingerprint(),
+        source_ref="test:explicit-human-event", projects=(draft.project,),
+        evidence_status="confirmed"))
+
+
 def event(**changes):
     values = dict(
         project="bluewhale",
@@ -21,7 +35,7 @@ def event(**changes):
 def test_archive_rebuilds_from_events_and_computes_dynamic_period(test_config):
     with ContextStore(test_config) as store:
         archives = ProjectArchiveStore(store)
-        event_id = archives.record_event(event())
+        event_id = save_manual_event(archives, event())
 
         current = archives.rebuild("bluewhale")
 
@@ -39,8 +53,8 @@ def test_archive_rebuilds_from_events_and_computes_dynamic_period(test_config):
 def test_duplicate_event_does_not_duplicate_history_or_summary(test_config):
     with ContextStore(test_config) as store:
         archives = ProjectArchiveStore(store)
-        first = archives.record_event(event())
-        second = archives.record_event(event())
+        first = save_manual_event(archives, event())
+        second = save_manual_event(archives, event())
 
         assert second == first
         assert len(archives.events("bluewhale")) == 1
@@ -50,9 +64,9 @@ def test_duplicate_event_does_not_duplicate_history_or_summary(test_config):
 def test_rebuild_uses_only_active_events_and_checks_revision(test_config):
     with ContextStore(test_config) as store:
         archives = ProjectArchiveStore(store)
-        archives.record_event(event())
+        save_manual_event(archives, event())
         archives.rebuild("bluewhale")
-        archives.record_event(event(
+        save_manual_event(archives, event(
             event_type="major_change", title="替换核心模块", content="完成核心模块替换。",
             source_ref="archive:2", occurred_at="2026-03-01 00:00:00",
         ))
@@ -68,7 +82,7 @@ def test_rebuild_uses_only_active_events_and_checks_revision(test_config):
 def test_empty_rebuild_preserves_existing_summary(test_config):
     with ContextStore(test_config) as store:
         archives = ProjectArchiveStore(store)
-        archives.record_event(event())
+        save_manual_event(archives, event())
         before = archives.rebuild("bluewhale")
 
         with pytest.raises(ValueError, match="empty_summary"):

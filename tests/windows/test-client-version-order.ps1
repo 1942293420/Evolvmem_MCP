@@ -292,6 +292,8 @@ try {
         Clear-UploadCalls
         $script:Offline = $false
         Invoke-UploadRound
+        # The fair worker selects one immutable version per session per tick.
+        Invoke-UploadRound
         $callsB = @(Get-SessionUploadCalls 'session-rewrite-b')
         Assert-Equal 2 $callsB.Count 'B: both versions must terminate.'
         if ($callsB.Count -ge 2) {
@@ -353,6 +355,8 @@ try {
 
     $script:Offline = $false
     Clear-UploadCalls
+    Invoke-UploadRound
+    Invoke-UploadRound
     Invoke-UploadRound
     $callsC = @(Get-SessionUploadCalls 'session-migrate-c')
     Assert-Equal 3 $callsC.Count 'C: the anchor and both legacy versions must terminate.'
@@ -480,6 +484,7 @@ try {
     $script:Offline = $false
     Clear-UploadCalls
     Invoke-UploadRound
+    Invoke-UploadRound
     $reused = @{}
     foreach ($callG in @(Get-SessionUploadCalls 'session-legacy-g')) {
         $reused[[string](Get-Field $callG.Arguments 'sha256' '')] = [int64](Get-Field $callG.Arguments 'source_order' 0)
@@ -513,8 +518,12 @@ try {
         Assert-True ($null -ne $currentManifest) ($Tag + ': an unconfirmed anchor must keep the current payload queued.')
         if ($null -ne $currentManifest) {
             Assert-Equal $ExpectedCode ([string](Get-Field $currentManifest.Manifest 'last_error' '')) ($Tag + ': the retained anchor must carry the stable diagnostic code.')
+            Assert-Equal ([int64](Get-Field $currentManifest.Manifest 'source_order' 0)) ([int64](Get-Field (Get-SessionRecord $SessionId) 'source_order' 0)) ($Tag + ': migration must persist the raised anchor order in the registration.')
         }
         $session = Get-SessionRecord $SessionId
+        $preparedOrder = [int64](Get-Field $session 'source_order' 0)
+        [void](Invoke-WithClientLock { Initialize-SessionSourceState $Config $SessionId } 5000 (Get-SessionLockScope $SessionId))
+        Assert-Equal $preparedOrder ([int64](Get-Field (Get-SessionRecord $SessionId) 'source_order' 0)) ($Tag + ': repeated preparation must not raise the anchor order again.')
         Assert-True (-not [string](Get-Field $session 'anchor_confirmed_sha256' '')) ($Tag + ': a non-confirming receipt must never confirm the anchor.')
         Assert-Equal (Get-ShaOf $current) ([string](Get-Field $session 'current_sha256' '')) ($Tag + ': the local current sha must survive the refusal.')
         $local = Get-LocalStatus $Config
@@ -581,6 +590,7 @@ try {
     Invoke-UploadRound
     $script:Offline = $false
     Assert-Equal $newOrderJ ([int64](Get-Field (Get-SessionRecord 'session-aba-j') 'source_order' 0)) 'J: network failure must keep the recapture order.'
+    Invoke-UploadRound
     Invoke-UploadRound
     Assert-Equal (Get-ShaOf $contentA) ([string]$script:SessionHeads['session-aba-j'].Sha) 'J: late B must not overwrite recaptured A.'
     Assert-Equal 0 (@(Get-SessionManifests 'session-aba-j').Count) 'J: both immutable versions must be acknowledged.'

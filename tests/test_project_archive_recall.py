@@ -1,4 +1,5 @@
 """Exact project archive queries stay separate from capability memories."""
+from tests.test_project_archive_store import save_manual_event
 from types import SimpleNamespace
 
 import pytest
@@ -30,7 +31,7 @@ def seed(service):
         category="frontend", title="表单校验", content="提交前校验。",
         source_project="bluewhale", source_ref="archive:memory"))
     archives = ProjectArchiveStore(service.store)
-    archives.record_event(ProjectEventDraft(
+    save_manual_event(archives, ProjectEventDraft(
         project="bluewhale", event_type="feature", title="新增权限管理",
         content="完成统一权限管理。", source_ref="archive:event",
         occurred_at="2026-01-01 00:00:00"))

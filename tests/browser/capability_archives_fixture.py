@@ -1,4 +1,5 @@
 """Disposable Signal server for capability and project archive browser checks."""
+from tests.test_project_archive_store import save_manual_event
 import shutil
 import sys
 import tempfile
@@ -38,7 +39,7 @@ for index in range(25):
         source_ref=f"archive:{index}"))
 create_category_suggestion(service, {"label":"移动端", "reason":"出现独立移动开发记忆"})
 archives = ProjectArchiveStore(service.store)
-archives.record_event(ProjectEventDraft(
+save_manual_event(archives, ProjectEventDraft(
     project="bluewhale", event_type="feature", title="新增权限管理",
     content="蓝鲸完成统一权限管理。", source_ref="archive:event",
     occurred_at="2026-01-01 00:00:00"))

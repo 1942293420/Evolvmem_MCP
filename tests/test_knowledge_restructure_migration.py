@@ -22,6 +22,12 @@ def add_legacy_item(store, content_type, text, project="bluewhale", status=Conte
         project=project,
         status=status,
     ))
+    with store.transaction():
+        store._connection().execute(
+            "INSERT OR IGNORE INTO context_project_registry(project,created_at,updated_at) VALUES(?,'now','now')", (project,))
+        store._connection().execute(
+            "INSERT INTO context_project_resolutions(item_id,resolution_state,decision_source,review_state,resolved_project,created_at,updated_at) "
+            "VALUES(?,'resolved','human','accepted',?,'now','now')", (item.id, project))
     return item.id
 
 

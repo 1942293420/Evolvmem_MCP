@@ -1,4 +1,5 @@
 """Disposable HTTP fixture for history date/provenance UI checks; no production access."""
+from tests.test_project_archive_store import save_manual_event
 import argparse
 from pathlib import Path
 import signal
@@ -35,7 +36,7 @@ def main():
             conn.execute('INSERT INTO context_project_registry(project,display_name,created_at,updated_at) VALUES(?,?,?,?)',
                          ('unknown', '日期未知项目', _now_iso(), _now_iso()))
         archives = ProjectArchiveStore(service.store)
-        archives.record_event(ProjectEventDraft(project='unknown',event_type='milestone',title='日期未知',content='没有可靠历史日期'))
+        save_manual_event(archives, ProjectEventDraft(project='unknown',event_type='milestone',title='日期未知',content='没有可靠历史日期'))
         archives.rebuild('unknown')
         server = make_http_server(service, port=args.port)
         def stop(*_):

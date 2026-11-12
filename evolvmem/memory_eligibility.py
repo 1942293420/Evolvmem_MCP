@@ -11,18 +11,14 @@ def eligible(store, item_id, *, read=None, rows=None):
 
 
 def _eligible_row(store, item_id, row):
-    if row is None:
-        return False
-    from evolvmem.knowledge_provenance import unconfirmed_rule
-    if unconfirmed_rule(store, item_id, row['category'], row['learning_payload']):
-        return False
-    if row['content_type'] == 'project_summary':
+    from evolvmem.source_qualification import eligible_row as decide
+    def unconfirmed(category, payload):
+        from evolvmem.knowledge_provenance import unconfirmed_rule
+        return unconfirmed_rule(store, item_id, category, payload)
+    def summary_current():
         from evolvmem.rollup_provenance import current
         return current(store, item_id)
-    if row['content_type'] != 'experience' and row['category'] != 'experience':
-        return True
-    # The experience service alone validates proof and derives these counters.
-    return row['status'] == 'active' and row['success_count'] > 0 and bool(row['experience_payload'])
+    return decide(row, unconfirmed, summary_current)
 
 
 def eligible_ids(store, item_ids, *, read=None, preserve_text_decoding=False):

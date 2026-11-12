@@ -66,48 +66,23 @@ class BackingRead:
 
 
 def currently_backed(store, item_id, *, read=None):
-    """A withdrawn unit cannot keep supplying knowledge to current recall.
-
-    An independent source or another current unit can still back a shared item.
-    The source rows remain intact for provenance and restoration.
-    """
+    """Canonical verdict; retain SQLite's original lazy source/cached-member reads."""
+    from evolvmem.source_qualification import currently_backed as decide
     conn = store._connection()
     rows = read.rows.get(item_id, []) if read is not None else conn.execute(
         _BACKING_SQL + ' WHERE d.item_id=?', (item_id,)).fetchall()
-    if not rows:
-        return True
-    if any(r['status'] != 'superseded' and r['decision'] in ('auto', 'manual')
-           and r['disposition'] == 'keep' and (
-               (r['knowledge_scope'] == r['item_scope'] == 'global') or
-               (r['knowledge_scope'] == r['item_scope'] == 'project' and
-                set(ks.projects(r)) & set(ks.projects({'project':r['item_project'],'projects':r['item_projects']}))))
-           for r in rows):
-        return True
-    keys = {r['source_key'] for r in rows}
-    archives = {int(k.split(':')[1]) for k in keys if k.startswith('archive:')}
-    for key in keys:
-        if key.startswith('conversation:'):
-            if read is not None and key in read.archives:
-                archives.update(read.archives[key])
-            else:
-                row=conn.execute('SELECT members FROM organization_conversations WHERE source_key=?',(key,)).fetchone()
-                linked = {int(k.split(':')[1]) for k in json.loads(row['members']) if k.startswith('archive:')} if row else set()
-                archives.update(linked)
-                if read is not None:
-                    read.archives[key] = linked
-
-    sources = read.sources.get(item_id, []) if read is not None and read.sources is not None else conn.execute(
-        'SELECT * FROM context_sources WHERE item_id=?', (item_id,))
-    for source in sources:
-        if source['source_kind'] == 'session' and source['archive_id'] in archives:
-            continue
-        if source['source_kind'] in ('organization', 'extraction') and any(
-                source['source_ref'] == key or source['source_ref'].startswith(key + '#') for key in keys):
-            continue
-        if source['archive_id'] in archives:
-            continue
-        return True
-    return False
+    def members(key):
+        if read is not None and key in read.archives:
+            return read.archives[key]
+        row = conn.execute('SELECT members FROM organization_conversations WHERE source_key=?', (key,)).fetchone()
+        archives = {int(k.split(':')[1]) for k in json.loads(row['members']) if k.startswith('archive:')} if row else set()
+        if read is not None:
+            read.archives[key] = archives
+        return archives
+    def sources():
+        return read.sources.get(item_id, []) if read is not None and read.sources is not None else conn.execute(
+            'SELECT * FROM context_sources WHERE item_id=?', (item_id,))
+    return decide(rows, members, sources)
 
 
 def current_item_ids(store, item_ids):

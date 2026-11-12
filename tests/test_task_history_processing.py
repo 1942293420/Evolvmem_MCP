@@ -3,6 +3,7 @@ import hashlib
 import json
 import pytest
 from tests.test_lan_sharing import lan
+from tests.test_lan_server import http_lan
 from tests.test_lan_capture import transcript, upload
 
 TOOL = 'session_archive_process_history'
@@ -164,3 +165,132 @@ def test_scoped_unknown_http_outcome_has_no_retry_or_fallback(lan, monkeypatch):
     monkeypatch.setattr(auto_organization, '_load_llm', lambda: (config, hooks._call_llm_with_retry))
     assert adapter.call_tool('jiangli', TOOL, args, owner=True).get('error') == 'request_indeterminate'
     assert calls == ['http']
+
+
+@pytest.mark.parametrize('empty_events', [False, True])
+def test_first_history_call_preserves_startup_health_schema(lan, monkeypatch, empty_events):
+    from evolvmem import auto_organization
+    from evolvmem.health_generation import observed
+    service, adapter, _, args, calls = setup(lan, monkeypatch)
+    runtime, _ = lan
+    manager = runtime._background_health
+    conn = service.store._connection()
+    schema = conn.execute('PRAGMA schema_version').fetchone()[0]
+    assert observed(service.store, schema) is not None
+    hard_before, _ = manager._observation('jiangli', conn)
+    assert hard_before == manager._contracts['jiangli']
+    if empty_events:
+        def provider(*a, **kwargs):
+            calls.append('synthetic empty event result')
+            return json.dumps({'events': []})
+        monkeypatch.setattr(auto_organization, '_load_llm', lambda: (object(), provider))
+    result = adapter.call_tool('jiangli', TOOL, args, owner=True)
+    assert result.get('state') == 'completed', result
+    assert len(calls) == 1
+    assert conn.execute('PRAGMA schema_version').fetchone()[0] == schema
+    assert observed(service.store, schema) is not None
+    assert manager._observation('jiangli', conn)[0] == hard_before
+    assert [row[0] for row in conn.execute('PRAGMA quick_check')] == ['ok']
+    manager.refresh('jiangli')
+    manager.run_once()
+    assert manager.status('jiangli')['hard_gate'] == 'allowed'
+    recall = adapter.call_tool('jiangli', 'context_project_recall', {'query': 'demo', 'space': 'personal'}, owner=True)
+    assert 'error' not in recall, recall
+    if empty_events:
+        assert result['event_ids'] == [] and result['summary_revision'] == 0
+        proof = adapter.call_tool('jiangli', 'session_archive_status', {
+            'device_id': args['device_id'], 'session_id': args['session_id'],
+            'handoff': {'sha256': args['sha256'], 'project': 'demo'}})['handoff']
+        assert proof['state'] != 'ready'
+
+
+def test_grant_schema_is_prepared_only_for_owner_before_health(lan):
+    from evolvmem.health_generation import observed
+    runtime, adapter = lan
+    for user, space in [('jiangli', 'personal'), ('kane', 'personal'), ('jiangli', 'public')]:
+        service = runtime.server_for(user, space).context_service
+        conn = service.store._connection()
+        schema = conn.execute('PRAGMA schema_version').fetchone()[0]
+        assert observed(service.store, schema) is not None
+        present = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_history_grants'").fetchone()
+        assert bool(present) == (user == 'jiangli' and space == 'personal')
+    assert TOOL in adapter._catalog_specs[('jiangli', True)]
+    for role in [('jiangli', False), ('kane', True), ('kane', False)]:
+        assert TOOL not in adapter._catalog_specs[role]
+
+
+def test_request_does_not_recreate_missing_grant_schema(lan, monkeypatch):
+    service, adapter, _, args, calls = setup(lan, monkeypatch)
+    conn = service.store._connection()
+    with service.store.transaction():
+        conn.execute('DROP TABLE IF EXISTS task_history_grants')
+    schema = conn.execute('PRAGMA schema_version').fetchone()[0]
+    receipt = adapter.call_tool('jiangli', 'session_archive_status', {
+        'device_id': args['device_id'], 'session_id': args['session_id'],
+        'handoff': {'sha256': args['sha256'], 'project': 'demo'}})
+    assert 'error' not in receipt and receipt.get('task_history') is None
+    assert receipt['handoff']['state'] != 'ready'
+    assert conn.execute('PRAGMA schema_version').fetchone()[0] == schema
+    result = adapter.call_tool('jiangli', TOOL, args, owner=True)
+    assert result.get('error') == 'task_history_schema_unprepared'
+    assert not calls
+    assert conn.execute('PRAGMA schema_version').fetchone()[0] == schema
+    assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='task_history_grants'").fetchone()
+
+
+@pytest.mark.parametrize('empty_events', [False, True])
+def test_http_first_history_write_keeps_resident_health_and_project_recall(http_lan, monkeypatch, empty_events):
+    import base64
+    import http.client
+    from evolvmem import auto_organization
+    from evolvmem.health_generation import observed
+    server, runtime = http_lan  # Real production make_http_server/worker/physical-owner startup.
+    service = runtime.server_for('jiangli').context_service
+    service.knowledge().save_project({'project': 'demo'})
+    conn = service.store._connection()
+    schema = conn.execute('PRAGMA schema_version').fetchone()[0]
+    assert observed(service.store, schema) is not None
+    calls = []
+    def provider(*a, **kwargs):
+        calls.append('synthetic provider')
+        return json.dumps({'events': [] if empty_events else [
+            {'event_type': 'feature', 'title': 'HTTP startup verified', 'content': 'Synthetic scoped history verified.'}]})
+    monkeypatch.setattr(auto_organization, '_load_llm', lambda: (object(), provider))
+    def owner_call(name, arguments):
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        try:
+            connection.request('POST', '/owner/mcp', body=json.dumps({
+                'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                'params': {'name': name, 'arguments': arguments}}), headers={
+                    'Content-Type': 'application/json', 'Authorization': 'Bearer jiangli-token',
+                    'X-EvolvMem-Expected-User': 'jiangli'})
+            reply = connection.getresponse()
+            body = json.loads(reply.read())
+            assert reply.status == 200 and body['id'] == 1
+            result = body['result']
+            data = json.loads(result['content'][0]['text'])
+            assert not result.get('isError') and 'error' not in data, data
+            assert data['authenticated_user'] == 'jiangli'
+            return data
+        finally:
+            connection.close()
+    raw = transcript(text='Synthetic HTTP startup regression source.')
+    sha = hashlib.sha256(raw).hexdigest()
+    receipt = owner_call('session_archive_upload', {
+        'device_id': 'windows-main', 'session_id': 'session-1', 'project': 'demo',
+        'sha256': sha, 'total_bytes': len(raw), 'offset': 0, 'extract': False,
+        'content_b64': base64.b64encode(raw).decode(), 'request_id': 'http-startup-upload'})
+    result = owner_call(TOOL, {
+        'device_id': 'windows-main', 'session_id': 'session-1', 'project': 'demo',
+        'archive_id': receipt['archive_id'], 'sha256': sha,
+        'source_revision': receipt['source_revision'], 'source_format': 'codex-jsonl',
+        'request_id': 'http-startup-history'})
+    assert result['state'] == 'completed' and calls == ['synthetic provider']
+    assert conn.execute('PRAGMA schema_version').fetchone()[0] == schema
+    assert observed(service.store, schema) is not None
+    health = owner_call('memory_status', {'detail': 'health', 'space': 'personal'})
+    assert health['hard_gate'] == 'allowed'
+    assert 'error' not in owner_call('context_project_recall', {'query': 'demo', 'space': 'personal'})
+    assert [row[0] for row in conn.execute('PRAGMA quick_check')] == ['ok']
+    if empty_events:
+        assert result['event_ids'] == [] and result['summary_revision'] == 0

@@ -35,9 +35,9 @@ def test_worker_organizes_before_classifying_and_keeps_full_sources(service,monk
     units=org.unit_views(service,task['id'])
     assert len(units)==1 and units[0]['task_record']['result']['text']=='仍待验收'
     assert org.task_view(service,task['id'])['stage']=='assignment'
-    worker._assign(service,org.task_view(service,task['id']))
+    worker._assign(service,org.task_view(service,task['id']),materialize=False)
     unit=org.unit_views(service,task['id'])[0]
-    assert unit['project']=='' and unit['decision']=='review'
+    assert unit['project']=='demo' and unit['decision']=='auto'
     assert unit['business_analysis']['projects']==['demo']
     assert unit['item_id'] is None
     from evolvmem.task_context import read

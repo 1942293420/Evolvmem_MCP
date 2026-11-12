@@ -201,6 +201,9 @@ if os.environ.get('EVOLVMEM_CARD_FIXTURE') == '1':
         with s.store.transaction():
             s.store._connection().execute('UPDATE context_items SET updated_at=? WHERE project=?',(stamp,slug))
             s.store._connection().execute('UPDATE context_project_registry SET updated_at=? WHERE project=?',(stamp,slug))
+if os.environ.get('EVOLVMEM_GOVERNANCE_FIXTURE') == '1':
+    from tests.browser.capability_governance_fixture import seed
+    seed(s)
 server=make_http_server(s, port=int(os.environ.get('EVOLVMEM_TEST_PORT','39478')))
 # A pending auto-organization task plus the bounded worker, both synthetic.
 from evolvmem.auto_organization import OrganizationWorker

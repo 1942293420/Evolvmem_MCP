@@ -149,10 +149,10 @@ def test_only_the_real_incremental_batch_shape_is_recognized():
 
 # ------------------------------------------------- incremental batches stay separate
 
-def test_a_second_batch_never_replaces_a_queued_first_batch(service, config, tmp_path, monkeypatch):
+def test_a_second_batch_extends_conversation_without_replacing_original_sources(service, config, tmp_path, monkeypatch):
     from evolvmem.auto_organization import task_view
     from evolvmem.history_organization import source_refs
-    from evolvmem import history_memory
+    from evolvmem import history_memory, conversation_tasks
     from evolvmem.organization_arrival import discover_new, update_settings
 
     roots = tmp_path / 'codex-roots'
@@ -168,8 +168,13 @@ def test_a_second_batch_never_replaces_a_queued_first_batch(service, config, tmp
     # Batch 1 is already queued when batch 2 is captured.
     queued = discover_new(service)
     assert queued['created'] == 1
-    assert queued['items'][0]['source_key'] == f"archive:{first['id']}"
+    source_key = queued['items'][0]['source_key']
+    assert source_key.startswith('conversation:')
+    assert conversation_tasks.members(service, source_key) == [f"archive:{first['id']}"]
     first_task_id = queued['items'][0]['id']
+    first_snapshot = service.store._connection().execute(
+        'SELECT source_snapshot FROM organization_tasks WHERE id=?', (first_task_id,)).fetchone()[0]
+    first_payload = (config.data_dir / first['payload_path']).read_bytes()
 
     append_lines(path, incremental_batch('用户要求：Evo 演示项目第二批必须保留旧快照。'))
     assert scan(service)['archives'] == 1
@@ -189,15 +194,29 @@ def test_a_second_batch_never_replaces_a_queued_first_batch(service, config, tmp
     assert f"archive:{first['id']}" not in {ref['key'] for ref in source_refs(service)}
     assert task_view(service, first_task_id)['source_current'] is True
 
+    second_payload = (config.data_dir / second['payload_path']).read_bytes()
+    extended = discover_new(service)
+    assert extended['created'] == 1
+    complete_task = extended['items'][0]
+    assert complete_task['source_key'] == source_key
+    assert complete_task['id'] != first_task_id
+    assert conversation_tasks.members(service, source_key) == [
+        f"archive:{first['id']}", f"archive:{second['id']}"]
+    # A new complete-conversation revision replaces the queued processing job,
+    # while both immutable sources and the old frozen task snapshot remain.
+    old_task = task_view(service, first_task_id)
+    assert old_task['status'] == 'superseded'
+    assert service.store._connection().execute(
+        'SELECT source_snapshot FROM organization_tasks WHERE id=?', (first_task_id,)).fetchone()[0] == first_snapshot
     tasks = run_worker(service, monkeypatch, model_for(service, projects={'evo', 'shop'}), timeout=30)
-    by_key = {task['source_key']: task for task in tasks}
-    first_task = by_key[f"archive:{first['id']}"]
-    second_task = by_key[f"archive:{second['id']}"]
-    assert first_task['error_code'] != 'classification_source_changed'
-    assert first_task['status'] in ('completed', 'review'), first_task['error_code']
-    assert second_task['status'] in ('completed', 'review'), second_task['error_code']
-    assert stored_units(service, first_task['id'])
-    assert stored_units(service, second_task['id'])
+    current = next(task for task in tasks if task['id'] == complete_task['id'])
+    assert current['error_code'] != 'classification_source_changed'
+    assert current['status'] in ('completed', 'review'), current['error_code']
+    contents = '\n'.join(row['text'] for row in stored_units(service, current['id']))
+    assert '先明确验收条件' in contents
+    assert '第二批必须保留旧快照' in contents
+    assert (config.data_dir / first['payload_path']).read_bytes() == first_payload
+    assert (config.data_dir / second['payload_path']).read_bytes() == second_payload
 
     # Both batches are readable history for the same project, not one replacing the other.
     listed = [row for row in history_memory.sessions(service, 'evo') if row['summary']]
