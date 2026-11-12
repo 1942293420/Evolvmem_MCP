@@ -1266,25 +1266,48 @@ def make_handler(service: ContextService):
     auth = WebAuth(AuthSettings.load(service.config.data_dir))
     views = TrustViews(service)
     from evolvmem.product_policy import load_policy
-    from evolvmem.knowledge_console import ConsoleService
+    from evolvmem.console_access import configured_console, configured_session_store, is_pg_control_configured
+    from evolvmem.knowledge_console import ConsoleError, ConsoleService
     from evolvmem.manual_experience_search import configured_search
-    console = ConsoleService(
-        os.environ.get('EVOLVMEM_CONSOLE_REGISTRY', str(Path.home()/'.config/evolvmem-console/users.db')),
-        os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID', 'jiangli'), service.config.data_dir,
-        os.environ.get('EVOLVMEM_LAN_DATA_DIR', str(Path.home()/'.local/share/evolvmem-lan')),
-        dict(os.environ), experience_search=configured_search(service.config))
+    from evolvmem.web_sessions import PersistentSessions, SessionStoreError
+    pg_mode = is_pg_control_configured()
+    pg_startup_error = None
+    console = None
+    try:
+        if pg_mode:
+            console = configured_console(
+                owner_data_dir=service.config.data_dir,
+                history_environ=dict(os.environ),
+                experience_search=configured_search(service.config),
+            )
+        else:
+            console = ConsoleService(
+                os.environ.get('EVOLVMEM_CONSOLE_REGISTRY', str(Path.home()/'.config/evolvmem-console/users.db')),
+                os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID', 'jiangli'), service.config.data_dir,
+                os.environ.get('EVOLVMEM_LAN_DATA_DIR', str(Path.home()/'.local/share/evolvmem-lan')),
+                dict(os.environ), experience_search=configured_search(service.config))
+    except ConsoleError as exc:
+        if pg_mode or exc.code == 'pg_control_unavailable':
+            pg_startup_error = SessionStoreError('pg_control_unavailable', message='PG 不可用')
+        else:
+            raise
     def observe_console_login(open_id, name):
         if load_policy().console_enabled:
             console.observe_login(open_id, name)
     auth.login_observer = observe_console_login
-    from evolvmem.web_sessions import PersistentSessions, SessionStoreError
     console_sessions = load_policy().console_enabled
     def session_identity_allowed(open_id):
         try:
             if load_policy().console_enabled != console_sessions:
                 raise SessionStoreError()
             return console.login_allowed(open_id) if console_sessions else True
+        except ConsoleError as exc:
+            if pg_mode or exc.code == 'pg_control_unavailable':
+                raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+            raise SessionStoreError() from None
         except Exception:
+            if pg_mode:
+                raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
             raise SessionStoreError() from None
     def session_write_allowed(conn, open_id):
         if load_policy().console_enabled != console_sessions:
@@ -1292,10 +1315,19 @@ def make_handler(service: ContextService):
         return console.login_allowed_in_transaction(conn, open_id) if console_sessions else True
     auth.session_validator = session_identity_allowed
     auth.session_write_validator = session_write_allowed
-    if auth.enabled:
-        session_path = console.registry_path if console_sessions else service.config.data_dir/'web-sessions.db'
-        auth.enable_persistence(PersistentSessions(session_path, auth.persistence_scope(),
-                                                  require_existing=console_sessions))
+    if auth.enabled and pg_startup_error is None:
+        try:
+            store_obj = configured_session_store(
+                console, auth.persistence_scope(),
+                console_sessions=console_sessions,
+                fallback_sqlite_path=service.config.data_dir/'web-sessions.db',
+            )
+            auth.enable_persistence(store_obj)
+        except SessionStoreError as exc:
+            if pg_mode or exc.code == 'pg_control_unavailable':
+                pg_startup_error = SessionStoreError('pg_control_unavailable', message='PG 不可用')
+            else:
+                raise
     # Browser preconnects may open a socket without sending an HTTP request.
     # Parse those sockets independently, but retain serialized use of this
     # service's shared SQLite connections and transaction state.
@@ -1461,10 +1493,15 @@ def make_handler(service: ContextService):
         @wraps(method)
         def guarded_call(self, *args, **kwargs):
             try:
+                if pg_startup_error is not None:
+                    raise pg_startup_error
                 return call(self, *args, **kwargs)
-            except SessionStoreError:
+            except SessionStoreError as exc:
                 self.close_connection = True
-                self._send_json({'ok': False, 'error': 'session_store_unavailable'}, 503)
+                if exc.code == 'pg_control_unavailable':
+                    self._send_json({'ok': False, 'error': 'pg_control_unavailable', 'message': 'PG 不可用'}, 503)
+                else:
+                    self._send_json({'ok': False, 'error': 'session_store_unavailable'}, 503)
         return guarded_call
 
     class MemoryWebHandler(BaseHTTPRequestHandler):
