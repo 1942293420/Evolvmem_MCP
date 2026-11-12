@@ -186,6 +186,9 @@ class MemoryMCPServer:
         *,
         rebuild_legacy_vectors_on_start: bool = True,
         initial_physical_config=None,
+        agent_registry=None,
+        actor_id: str | None = None,
+        device_id: str | None = None,
     ):
         self.config = config if config is not None else Config.from_file()
         self._rebuild_legacy_vectors_on_start = rebuild_legacy_vectors_on_start
@@ -228,6 +231,13 @@ class MemoryMCPServer:
         # 后台 initialize() 完成轻量 Context 健康评估（服务初始化）后置位；
         # 握手最多有界等待它，绝不等待可选的 embedding 模型加载
         self._service_evaluated = threading.Event()
+        self._agent_registry = agent_registry
+        self._actor_id = actor_id
+        self._device_id = device_id
+        self._current_attribution = None
+
+    def current_attribution(self):
+        return self._current_attribution
 
     def initialize(self):
         """Initialize all components."""
@@ -1952,6 +1962,19 @@ class MemoryMCPServer:
 
         if method == "initialize":
             params = request.get("params") or {}
+            from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
+            actor_val = self._actor_id or "local"
+            client_info = params.get("clientInfo")
+            if self._agent_registry is not None:
+                self._current_attribution = self._agent_registry.record_seen(
+                    actor=actor_val, client_info=client_info, device_id=self._device_id,
+                    default_client=self.adapter or "unknown",
+                )
+            else:
+                self._current_attribution = resolve_mcp_client_info(
+                    client_info, actor=actor_val, device_id=self._device_id,
+                    default_client=self.adapter or "unknown",
+                )
             protocol_version = params.get("protocolVersion", "2024-11-05")
             result = {
                 "protocolVersion": protocol_version,

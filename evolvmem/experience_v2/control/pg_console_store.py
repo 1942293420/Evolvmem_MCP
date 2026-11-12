@@ -111,8 +111,19 @@ def _map_pg_exception(exc: Exception):
     ):
         if code in msg:
             raise ConsoleError(code, status) from None
-    if 'configured_owner_rebind_forbidden' in msg:
-        raise ValueError('configured owner identity cannot be rebound') from None
+    for invalid_code in (
+        'configured_owner_rebind_forbidden',
+        'user_tier_reserved_for_human_auth',
+        'invalid_reputation_policy',
+        'invalid_agent_registration',
+        'invalid_reputation_delta',
+    ):
+        if invalid_code in msg:
+            raise ValueError(
+                'configured owner identity cannot be rebound'
+                if invalid_code == 'configured_owner_rebind_forbidden'
+                else invalid_code
+            ) from None
     raise PgControlUnavailableError() from None
 
 

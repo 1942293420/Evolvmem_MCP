@@ -114,7 +114,12 @@ def response_for(event):
     return {'hookSpecificOutput': {'hookEventName': EVENT, 'additionalContext': '\n'.join(instructions)}}
 
 
-def main():
+def main(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description="Codex explicit memory intent hook")
+    parser.add_argument("--agent", default="codex", help="Client agent identifier")
+    parser.add_argument("--model", default="unknown", help="Client model identifier")
+    parser.parse_args(argv)
     raw = sys.stdin.buffer.read(MAX_INPUT + 1)
     try:
         result = response_for(json.loads(raw)) if len(raw) <= MAX_INPUT else {}

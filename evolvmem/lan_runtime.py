@@ -450,7 +450,7 @@ class LanRuntime:
         config.data_dir = Path(data_dir).expanduser()
         config.apply_environment = False
         config.context_mode = "primary"
-        config.adapter = "codex"
+        config.adapter = "lan"
         config.context_vectors_required = False
         config.lan_shared_vector_cache = True
         # Server owns the local model; never recursively contact an HTTP provider.

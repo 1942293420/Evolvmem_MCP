@@ -484,7 +484,13 @@ def extract_cli(args: argparse.Namespace) -> int:
     return 0
 
 
+def parse_agent_model_args(argv, *, actor: str = "local"):
+    from evolvmem.experience_v2.control.agent_identity import parse_cli_agent_model
+    return parse_cli_agent_model(argv, default_client="dsh", default_model="unknown", actor=actor)
+
+
 def main() -> int:
+    _attr, rest_argv = parse_agent_model_args(sys.argv[1:])
     parser = argparse.ArgumentParser(prog="evolvmem.dsh_bridge")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -504,7 +510,7 @@ def main() -> int:
     p_extract.add_argument("--content-version", default="",
                            help="stable digest of the projected messages")
 
-    args = parser.parse_args()
+    args = parser.parse_args(rest_argv)
     try:
         if args.command == "inject":
             print(inject())

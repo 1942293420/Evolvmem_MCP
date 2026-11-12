@@ -469,3 +469,9 @@ def get_stop_prompt(messages_summary: str) -> str:
     return extractor.build_extraction_prompt(
         messages=[{"role": "user", "content": messages_summary}],
     )
+
+
+def parse_agent_model_args(argv, *, actor: str = "local"):
+    """Parse optional --agent / --model CLI arguments for Claude/generic hooks."""
+    from evolvmem.experience_v2.control.agent_identity import parse_cli_agent_model
+    return parse_cli_agent_model(argv, default_client="claude", default_model="unknown", actor=actor)

@@ -461,7 +461,7 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
     def tracked(config, *, fallback=False, **kwargs):
         if task_history_grant is not None:
             kwargs["task_history_grant"] = task_history_grant
-        call_id, started = uuid.uuid4().hex, time.monotonic()
+        call_id, started = uuid.uuid4().hex, time.perf_counter()
         _report_provider(config, fallback=fallback, state='running', call_id=call_id)
         try:
             response = _call_single_provider_with_retry(prompt, config, **kwargs)
@@ -471,10 +471,10 @@ def _call_llm_with_retry(prompt: str, llm_config: LLMConfig,
         except Exception:
             # Never persist exception messages: they may contain provider payloads.
             _report_provider(config, fallback=fallback, state='failed', call_id=call_id,
-                             elapsed_ms=max(0, round((time.monotonic()-started)*1000)))
+                             elapsed_ms=max(0, round((time.perf_counter()-started)*1000)))
             raise
         _report_provider(config, fallback=fallback, state='succeeded', call_id=call_id,
-                         elapsed_ms=max(0, round((time.monotonic()-started)*1000)))
+                         elapsed_ms=max(0, round((time.perf_counter()-started)*1000)))
         return response
 
     # An explicit source grant authorizes one provider attempt. A lost response
@@ -1092,8 +1092,14 @@ def _payload_session_id(raw: str) -> str:
 
 # ---- entry ----
 
+def parse_agent_model_args(argv, *, actor: str = "local"):
+    from evolvmem.experience_v2.control.agent_identity import parse_cli_agent_model
+    return parse_cli_agent_model(argv, default_client="kimi", default_model=_MODEL, actor=actor)
+
+
 def main() -> None:
-    sub = sys.argv[1] if len(sys.argv) > 1 else ""
+    _attr, rest = parse_agent_model_args(sys.argv[1:])
+    sub = rest[0] if rest else ""
     try:
         if sub == "session-start":
             raw = sys.stdin.read()
