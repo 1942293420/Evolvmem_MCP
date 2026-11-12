@@ -9,6 +9,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$script:AgentClient = if ($Agent -and $Agent.Trim()) { $Agent.Trim() } else { 'codex' }
+$script:AgentModel = if ($Model -and $Model.Trim()) { $Model.Trim() } elseif ($env:EVOLVMEM_AGENT_MODEL) { [string]$env:EVOLVMEM_AGENT_MODEL } else { '' }
+$env:EVOLVMEM_AGENT_CLIENT = $script:AgentClient
+if ($script:AgentModel) { $env:EVOLVMEM_AGENT_MODEL = $script:AgentModel }
 # The native command hooks have a 12-second outer deadline. Account for all
 # hook work together and keep time for PowerShell startup and JSON delivery.
 $script:HookBudgetMilliseconds = 10500
@@ -222,6 +226,10 @@ function Invoke-Rpc($Config, [string]$Method, $Parameters, [string]$RpcId) {
         Authorization = 'Bearer ' + $token
         'MCP-Protocol-Version' = '2025-11-25'
         'X-EvolvMem-Expected-User' = [string]$Config.expected_user
+        'X-EvolvMem-Agent' = [string]$script:AgentClient
+    }
+    if ($script:AgentModel) {
+        $headers['X-EvolvMem-Model'] = [string]$script:AgentModel
     }
     $body = @{ jsonrpc = '2.0'; id = $RpcId; method = $Method; params = $Parameters } |
         ConvertTo-Json -Depth 20 -Compress

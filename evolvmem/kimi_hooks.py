@@ -1092,15 +1092,22 @@ def _payload_session_id(raw: str) -> str:
 
 # ---- entry ----
 
-def parse_agent_model_args(argv, *, actor: str = "local"):
+def parse_agent_model_args(argv, *, actor: str | None = None):
     from evolvmem.experience_v2.control.agent_identity import parse_cli_agent_model
     return parse_cli_agent_model(argv, default_client="kimi", default_model=_MODEL, actor=actor)
 
 
 def main() -> None:
-    _attr, rest = parse_agent_model_args(sys.argv[1:])
-    sub = rest[0] if rest else ""
+    global _MODEL
+    from evolvmem.experience_v2.control.agent_identity import activate_cli_attribution
+
+    sub = ""
     try:
+        attr, rest = parse_agent_model_args(sys.argv[1:])
+        activate_cli_attribution(attr)
+        if attr.model and attr.model != "unknown":
+            _MODEL = attr.model
+        sub = rest[0] if rest else ""
         if sub == "session-start":
             raw = sys.stdin.read()
             try:

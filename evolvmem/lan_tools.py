@@ -122,7 +122,9 @@ class LanTools:
         self.runtime = runtime
         self._agent_registry = agent_registry
         self._device_resolver = device_resolver
+        self._attribution_lock = threading.RLock()
         self._attributions = {}
+        self._latest_user_attribution = {}
         # Share the same lock even when more than one HTTP/direct adapter wraps
         # this runtime. Runtime creation itself precedes serving requests.
         if not hasattr(runtime, '_lan_dispatch_lock'):
@@ -699,22 +701,57 @@ class LanTools:
             result['space'] = space
         return result
 
-    def attribution_for(self, user):
-        return self._attributions.get(user)
+    def attribution_for(self, user, *, session_id=None):
+        with self._attribution_lock:
+            if session_id is not None:
+                return self._attributions.get((user, str(session_id)))
+            return self._attributions.get((user, '__default__')) or self._latest_user_attribution.get(user)
 
-    def _record_initialize_client(self, user, params):
+    def _merge_client_info(self, raw_info, client_hint):
+        merged = dict(raw_info) if isinstance(raw_info, dict) else {}
+        if isinstance(client_hint, dict):
+            for k in ('name', 'model'):
+                if not merged.get(k) and client_hint.get(k):
+                    merged[k] = client_hint[k]
+        return merged or None
+
+    def _resolve_or_record_attr(self, user, client_info):
         from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
         dev_id = self._device_resolver(user) if callable(self._device_resolver) else None
-        client_info = params.get('clientInfo') if isinstance(params, dict) else None
         if self._agent_registry is not None:
-            attr = self._agent_registry.record_seen(actor=user, client_info=client_info, device_id=dev_id)
-        else:
-            attr = resolve_mcp_client_info(client_info, actor=user, device_id=dev_id)
-        self._attributions[user] = attr
+            return self._agent_registry.record_seen(actor=user, client_info=client_info, device_id=dev_id)
+        return resolve_mcp_client_info(client_info, actor=user, device_id=dev_id)
+
+    def _record_initialize_client(self, user, params, *, session_id=None, client_hint=None):
+        raw_info = params.get('clientInfo') if isinstance(params, dict) else None
+        attr = self._resolve_or_record_attr(user, self._merge_client_info(raw_info, client_hint))
+        sess_key = str(session_id) if session_id else '__default__'
+        with self._attribution_lock:
+            if len(self._attributions) >= 4096:
+                self._attributions.pop(next(iter(self._attributions)))
+            self._attributions[(user, sess_key)] = attr
+            self._latest_user_attribution[user] = attr
         return attr
 
+    def _active_tool_attribution(self, user, *, session_id=None, client_hint=None):
+        if session_id is not None:
+            with self._attribution_lock:
+                found = self._attributions.get((user, str(session_id)))
+            if found is not None:
+                return found
+        if isinstance(client_hint, dict) and (client_hint.get('name') or client_hint.get('model')):
+            attr = self._resolve_or_record_attr(user, client_hint)
+            if session_id is not None:
+                with self._attribution_lock:
+                    self._attributions[(user, str(session_id))] = attr
+            return attr
+        existing = self.attribution_for(user)
+        if existing is not None:
+            return existing
+        return self._resolve_or_record_attr(user, None)
+
     @traced_rpc
-    def handle_request(self, user, request, *, owner=False):
+    def handle_request(self, user, request, *, owner=False, session_id=None, client_hint=None):
         if user not in self.runtime.users:
             return self._rpc_error(None, -32600, 'Unauthorized')
         if (not isinstance(request, dict) or request.get('jsonrpc') != '2.0'
@@ -730,7 +767,7 @@ class LanTools:
         if IDENTITY_FIELDS.intersection(params):
             return self._rpc_error(ident, -32600, 'Identity override forbidden')
         if method == 'initialize' and not owner:
-            self._record_initialize_client(user, params)
+            self._record_initialize_client(user, params, session_id=session_id, client_hint=client_hint)
             requested = params.get('protocolVersion')
             result = {'protocolVersion': requested if requested in PROTOCOLS else PROTOCOLS[0],
                       'capabilities': {'tools': {}}, 'serverInfo': {'name': 'evolvmem-lan', 'version': '0.1.0'},
@@ -745,7 +782,7 @@ class LanTools:
             specs = deepcopy(cached_specs)
             result = {'tools': list(specs.values())}
         elif method == 'initialize':
-            self._record_initialize_client(user, params)
+            self._record_initialize_client(user, params, session_id=session_id, client_hint=client_hint)
             # Owner instructions derive from live Context readiness, unlike
             # remote transport negotiation. Keep their store access serialized.
             with timed_lock(self.lock):
@@ -755,7 +792,10 @@ class LanTools:
                 result['serverInfo']['name'] = 'evolvmem-lan'
                 result['instructions'] = result.get('instructions', '') + '\nSearch defaults to personal plus curated public summaries. Use memory_publish to explicitly share.'
         elif method == 'tools/call':
-            data = self.call_tool(user, params.get('name'), params.get('arguments', {}), owner=owner)
+            from evolvmem.experience_v2.control.agent_identity import bind_active_attribution
+            active_attr = self._active_tool_attribution(user, session_id=session_id, client_hint=client_hint)
+            with bind_active_attribution(active_attr):
+                data = self.call_tool(user, params.get('name'), params.get('arguments', {}), owner=owner)
             result = {'content': [{'type': 'text', 'text': json.dumps(data, ensure_ascii=False)}], 'isError': 'error' in data}
         else:
             return self._rpc_error(ident, -32601, 'Method not found')

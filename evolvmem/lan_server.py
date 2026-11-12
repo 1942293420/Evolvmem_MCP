@@ -9,6 +9,7 @@ import json
 import ipaddress
 import os
 from pathlib import Path
+import uuid
 
 from evolvmem.lan_config import LanSettings
 from evolvmem.console_access import console_user_gate
@@ -28,7 +29,7 @@ def owner_peer_allowed(peer, user, owner_user=None):
         return False
 
 
-def make_http_server(runtime, host=None, port=None, *, library_host=None, deadline_guard=None, allow_legacy=True):
+def make_http_server(runtime, host=None, port=None, *, library_host=None, deadline_guard=None, allow_legacy=True, agent_registry=None, device_resolver=None):
     """Share the real transport, keeping library identities out of SQLite.
 
     The optional host is trusted application code, never request configuration.
@@ -53,7 +54,7 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
         raise ValueError('request-owned host cannot borrow a static HTTP guard')
     if runtime is not None:
         from evolvmem.lan_tools import LanTools
-        adapter = LanTools(runtime)
+        adapter = LanTools(runtime, agent_registry=agent_registry, device_resolver=device_resolver)
     else:
         adapter = None
     if runtime is not None:
@@ -235,11 +236,34 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
                     # authentication scope or let SQLite ignore PG parameters.
                     self._reply(409, _rpc_error(request.get('id'),-32000,'explicit_postgres_backend_required'))
                     return
+                mcp_session_id = (self.headers.get('Mcp-Session-Id') or '').strip() or None
+                hdr_agent = (self.headers.get('X-EvolvMem-Agent') or '').strip()
+                hdr_model = (self.headers.get('X-EvolvMem-Model') or '').strip()
+                client_hint = {}
+                if hdr_agent:
+                    client_hint['name'] = hdr_agent
+                if hdr_model:
+                    client_hint['model'] = hdr_model
+                if isinstance(request, dict) and request.get('method') == 'initialize' and mcp_session_id is None:
+                    mcp_session_id = f'mcp-{uuid.uuid4().hex}'
+                reply_headers = {'Mcp-Session-Id': mcp_session_id} if mcp_session_id else None
                 if self._library_request:
                     # Do not return a body and publish it after the host's lease
                     # exits. The callback is the actual HTTP response boundary.
-                    library_host.serve_rpc(user, request, publish=lambda payload:
-                        self._reply(202 if payload is None else 200, payload))
+                    if scoped_host is not None:
+                        library_host.serve_rpc(
+                            user,
+                            request,
+                            publish=lambda payload: self._reply(202 if payload is None else 200, payload, reply_headers),
+                            session_id=mcp_session_id,
+                            client_hint=client_hint or None,
+                        )
+                    else:
+                        library_host.serve_rpc(
+                            user,
+                            request,
+                            publish=lambda payload: self._reply(202 if payload is None else 200, payload, reply_headers),
+                        )
                     if not getattr(self, '_response_started', False):
                         raise RuntimeError('library_response_not_published')
                     return
@@ -287,12 +311,18 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
                             return
                         result = {'vector': vector}
                 else:
-                    result = adapter.handle_request(user, request, owner=self.path == '/owner/mcp')
+                    result = adapter.handle_request(
+                        user,
+                        request,
+                        owner=self.path == '/owner/mcp',
+                        session_id=mcp_session_id,
+                        client_hint=client_hint or None,
+                    )
             except Exception:
                 if not getattr(self, '_response_started', False):
                     self._reply(500, _rpc_error(None, -32603, 'Internal error'))
                 return
-            self._reply(202 if result is None else 200, result)
+            self._reply(202 if result is None else 200, result, reply_headers)
 
         def do_GET(self):
             self._run_request(self._get)

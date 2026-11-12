@@ -1,8 +1,12 @@
-"""Agent/model attribution normalization, CLI parser, and PostgreSQL em_control.agents registry."""
+"""Agent/model attribution normalization, CLI parser, active context, and PostgreSQL em_control.agents registry."""
 from __future__ import annotations
 
+from collections.abc import MutableMapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import hashlib
+import os
 import re
 from typing import Sequence
 import uuid
@@ -32,6 +36,11 @@ SPOOFABLE_CLIENT_INFO_KEYS = frozenset({
     'principal', 'principal_id', 'is_admin', 'role', 'tier',
     'permission_tier', 'quota', 'quota_per_session',
 })
+_RESERVED_CLI_SUBCOMMANDS = frozenset({
+    'session-start', 'session-end', 'heartbeat', 'stop',
+    'inject', 'recall', 'extract', 'status', 'self-test',
+    'worker', 'upload', 'snapshot', 'prompt-submit', 'discover-history',
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +52,26 @@ class AgentAttribution:
     device_id: str | None = None
     client_version: str = ''
     spoof_attempt_stripped: bool = False
+
+
+_ACTIVE_ATTRIBUTION: ContextVar[AgentAttribution | None] = ContextVar(
+    'evolvmem_active_attribution', default=None
+)
+
+
+def get_active_attribution() -> AgentAttribution | None:
+    """Return the AgentAttribution bound to the current MCP tools/call or CLI hook execution."""
+    return _ACTIVE_ATTRIBUTION.get()
+
+
+@contextmanager
+def bind_active_attribution(attr: AgentAttribution | None):
+    """Bind AgentAttribution into ContextVar for the duration of a tools/call or hook invocation."""
+    token = _ACTIVE_ATTRIBUTION.set(attr)
+    try:
+        yield attr
+    finally:
+        _ACTIVE_ATTRIBUTION.reset(token)
 
 
 def normalize_client_slug(raw_name: object, *, default: str = 'unknown') -> str:
@@ -115,14 +144,26 @@ def resolve_mcp_client_info(
     )
 
 
+def _validate_cli_flag_value(flag: str, value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned or cleaned.startswith('-') or cleaned.lower() in _RESERVED_CLI_SUBCOMMANDS:
+        raise ValueError(f'invalid or missing value for {flag}: {value!r}')
+    return cleaned
+
+
 def parse_cli_agent_model(
     argv: Sequence[str],
     *,
     default_client: str = 'unknown',
     default_model: str = 'unknown',
-    actor: str = 'local',
+    actor: str | None = None,
 ) -> tuple[AgentAttribution, list[str]]:
-    """Extract --agent / --model flags from CLI argv without disturbing positional subcommands."""
+    """Extract --agent / --model flags from CLI argv without swallowing flags or subcommands."""
+    resolved_actor = (
+        actor.strip()
+        if isinstance(actor, str) and actor.strip()
+        else (os.environ.get('EVOLVMEM_AGENT_ACTOR') or os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID') or 'local').strip() or 'local'
+    )
     raw_agent: str | None = None
     raw_model: str | None = None
     remaining: list[str] = []
@@ -130,28 +171,57 @@ def parse_cli_agent_model(
     items = list(argv)
     while idx < len(items):
         token = items[idx]
-        if token == '--agent' and idx + 1 < len(items):
-            raw_agent = items[idx + 1]
+        if token == '--':
+            remaining.extend(items[idx + 1:])
+            break
+        if token in ('--agent', '--model'):
+            if idx + 1 >= len(items):
+                raise ValueError(f'{token} requires a value')
+            val = _validate_cli_flag_value(token, items[idx + 1])
+            if token == '--agent':
+                raw_agent = val
+            else:
+                raw_model = val
             idx += 2
             continue
         if token.startswith('--agent='):
-            raw_agent = token.split('=', 1)[1]
+            raw_agent = _validate_cli_flag_value('--agent', token.split('=', 1)[1])
             idx += 1
             continue
-        if token == '--model' and idx + 1 < len(items):
-            raw_model = items[idx + 1]
-            idx += 2
-            continue
         if token.startswith('--model='):
-            raw_model = token.split('=', 1)[1]
+            raw_model = _validate_cli_flag_value('--model', token.split('=', 1)[1])
             idx += 1
             continue
         remaining.append(token)
         idx += 1
     client = normalize_client_slug(raw_agent, default=default_client)
     model = normalize_model_name(raw_model, default=default_model)
-    agent_id = compute_agent_id(actor=actor, device_id=None, client=client, model=model)
-    return AgentAttribution(actor=actor, agent_id=agent_id, client=client, model=model), remaining
+    agent_id = compute_agent_id(actor=resolved_actor, device_id=None, client=client, model=model)
+    return AgentAttribution(actor=resolved_actor, agent_id=agent_id, client=client, model=model), remaining
+
+
+def activate_cli_attribution(
+    attr: AgentAttribution,
+    *,
+    environ: MutableMapping[str, str] | None = None,
+) -> AgentAttribution:
+    """Apply CLI --agent/--model attribution to process env, ContextVar, and optional PG em_control.agents."""
+    env = os.environ if environ is None else environ
+    env['EVOLVMEM_AGENT_CLIENT'] = attr.client
+    env['EVOLVMEM_AGENT_MODEL'] = attr.model
+    env['EVOLVMEM_AGENT_ID'] = attr.agent_id
+    _ACTIVE_ATTRIBUTION.set(attr)
+    pg_cfg_file = (env.get('EVOLVMEM_CONSOLE_PG_CONFIG') or '').strip()
+    if pg_cfg_file:
+        try:
+            from .pg_console_store import PgConsoleStore, PgControlConfig
+
+            store = PgConsoleStore(PgControlConfig.from_file(pg_cfg_file))
+            PgAgentRegistry(store).record_attribution(attr)
+        except Exception:
+            # CLI hooks remain fail-open when PG control is transiently unavailable.
+            pass
+    return attr
 
 
 def _valid_uuid_or_none(value: str | None) -> str | None:
@@ -169,6 +239,13 @@ class PgAgentRegistry:
     def __init__(self, store) -> None:
         self._store = store
 
+    def record_attribution(self, attr: AgentAttribution) -> AgentAttribution:
+        self._store.mutate(
+            'SELECT * FROM em_control.upsert_agent_seen(%s,%s,%s,%s)',
+            (attr.agent_id, attr.device_id, attr.client, attr.model),
+        )
+        return attr
+
     def record_seen(
         self,
         *,
@@ -185,11 +262,7 @@ class PgAgentRegistry:
             default_client=default_client,
             default_model=default_model,
         )
-        self._store.mutate(
-            'SELECT * FROM em_control.upsert_agent_seen(%s,%s,%s,%s)',
-            (attr.agent_id, attr.device_id, attr.client, attr.model),
-        )
-        return attr
+        return self.record_attribution(attr)
 
     def get_agent(self, agent_id: str) -> dict | None:
         rows = self._store.query('SELECT * FROM em_control.get_agent(%s)', (agent_id,))
