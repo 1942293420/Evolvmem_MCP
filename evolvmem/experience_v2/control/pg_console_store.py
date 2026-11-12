@@ -11,7 +11,7 @@ import uuid
 
 from evolvmem.library_catalog import ControlBinding, ControlProvider
 from evolvmem.library_foundation import FoundationError, RequestIdentity
-from evolvmem.library_project_acl import project_uuid
+from evolvmem.library_project_acl.coordinator import project_uuid
 from evolvmem.library_startup import FileSecretResolver
 from .migrations import loopback_psycopg_connector
 
