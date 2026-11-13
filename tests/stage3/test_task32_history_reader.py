@@ -231,10 +231,14 @@ def test_no_direct_sqlite_outside_history_reader_in_pipeline():
 def test_stage0_readonly_snapshot_smoke():
     from evolvmem.experience_v2.pipeline.history_reader import SqliteHistoryReader
 
-    snap_mem = Path('/home/jiangli/evolvmem-stage0-20261112/backups/sqlite-20261112/owner_memory.db')
-    snap_cand = Path('/home/jiangli/evolvmem-stage0-20261112/backups/sqlite-20261112/history_candidate.db')
+    snap_dir_env = os.environ.get('EVOLVMEM_STAGE0_BACKUP_DIR', '').strip()
+    if not snap_dir_env:
+        pytest.skip('EVOLVMEM_STAGE0_BACKUP_DIR not configured in this environment')
+    snap_dir = Path(snap_dir_env)
+    snap_mem = snap_dir / 'owner_memory.db'
+    snap_cand = snap_dir / 'history_candidate.db'
     if not snap_mem.is_file() or not snap_cand.is_file():
-        pytest.skip('Stage 0 read-only snapshot not present in this environment')
+        pytest.skip('Stage 0 read-only snapshot not present in EVOLVMEM_STAGE0_BACKUP_DIR')
 
     reader = SqliteHistoryReader(memory_db=snap_mem, candidate_db=snap_cand)
     listed = reader.list_sessions(limit=5)

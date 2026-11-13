@@ -37,8 +37,8 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'sk-[A-Za-z0-9_-]{8,}'), '[REDACTED_KEY]'),
     (re.compile(r'(?:api[-_]?key|token|password|secret)\s*[:=]\s*["\']?[A-Za-z0-9._-]{6,}["\']?', re.IGNORECASE), '[REDACTED_CRED]'),
     (re.compile(r'/home/[A-Za-z0-9._-]+'), '/home/<owner>'),
-    (re.compile(r'[A-Za-z]:\\\\Users\\\\[A-Za-z0-9._-]+'), r'C:\\Users\\<owner>'),
-    (re.compile(r'[A-Za-z]:/Users/[A-Za-z0-9._-]+'), 'C:/Users/<owner>'),
+    (re.compile(r'[A-Za-z]:\\Users\\[A-Za-z0-9._-]+'), r'C:\\Users\\<owner>'),
+    (re.compile(r'[A-Za-z]:\\Users\\[A-Za-z0-9._-]+'), r'C:\\Users\\<owner>'),
     (re.compile(r'\b192\.168\.\d{1,3}\.\d{1,3}\b'), '<lan-host>'),
 )
 
@@ -178,9 +178,10 @@ def _select_user_samples(
         WHERE run_id = %s
         ORDER BY
           CASE
-            WHEN gate_layer = 'L3' AND gate_verdict IN ('pass', 'merge') THEN 0
-            WHEN gate_layer IN ('L2b', 'L2a', 'L0') THEN 1
-            ELSE 2
+            WHEN gate_layer = 'L3' AND gate_verdict = 'pass' THEN 0
+            WHEN gate_verdict = 'merge' THEN 1
+            WHEN gate_layer IN ('L2b', 'L2a', 'L0') THEN 2
+            ELSE 3
           END ASC,
           id ASC
         LIMIT %s
@@ -195,7 +196,8 @@ def _select_user_samples(
         )
     samples: list[dict[str, Any]] = []
     for rank, r in enumerate(rows, 1):
-        ev = r[10] if isinstance(r[10], list) else json.loads(r[10] or '[]')
+        ev_raw = r[10] if isinstance(r[10], list) else json.loads(r[10] or '[]')
+        ev = [{k: scrub_pilot_text(v, extra_terms=extra_scrub_terms) if isinstance(v, str) else v for k, v in item.items()} if isinstance(item, dict) else item for item in ev_raw]
         samples.append({
             'sample_index': rank,
             'item_id': int(r[0]),
@@ -234,6 +236,7 @@ def run_shadow_pilot(
     pipeline_version: str = DEFAULT_PIPELINE_VERSION,
     track: Literal['live', 'backfill'] = 'live',
     budget: BudgetConfig | None = None,
+    embedder: Any = None,
     extra_scrub_terms: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Execute 50-session shadow pilot strictly into shadow tables and build pilot-report."""
@@ -261,6 +264,7 @@ def run_shadow_pilot(
         flash_transport=flash_transport,
         strong_transport=strong_transport,
         judge_transport=judge_transport,
+        embedder=embedder,
         pipeline_version=pipeline_version,
         track=track,
         budget=budget,
@@ -294,7 +298,8 @@ def run_shadow_pilot(
     item_stats = conn.execute(
         """
         SELECT COUNT(*) FILTER (WHERE stage_outcome != 'skipped_extract')::int,
-               COUNT(*) FILTER (WHERE gate_layer = 'L3' AND gate_verdict IN ('pass', 'merge'))::int,
+               COUNT(*) FILTER (WHERE gate_layer = 'L3' AND gate_verdict = 'pass')::int,
+               COUNT(*) FILTER (WHERE gate_verdict = 'merge')::int,
                COUNT(*) FILTER (WHERE gate_verdict = 'reject')::int
         FROM shadow_pilot_items
         WHERE run_id = %s
@@ -302,8 +307,10 @@ def run_shadow_pilot(
         (rid,),
     ).fetchone()
     proposals_generated = int(item_stats[0] or 0) if item_stats else 0
-    proposals_admitted = int(item_stats[1] or 0) if item_stats else 0
-    items_rejected = int(item_stats[2] or 0) if item_stats else 0
+    proposals_admitted_new = int(item_stats[1] or 0) if item_stats else 0
+    proposals_merged_dup = int(item_stats[2] or 0) if item_stats else 0
+    proposals_admitted = proposals_admitted_new + proposals_merged_dup
+    items_rejected = int(item_stats[3] or 0) if item_stats else 0
 
     by_stage, calls_total, tokens_total = _collect_stage_usage(conn, track=track, after_call_id=max_call_before)
     samples = _select_user_samples(
@@ -314,6 +321,7 @@ def run_shadow_pilot(
     total_sess = len(sessions)
     zero_ratio = round(zero_moments / max(1, total_sess), 4)
     tok_per_prop = round(tokens_total / proposals_generated, 2) if proposals_generated else 0.0
+    tok_per_new = round(tokens_total / proposals_admitted_new, 2) if proposals_admitted_new else 0.0
     tok_per_admit = round(tokens_total / proposals_admitted, 2) if proposals_admitted else 0.0
     policy_snapshot = load_policy()
 
@@ -331,11 +339,14 @@ def run_shadow_pilot(
         'moments_detected': moments_detected,
         'adapter_breakdown': adapter_counts,
         'proposals_generated': proposals_generated,
+        'proposals_admitted_new': proposals_admitted_new,
+        'proposals_merged_duplicate': proposals_merged_dup,
         'proposals_admitted_candidate': proposals_admitted,
         'items_rejected_or_skipped': items_rejected,
         'llm_calls_total': calls_total,
         'tokens_total': tokens_total,
         'tokens_per_proposal': tok_per_prop,
+        'tokens_per_new_candidate': tok_per_new,
         'tokens_per_admitted_candidate': tok_per_admit,
         'llm_usage_by_stage': by_stage,
         'transport_errors': transport_errors,

@@ -276,3 +276,57 @@ def test_challenger_probation_promote_and_auto_rollback_and_guards(pg_s3_migrate
     assert scan_unauthorized_experience_notes_writes(Path(".")) == []
     assert scan_unmetered_llm_calls(Path("evolvmem/experience_v2")) == []
     assert scan_direct_sqlite_in_pipeline(Path("evolvmem/experience_v2/pipeline")) == []
+
+
+def test_l3_allows_none_novel_without_forcing_unrelated_link(pg_s3_migrated) -> None:
+    from evolvmem.experience_v2.gate.reconcile import assess_l3_shadow, run_l3_reconcile_gate
+
+    conn, *_ = pg_s3_migrated
+    secret = b"test-secret-37"
+    issuer = TicketIssuer(secret, gate_id="L3_reconcile")
+    writer = ExperienceWriter(secret)
+    _seed_incumbent(
+        conn, issuer, writer, req_id="unrelated",
+        problem="旧桌面控件需用快捷键打开", solution="按 ctrl+comma 打开设置面板",
+        reusable="优先快捷键触发桌面菜单",
+    )
+
+    shadow_out = assess_l3_shadow(
+        conn,
+        owner_id="owner-37",
+        proposer_model="deepseek-v4-flash",
+        judge_model="mimo-v2.6-flash",
+        judge_transport=lambda m, msgs, k: {
+            "text": json.dumps({"relation": "none", "target_note_id": "", "confidence": 0.92, "reason": "完全独立的新主题"}),
+            "input_tokens": 90,
+            "output_tokens": 25,
+        },
+        problem="在线多维表需先锁定 revision",
+        solution="取数前先比对 table revision diff 再计算",
+        reusable_experience="在线协作表取数须校验 revision 增量",
+        category="系统环境经验",
+    )
+    assert shadow_out["relation"] is None
+    assert shadow_out["target_note_id"] is None
+    assert shadow_out["incumbent"] is None
+
+    prop_uid = _propose_candidate(
+        conn, req_id="cand-novel",
+        problem="在线多维表需先锁定 revision",
+        solution="取数前先比对 table revision diff 再计算",
+        reusable="在线协作表取数须校验 revision 增量",
+    )
+    rel_count_before = conn.execute("SELECT COUNT(*) FROM experience_relations").fetchone()[0]
+    gate_out = run_l3_reconcile_gate(
+        conn, prop_uid, judge_model="mimo-v2.6-flash",
+        judge_transport=lambda m, msgs, k: {
+            "text": json.dumps({"relation": "none", "target_note_id": "", "confidence": 0.91, "reason": "独立新经验"}),
+            "input_tokens": 85,
+            "output_tokens": 22,
+        },
+        writer=writer, ticket_issuer=issuer, gate_mode="auto",
+    )
+    assert gate_out["verdict"] == "pass"
+    assert gate_out["relation"] is None
+    assert gate_out["new_note_id"] is not None
+    assert conn.execute("SELECT COUNT(*) FROM experience_relations").fetchone()[0] == rel_count_before

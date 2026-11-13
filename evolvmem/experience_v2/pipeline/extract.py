@@ -60,7 +60,19 @@ class HistoryReaderEvidenceVerifier:
 
 def _clean_line(text: Any, limit: int) -> str:
     single = _WS_RE.sub(' ', str(text or '')).strip()
-    return single[:limit]
+    if len(single) <= limit:
+        return single
+    cut = single[:limit]
+    floor = max(1, int(limit * 0.65))
+    for sep in ('。', '；', '，', ';', ',', ' '):
+        pos = cut.rfind(sep)
+        if pos >= floor:
+            return cut[:pos].rstrip(' ，,;；。. ')
+    if cut[-1].isascii() and cut[-1].isalnum() and len(single) > limit and single[limit].isascii() and single[limit].isalnum():
+        trimmed = re.sub(r'[A-Za-z0-9_]+$', '', cut).rstrip(' ，,;；.-_')
+        if len(trimmed) >= floor:
+            return trimmed
+    return cut.rstrip(' ，,;；。. ')
 
 
 def _clip_tokens(text: str, max_tokens: int) -> str:
@@ -106,7 +118,7 @@ def _resolve_verified_evidence(
     if valid_record_indices:
         ordered = sorted({int(i) for i in valid_record_indices if int(i) >= 1})
         if ordered and ev_num not in ordered:
-            ev_num = ordered[0]
+            ev_num = min(ordered, key=lambda x: abs(x - ev_num))
     return [{'library': library or 'default', 'source': src, 'event': int(ev_num)}]
 
 
