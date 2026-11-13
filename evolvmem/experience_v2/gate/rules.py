@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 import sqlite3
-from typing import Any, Protocol
+from typing import Any, Protocol, Sequence
 import uuid
 
 from evolvmem.experience_v2.gate.propose import VALID_KINDS
@@ -55,13 +55,43 @@ class EvidenceVerifier(Protocol):
 class SqliteHistoryEvidenceVerifier:
     """Read-only ?mode=ro verifier checking experience evidence pointers in SQLite history."""
 
-    def __init__(self, db_path: Path | str):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: Path | str | Sequence[Path | str]):
+        raw = [db_path] if isinstance(db_path, (str, Path)) else list(db_path)
+        self.db_paths: tuple[Path, ...] = tuple(Path(p) for p in raw if p and str(p).strip())
+        self.db_path = self.db_paths[0] if self.db_paths else Path('')
+
+    @staticmethod
+    def _has_ref(conn: sqlite3.Connection, tables: set[str], kind: str, ref_id: str) -> tuple[bool, str]:
+        if kind == 'archive':
+            row = None
+            if 'session_archives' in tables:
+                row = conn.execute('SELECT 1 FROM session_archives WHERE id = ?', (int(ref_id),)).fetchone()
+            if row is None and 'conversation_history' in tables:
+                row = conn.execute('SELECT 1 FROM conversation_history WHERE archive_id = ?', (int(ref_id),)).fetchone()
+            return (row is not None), f'未找到归档记录 archive:{ref_id}'
+        if kind == 'session':
+            if 'session_archives' not in tables:
+                return False, '缺少 session_archives 表'
+            row = conn.execute(
+                'SELECT 1 FROM session_archives WHERE external_session_id = ? OR CAST(id AS TEXT) = ?',
+                (ref_id, ref_id),
+            ).fetchone()
+            return (row is not None), f'未找到会话记录 session:{ref_id}'
+        if kind == 'context':
+            if 'context_items' not in tables:
+                return False, '未找到上下文条目'
+            row = conn.execute('SELECT 1 FROM context_items WHERE id = ?', (int(ref_id),)).fetchone()
+            return (row is not None), f'未找到上下文 context:{ref_id}'
+        if 'project_events' not in tables:
+            return False, '缺少 project_events 表'
+        row = conn.execute('SELECT 1 FROM project_events WHERE event_id = ?', (ref_id,)).fetchone()
+        return (row is not None), f'未找到项目事件 event:{ref_id}'
 
     def verify_all(self, evidence: list[dict[str, Any]]) -> tuple[bool, str]:
         if not isinstance(evidence, list) or not evidence:
             return False, '缺少历史会话证据指针'
-        if not self.db_path.is_file():
+        existing = [p for p in self.db_paths if p.is_file()]
+        if not existing:
             return False, '历史库文件不存在，无法核验证据'
 
         parsed_refs: list[tuple[str, str]] = []
@@ -74,52 +104,41 @@ class SqliteHistoryEvidenceVerifier:
             match = _PTR_RE.fullmatch(src.strip())
             if not match:
                 return False, f'不支持的证据指针格式: {src[:32]}'
-            parsed_refs.append((match.group(1), match.group(2)))
+            kind, ref_id = match.group(1), match.group(2)
+            if kind in ('archive', 'context') and not ref_id.isdigit():
+                return False, f'{kind} 指针必须为整数ID'
+            parsed_refs.append((kind, ref_id))
 
+        conns: list[tuple[sqlite3.Connection, set[str]]] = []
         try:
-            conn = sqlite3.connect(self.db_path.as_uri() + '?mode=ro', uri=True, timeout=5)
-        except sqlite3.Error:
-            return False, '只读打开历史库失败'
-        try:
-            conn.execute('PRAGMA query_only=ON')
-            tables = {
-                r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            }
+            for path in existing:
+                try:
+                    c = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=5)
+                    c.execute('PRAGMA query_only=ON')
+                    tbls = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+                    conns.append((c, tbls))
+                except sqlite3.Error:
+                    continue
+            if not conns:
+                return False, '只读打开历史库失败'
             for kind, ref_id in parsed_refs:
-                if kind == 'archive':
-                    if not ref_id.isdigit():
-                        return False, 'archive 指针必须为整数ID'
-                    row = None
-                    if 'session_archives' in tables:
-                        row = conn.execute('SELECT 1 FROM session_archives WHERE id = ?', (int(ref_id),)).fetchone()
-                    if row is None and 'conversation_history' in tables:
-                        row = conn.execute('SELECT 1 FROM conversation_history WHERE archive_id = ?', (int(ref_id),)).fetchone()
-                    if row is None:
-                        return False, f'未找到归档记录 archive:{ref_id}'
-                elif kind == 'session':
-                    if 'session_archives' not in tables:
-                        return False, '缺少 session_archives 表'
-                    row = conn.execute(
-                        'SELECT 1 FROM session_archives WHERE external_session_id = ? OR CAST(id AS TEXT) = ?',
-                        (ref_id, ref_id),
-                    ).fetchone()
-                    if row is None:
-                        return False, f'未找到会话记录 session:{ref_id}'
-                elif kind == 'context':
-                    if not ref_id.isdigit() or 'context_items' not in tables:
-                        return False, '未找到上下文条目'
-                    row = conn.execute('SELECT 1 FROM context_items WHERE id = ?', (int(ref_id),)).fetchone()
-                    if row is None:
-                        return False, f'未找到上下文 context:{ref_id}'
-                elif kind == 'event':
-                    if 'project_events' not in tables:
-                        return False, '缺少 project_events 表'
-                    row = conn.execute('SELECT 1 FROM project_events WHERE event_id = ?', (ref_id,)).fetchone()
-                    if row is None:
-                        return False, f'未找到项目事件 event:{ref_id}'
+                err_msg = '证据校验失败'
+                found = False
+                for c, tbls in conns:
+                    ok, msg = self._has_ref(c, tbls, kind, ref_id)
+                    if ok:
+                        found = True
+                        break
+                    err_msg = msg
+                if not found:
+                    return False, err_msg
             return True, 'ok'
         finally:
-            conn.close()
+            for c, _ in conns:
+                try:
+                    c.close()
+                except Exception:
+                    pass
 
 
 def _contains_secret(texts: list[str]) -> bool:

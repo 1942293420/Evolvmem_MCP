@@ -32,6 +32,8 @@ def to_unit_vec768_literal(raw: list[float] | tuple[float, ...]) -> str:
 def _encode_text(embedder: Any, text: str) -> list[float]:
     if hasattr(embedder, 'initialize'):
         embedder.initialize()
+    if hasattr(embedder, 'encode_document'):
+        return list(embedder.encode_document(text))
     if hasattr(embedder, 'encode'):
         return list(embedder.encode(text, 'document'))
     if hasattr(embedder, 'embed_texts'):

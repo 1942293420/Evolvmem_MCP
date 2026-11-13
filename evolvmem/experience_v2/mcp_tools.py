@@ -1,9 +1,13 @@
 """Task 2.5/2.10: MCP specs and handlers for experience_v2 tools."""
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
+from typing import Any, Sequence
 
 from evolvmem.experience_v2.changes_sync import changes_since, recall_pg_experiences
+from evolvmem.experience_v2.gate.dedupe import _encode_text, _resolve_gate_mode, run_l1_dedupe
+from evolvmem.experience_v2.gate.rules import SqliteHistoryEvidenceVerifier, run_l0_gate
+from evolvmem.experience_v2.writer import ExperienceWriter, TicketIssuer
 from evolvmem.experience_v2.control.agent_identity import AgentAttribution
 from evolvmem.experience_v2.control.reputation_policy import (
     ReputationCoordinator,
@@ -19,6 +23,7 @@ from evolvmem.experience_v2.gate.propose import (
 )
 from evolvmem.experience_v2.pg_experience_store import (
     PgExperienceUnavailableError,
+    load_pg_experience_settings,
     open_experience_conn,
 )
 from evolvmem.manual_experience_mcp import ManualMcpError
@@ -76,6 +81,56 @@ EXPERIENCE_V2_MCP_SPECS: dict[str, dict[str, Any]] = {
 }
 
 
+class _PrecomputedEmbedder:
+    def __init__(self, vec: list[float]):
+        self._vec = vec
+
+    def encode(self, _text: str, _kind: str = 'document') -> list[float]:
+        return self._vec
+
+
+def _precompute_vector(embedder: Any, args: dict[str, Any]) -> list[float] | None:
+    if embedder is None or not getattr(embedder, 'is_loaded', True):
+        return None
+    doc_text = f"{args.get('problem', '')}\n{args.get('solution', '')}\n{args.get('reusable_experience', '')}"
+    try:
+        return _encode_text(embedder, doc_text)
+    except Exception:
+        return None
+
+
+def _build_live_gate_hook(
+    *,
+    history_db_paths: Sequence[Path | str],
+    vec: list[float] | None,
+    ticket_secret: bytes,
+    gate_mode: str | dict[str, str],
+    category: str,
+):
+    existing = [Path(p) for p in history_db_paths if p and str(p).strip() and Path(p).is_file()]
+    verifier = SqliteHistoryEvidenceVerifier(existing) if existing else None
+
+    def _hook(conn, uid: str) -> dict[str, Any]:
+        l0 = run_l0_gate(conn, uid, evidence_verifier=verifier, require_evidence=True)
+        if l0['verdict'] != 'pass':
+            return l0
+        if vec is not None:
+            return run_l1_dedupe(
+                conn,
+                uid,
+                embedder=_PrecomputedEmbedder(vec),
+                ticket_issuer=TicketIssuer(ticket_secret, gate_id='L1_dedupe'),
+                writer=ExperienceWriter(ticket_secret),
+                gate_mode=gate_mode,
+            )
+        mode = _resolve_gate_mode(gate_mode, category)
+        if mode in ('review', 'partial', 'auto'):
+            conn.execute("UPDATE experience_proposals SET state = 'review', updated_at = now() WHERE uid = %s", (uid,))
+        return l0
+
+    return _hook
+
+
 def call_experience_v2_tool(
     tool_name: str,
     args: dict[str, Any],
@@ -86,6 +141,8 @@ def call_experience_v2_tool(
     channel: TrustedChannel = TrustedChannel.MCP_CLIENT,
     reputation_config: ReputationPolicyConfig | None = None,
     gate_hook=None,
+    history_db_paths: Sequence[Path | str] | None = None,
+    embedder: Any = None,
 ) -> dict[str, Any]:
     if not isinstance(args, dict):
         raise ManualMcpError('invalid_arguments')
@@ -99,8 +156,18 @@ def call_experience_v2_tool(
     if set(args) - set(spec['properties']) or set(spec.get('required', [])) - set(args):
         raise ManualMcpError('invalid_arguments')
 
+    pre_vec = _precompute_vector(embedder, args) if (tool_name == 'experience_propose' and gate_hook is None and history_db_paths is not None) else None
     try:
-        with open_experience_conn(role='coordinator') as conn:
+        settings = load_pg_experience_settings()
+        if tool_name == 'experience_propose' and gate_hook is None and history_db_paths is not None:
+            gate_hook = _build_live_gate_hook(
+                history_db_paths=history_db_paths,
+                vec=pre_vec,
+                ticket_secret=settings.ticket_secret,
+                gate_mode=policy.experience_gate_mode,
+                category=str(args.get('category') or ''),
+            )
+        with open_experience_conn(settings, role='coordinator') as conn:
             if tool_name == 'experience_changes_since':
                 return changes_since(
                     conn,

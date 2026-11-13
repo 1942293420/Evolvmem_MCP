@@ -5,6 +5,7 @@ from copy import deepcopy
 import logging
 import json
 import math
+import os
 import re
 import threading
 import uuid
@@ -18,6 +19,7 @@ from evolvmem.mcp_contract import tool_specs
 from evolvmem.lan_context import remote_context, validate_snapshot, prepare_bindings, bind_workspace, prepare_memory_revision
 from evolvmem.lan_capture import CAPTURE_TOOLS, LanCapture, capture_specs
 from evolvmem import manual_experience_mcp
+from evolvmem.product_policy import load_policy
 from evolvmem.request_health import request_health_scope, background_read_scope, BackgroundReadDenied
 from evolvmem.request_trace import traced_tool, traced_rpc, timed_lock, stage, failure
 
@@ -177,8 +179,9 @@ class LanTools:
         # Clients may cache tools/list for the entire session. Discovery must
         # describe supported schemas, never fluctuate with lock/readiness state.
         # Business calls retain live gates; capability uses its explicit hard baseline and current candidate proofs.
+        v2_on = bool(load_policy().experience_v2_enabled)
         self._catalog_specs = {
-            (user, owner): self._specs(user, owner=owner, catalog=True)
+            (user, owner, v2_on): self._specs(user, owner=owner, catalog=True)
             for user in users for owner in (False, True)
         }
 
@@ -187,7 +190,6 @@ class LanTools:
             'SELECT revision FROM lan_memory_revision WHERE id=1').fetchone()[0]) for space in ('personal', 'public'))
 
     def capture_local_sources(self):
-        from evolvmem.product_policy import load_policy
         if not load_policy().console_enabled:
             return 0
         from evolvmem.local_codex_capture import capture_once
@@ -205,7 +207,7 @@ class LanTools:
 
     def process_pending(self):
         """Process one durable extraction job; no model work in the upload hook."""
-        from evolvmem.product_policy import load_policy, AIProcessingDisabled
+        from evolvmem.product_policy import AIProcessingDisabled
         if not load_policy().ai_processing_enabled:
             return 0
         from evolvmem import kimi_hooks
@@ -343,7 +345,6 @@ class LanTools:
                 schema['properties']['request_id'] = {'type': 'string', 'maxLength': 128}
                 schema['required'] = [k for k in schema.get('required', []) if k != 'request_id']
         result.update(deepcopy(manual_experience_mcp.MANUAL_EXPERIENCE_SPECS))
-        from evolvmem.product_policy import load_policy
         if load_policy().experience_v2_enabled:
             from evolvmem.experience_v2.mcp_tools import EXPERIENCE_V2_MCP_SPECS
             result.update(deepcopy(EXPERIENCE_V2_MCP_SPECS))
@@ -360,6 +361,11 @@ class LanTools:
         try:
             return exp_v2_mcp.call_experience_v2_tool(
                 name, args, owner_id=user, actor_id=user, attribution=attr,
+                history_db_paths=(
+                    self.runtime._namespace_for(user, 'personal') / 'memory.db',
+                    os.environ.get('EVOLVMEM_HISTORY_CANDIDATE_DB') or '',
+                ),
+                embedder=getattr(self.runtime, '_shared_engine', None),
             )
         except manual_experience_mcp.ManualMcpError as exc:
             raise LanError(str(exc)) from None
@@ -465,7 +471,7 @@ class LanTools:
         health_only = name == 'memory_status' and args.get('detail') == 'health'
         background_capability = independent_capability or (name == 'capability_search' and self.runtime._background_health.active)
         background_experience = independent_experience or (name == 'experience_recall' and self.runtime._background_health.active and not load_policy().experience_v2_enabled)
-        specs = (self._catalog_specs[(user, owner)] if revision_only or health_only or background_capability or background_experience or name in CONTINUITY_READS else
+        specs = (self._catalog_specs.setdefault((user, owner, bool(load_policy().experience_v2_enabled)), self._specs(user, owner=owner, catalog=True)) if revision_only or health_only or background_capability or background_experience or name in CONTINUITY_READS else
                  self._specs(user, owner=owner, capture_only=name in CAPTURE_TOOLS,
                              continuity_only=name in CONTINUITY_TOOLS))
         if name not in specs:
@@ -800,10 +806,11 @@ class LanTools:
         elif method == 'ping':
             result = {}
         elif method == 'tools/list':
-            cached_specs = self._catalog_specs.get((user, owner))
+            v2_on = bool(load_policy().experience_v2_enabled)
+            cached_specs = self._catalog_specs.get((user, owner, v2_on))
             if cached_specs is None:
                 cached_specs = self._specs(user, owner=owner, catalog=True)
-                self._catalog_specs[(user, owner)] = cached_specs
+                self._catalog_specs[(user, owner, v2_on)] = cached_specs
             specs = deepcopy(cached_specs)
             result = {'tools': list(specs.values())}
         elif method == 'initialize':

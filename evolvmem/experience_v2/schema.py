@@ -31,15 +31,16 @@ def apply_experience_migrations(conn, *, migrations_dir: Path | None = None) -> 
     files = list_migration_files(migrations_dir)
     applied_now: list[str] = []
     with conn.transaction():
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS experience_schema_migrations (
-              version TEXT PRIMARY KEY,
-              sha256 TEXT NOT NULL,
-              applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        if conn.execute("SELECT to_regclass('experience_schema_migrations')").fetchone()[0] is None:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS experience_schema_migrations (
+                  version TEXT PRIMARY KEY,
+                  sha256 TEXT NOT NULL,
+                  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
             )
-            """
-        )
         existing = {
             row[0]: row[1]
             for row in conn.execute('SELECT version, sha256 FROM experience_schema_migrations').fetchall()
