@@ -215,6 +215,16 @@ class ExperienceWriter:
             raise ExperienceWriteError('invalid_experience_actor_or_request', 400)
         payload_sha = self._payload_sha(op)
         with conn.transaction():
+            if op.action == 'import_manual':
+                if not op.note_id:
+                    raise ExperienceWriteError('invalid_experience_id', 400)
+                existing_import = conn.execute(
+                    f'SELECT {_SELECT_COLS} FROM experience_notes WHERE owner_id = %s AND id = %s FOR UPDATE',
+                    (op.owner_id, op.note_id),
+                ).fetchone()
+                if existing_import is not None:
+                    note_obj = _row_to_note(existing_import)
+                    return {'ok': True, 'experience': note_obj, 'replayed': True, 'http_status': 200}
             prior = conn.execute(
                 """
                 SELECT actor_id, payload_sha256, response_json, http_status
@@ -224,7 +234,7 @@ class ExperienceWriter:
                 """,
                 (op.owner_id, op.request_id),
             ).fetchone()
-            if prior is not None:
+            if prior is not None and op.action != 'import_manual':
                 if prior[0] != op.actor_id or prior[1] != payload_sha:
                     raise ExperienceWriteError('experience_request_id_conflict', 409)
                 resp = dict(prior[2])
@@ -365,6 +375,50 @@ class ExperienceWriter:
             after_note = _row_to_note(after_row)
             status_code = 201 if op.action == 'create' else 200
             response = {'ok': True, 'experience': after_note, 'replayed': False}
+
+            if op.action == 'import_manual' and isinstance(op.restore_snapshot, dict):
+                hist_events = op.restore_snapshot.get('historical_events') or []
+                hist_reqs = op.restore_snapshot.get('historical_requests') or []
+                if hist_events:
+                    for ev in hist_events:
+                        conn.execute(
+                            """
+                            INSERT INTO experience_events(
+                                event_id, owner_id, actor_id, request_id, action, note_id,
+                                before_json, after_json, agent_client, model, created_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, '', '', %s)
+                            ON CONFLICT (event_id) DO NOTHING
+                            """,
+                            (
+                                ev['event_id'], ev['owner_id'], ev['actor_id'], ev['request_id'],
+                                ev['action'], ev['note_id'], ev.get('before_json'), ev['after_json'],
+                                ev['created_at'],
+                            ),
+                        )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO experience_events(
+                            event_id, owner_id, actor_id, request_id, action, note_id,
+                            before_json, after_json, proposal_uid, agent_client, model, created_at
+                        ) VALUES (%s, %s, %s, %s, 'import_manual', %s, NULL, %s::jsonb, NULL, '', '', %s)
+                        """,
+                        (uuid.uuid4().hex, op.owner_id, op.actor_id, op.request_id, target_id, _json_canon(after_note), op.updated_at or now),
+                    )
+                for req in hist_reqs:
+                    conn.execute(
+                        """
+                        INSERT INTO experience_requests(
+                            owner_id, request_id, actor_id, payload_sha256, response_json, http_status, created_at
+                        ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s)
+                        ON CONFLICT (owner_id, request_id) DO NOTHING
+                        """,
+                        (
+                            req['owner_id'], req['request_id'], req['actor_id'],
+                            req['payload_sha256'], req['response_json'], int(req['http_status']), req['created_at'],
+                        ),
+                    )
+                return {**response, 'http_status': status_code}
 
             conn.execute(
                 """
