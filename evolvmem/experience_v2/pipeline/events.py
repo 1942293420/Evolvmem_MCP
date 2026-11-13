@@ -12,17 +12,17 @@ from evolvmem.experience_v2.pipeline.history_reader import HistorySession
 from evolvmem.lan_sharing import LanError
 
 _CODE_FENCE_RE = re.compile(r"(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)")
-_EXIT_CODE_RE = re.compile(r"(?:exit[_\s]?code\s*[=:]\s*|Exit\s+code\s+)(\d+)")
+_EXIT_CODE_RE = re.compile(r"(?:process\s+exited\s+with\s+code\s+|exit[_\s]?code\s*[=:]?\s*)(\d+)", re.IGNORECASE)
 _ERROR_SIG_RE = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)|ECONNREFUSED|EACCES|ENOENT|TS\d{4}|error\[[A-Z0-9]+\]|Operation not permitted)"
 )
 _ROLLBACK_CMD_RE = re.compile(r"\b(git\s+(?:checkout|restore|reset|revert)|roll\s*back)\b", re.IGNORECASE)
 
 _INTENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("preference", re.compile(r"\b(?:always\s+(?:prefer|use|keep)|never\s+use|please\s+remember|prefer\s+\S+\s+over)\b", re.IGNORECASE)),
-    ("correction", re.compile(r"\b(?:actually\s+use|instead\s+of|don'?t\s+(?:kill|use|do|retry)|wrong\b|not\s+that)\b", re.IGNORECASE)),
-    ("abandon", re.compile(r"\b(?:abandon|drop\s+the|discard|give\s+up|switch\s+to\s+podman|roll\s*back\s+to)\b", re.IGNORECASE)),
-    ("confirmation", re.compile(r"\b(?:confirmed|that\s+worked|that\s+fixed|looks\s+good|go\s+ahead|yes,\s*proceed)\b", re.IGNORECASE)),
+    ("preference", re.compile(r"(?:\b(?:always\s+(?:prefer|use|keep)|never\s+use|please\s+remember|prefer\s+\S+\s+over)\b|以后(?:都|一律|默认)|请记住|默认用|优先使用|我习惯)", re.IGNORECASE)),
+    ("correction", re.compile(r"(?:\b(?:actually\s+use|instead\s+of|don'?t\s+(?:kill|use|do|retry)|wrong\b|not\s+that)\b|不对[，,。！\s]|不是这个|搞错了|弄错了|别这么|不要直接)", re.IGNORECASE)),
+    ("abandon", re.compile(r"(?:\b(?:abandon|drop\s+the|discard|give\s+up|switch\s+to\s+podman|roll\s*back\s+to)\b|放弃(?:这个)?方案|换个方案|回滚掉)", re.IGNORECASE)),
+    ("confirmation", re.compile(r"(?:\b(?:confirmed|that\s+worked|that\s+fixed|looks\s+good|go\s+ahead|yes,\s*proceed)\b|修好了|验证通过)", re.IGNORECASE)),
 )
 
 
@@ -97,6 +97,11 @@ def _extract_error_signature(text: str) -> str:
 
 
 def _extract_exit_code(text: str) -> int | None:
+    ls = text.lstrip()
+    if ls.startswith("Script completed"):
+        return 0
+    if ls.startswith("Script failed"):
+        return 1
     match = _EXIT_CODE_RE.search(text)
     if match:
         return int(match.group(1))
@@ -147,16 +152,21 @@ def _extract_from_codex(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     p.get("text", "") for p in parts if isinstance(p, dict) and isinstance(p.get("text"), str)
                 )
                 norm.append({"index": idx, "kind": "message", "role": payload["role"], "text": text})
-            elif kind == "function_call":
-                args = _json_arg_dict(payload.get("arguments"))
+            elif kind in ("function_call", "custom_tool_call"):
+                raw_args = payload.get("arguments") if payload.get("arguments") is not None else payload.get("input")
+                args = _json_arg_dict(raw_args)
+                cmd = str(args.get("cmd") or args.get("command") or args.get("code") or args.get("raw") or "")[:400]
                 norm.append({
                     "index": idx, "kind": "tool_call", "call_id": str(payload.get("call_id") or ""),
-                    "tool": str(payload.get("name") or ""), "command": str(args.get("cmd") or args.get("command") or ""),
+                    "tool": str(payload.get("name") or ""), "command": cmd,
                     "path": str(args.get("path") or ""), "action": str(args.get("action") or ""),
                 })
             elif kind in ("function_call_output", "custom_tool_call_output"):
                 out = payload.get("output", "")
-                text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)
+                if isinstance(out, list):
+                    text = "".join(p.get("text", "") for p in out if isinstance(p, dict) and isinstance(p.get("text"), str))
+                else:
+                    text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)
                 norm.append({
                     "index": idx, "kind": "tool_result", "call_id": str(payload.get("call_id") or ""),
                     "exit_code": _extract_exit_code(text), "text": text,
@@ -302,6 +312,7 @@ def parse_session_events(session: HistorySession) -> ParsedSessionEvents:
     rollbacks: list[str] = []
     cmd_hits: dict[str, list[int]] = {}
     intents: list[UserIntentSignal] = []
+    seen_user_texts: set[str] = set()
 
     for ev in norm:
         idx = int(ev.get("index", 0))
@@ -328,7 +339,10 @@ def parse_session_events(session: HistorySession) -> ParsedSessionEvents:
             text = str(ev.get("text") or "")
             rc = ev.get("exit_code")
             sig = _extract_error_signature(text)
-            is_err = (rc is not None and rc != 0) or bool(sig)
+            if rc is not None:
+                is_err = rc != 0
+            else:
+                is_err = ("Traceback (most recent call last)" in text) or (bool(sig) and not text.lstrip().startswith("Wall time:"))
             outcomes.append(
                 ToolOutcome(
                     event_index=idx,
@@ -341,7 +355,11 @@ def parse_session_events(session: HistorySession) -> ParsedSessionEvents:
                 )
             )
         elif kind == "message" and ev.get("role") == "user":
-            sigs = classify_user_intent(str(ev.get("text") or ""), event_index=idx)
+            raw_u = str(ev.get("text") or "").strip()
+            if not raw_u or raw_u.startswith("<environment_context>") or raw_u.startswith("# AGENTS.md") or raw_u in seen_user_texts:
+                continue
+            seen_user_texts.add(raw_u)
+            sigs = classify_user_intent(raw_u, event_index=idx)
             intents.extend(sigs)
             for s in sigs:
                 if s.kind == "abandon" and "roll" in s.excerpt.lower():

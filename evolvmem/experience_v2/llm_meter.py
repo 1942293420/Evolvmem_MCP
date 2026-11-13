@@ -124,15 +124,19 @@ def default_http_transport(
     endpoint: LlmEndpoint,
     *,
     timeout_seconds: float = 45.0,
+    disable_thinking: bool = True,
 ) -> Callable[[str, list[dict[str, Any]], int], dict[str, Any]]:
     """Build an OpenAI-compatible HTTP transport bound to one LlmEndpoint."""
 
     def _send(model: str, messages: list[dict[str, Any]], max_output_tokens: int) -> dict[str, Any]:
+        active_model = model or endpoint.model
         payload: dict[str, Any] = {
-            'model': model or endpoint.model,
+            'model': active_model,
             'messages': messages,
             'temperature': 0.2,
         }
+        if endpoint.provider != 'mimo' and disable_thinking and 'reasoner' not in active_model.casefold():
+            payload['thinking'] = {'type': 'disabled'}
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
         if endpoint.provider == 'mimo':
             payload['max_completion_tokens'] = int(max_output_tokens)

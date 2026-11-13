@@ -450,11 +450,30 @@ class PipelineScheduler:
         prev_idx = int(prev_row[0]) if (prev_row and prev_row[0] is not None) else -1
 
         parsed = parse_session_events(session)
+        mode_tag = 'shadow' if shadow_mode else 'live'
+        if not parsed.events and prev_idx < 0:
+            empty_hash = hashlib.sha256(f'{mode_tag}:{sid}:-1:0:empty'.encode('utf-8')).hexdigest()[:32]
+            empty_done = conn.execute(
+                """
+                SELECT status FROM pipeline_segment_runs
+                WHERE owner_id = %s AND track = %s AND session_id = %s
+                  AND segment_hash = %s AND pipeline_version = %s AND is_shadow = %s
+                """,
+                (self.owner_id, self.track, sid, empty_hash, self.pipeline_version, shadow_mode),
+            ).fetchone()
+            if empty_done and empty_done[0] in ('completed', 'skipped_zero_moments'):
+                return {'status': 'already_processed', 'replayed': True, 'llm_calls': 0}
+            _upsert_segment_run(
+                conn,
+                owner_id=self.owner_id, track=self.track, session_id=sid, segment_hash=empty_hash,
+                pipeline_version=self.pipeline_version, status='skipped_zero_moments',
+                moments_count=0, proposals_count=0, tokens_spent=0, last_event_index=0, is_shadow=shadow_mode,
+            )
+            return {'status': 'skipped_zero_moments', 'moments': 0, 'llm_calls': 0}
+
         delta_parsed, end_idx = _slice_delta_parsed(parsed, prev_idx)
         if delta_parsed is None:
             return {'status': 'already_processed', 'replayed': True, 'llm_calls': 0}
-
-        mode_tag = 'shadow' if shadow_mode else 'live'
         seg_hash = hashlib.sha256(
             f'{mode_tag}:{sid}:{prev_idx}:{end_idx}:{json.dumps(delta_parsed.events, sort_keys=True, ensure_ascii=False)}'.encode('utf-8')
         ).hexdigest()[:32]

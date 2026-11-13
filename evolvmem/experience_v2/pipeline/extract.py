@@ -122,7 +122,7 @@ def extract_moment(
     valid_record_indices: Sequence[int] = (),
     is_shadow: bool = False,
     budget: BudgetConfig | None = None,
-    max_output_tokens: int = 500,
+    max_output_tokens: int = 600,
 ) -> ExtractionResult:
     """Extract at most one structured experience (§5.3) from a bounded KeyMoment snippet."""
     if estimate_tokens(EXTRACT_SYSTEM_PROMPT) > STATIC_PROMPT_MAX_TOKENS:

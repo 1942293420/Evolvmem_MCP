@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from evolvmem.experience_v2.llm_meter import estimate_tokens
 from evolvmem.experience_v2.pipeline.events import ParsedSessionEvents, strip_code_blocks
+
+_ROUTINE_CMD_RE = re.compile(
+    r"(?:^\s*(?:git\s+(?:status|diff|log|branch)|ls\b|pwd\b|echo\b)|tab\.getScreenshot|cua\.getState|tools\.clock__|tools\.write_stdin)",
+    re.IGNORECASE,
+)
 
 MOMENT_KINDS: tuple[str, ...] = (
     "fail_to_success",
@@ -122,22 +128,26 @@ def detect_key_moments(parsed: ParsedSessionEvents, max_snippet_tokens: int = 30
         moments.append(_make_moment(parsed, kind, title, lo, hi, score, max_snippet_tokens))
 
     outcomes = parsed.tool_outcomes
-    first_err = next((o for o in outcomes if o.is_error), None)
-    last_ok = next((o for o in reversed(outcomes) if not o.is_error and o.exit_code == 0), None)
-
-    # 1. fail_to_success: error occurred followed by later edit or successful command
     has_f2s = False
-    if first_err is not None and last_ok is not None and last_ok.event_index > first_err.event_index:
-        add(
-            "fail_to_success",
-            f"Recovered from {first_err.error_signature or first_err.command_or_target}",
-            first_err.event_index,
-            last_ok.event_index,
-            0.9,
-        )
-        has_f2s = True
+    for idx_e, err in enumerate(outcomes):
+        if not err.is_error:
+            continue
+        ok = next((o for o in outcomes[idx_e + 1 :] if not o.is_error and o.exit_code == 0), None)
+        if ok is None:
+            continue
+        near = (ok.event_index - err.event_index) <= 15
+        edited = any(err.event_index < fe.event_index < ok.event_index for fe in parsed.file_edits)
+        if near or edited:
+            add(
+                "fail_to_success",
+                f"Recovered from {err.error_signature or err.command_or_target}",
+                err.event_index,
+                ok.event_index,
+                0.9,
+            )
+            has_f2s = True
+            break
 
-    # 2. abandoned_approach: rollback command/edit or abandon user intent
     has_abandon = False
     for rb in parsed.rollbacks:
         idxs = [int(e.get("index", 0)) for e in parsed.events]
@@ -152,23 +162,26 @@ def detect_key_moments(parsed: ParsedSessionEvents, max_snippet_tokens: int = 30
                 has_abandon = True
                 break
 
-    # 3. user_correction & 4. preference_expression
     for u in parsed.user_intents:
         if u.kind == "correction":
             add("user_correction", f"User correction: {_clip_line(u.excerpt, 60)}", max(0, u.event_index - 2), u.event_index, 0.9)
         elif u.kind == "preference":
             add("preference_expression", f"User preference: {_clip_line(u.excerpt, 60)}", u.event_index, u.event_index, 0.85)
 
-    # 5. high_cost_segment: repeated tool retry loops
-    for r in parsed.retries:
-        lo, hi = min(r.event_indices), max(r.event_indices)
-        add("high_cost_segment", f"Repeated command ({r.count}x): {_clip_line(r.command_or_target, 50)}", lo, hi, 0.8)
+    eligible_retries = [
+        r for r in parsed.retries
+        if r.count >= 3 and len(r.command_or_target.strip()) > 8 and not _ROUTINE_CMD_RE.search(r.command_or_target)
+    ]
+    if eligible_retries:
+        top_r = max(eligible_retries, key=lambda r: r.count)
+        lo, hi = min(top_r.event_indices), max(top_r.event_indices)
+        add("high_cost_segment", f"Repeated command ({top_r.count}x): {_clip_line(top_r.command_or_target, 50)}", lo, hi, 0.8)
 
-    # 6. external_surprise: unresolved external error signature
     if not has_f2s:
         for o in outcomes:
             if o.is_error and o.error_signature:
                 add("external_surprise", f"External failure: {o.error_signature}", o.event_index, o.event_index, 0.78)
                 break
 
-    return tuple(moments)
+    moments.sort(key=lambda m: (-m.score, m.event_range[0]))
+    return tuple(moments[:3])
