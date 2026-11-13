@@ -88,8 +88,29 @@ def _read_params(params):
         _integer(params.get('deleted',0),0,1,'invalid_deleted')
 
 
+def _pg_store():
+    from evolvmem.experience_v2.pg_experience_store import (
+        PgExperienceStore,
+        PgExperienceUnavailableError,
+    )
+    from evolvmem.experience_v2.writer import ExperienceWriteError
+    return PgExperienceStore(), PgExperienceUnavailableError, ExperienceWriteError
+
+
 def read(source, params, item_id=None, *, search=None):
     category, query, page, page_size, deleted = _read_params(params)
+    from evolvmem.product_policy import load_policy
+    if load_policy().experience_v2_enabled:
+        store, pg_err, write_err = _pg_store()
+        try:
+            return store.read(
+                source, params, category=category, query=query, page=page,
+                page_size=page_size, deleted=deleted, item_id=item_id, search=search,
+            )
+        except pg_err:
+            raise ManualExperienceError('pg_experience_unavailable', 503) from None
+        except write_err as exc:
+            raise ManualExperienceError(exc.code, exc.status) from None
     if item_id is not None and (not isinstance(item_id,str) or not NOTE_ID.fullmatch(item_id)):
         raise ManualExperienceError('experience_not_found',404)
     path = _database(source)
@@ -167,6 +188,10 @@ def _text(value, maximum):
 
 
 def _write_params(body):
+    return _write_params_with(body, NOTE_ID)
+
+
+def _write_params_with(body, id_pattern):
     body=dict(body)
     if body.pop('origin','manual')!='manual':
         raise ManualExperienceError('invalid_origin')
@@ -184,7 +209,7 @@ def _write_params(body):
         for name,limit in [('problem',1000),('solution',8000),('reusable_experience',8000)]:
             body[name]=_text(body[name],limit)
     if action!='create':
-        if not isinstance(body['id'],str) or not NOTE_ID.fullmatch(body['id']):
+        if not isinstance(body['id'],str) or not id_pattern.fullmatch(body['id']):
             raise ManualExperienceError('invalid_experience_id')
         body['revision']=_integer(body['revision'],1,2147483647,'invalid_experience_revision')
     return body
@@ -194,6 +219,17 @@ def write(source, actor_id, body, *, validate_new=None):
     if not source or actor_id!=source['user_id']:
         raise ManualExperienceError('experience_management_forbidden',403)
     submitted=body
+    from evolvmem.product_policy import load_policy
+    if load_policy().experience_v2_enabled:
+        store, pg_err, write_err = _pg_store()
+        from evolvmem.experience_v2.pg_experience_store import PG_NOTE_ID
+        body = _write_params_with(body, PG_NOTE_ID)
+        try:
+            return store.write(source, actor_id, body, submitted, validate_new=validate_new)
+        except pg_err:
+            raise ManualExperienceError('pg_experience_unavailable', 503) from None
+        except write_err as exc:
+            raise ManualExperienceError(exc.code, exc.status) from None
     body=_write_params(body)
     path=_database(source)
     if not path:

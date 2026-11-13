@@ -84,6 +84,14 @@ def registered_source(data_dir, *, owner_data_dir, lan_data_dir=None, user=None,
     if registered_dir != namespace or (db_path is not None and
             Path(db_path).resolve() != (registered_dir / 'memory.db').resolve()):
         raise ManualMcpError('manual_experience_source_mismatch')
+    from evolvmem.product_policy import load_policy
+    if load_policy().experience_v2_enabled:
+        from evolvmem.experience_v2.pg_experience_store import PgExperienceUnavailableError, check_available
+        try:
+            check_available()
+        except PgExperienceUnavailableError:
+            raise ManualMcpError('pg_experience_unavailable') from None
+        return {**source, 'data_dir': registered_dir}
     if not (registered_dir / 'memory.db').is_file():
         raise ManualMcpError('experience_not_connected')
     return {**source, 'data_dir': registered_dir}
