@@ -1,0 +1,13 @@
+.review-inbox-wrap { display: flex; flex-direction: column; gap: 14px; }
+.review-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.review-tracks { display: inline-flex; gap: 8px; }
+.review-track-btn { padding: 6px 14px; border-radius: 999px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; font-weight: 600; }
+.review-track-btn[aria-selected="true"] { background: #0284c7; color: #fff; border-color: #0284c7; }
+.review-shadow-banner { padding: 8px 12px; border-radius: 8px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; font-size: 13px; }
+.review-card { border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; background: #fff; display: flex; flex-direction: column; gap: 10px; }
+.review-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.review-evidence { background: #f8fafc; border-left: 3px solid #94a3b8; padding: 8px 10px; font-size: 12px; border-radius: 4px; }
+.review-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.review-reason-select { padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; }
+.review-edit-box { display: grid; gap: 6px; padding-top: 6px; border-top: 1px dashed #cbd5e1; }
+.review-edit-box input, .review-edit-box textarea, .review-edit-box select { width: 100%; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; }

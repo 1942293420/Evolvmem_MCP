@@ -1409,8 +1409,14 @@ def make_handler(service: ContextService):
                             return
                         body = {**body, 'inspect':'1'}
                     params = body
-                status, content_type, body = ensure_control_plane_ready().dispatch(self.command,
-                    unquote(parsed.path[len('/api/knowledge-console'):] or '/'), params, session)
+                rel_console_path = unquote(parsed.path[len('/api/knowledge-console'):] or '/')
+                if rel_console_path == '/review-inbox' or rel_console_path.startswith('/review-inbox/'):
+                    from evolvmem.experience_v2.gate.review_http import dispatch_review_inbox
+                    status, content_type, body = dispatch_review_inbox(
+                        ensure_control_plane_ready(), policy, self.command, rel_console_path, params, session)
+                else:
+                    status, content_type, body = ensure_control_plane_ready().dispatch(
+                        self.command, rel_console_path, params, session)
                 if isinstance(body, dict):
                     if parsed.path.endswith('/me') and status == 200:
                         body['policy'] = {**body.get('policy', {}), **policy.as_dict()}
@@ -1431,7 +1437,7 @@ def make_handler(service: ContextService):
                     if parsed.path in ('/', '/index.html', '/designs/signal.html'):
                         self._send_html((_STATIC_INDEX.parent/'knowledge-console.html').read_text(encoding='utf-8'))
                         return
-                    if parsed.path in ('/knowledge-console.js','/knowledge-console.css','/history-library.js','/history-library.css','/principles.js','/nebula.js'):
+                    if parsed.path in ('/knowledge-console.js','/knowledge-console.css','/history-library.js','/history-library.css','/principles.js','/nebula.js','/review-inbox.js','/review-inbox.css'):
                         asset=_STATIC_INDEX.parent/parsed.path.lstrip('/')
                         data=asset.read_bytes()
                         self.send_response(200)
