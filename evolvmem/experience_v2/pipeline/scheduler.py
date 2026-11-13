@@ -68,12 +68,14 @@ def evaluate_circuit_breaker(
         ).fetchall()
         note_rows = conn.execute(
             """
-            SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, COUNT(*)
-            FROM experience_events
-            WHERE owner_id = %s AND action = 'create'
+            SELECT to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, COUNT(*)
+            FROM experience_events e
+            LEFT JOIN experience_proposals p ON p.uid = e.proposal_uid
+            WHERE e.owner_id = %s AND e.action = 'create'
+              AND COALESCE(p.source_track, 'live') = %s
             GROUP BY 1
             """,
-            (owner_id,),
+            (owner_id, track),
         ).fetchall()
         notes_by_day = {r[0]: int(r[1]) for r in note_rows}
         series = [(r[0], int(r[1]), notes_by_day.get(r[0], 0)) for r in tok_rows]
@@ -384,7 +386,7 @@ class PipelineScheduler:
         safe_sid = _REQ_SAFE_RE.sub('_', session.summary.session_id)[:32]
         attr = AgentAttribution(
             actor=self.owner_id,
-            agent_id='stage3-pipeline',
+            agent_id='stage4-backfill' if self.track == 'backfill' else 'stage3-pipeline',
             client=session.summary.adapter or 'codex',
             model=self.flash_model,
         )
@@ -393,7 +395,8 @@ class PipelineScheduler:
             if ext.skipped:
                 continue
             p = ext.payload
-            req_id = f'pipe-{safe_sid}-{segment_hash[:8]}-{idx}'
+            req_prefix = 'bf' if self.track == 'backfill' else 'pipe'
+            req_id = f'{req_prefix}-{safe_sid}-{segment_hash[:8]}-{idx}'
             try:
                 res = self._proposer.propose(
                     conn,
@@ -454,7 +457,8 @@ class PipelineScheduler:
         shadow_mode: bool = False,
         shadow_run_id: str | None = None,
     ) -> dict[str, Any]:
-        if not shadow_mode and not self.policy.experience_pipeline_enabled:
+        enabled = self.policy.experience_backfill_enabled if self.track == 'backfill' else self.policy.experience_pipeline_enabled
+        if not shadow_mode and not enabled:
             return {'status': 'disabled', 'llm_calls': 0}
 
         ready, trig_reason = should_trigger_session(is_closed=is_closed, last_message_at=last_message_at, now=now)

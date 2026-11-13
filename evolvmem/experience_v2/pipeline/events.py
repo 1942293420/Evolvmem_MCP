@@ -120,7 +120,10 @@ def _parse_json_lines(raw: bytes) -> list[dict[str, Any]]:
         s = line.strip()
         if not s:
             continue
-        obj = json.loads(s)
+        try:
+            obj = json.loads(s)
+        except ValueError:
+            continue
         if isinstance(obj, dict):
             rows.append(obj)
     return rows
