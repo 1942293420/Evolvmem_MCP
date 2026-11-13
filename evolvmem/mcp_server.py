@@ -1133,6 +1133,14 @@ class MemoryMCPServer:
     def _experience_recall(self, args: dict, *, service=None) -> dict:
         if not isinstance(args, dict) or set(args) - {"project", "query", "constraints", "workstream_id", "mode"}:
             return self._context_error("invalid_arguments")
+        if service is None and load_policy().experience_v2_enabled:
+            from evolvmem.experience_v2.control.agent_identity import get_active_attribution
+            from evolvmem.experience_v2.mcp_tools import call_pg_experience_recall
+            try:
+                source = self._manual_experience_source()
+            except manual_experience_mcp.ManualMcpError as exc:
+                return {"error": str(exc)}
+            return call_pg_experience_recall(args, owner_id=source['user_id'], attribution=get_active_attribution())
         error = self._context_gate_error()
         if error is not None:
             return error
@@ -2045,6 +2053,12 @@ class MemoryMCPServer:
                 if load_policy().experience_v2_enabled:
                     from evolvmem.experience_v2.mcp_tools import EXPERIENCE_V2_MCP_SPECS
                     tools.extend(deepcopy(list(EXPERIENCE_V2_MCP_SPECS.values())))
+                    if not any(t["name"] == "experience_recall" for t in tools):
+                        tools.extend(
+                            {"name": s.name, "description": s.description, "annotations": deepcopy(s.annotations), "inputSchema": deepcopy(s.input_schema)}
+                            for s in tool_specs(adapter=adapter, mode=mode, health=None, catalog=True)
+                            if s.name == "experience_recall"
+                        )
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -2072,6 +2086,7 @@ class MemoryMCPServer:
                 if isinstance(tool_name, str) and (
                     tool_name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS
                     or tool_name in EXPERIENCE_V2_MCP_SPECS
+                    or (tool_name == "experience_recall" and load_policy().experience_v2_enabled)
                 ):
                     result = self.handle_tool_call(tool_name, tool_args)
                 else:
