@@ -147,7 +147,7 @@ def assess_l3_shadow(
         model=judge_model,
         messages=[{'role': 'system', 'content': L3_SYSTEM_PROMPT}, {'role': 'user', 'content': user_prompt}],
         session_id=session_id,
-        max_output_tokens=320,
+        max_output_tokens=600,
         conn=conn,
         owner_id=owner_id,
         proposal_uid=proposal_uid,

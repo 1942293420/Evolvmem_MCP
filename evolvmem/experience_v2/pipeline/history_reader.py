@@ -63,6 +63,7 @@ class HistoryReader(Protocol):
         since: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        dedupe_logical_sessions: bool = True,
     ) -> list[HistorySessionSummary]: ...
 
     def get_session(self, source_ref: str) -> HistorySession | None: ...
@@ -85,6 +86,7 @@ class InMemoryHistoryReader:
         since: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        dedupe_logical_sessions: bool = True,
     ) -> list[HistorySessionSummary]:
         items = [s.summary for s in self._sessions.values()]
         if project is not None:
@@ -187,6 +189,19 @@ class SqliteHistoryReader:
                 upload_fmt = str(uf[0])
 
         raw_bytes = self._decrypt_archive_bytes(row['payload_path']) if row['state'] == 'available' else None
+        envelope_conv = None
+        if raw_bytes is not None:
+            stripped = raw_bytes.lstrip()
+            if stripped.startswith(b'{') and b'\n' not in raw_bytes.strip():
+                try:
+                    env = json.loads(raw_bytes.decode('utf-8', errors='replace'))
+                    if isinstance(env, dict) and isinstance(env.get('transcript'), str):
+                        if env.get('source_format'):
+                            upload_fmt = str(env['source_format'])
+                        envelope_conv = env.get('conversation') or env.get('messages')
+                        raw_bytes = env['transcript'].encode('utf-8')
+                except ValueError:
+                    pass
         records: list[HistoryRawRecord] = []
         if 'conversation_history' in tables:
             ch = conn.execute(
@@ -209,6 +224,11 @@ class SqliteHistoryReader:
                                 )
                 except ValueError:
                     pass
+
+        if not records and isinstance(envelope_conv, list):
+            for idx, msg in enumerate(envelope_conv, 1):
+                if isinstance(msg, dict):
+                    records.append(HistoryRawRecord(idx, str(msg.get('role') or 'unknown'), str(msg.get('content') or ''), msg))
 
         if not records and raw_bytes is not None:
             try:
@@ -295,14 +315,32 @@ class SqliteHistoryReader:
         since: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        dedupe_logical_sessions: bool = True,
     ) -> list[HistorySessionSummary]:
         results: list[HistorySessionSummary] = []
         if self.memory_db and self.memory_db.is_file():
             with self._connect(self.memory_db) as conn:
                 tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-                if 'session_archives' in tables and 'conversation_history' in tables:
+                has_key = bool(self.data_dir and (self.data_dir / 'archive.key').is_file())
+                if 'session_archives' in tables and (has_key or 'conversation_history' in tables):
+                    has_uploads = 'lan_session_uploads' in tables
                     clauses = ["sa.state = 'available'"]
                     params: list[Any] = []
+                    if not has_key and 'conversation_history' in tables:
+                        clauses.append('EXISTS (SELECT 1 FROM conversation_history ch WHERE ch.archive_id = sa.id)')
+                    if dedupe_logical_sessions:
+                        if has_uploads:
+                            clauses.append(
+                                "sa.id IN (SELECT MAX(sa2.id) FROM session_archives sa2 "
+                                "LEFT JOIN lan_session_uploads lsu2 ON lsu2.archive_id = sa2.id "
+                                "WHERE sa2.state = 'available' "
+                                "GROUP BY COALESCE(NULLIF(lsu2.session_id, ''), sa2.external_session_id))"
+                            )
+                        else:
+                            clauses.append(
+                                "sa.id IN (SELECT MAX(sa2.id) FROM session_archives sa2 "
+                                "WHERE sa2.state = 'available' GROUP BY sa2.external_session_id)"
+                            )
                     if project is not None:
                         clauses.append('sa.project = ?')
                         params.append(project)
@@ -313,9 +351,11 @@ class SqliteHistoryReader:
                         clauses.append('sa.created_at >= ?')
                         params.append(since)
                     where = ' AND '.join(clauses)
+                    join_sql = 'LEFT JOIN lan_session_uploads lsu ON lsu.archive_id = sa.id ' if has_uploads else ''
+                    fmt_col = 'lsu.source_format AS upload_fmt' if has_uploads else 'NULL AS upload_fmt'
                     rows = conn.execute(
-                        f'SELECT sa.id, sa.project, sa.adapter, sa.external_session_id, sa.created_at '
-                        f'FROM session_archives sa JOIN conversation_history ch ON ch.archive_id = sa.id '
+                        f'SELECT sa.id, sa.project, sa.adapter, sa.external_session_id, sa.payload_path, sa.created_at, {fmt_col} '
+                        f'FROM session_archives sa {join_sql}'
                         f'WHERE {where} ORDER BY sa.created_at DESC, sa.id DESC LIMIT ? OFFSET ?',
                         (*params, max(0, int(limit)), max(0, int(offset))),
                     ).fetchall()
@@ -325,13 +365,13 @@ class SqliteHistoryReader:
                             HistorySessionSummary(
                                 session_id=f"archive:{r['id']}",
                                 adapter=adp,
-                                source_format=self._infer_format(adp, None),
+                                source_format=self._infer_format(adp, r['upload_fmt']),
                                 project=str(r['project'] or ''),
                                 source_ref=f"archive:{r['id']}",
                                 library=self.library,
                                 external_session_id=str(r['external_session_id'] or ''),
                                 created_at=str(r['created_at'] or ''),
-                                has_raw_bytes=False,
+                                has_raw_bytes=bool(has_key and r['payload_path']),
                             )
                         )
         if not results and self.candidate_db and self.candidate_db.is_file():
