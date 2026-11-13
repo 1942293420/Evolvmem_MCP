@@ -557,7 +557,7 @@ class ConsoleService:
             else:
                 item_id = None
                 if suffix:
-                    if re.fullmatch(r'/manual-[a-f0-9]{32}', suffix) or re.fullmatch(r'/history-[a-f0-9]{64}', suffix):
+                    if re.fullmatch(r'/(?:manual-[a-f0-9]{32}|exp-[0-9a-z]{26}|history-[a-f0-9]{64})', suffix):
                         item_id = suffix[1:]
                     elif re.fullmatch(r'/[1-9][0-9]{0,17}', suffix):
                         item_id = int(suffix[1:])

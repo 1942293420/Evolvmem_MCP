@@ -4,10 +4,24 @@ No credentials, database access or process-wide cache. A configured malformed
 or missing policy disables every gate; an absent default file preserves the
 pre-console installation defaults.
 """
+from __future__ import annotations
+
 from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+
+_GATE_MODES = frozenset({'review', 'partial', 'auto'})
+_GATE_CATEGORIES = frozenset({'前端经验', '业务经验', '系统环境经验'})
+_BOOL_NAMES = frozenset({
+    'console_enabled',
+    'legacy_web_enabled',
+    'ai_processing_enabled',
+    'experience_v2_enabled',
+    'experience_pipeline_enabled',
+    'experience_backfill_enabled',
+})
+_ALL_NAMES = _BOOL_NAMES | {'experience_gate_mode'}
 
 
 class AIProcessingDisabled(RuntimeError):
@@ -23,10 +37,39 @@ class ProductPolicy:
     ai_processing_enabled: bool = True
     valid: bool = True
     source_error: str = ''
+    experience_v2_enabled: bool = False
+    experience_gate_mode: str | dict[str, str] = 'review'
+    experience_pipeline_enabled: bool = False
+    experience_backfill_enabled: bool = False
 
     def as_dict(self):
-        return {name: getattr(self, name) for name in
-                ('console_enabled', 'legacy_web_enabled', 'ai_processing_enabled', 'valid')}
+        out = {
+            name: getattr(self, name)
+            for name in (
+                'console_enabled',
+                'legacy_web_enabled',
+                'ai_processing_enabled',
+                'valid',
+                'experience_v2_enabled',
+                'experience_gate_mode',
+                'experience_pipeline_enabled',
+                'experience_backfill_enabled',
+            )
+        }
+        if isinstance(out['experience_gate_mode'], dict):
+            out['experience_gate_mode'] = dict(out['experience_gate_mode'])
+        return out
+
+
+def _valid_gate_mode(value) -> bool:
+    if isinstance(value, str):
+        return value in _GATE_MODES
+    if isinstance(value, dict) and value:
+        return (
+            set(value).issubset(_GATE_CATEGORIES)
+            and all(isinstance(v, str) and v in _GATE_MODES for v in value.values())
+        )
+    return False
 
 
 def load_policy() -> ProductPolicy:
@@ -38,16 +81,29 @@ def load_policy() -> ProductPolicy:
         if len(raw) > 4096:
             raise ValueError('policy_too_large')
         body = json.loads(raw)
-        names = {'console_enabled', 'legacy_web_enabled', 'ai_processing_enabled'}
-        if not isinstance(body, dict) or set(body) - names or any(type(v) is not bool for v in body.values()):
+        if not isinstance(body, dict) or set(body) - _ALL_NAMES:
             raise ValueError('invalid_policy')
+        for name in _BOOL_NAMES & set(body):
+            if type(body[name]) is not bool:
+                raise ValueError('invalid_policy')
+        if 'experience_gate_mode' in body:
+            if not _valid_gate_mode(body['experience_gate_mode']):
+                raise ValueError('invalid_policy')
+            body = {
+                **body,
+                'experience_gate_mode': (
+                    dict(body['experience_gate_mode'])
+                    if isinstance(body['experience_gate_mode'], dict)
+                    else body['experience_gate_mode']
+                ),
+            }
         return ProductPolicy(**body)
     except FileNotFoundError:
         if not override:
             return ProductPolicy()
     except (OSError, ValueError, UnicodeError):
         pass
-    return ProductPolicy(False, False, False, False, 'policy_unavailable')
+    return ProductPolicy(False, False, False, False, 'policy_unavailable', False, 'review', False, False)
 
 
 def require_ai_processing(*, task_history_grant=None) -> None:
