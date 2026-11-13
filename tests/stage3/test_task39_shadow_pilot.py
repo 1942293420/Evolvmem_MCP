@@ -171,6 +171,14 @@ def test_shadow_pilot_50_sessions_writes_only_shadow_tables_and_produces_report(
     assert "proposals_merged_duplicate" in report
     assert 0 < report["tokens_per_admitted_candidate"] <= 30_000
     assert len(report["samples_for_user_review"]) == 20
+    for s in report["samples_for_user_review"]:
+        assert "source_meta" in s
+        assert s["source_meta"]["adapter"] == "codex"
+        assert "project_name" in s["source_meta"]
+        assert "cwd" in s["source_meta"]
+        assert "context_excerpt" in s
+        assert isinstance(s["context_excerpt"]["turns"], list)
+        assert "gate_trace" in s
     for st in ("extract", "l2a_predict", "l2a_judge", "l2b_predict", "l2b_judge", "l3_reconcile"):
         assert report["llm_usage_by_stage"][st]["calls"] > 0
         assert report["llm_usage_by_stage"][st]["tokens"] > 0
@@ -235,3 +243,90 @@ def test_shadow_pilot_circuit_breaker_drill_and_scrubber(pg_s3_migrated) -> None
     assert scan_unauthorized_experience_notes_writes(Path(".")) == []
     assert scan_unmetered_llm_calls(Path("evolvmem/experience_v2")) == []
     assert scan_direct_sqlite_in_pipeline(Path("evolvmem/experience_v2/pipeline")) == []
+
+
+def test_shadow_pilot_intra_batch_l1_dedupes_forked_sessions(pg_s3_migrated) -> None:
+    from evolvmem.experience_v2.pipeline.pilot import run_shadow_pilot
+
+    conn, *_ = pg_s3_migrated
+    owner_id = "owner-s3-fork-dedupe"
+
+    def _forked_sess(idx: int) -> HistorySession:
+        sid = f"archive:{9500 + idx}"
+        return HistorySession(
+            summary=HistorySessionSummary(
+                session_id=sid,
+                adapter="codex",
+                source_format="codex-jsonl",
+                project="fork-proj",
+                source_ref=sid,
+                library="personal",
+                external_session_id=f"ext-fork-{idx}",
+                created_at=f"2026-11-13T12:{idx:02d}:00Z",
+                has_raw_bytes=False,
+            ),
+            records=(
+                HistoryRawRecord(event_index=1, role="user", content="Run browser crawler check"),
+                HistoryRawRecord(event_index=2, role="tool", content="exit_code=1\nTimerStalledError"),
+                HistoryRawRecord(event_index=3, role="tool", content="exit_code=0\nok"),
+            ),
+        )
+
+    class ConstEmbedder:
+        def encode_document(self, text: str) -> list[float]:
+            vec = [0.0] * 768
+            vec[0] = 1.0
+            return vec
+
+    l2_calls = 0
+
+    def flash(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        nonlocal l2_calls
+        sys_p = messages[0]["content"]
+        if sys_p == EXTRACT_SYSTEM_PROMPT:
+            return {
+                "text": json.dumps({
+                    "category": "系统环境经验",
+                    "problem": "内网采集页切到后台超过15分钟后定时器会被挂起",
+                    "solution": "将长耗时阻塞等待计时放在宿主运行器进程内而不是页面脚本中",
+                    "reusable_experience": "浏览器后台页定时不可靠时必须由宿主执行器接管计时",
+                    "kind": "pitfall",
+                    "misbelief": "误以为后台页 setTimeout 按固定周期触发",
+                    "scope": {"system": "crawler"},
+                    "skip_reason": "",
+                }, ensure_ascii=False),
+                "input_tokens": 100,
+                "output_tokens": 60,
+            }
+        l2_calls += 1
+        if sys_p == L2_JUDGE_SYSTEM_PROMPT:
+            return {"text": json.dumps({"consistent": False, "confidence": 0.92, "detail": "private crawler topology"}), "input_tokens": 60, "output_tokens": 20}
+        return {"text": "Check timeout", "input_tokens": 40, "output_tokens": 20}
+
+    def strong(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        if messages[0]["content"] == L2_JUDGE_SYSTEM_PROMPT:
+            return {"text": json.dumps({"consistent": False, "confidence": 0.95, "detail": "private crawler topology"}), "input_tokens": 60, "output_tokens": 20}
+        return {"text": "Increase retry", "input_tokens": 40, "output_tokens": 20}
+
+    def judge(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        return {"text": json.dumps({"relation": "novel", "confidence": 0.9, "reason": "brand new"}), "input_tokens": 50, "output_tokens": 20}
+
+    reader = InMemoryHistoryReader([_forked_sess(1), _forked_sess(2)])
+    report = run_shadow_pilot(
+        conn,
+        history_reader=reader,
+        owner_id=owner_id,
+        flash_model="deepseek-v4-flash",
+        strong_model="deepseek-chat",
+        judge_model="deepseek-chat",
+        flash_transport=flash,
+        strong_transport=strong,
+        judge_transport=judge,
+        limit=2,
+        sample_size=5,
+        embedder=ConstEmbedder(),
+        run_id="test-fork-dedupe",
+    )
+    assert report["proposals_admitted_new"] == 1
+    assert report["proposals_merged_duplicate"] == 1
+    assert l2_calls == 2  # only first forked session reaches L2a (2 calls), second merges at L1 (0 L2 calls)

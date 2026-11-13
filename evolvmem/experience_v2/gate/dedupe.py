@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Any
+from typing import Any, Sequence
 import uuid
 
 from evolvmem.experience_v2.writer import ExperienceWriter, Op, TicketIssuer
@@ -198,10 +198,12 @@ def assess_l1_shadow(
     reusable_experience: str,
     embedder: Any,
     threshold: float = DEFAULT_DEDUPE_THRESHOLD,
+    shadow_incumbents: Sequence[tuple[str, str, Sequence[float]]] = (),
 ) -> dict[str, Any]:
     """Read-only L1 local vector similarity check for shadow runs (0 LLM tokens)."""
     doc_text = f'{problem}\n{solution}\n{reusable_experience}'
-    vec_literal = to_unit_vec768_literal(_encode_text(embedder, doc_text))
+    unit_vec = normalize_vec768(_encode_text(embedder, doc_text))
+    vec_literal = '[' + ','.join(f'{v:.8g}' for v in unit_vec) + ']'
     match = conn.execute(
         """
         SELECT id, (1.0 - (embedding <=> %s::vector)) AS cosine_sim
@@ -218,6 +220,13 @@ def assess_l1_shadow(
     ).fetchone()
     best_id = match[0] if match else None
     best_sim = float(match[1]) if (match and match[1] is not None) else 0.0
+    for inc_id, inc_cat, inc_vec in shadow_incumbents:
+        if inc_cat != category or len(inc_vec) != len(unit_vec):
+            continue
+        sim = float(sum(a * b for a, b in zip(unit_vec, inc_vec)))
+        if sim > best_sim:
+            best_sim = sim
+            best_id = f'shadow:{inc_id}'
     if best_id is not None and best_sim >= float(threshold):
         return {
             'verdict': 'merge',
@@ -225,6 +234,7 @@ def assess_l1_shadow(
             'target_note_id': best_id,
             'similarity': best_sim,
             'embedding': vec_literal,
+            'unit_vec': unit_vec,
         }
     return {
         'verdict': 'pass',
@@ -232,4 +242,5 @@ def assess_l1_shadow(
         'target_note_id': None,
         'similarity': best_sim,
         'embedding': vec_literal,
+        'unit_vec': unit_vec,
     }

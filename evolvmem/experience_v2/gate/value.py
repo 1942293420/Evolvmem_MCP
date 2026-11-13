@@ -14,14 +14,16 @@ BLIND_INPUT_MAX_TOKENS = 300
 _FENCE_RE = re.compile(r'^\s*```(?:json)?\s*|\s*```\s*\Z', re.IGNORECASE)
 
 L2_PREDICT_SYSTEM_PROMPT = (
-    '你是资深工程师，正在参加盲测验证。下面只提供触发情境与问题描述，'
-    '请直接给出你推断的根因或标准解决办法，要求简洁准确（<=120字），不要提问。'
+    '你是资深工程师，正在参加盲测验证。下面只提供触发范围与问题现象，'
+    '请直接给出你推断的核心根因与标准解决办法，要求简洁准确（<=160字），不要提问。'
 )
 
 L2_JUDGE_SYSTEM_PROMPT = (
-    '你是客观评审员，只做对比参考答案与候选答案的一致性判定。\n'
-    '如果候选预测已经准确覆盖了参考解法的核心机制与关键动作，consistent 为 true（说明模型本来就会，属常识）；'
-    '如果候选预测遗漏关键私有环境原因或给出错误方案，consistent 为 false（说明该经验有保留价值）。\n'
+    '你是严格客观的经验价值评审员，只做对比参考答案与候选答案的一致性判定，过滤低价值常识与牵强经验。\n'
+    '判定准则：\n'
+    '1) 只看核心根因与不可替代的私有知识，忽略参考解法中顺带写的常规校验/兜底动作（如算sha256校验、设UTF-8编码、改写临时脚本执行）。\n'
+    '2) 若候选预测已命中核心机制，或该问题本质只是通用编程/排错常识、标准CLI/系统行为、或Agent自身调用工具/写内联脚本的语法参数手滑与常规UI重试（无需预知私有环境也能现场解决），必须判 consistent: true（拒绝入库）。\n'
+    '3) 只有当参考解法包含盲测未能猜出的高价值私有事实（内部业务口径/归因分摊规则、真实生产拓扑/服务状态、特定包/二进制偏移结构细节、或团队协作数据源与专用CLI的版本diff规程）时，才判 consistent: false（值得保留）。\n'
     '仅输出严格单个 JSON 对象：{"consistent": true|false, "confidence": 0.0~1.0, "detail": "<=120字判定说明"}。'
 )
 
@@ -106,7 +108,7 @@ def _run_single_tier(
             {'role': 'user', 'content': blind_prompt},
         ],
         session_id=session_id,
-        max_output_tokens=260,
+        max_output_tokens=320,
         conn=conn,
         owner_id=owner_id,
         proposal_uid=proposal_uid,
@@ -114,7 +116,10 @@ def _run_single_tier(
         budget=budget,
         transport=transport,
     )
-    judge_user = _clip_tokens(f'参考解法: {solution.strip()}\n模型盲测答案: {pred_res.text.strip()}', 450)
+    judge_user = _clip_tokens(
+        f'{blind_prompt}\n参考解法: {solution.strip()}\n模型盲测答案: {pred_res.text.strip()}',
+        750,
+    )
     judge_res = metered_llm(
         track=track,
         stage=f'{stage_prefix}_judge',

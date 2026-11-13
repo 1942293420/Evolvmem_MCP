@@ -9,6 +9,7 @@ from typing import Any, Callable, Literal, Sequence
 import uuid
 
 from evolvmem.experience_v2.llm_meter import BudgetConfig, LlmTransportError
+from evolvmem.experience_v2.pipeline.pilot_context import enrich_pilot_samples
 from evolvmem.experience_v2.pipeline.history_reader import (
     HistoryRawRecord,
     HistoryReader,
@@ -201,6 +202,8 @@ def _select_user_samples(
         samples.append({
             'sample_index': rank,
             'item_id': int(r[0]),
+            '_raw_session_id': str(r[1]),
+            '_raw_problem': str(r[6] or ''),
             'session_ref': scrub_pilot_text(r[1], extra_terms=extra_scrub_terms),
             'moment_kind': str(r[2]),
             'stage_outcome': str(r[3]),
@@ -315,6 +318,14 @@ def run_shadow_pilot(
     by_stage, calls_total, tokens_total = _collect_stage_usage(conn, track=track, after_call_id=max_call_before)
     samples = _select_user_samples(
         conn, run_id=rid, sample_size=sample_size, extra_scrub_terms=extra_scrub_terms,
+    )
+    samples = enrich_pilot_samples(
+        samples,
+        history_reader=history_reader,
+        run_id=rid,
+        gate_traces=scheduler.shadow_gate_traces,
+        scrub_fn=scrub_pilot_text,
+        extra_scrub_terms=extra_scrub_terms,
     )
     drill = simulate_circuit_breaker_drill(conn, owner_id=f'{owner_id}-drill')
 

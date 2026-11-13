@@ -23,10 +23,10 @@ REASON_CODES: dict[str, str] = {
 }
 
 L0_LIMITS = {
-    'problem': 40,
-    'solution': 90,
-    'reusable_experience': 50,
-    'misbelief': 80,
+    'problem': 120,
+    'solution': 240,
+    'reusable_experience': 120,
+    'misbelief': 160,
 }
 
 _LINE_BREAKS_RE = re.compile(r'[\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029]')

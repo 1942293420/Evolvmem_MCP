@@ -231,6 +231,8 @@ class PipelineScheduler:
         self._writer = ExperienceWriter(ticket_secret)
         self._issuer = TicketIssuer(ticket_secret, gate_id='stage3_pipeline')
         self._verifier = HistoryReaderEvidenceVerifier(history_reader)
+        self._shadow_incumbents: dict[str, list[tuple[str, str, list[float]]]] = {}
+        self.shadow_gate_traces: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     def _run_shadow_moments(
         self,
@@ -267,16 +269,19 @@ class PipelineScheduler:
             toks = ext.tokens_used
             if ext.skipped:
                 tokens_total += toks
+                ev_num = max(1, int(mom.event_range[0]) if mom.event_range else 1)
+                ev_json = json.dumps([{'library': session.summary.library or 'default', 'source': session.summary.session_id, 'event': ev_num}], ensure_ascii=False)
                 pending_items.append((
                     run_id, session.summary.session_id, mom.kind, 'skipped_extract',
-                    '', '', '', '', '', '', '[]', 'extract', 'reject', ext.skip_reason[:64], toks,
+                    '', '', '', '', '', '', ev_json, 'extract', 'reject', ext.skip_reason[:160], toks,
                 ))
                 continue
 
             proposals_cnt += 1
             p = ext.payload
             l0_verdict, l0_reason, _ = evaluate_l0_fields(p, evidence_verifier=self._verifier, require_evidence=True)
-            layer, verdict, reason, emb = 'L0', l0_verdict, (l0_reason or ''), None
+            layer, verdict, reason, emb, unit_vec = 'L0', l0_verdict, (l0_reason or ''), None, None
+            trace: dict[str, Any] = {'l1_similarity': None, 'l1_target': ''}
             if l0_verdict == 'pass' and self.embedder is not None:
                 l1 = assess_l1_shadow(
                     conn,
@@ -286,8 +291,10 @@ class PipelineScheduler:
                     solution=p['solution'],
                     reusable_experience=p['reusable_experience'],
                     embedder=self.embedder,
+                    shadow_incumbents=self._shadow_incumbents.get(run_id, ()),
                 )
-                emb = l1['embedding']
+                emb, unit_vec = l1['embedding'], l1.get('unit_vec')
+                trace.update({'l1_similarity': round(float(l1.get('similarity') or 0.0), 4), 'l1_target': str(l1.get('target_note_id') or '')})
                 if l1['verdict'] == 'merge':
                     layer, verdict, reason = 'L1', 'merge', 'duplicate'
             if layer == 'L0' and l0_verdict == 'pass':
@@ -308,6 +315,7 @@ class PipelineScheduler:
                 )
                 toks += l2.tokens_used
                 layer, verdict, reason = l2.layer, l2.verdict, (l2.reason_code or '')
+                trace.update({'l2_flash_prediction': l2.flash_prediction, 'l2_strong_prediction': l2.strong_prediction, 'l2_detail': l2.detail})
                 if l2.verdict == 'pass':
                     l3 = assess_l3_shadow(
                         conn,
@@ -331,6 +339,10 @@ class PipelineScheduler:
                     rel = l3.get('relation')
                     verdict = 'merge' if rel == 'duplicate' else 'pass'
                     reason = str(rel or 'novel')
+                    trace.update({'l3_reason': str(l3.get('reason') or ''), 'l3_target_id': str(l3.get('target_note_id') or '')})
+                    if verdict == 'pass' and unit_vec is not None:
+                        self._shadow_incumbents.setdefault(run_id, []).append((session.summary.session_id, p['category'], list(unit_vec)))
+            self.shadow_gate_traces[(run_id, session.summary.session_id, p['problem'])] = trace
 
             tokens_total += toks
             pending_items.append((
