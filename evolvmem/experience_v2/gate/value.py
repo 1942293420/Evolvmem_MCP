@@ -19,12 +19,17 @@ L2_PREDICT_SYSTEM_PROMPT = (
 )
 
 L2_JUDGE_SYSTEM_PROMPT = (
-    '你是严格客观的经验价值评审员，只做对比参考答案与候选答案的一致性判定，过滤低价值常识与牵强经验。\n'
-    '判定准则：\n'
-    '1) 只看核心根因与不可替代的私有知识，忽略参考解法中顺带写的常规校验/兜底动作（如算sha256校验、设UTF-8编码、改写临时脚本执行）。\n'
-    '2) 若候选预测已命中核心机制，或该问题本质只是通用编程/排错常识、标准CLI/系统行为、或Agent自身调用工具/写内联脚本的语法参数手滑与常规UI重试（无需预知私有环境也能现场解决），必须判 consistent: true（拒绝入库）。\n'
-    '3) 只有当参考解法包含盲测未能猜出的高价值私有事实（内部业务口径/归因分摊规则、真实生产拓扑/服务状态、特定包/二进制偏移结构细节、或团队协作数据源与专用CLI的版本diff规程）时，才判 consistent: false（值得保留）。\n'
-    '仅输出严格单个 JSON 对象：{"consistent": true|false, "confidence": 0.0~1.0, "detail": "<=120字判定说明"}。'
+    '你是客观盲测评审员，只做对比参考答案与候选答案（模型盲测答案）的一致性判定。\n'
+    'consistent 表示「盲测是否已命中核心解法，或该条仅属无需记忆的通用常识/工具手滑」：\n'
+    '- consistent 为 true：1) 盲测已准确说出参考解法的核心机制（忽略算sha256校验、设UTF-8编码等顺带兜底细节）；'
+    '或 2) 问题仅属通用编程/系统常识（命令行超长写文件、JSON解析前判类型）或Agent调工具语法参数手滑（apply_patch冲突、内联引号截断、常规UI异步加载重试）。\n'
+    '- consistent 为 false：参考解法含盲测未猜出、猜错或相反的具体事实：'
+    '1) 私有业务核算口径（如特定平台SKU禁挂人、只能按占比分摊，盲测却猜建映射表）；'
+    '2) 内部系统真实生产状态与切换边界（如正式systemd服务仍连旧库及三阶段独立边界，盲测仅泛谈改配置重启）；'
+    '3) 精确二进制偏移（如前16字节offset 12处uint32长度，盲测未说出或说错字节数）；'
+    '4) 协作数据源与内部CLI规程（如多维表动态增长需用lark-cli取revision+records_count做增量diff，盲测仅泛谈主键清洗或加锁）。\n'
+    '注意：只要盲测未命中上述具体事实，consistent 必须填布尔值 false！\n'
+    '仅输出严格单个 JSON 对象：{"consistent": true或false, "confidence": 0.0~1.0, "detail": "<=120字判定说明"}。'
 )
 
 
@@ -75,7 +80,13 @@ def _parse_judge_json(raw_text: str) -> tuple[bool, float, str]:
                     obj = parsed
             except ValueError:
                 pass
-    consistent = bool(obj.get('consistent', False))
+    raw_c = obj.get('consistent', False)
+    if isinstance(raw_c, bool):
+        consistent = raw_c
+    elif isinstance(raw_c, str):
+        consistent = raw_c.strip().lower() in ('true', '1', 'yes')
+    else:
+        consistent = bool(raw_c)
     try:
         conf = max(0.0, min(1.0, float(obj.get('confidence', 0.5))))
     except (TypeError, ValueError):
