@@ -400,7 +400,7 @@ class LanTools:
                        and arguments.get('detail') == 'health')
         continuity_read = isinstance(name,str) and name in CONTINUITY_READS
         capability_read = name == 'capability_search' and self.runtime._background_health.active
-        experience_read = name == 'experience_recall' and self.runtime._background_health.active
+        experience_read = name == 'experience_recall' and self.runtime._background_health.active and not load_policy().experience_v2_enabled
         # These fixed reads use owned connections and never enter mutable
         # request identity or resident SQLite transactions.
         with (nullcontext() if revision_only or health_only or continuity_read or capability_read or experience_read else timed_lock(self.lock)), request_health_scope():
@@ -464,7 +464,7 @@ class LanTools:
         revision_only = name == 'memory_status' and args.get('detail') == 'revision'
         health_only = name == 'memory_status' and args.get('detail') == 'health'
         background_capability = independent_capability or (name == 'capability_search' and self.runtime._background_health.active)
-        background_experience = independent_experience or (name == 'experience_recall' and self.runtime._background_health.active)
+        background_experience = independent_experience or (name == 'experience_recall' and self.runtime._background_health.active and not load_policy().experience_v2_enabled)
         specs = (self._catalog_specs[(user, owner)] if revision_only or health_only or background_capability or background_experience or name in CONTINUITY_READS else
                  self._specs(user, owner=owner, capture_only=name in CAPTURE_TOOLS,
                              continuity_only=name in CONTINUITY_TOOLS))
@@ -627,6 +627,8 @@ class LanTools:
             return self.sharing.status()
         if name == 'experience_recall':
             result = server.handle_tool_call(name, args) if space != 'public' else {'cases': [], 'methods': []}
+            if space != 'public' and isinstance(result, dict) and result.get('error') == 'pg_experience_unavailable':
+                raise LanError('pg_experience_unavailable')
             result = self._qualify(self._sanitize(result), 'personal', name)
             result['shared_knowledge'] = self.sharing.search({k: v for k, v in args.items() if k in ('query', 'project')}) if space != 'personal' else []
             return result

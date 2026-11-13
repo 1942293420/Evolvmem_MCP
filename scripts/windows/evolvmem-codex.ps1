@@ -662,13 +662,18 @@ function Invoke-PromptSubmit($Config, $Event) {
         }
         else {
             try {
-                $experienceArgs = [ordered]@{
-                    query = $prompt
-                    project = Resolve-Project $Config ([string](Get-Value $Event 'cwd' ''))
-                    mode = 'hook'
+                $projName = Resolve-Project $Config ([string](Get-Value $Event 'cwd' ''))
+                $expV2Enabled = ([bool](Get-Value $Config 'experience_v2_enabled' $false)) -or ($env:EVOLVMEM_EXPERIENCE_V2_ENABLED -eq '1')
+                $syncHelper = Join-Path $PSScriptRoot 'evolvmem-experience-sync.ps1'
+                if ($expV2Enabled -and (Test-Path -LiteralPath $syncHelper)) {
+                    . $syncHelper
+                    $experienceContext = Invoke-ExperienceIncrementalSync $Config $sessionId $prompt $projName
                 }
-                $experience = Invoke-McpTool $Config 'experience_recall' $experienceArgs
-                $experienceContext = Format-ExperienceContext $experience
+                else {
+                    $experienceArgs = [ordered]@{ query = $prompt; project = $projName; mode = 'hook' }
+                    $experience = Invoke-McpTool $Config 'experience_recall' $experienceArgs
+                    $experienceContext = Format-ExperienceContext $experience
+                }
                 if ($experienceContext) { $parts.Add($experienceContext) }
             }
             catch {
