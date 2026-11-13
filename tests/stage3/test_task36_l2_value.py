@@ -216,3 +216,19 @@ def test_l2_judge_receives_problem_and_unclipped_long_solution(pg_s3_migrated) -
         assert "参考解法:" in ju
         assert "模型盲测答案:" in ju
         assert "从而避免盲写覆盖协作数据" in ju
+
+
+def test_parse_judge_json_handles_string_booleans() -> None:
+    from evolvmem.experience_v2.gate.value import _parse_judge_json
+
+    assert _parse_judge_json('{"consistent": "false", "confidence": 0.91, "detail": "未命中私有规程"}') == (
+        False,
+        0.91,
+        "未命中私有规程",
+    )
+    assert _parse_judge_json('{"consistent": "true", "confidence": "0.85", "detail": "已命中"}') == (
+        True,
+        0.85,
+        "已命中",
+    )
+    assert _parse_judge_json('{"consistent": false, "confidence": 0.9, "detail": "ok"}')[0] is False
