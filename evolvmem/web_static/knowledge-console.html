@@ -7,6 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230284c7'/%3E%3Ctext x='32' y='45' fill='%23ffffff' font-size='38' font-family='Consolas,monospace' font-weight='bold' text-anchor='middle'%3EE%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="/history-library.css?v=matrix2">
   <link rel="stylesheet" href="/knowledge-console.css?v=matrix2">
+  <link rel="stylesheet" href="/review-inbox.css?v=matrix2">
 </head>
 <body data-design="console">
   <a class="skip" id="skip-to-content" href="#workspace">跳到内容</a>
@@ -41,6 +42,7 @@
           经验库
           <span class="nav-count" id="nav-count-exp" hidden></span>
         </a>
+        <a href="#review-inbox" data-nav="review-inbox" class="nav-tab">审阅箱 <span class="nav-count" id="nav-count-review" hidden></span></a>
         <a href="#history" data-nav="history" class="nav-tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
           历史会话
@@ -83,6 +85,7 @@
     </section>
     <div id="console-notice" role="status" class="notice" hidden></div>
     <section id="history-view" data-slot="history-library" hidden></section>
+    <section id="review-inbox-view" data-slot="review-inbox" hidden></section>
     <section id="console-view"><p class="empty">正在读取你的知识库与神经记忆矩阵…</p></section>
   </main>
 
@@ -151,5 +154,6 @@
   <script src="/history-library.js?v=matrix2"></script>
   <script src="/principles.js?v=matrix2"></script>
   <script src="/knowledge-console.js?v=matrix2"></script>
+  <script src="/review-inbox.js?v=matrix2"></script>
 </body>
 </html>
