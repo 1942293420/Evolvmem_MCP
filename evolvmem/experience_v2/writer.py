@@ -420,20 +420,26 @@ class ExperienceWriter:
                     )
                 return {**response, 'http_status': status_code}
 
-            conn.execute(
+            ev_row = conn.execute(
                 """
                 INSERT INTO experience_events(
                     event_id, owner_id, actor_id, request_id, action, note_id,
                     before_json, after_json, proposal_uid, agent_client, model, rolled_back_by_seq, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, NULL, %s)
+                RETURNING seq
                 """,
                 (
                     uuid.uuid4().hex, op.owner_id, op.actor_id, op.request_id, op.action, target_id,
                     _json_canon(before_note) if before_note is not None else None,
                     _json_canon(after_note), proposal_uid, op.agent_client, op.model,
-                    op.target_event_seq, op.updated_at or now,
+                    op.updated_at or now,
                 ),
-            )
+            ).fetchone()
+            if op.action == 'rollback' and op.target_event_seq is not None and ev_row:
+                conn.execute(
+                    'UPDATE experience_events SET rolled_back_by_seq = %s WHERE owner_id = %s AND seq = %s',
+                    (int(ev_row[0]), op.owner_id, int(op.target_event_seq)),
+                )
             conn.execute(
                 """
                 INSERT INTO experience_requests(
