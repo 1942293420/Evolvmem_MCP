@@ -49,7 +49,9 @@ def _insert_proposal(conn, svc: ProposalService, owner: str, body: dict) -> str:
 
 
 def test_l0_rules_length_secrets_and_history_evidence_verifier(pg_exp_schema, tmp_path: Path):
-    from evolvmem.experience_v2.gate.rules import SqliteHistoryEvidenceVerifier, run_l0_gate
+    from evolvmem.experience_v2.gate.rules import L0_LIMITS, SqliteHistoryEvidenceVerifier, run_l0_gate
+
+    assert L0_LIMITS == {'problem': 120, 'solution': 240, 'reusable_experience': 120, 'misbelief': 160}
 
     conn, _schema, _dsn = pg_exp_schema
     apply_experience_migrations(conn)
@@ -96,7 +98,7 @@ def test_l0_rules_length_secrets_and_history_evidence_verifier(pg_exp_schema, tm
     assert d_sec['reason_code'] == 'wrong'
     assert 'secret1234567890' not in d_sec['detail']
 
-    # 3. Over-length reusable_experience (> 50 chars) -> reject
+    # 3. Over-length reusable_experience (> L0_LIMITS['reusable_experience']) -> reject
     uid_len = _insert_proposal(
         conn,
         svc,
@@ -106,12 +108,42 @@ def test_l0_rules_length_secrets_and_history_evidence_verifier(pg_exp_schema, tm
             'kind': 'pitfall',
             'problem': '短问题',
             'solution': '短解决方案',
-            'reusable_experience': '长' * 55,
+            'reusable_experience': '长' * (L0_LIMITS['reusable_experience'] + 5),
             'evidence': [{'library': 'personal', 'source': 'context:77'}],
         },
     )
     d_len = run_l0_gate(conn, uid_len, evidence_verifier=verifier)
     assert d_len['verdict'] == 'reject'
+
+    # 3b. Complete untruncated sentences within relaxed L0_LIMITS -> pass
+    long_prob = '在TK平台进行全量订单利润归因核算时如果尝试把单个SKU编码直接关联到具体负责员工姓名会导致口径冲突'  # 49 chars
+    long_prob += '并且无法区分多运营协作分摊占比与跨期退换货带来的净利波动边界情况'  # +34 = 83 chars
+    long_sol = '核算TK业务利润归因时SKU表与销售流水本身不包含唯一负责人映射关系，不能按SKU一对一硬挂到某位员工名下；'  # 53 chars
+    long_sol += '若需要统计人员维度的贡献与毛利表现，必须先从订单与结算维度完成店铺归集，再严格按照预先配置的员工期间分摊比例表进行拆解计算，并在报表中单独标记未分配公摊部分以便对账校验。'  # +84 = 137 -> total ~190 chars
+    long_reus = 'TK利润核算中禁止将SKU硬映射给个人，人员维度利润统计一律基于店铺结算净利按期间分摊占比拆解计算。'  # 49 -> let's make it ~85 chars
+    long_reus += '所有跨部门协作订单的成本与推广费均遵循同一分摊口径以防重复计算。'
+    long_mis = '误以为每条SKU销售记录都能在后台商品主数据中找到唯一对应的运营负责人字段从而直接做SQL关联统计。'  # 50 -> ~100+ chars
+    long_mis += '忽视了多运营合推同一爆款商品及团队轮岗期间的历史归属变更实际情况导致对账差异。'
+    assert 70 <= len(long_prob) <= 120
+    assert 120 <= len(long_sol) <= 240
+    assert 70 <= len(long_reus) <= 120
+    assert 82 <= len(long_mis) <= 160
+    uid_relaxed = _insert_proposal(
+        conn,
+        svc,
+        'u1',
+        {
+            'category': '业务经验',
+            'kind': 'decision',
+            'problem': long_prob,
+            'solution': long_sol,
+            'reusable_experience': long_reus,
+            'misbelief': long_mis,
+            'evidence': [{'library': 'personal', 'source': 'archive:1'}],
+        },
+    )
+    d_relaxed = run_l0_gate(conn, uid_relaxed, evidence_verifier=verifier)
+    assert d_relaxed['verdict'] == 'pass', d_relaxed
 
     # 4. Valid evidence pointers (context:77 / event:evt-abc / session:ext-sess-001) pass L0
     uid_ok = _insert_proposal(

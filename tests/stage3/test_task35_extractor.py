@@ -66,6 +66,9 @@ def test_extract_prompt_limits_valid_json_and_l0_pass(pg_s3_migrated) -> None:
     assert "值得记" in EXTRACT_SYSTEM_PROMPT
     assert "不值得记" in EXTRACT_SYSTEM_PROMPT
     assert "skip_reason" in EXTRACT_SYSTEM_PROMPT
+    assert "tool_fumble" in EXTRACT_SYSTEM_PROMPT
+    assert "apply_patch" in EXTRACT_SYSTEM_PROMPT
+    assert "勿剧透" in EXTRACT_SYSTEM_PROMPT
 
     reader, moment = _sample_reader_and_moment()
     seen_msgs: list[list[dict]] = []
@@ -148,3 +151,54 @@ def test_extract_skip_reason_zero_moments_and_budget_deferral(pg_s3_migrated) ->
     assert scan_unmetered_llm_calls(Path("evolvmem/experience_v2")) == []
     assert scan_direct_sqlite_in_pipeline(Path("evolvmem/experience_v2/pipeline")) == []
     assert scan_unauthorized_experience_notes_writes(Path(".")) == []
+
+
+def test_extract_preserves_relaxed_l0_sentences_without_clipping(pg_s3_migrated) -> None:
+    from evolvmem.experience_v2.pipeline.extract import HistoryReaderEvidenceVerifier, extract_moment
+
+    conn, *_ = pg_s3_migrated
+    reader, moment = _sample_reader_and_moment()
+
+    prob = "在EvolvMem迁移验证过程中执行PG隔离自动化测试全部通过但生产后台服务依然读取旧的SQLite数据文件导致新增经验未生效"
+    sol = "迁移脚本仅在独立测试Schema与临时容器上跑通了写入回放测试，但线上Web与LAN MCP服务的systemd环境变量及配置文件仍指向本地SQLite路径；必须核对真实工作目录环境变量、切换连接配置并重启守护进程验证只读库切换状态。"
+    reus = "数据迁移任务绝不能仅凭隔离测试容器通过就判定上线完成，必须核实生产常驻服务的实际连接指向与配置热加载并执行端到端探针校验。"
+    mis = "误以为本地隔离集成测试套件全绿且脚本退出码为0即代表线上生产服务已自动切流到PostgreSQL数据库，忽略了后台常驻守护进程仍加载旧环境变量文件里的SQLite路径配置。"
+    assert 55 <= len(prob) <= 120
+    assert 105 <= len(sol) <= 240
+    assert 55 <= len(reus) <= 120
+    assert 85 <= len(mis) <= 160
+
+    def rich_transport(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        payload = {
+            "category": "系统环境经验",
+            "problem": prob,
+            "solution": sol,
+            "reusable_experience": reus,
+            "kind": "pitfall",
+            "misbelief": mis,
+            "scope": {"system": "evolvmem", "os": "Linux"},
+            "skip_reason": "",
+        }
+        return {
+            "text": json.dumps(payload, ensure_ascii=False),
+            "input_tokens": 200,
+            "output_tokens": 180,
+        }
+
+    res = extract_moment(
+        conn,
+        moment,
+        model="deepseek-v4-flash",
+        transport=rich_transport,
+        owner_id="owner-35-rich",
+        library="dev-lib",
+        valid_record_indices=[1, 2, 3],
+    )
+    assert res.skipped is False
+    assert res.payload["problem"] == prob
+    assert res.payload["solution"] == sol
+    assert res.payload["reusable_experience"] == reus
+    assert res.payload["misbelief"] == mis
+    verifier = HistoryReaderEvidenceVerifier(reader)
+    verdict, reason, detail = evaluate_l0_fields(res.payload, evidence_verifier=verifier, require_evidence=True)
+    assert verdict == "pass", f"Expected L0 pass, got {reason}: {detail}"

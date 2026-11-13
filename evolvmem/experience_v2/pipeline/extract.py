@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any, Callable, Literal, Sequence
 
+from evolvmem.experience_v2.gate.rules import L0_LIMITS
 from evolvmem.experience_v2.llm_meter import BudgetConfig, estimate_tokens, metered_llm
 from evolvmem.experience_v2.pipeline.history_reader import HistoryReader
 from evolvmem.experience_v2.pipeline.moments import KeyMoment
@@ -18,17 +19,28 @@ _FENCE_RE = re.compile(r'^\s*```(?:json)?\s*|\s*```\s*\Z', re.IGNORECASE)
 _WS_RE = re.compile(r'\s+')
 
 EXTRACT_SYSTEM_PROMPT = (
-    '你是经验提炼器，只从单个关键时刻片段提炼可复用工程教训，禁止输出任务流水账。\n'
-    '【值得记】：私有环境知识（内部系统/平台行为、拓扑、边界）、走过的死路（尝试失败并放弃的方案及原因）、'
-    '用户的品味与偏好、决策理由（为什么选A不选B）、跨会话反复出现的问题与误区。\n'
-    '【不值得记】：通用编程常识（common_knowledge）、单次会话任务日志（task_log，严禁用「用户要求」「用户询问」「已完成」开头）、'
-    '已修复并提交到 git 的一次性局部行号 bug（one_off_bug）。\n'
-    '不值得记时必须输出 skip_reason 说明原因并将前面字段留空，允许并鼓励输出 skip_reason。\n'
-    '仅输出严格单个 JSON 对象（UTF-8）：'
-    '{"category":"前端经验|业务经验|系统环境经验","problem":"<=40字触发情境与现象",'
-    '"solution":"<=90字真相与做法","reusable_experience":"<=50字可迁移教训",'
-    '"kind":"env_fact|pitfall|procedure|preference|decision","misbelief":"<=80字当时误以为何，无则空串",'
-    '"scope":{"system":"...","os":"..."},"skip_reason":"不值得记时填原因，否则空串"}。'
+    '你是高标准经验提炼器，只提炼真正值得跨会话记忆的知识，严禁流水账或牵强拔高。\n'
+    '【值得记】：1) 私有业务口径与核算规则（归因/分摊/字段语义）；'
+    '2) 真实生产拓扑/切换状态与认知死路（如隔离测试过但生产仍连旧库）；'
+    '3) 特定客户端包/二进制结构偏移与实测规程；'
+    '4) 协作数据源（如多维表、内部CLI）动态机制与增量diff步骤；'
+    '5) 用户明确纠偏或长期偏好。\n'
+    '【不值得记（填 skip_reason 且经验字段留空）】：\n'
+    '- tool_fumble：Agent调工具或写临时脚本的手滑/语法参数失误（apply_patch行未对齐或混用Delete+Add、'
+    '内联引号/String.raw未闭合、命令行超长、参数超限报错被JSON.parse、复合脚本路径不一致、'
+    'GUI点偏坐标未刷新后改按快捷键），严禁将单次排错包装成格言；\n'
+    '- common_knowledge：通用编程/排错常识；\n'
+    '- task_log：任务日志（禁「用户要求/询问/已完成」开头）；\n'
+    '- one_off_bug：已修局部行号笔误。\n'
+    '仅输出单个UTF-8 JSON（完整成句勿截断）：'
+    '{"category":"前端经验|业务经验|系统环境经验",'
+    '"problem":"<=100字触发情境与现象(勿剧透根因解法)",'
+    '"solution":"<=200字真实根因与可操作解法",'
+    '"reusable_experience":"<=100字带适用前提的规则",'
+    '"kind":"env_fact|pitfall|procedure|preference|decision",'
+    '"misbelief":"<=140字当时误以为何，无则空串",'
+    '"scope":{"system":"...","os":"..."},'
+    '"skip_reason":"不值得记填类型与原因，否则空串"}。'
 )
 
 
@@ -134,7 +146,7 @@ def extract_moment(
     valid_record_indices: Sequence[int] = (),
     is_shadow: bool = False,
     budget: BudgetConfig | None = None,
-    max_output_tokens: int = 600,
+    max_output_tokens: int = 800,
 ) -> ExtractionResult:
     """Extract at most one structured experience (§5.3) from a bounded KeyMoment snippet."""
     if estimate_tokens(EXTRACT_SYSTEM_PROMPT) > STATIC_PROMPT_MAX_TOKENS:
@@ -172,10 +184,10 @@ def extract_moment(
             call_id=llm_res.call_id,
         )
 
-    skip_reason = _clean_line(obj.get('skip_reason'), 120)
-    problem = _clean_line(obj.get('problem'), 40)
-    solution = _clean_line(obj.get('solution'), 90)
-    reusable = _clean_line(obj.get('reusable_experience'), 50)
+    skip_reason = _clean_line(obj.get('skip_reason'), 160)
+    problem = _clean_line(obj.get('problem'), L0_LIMITS['problem'])
+    solution = _clean_line(obj.get('solution'), L0_LIMITS['solution'])
+    reusable = _clean_line(obj.get('reusable_experience'), L0_LIMITS['reusable_experience'])
     if skip_reason or not (problem and solution and reusable):
         return ExtractionResult(
             moment_id=moment.moment_id,
@@ -192,7 +204,7 @@ def extract_moment(
     kind = str(obj.get('kind') or '').strip()
     if kind not in VALID_EXTRACT_KINDS:
         kind = 'pitfall'
-    misbelief = _clean_line(obj.get('misbelief'), 80)
+    misbelief = _clean_line(obj.get('misbelief'), L0_LIMITS['misbelief'])
     scope = obj.get('scope') if isinstance(obj.get('scope'), dict) else {}
     evidence = _resolve_verified_evidence(moment, library=library, valid_record_indices=valid_record_indices)
 

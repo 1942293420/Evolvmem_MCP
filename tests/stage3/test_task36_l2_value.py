@@ -55,6 +55,9 @@ def test_l2a_flash_solves_common_knowledge_skips_strong_model(pg_s3_migrated) ->
     conn, *_ = pg_s3_migrated
     assert estimate_tokens(L2_PREDICT_SYSTEM_PROMPT) <= 600
     assert estimate_tokens(L2_JUDGE_SYSTEM_PROMPT) <= 600
+    assert "对比参考答案" in L2_JUDGE_SYSTEM_PROMPT
+    assert "手滑" in L2_JUDGE_SYSTEM_PROMPT
+    assert "sha256" in L2_JUDGE_SYSTEM_PROMPT
 
     uid = _insert_proposal(
         conn,
@@ -163,3 +166,53 @@ def test_l2b_cascade_rejects_strong_known_and_passes_private_knowledge(pg_s3_mig
     assert scan_unmetered_llm_calls(Path("evolvmem/experience_v2")) == []
     assert scan_direct_sqlite_in_pipeline(Path("evolvmem/experience_v2/pipeline")) == []
     assert scan_unauthorized_experience_notes_writes(Path(".")) == []
+
+
+def test_l2_judge_receives_problem_and_unclipped_long_solution(pg_s3_migrated) -> None:
+    from evolvmem.experience_v2.gate.value import run_l2_value_gate
+
+    conn, *_ = pg_s3_migrated
+    long_prob = "飞书多维表跨会话自动同步任务在他人同步修改记录期间如何防止覆盖冲突并实现基于修订版本的精确增量拉取校验"
+    long_sol = (
+        "由于多维表在长会话执行期间会被其他协作人员实时增删改记录，每轮写回或汇总前绝不能复用开局缓存的全量快照；"
+        "必须先通过团队封装的 lark-cli 读取当前表的最新 revision 版本号及 records_count 统计，"
+        "若 revision 发生变化则按主键与字段级增量 diff 重新对齐本地状态后再提交变更，从而避免盲写覆盖协作数据。"
+    )
+    assert len(long_sol) > 150
+    uid = _insert_proposal(
+        conn,
+        "req-l2-judge-ctx",
+        long_prob,
+        long_sol,
+        "多维表协同更新前先用 lark-cli 检查 revision 变化并执行字段级增量 diff",
+        {"system": "lark-bitable"},
+    )
+    judge_users: list[str] = []
+
+    def flash_tr(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        if "对比参考答案" in messages[0]["content"]:
+            judge_users.append(messages[1]["content"])
+            return {"text": json.dumps({"consistent": False, "confidence": 0.9, "detail": "missed lark-cli revision diff"}), "input_tokens": 90, "output_tokens": 25}
+        assert estimate_tokens(messages[1]["content"]) <= 300
+        assert long_sol not in messages[1]["content"]
+        return {"text": "加锁重试即可", "input_tokens": 60, "output_tokens": 20}
+
+    def strong_tr(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        if "对比参考答案" in messages[0]["content"]:
+            judge_users.append(messages[1]["content"])
+            return {"text": json.dumps({"consistent": False, "confidence": 0.95, "detail": "private lark-cli revision workflow"}), "input_tokens": 95, "output_tokens": 25}
+        assert estimate_tokens(messages[1]["content"]) <= 300
+        assert "lark-cli" not in messages[1]["content"]
+        return {"text": "使用通用乐观锁版本号", "input_tokens": 65, "output_tokens": 20}
+
+    out = run_l2_value_gate(
+        conn, uid, flash_model="flash-m", strong_model="strong-m",
+        flash_transport=flash_tr, strong_transport=strong_tr,
+    )
+    assert out["verdict"] == "pass"
+    assert len(judge_users) == 2
+    for ju in judge_users:
+        assert "问题现象:" in ju
+        assert "参考解法:" in ju
+        assert "模型盲测答案:" in ju
+        assert "从而避免盲写覆盖协作数据" in ju
