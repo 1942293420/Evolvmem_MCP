@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
 from evolvmem.experience_v2.backfill.queue import BackfillQueue
-from evolvmem.experience_v2.llm_meter import BudgetConfig
+from evolvmem.experience_v2.llm_meter import BudgetConfig, BudgetDeferred
 from evolvmem.experience_v2.pipeline.history_reader import HistoryReader
 from evolvmem.experience_v2.pipeline.scheduler import PipelineScheduler
 from evolvmem.product_policy import ProductPolicy
@@ -113,15 +113,20 @@ class BackfillRunner:
         completed_cnt = 0
 
         for job in jobs:
-            res = self.scheduler.process_session_if_ready(
-                conn,
-                job['source_ref'],
-                is_closed=True,
-                last_message_at=ts,
-                now=ts,
-                shadow_mode=shadow_mode,
-                shadow_run_id=shadow_run_id,
-            )
+            try:
+                res = self.scheduler.process_session_if_ready(
+                    conn,
+                    job['source_ref'],
+                    is_closed=True,
+                    last_message_at=ts,
+                    now=ts,
+                    shadow_mode=shadow_mode,
+                    shadow_run_id=shadow_run_id,
+                )
+            except BudgetDeferred as exc:
+                res = {'status': 'deferred', 'reason': str(exc) or 'budget_deferred'}
+            except Exception as exc:
+                res = {'status': 'failed', 'reason': type(exc).__name__}
             st = str(res.get('status') or '')
             if st == 'deferred':
                 deferred += 1
@@ -146,7 +151,7 @@ class BackfillRunner:
             elif st in ('not_found', 'disabled'):
                 self.queue.mark_job_result(conn, job_id=job['job_id'], status='failed', error_code=st)
             else:
-                self.queue.mark_job_result(conn, job_id=job['job_id'], status='failed', error_code=st or 'unknown')
+                self.queue.mark_job_result(conn, job_id=job['job_id'], status='failed', error_code=str(res.get('reason') or st or 'unknown'))
 
             row_summary = {'job': job, 'result': res}
             results.append(row_summary)

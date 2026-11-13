@@ -110,3 +110,104 @@ def test_run_backfill_pilot_batch_100_sessions_isolated_and_scrubbed(pg_s4_migra
     assert 'sk-testsecret' not in blob
     assert '/home/bob' not in blob
     assert 'Users\\bob' not in blob
+
+
+def test_parse_json_lines_skips_truncated_jsonl_line():
+    from evolvmem.experience_v2.pipeline.events import parse_session_events
+
+    raw = (
+        json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': 'user', 'content': [{'text': 'hello'}]}}).encode('utf-8')
+        + b'\n{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"unterminated'
+    )
+    sess = HistorySession(
+        summary=HistorySessionSummary(
+            session_id='corrupt-1',
+            adapter='codex',
+            source_format='codex-jsonl',
+            project='alpha',
+            source_ref='corrupt-1',
+            library='dev',
+            external_session_id='corrupt-1',
+            created_at='2026-10-10T01:00:00Z',
+            has_raw_bytes=True,
+        ),
+        records=(),
+        raw_bytes=raw,
+    )
+    parsed = parse_session_events(sess)
+    assert len(parsed.events) == 1
+    assert parsed.events[0]['role'] == 'user'
+
+
+def test_backfill_runner_isolates_corrupt_session_exception(pg_s4_migrated):
+    from evolvmem.experience_v2.backfill.runner import BackfillRunner
+
+    conn, _schema, _dsn = pg_s4_migrated
+    s_good = HistorySession(
+        summary=HistorySessionSummary(
+            session_id='good-1',
+            adapter='codex',
+            source_format='codex-jsonl',
+            project='alpha',
+            source_ref='good-1',
+            library='dev',
+            external_session_id='good-1',
+            created_at='2026-10-10T02:00:00Z',
+        ),
+        records=(HistoryRawRecord(event_index=1, role='user', content='status check'),),
+    )
+    s_bad = HistorySession(
+        summary=HistorySessionSummary(
+            session_id='bad-1',
+            adapter='codex',
+            source_format='codex-jsonl',
+            project='alpha',
+            source_ref='bad-1',
+            library='dev',
+            external_session_id='bad-1',
+            created_at='2026-10-10T03:00:00Z',
+        ),
+        records=(HistoryRawRecord(event_index=1, role='user', content='broken'),),
+    )
+    reader = InMemoryHistoryReader([s_good, s_bad])
+    runner = BackfillRunner(
+        history_reader=reader,
+        policy=ProductPolicy(experience_backfill_enabled=True),
+        owner_id='owner-b5-err',
+        flash_model='f',
+        strong_model='s',
+        judge_model='j',
+        flash_transport=lambda m, ms, mt: {'text': 'ok', 'input_tokens': 1, 'output_tokens': 1},
+    )
+    runner.queue.enqueue_sessions(
+        conn,
+        scope_kind='month',
+        scope_value='2026-10',
+        sessions=[s_bad.summary, s_good.summary],
+        is_shadow=True,
+    )
+
+    orig_process = runner.scheduler.process_session_if_ready
+
+    def flaky(c, sref, **kwargs):
+        if sref == 'bad-1':
+            raise ValueError('simulated malformed session')
+        return orig_process(c, sref, **kwargs)
+
+    runner.scheduler.process_session_if_ready = flaky  # type: ignore[method-assign]
+    out = runner.run_queued_batch(
+        conn,
+        scope_kind='month',
+        scope_value='2026-10',
+        max_jobs=10,
+        now=datetime(2026, 10, 11, 2, 0, tzinfo=timezone.utc),
+        shadow_mode=True,
+        shadow_run_id='err-isolation-1',
+        enforce_night_window=False,
+    )
+    assert out['processed'] == 2
+    assert out['completed'] == 1
+    statuses = dict(
+        conn.execute("SELECT source_ref, status FROM backfill_jobs WHERE scope_value='2026-10'").fetchall()
+    )
+    assert statuses == {'bad-1': 'failed', 'good-1': 'skipped_zero_moments'}
