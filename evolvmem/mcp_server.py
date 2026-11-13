@@ -340,6 +340,9 @@ class MemoryMCPServer:
                 return manual_experience_mcp.call(tool_name, args, source)
             except manual_experience_mcp.ManualMcpError as exc:
                 return {'error': str(exc)}
+        from evolvmem.experience_v2 import mcp_tools as exp_v2_mcp
+        if tool_name in exp_v2_mcp.EXPERIENCE_V2_MCP_SPECS:
+            return self._call_experience_v2(tool_name, args)
         handler = self._tool_handlers().get(tool_name)
         if handler is None:
             return {"error": f"Unknown tool: {tool_name}"}
@@ -348,6 +351,20 @@ class MemoryMCPServer:
             if gate_error is not None:
                 return {"error": gate_error}
         return handler(args)
+
+    def _call_experience_v2(self, tool_name: str, args: dict) -> dict:
+        from evolvmem.experience_v2.control.agent_identity import get_active_attribution, resolve_mcp_client_info
+        from evolvmem.experience_v2 import mcp_tools as exp_v2_mcp
+        try:
+            source = self._manual_experience_source()
+            attr = get_active_attribution() or resolve_mcp_client_info(
+                None, actor=source['user_id'], device_id=self._device_id, default_client=self.adapter or 'unknown',
+            )
+            return exp_v2_mcp.call_experience_v2_tool(
+                tool_name, args, owner_id=source['user_id'], actor_id=source['user_id'], attribution=attr,
+            )
+        except manual_experience_mcp.ManualMcpError as exc:
+            return {'error': str(exc)}
 
     def _manual_experience_source(self):
         policy = load_policy()
@@ -2025,6 +2042,9 @@ class MemoryMCPServer:
                 pass
             else:
                 tools.extend(deepcopy(list(manual_experience_mcp.MANUAL_EXPERIENCE_SPECS.values())))
+                if load_policy().experience_v2_enabled:
+                    from evolvmem.experience_v2.mcp_tools import EXPERIENCE_V2_MCP_SPECS
+                    tools.extend(deepcopy(list(EXPERIENCE_V2_MCP_SPECS.values())))
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -2048,7 +2068,11 @@ class MemoryMCPServer:
                     default_client=self.adapter or "unknown",
                 )
             with bind_active_attribution(active_attr):
-                if isinstance(tool_name, str) and tool_name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
+                from evolvmem.experience_v2.mcp_tools import EXPERIENCE_V2_MCP_SPECS
+                if isinstance(tool_name, str) and (
+                    tool_name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS
+                    or tool_name in EXPERIENCE_V2_MCP_SPECS
+                ):
                     result = self.handle_tool_call(tool_name, tool_args)
                 else:
                     adapter, mode, health = self._contract_view()
