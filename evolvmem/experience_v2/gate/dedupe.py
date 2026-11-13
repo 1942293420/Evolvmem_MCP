@@ -186,3 +186,50 @@ def run_l1_dedupe(
             'target_note_id': None,
             'detail': detail[:200],
         }
+
+
+def assess_l1_shadow(
+    conn,
+    *,
+    owner_id: str,
+    category: str,
+    problem: str,
+    solution: str,
+    reusable_experience: str,
+    embedder: Any,
+    threshold: float = DEFAULT_DEDUPE_THRESHOLD,
+) -> dict[str, Any]:
+    """Read-only L1 local vector similarity check for shadow runs (0 LLM tokens)."""
+    doc_text = f'{problem}\n{solution}\n{reusable_experience}'
+    vec_literal = to_unit_vec768_literal(_encode_text(embedder, doc_text))
+    match = conn.execute(
+        """
+        SELECT id, (1.0 - (embedding <=> %s::vector)) AS cosine_sim
+        FROM experience_notes
+        WHERE owner_id = %s
+          AND category = %s
+          AND status = 'active'
+          AND deleted_at IS NULL
+          AND embedding IS NOT NULL
+        ORDER BY embedding <=> %s::vector ASC
+        LIMIT 1
+        """,
+        (vec_literal, owner_id, category, vec_literal),
+    ).fetchone()
+    best_id = match[0] if match else None
+    best_sim = float(match[1]) if (match and match[1] is not None) else 0.0
+    if best_id is not None and best_sim >= float(threshold):
+        return {
+            'verdict': 'merge',
+            'reason_code': 'duplicate',
+            'target_note_id': best_id,
+            'similarity': best_sim,
+            'embedding': vec_literal,
+        }
+    return {
+        'verdict': 'pass',
+        'reason_code': None,
+        'target_note_id': None,
+        'similarity': best_sim,
+        'embedding': vec_literal,
+    }

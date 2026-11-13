@@ -374,7 +374,7 @@ class SqliteHistoryReader:
                                 has_raw_bytes=bool(has_key and r['payload_path']),
                             )
                         )
-        if not results and self.candidate_db and self.candidate_db.is_file():
+        if len(results) < limit and self.candidate_db and self.candidate_db.is_file():
             with self._connect(self.candidate_db) as conn:
                 clauses = ['message_count > 0']
                 params = []

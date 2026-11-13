@@ -20,7 +20,8 @@ L3_SYSTEM_PROMPT = (
     '你是经验关系对账裁判。对比新提议与候选已有经验，给出唯一关系分类，严禁物理覆盖旧经验。\n'
     '可选 relation：duplicate（同一事实，合并证据）、refines（新条目细化旧条目触发条件）、'
     'scope_split（适用环境/系统分化，双方并存）、outdated（环境或版本演进导致旧条过时）、'
-    'refuted（旧条目根本前提错误，须额外生成误区条目）、contested（存在真实未决分歧，保留双方）。\n'
+    'refuted（旧条目根本前提错误，须额外生成误区条目）、contested（存在真实未决分歧，保留双方）、'
+    'none（与全部候选均无实质关联，作为独立新经验保留，target_note_id 留空）。\n'
     '仅输出严格单个 JSON 对象：{"relation":"...","target_note_id":"...",'
     '"confidence":0.0~1.0,"reason":"<=120字",'
     '"incumbent_scope":{},"challenger_scope":{},'
@@ -156,17 +157,25 @@ def assess_l3_shadow(
         transport=judge_transport,
     )
     obj = _parse_l3_json(res.text)
-    rel = str(obj.get('relation') or '').strip()
-    if rel not in RELATIONS:
-        rel = 'refines'
-    valid_ids = {c['id']: c for c in candidates}
+    rel = str(obj.get('relation') or '').strip().lower()
     target_id = str(obj.get('target_note_id') or '').strip()
-    if target_id not in valid_ids:
-        target_id = candidates[0]['id']
     try:
         conf = max(0.0, min(1.0, float(obj.get('confidence', 0.8))))
     except (TypeError, ValueError):
         conf = 0.8
+    if rel in ('', 'none', 'novel', 'unrelated') or (rel not in RELATIONS and not target_id):
+        return {
+            'relation': None, 'target_note_id': None, 'incumbent': None, 'confidence': conf,
+            'reason': _clip_single_line(obj.get('reason') or 'L3 判定为独立新经验 (none)', 200),
+            'incumbent_scope': {}, 'challenger_scope': scope or {},
+            'misbelief_problem': '', 'misbelief_solution': '', 'misbelief_reusable': '', 'misbelief_text': '',
+            'candidates_checked': len(candidates), 'calls_used': 1, 'tokens_used': res.total_tokens,
+        }
+    if rel not in RELATIONS:
+        rel = 'refines'
+    valid_ids = {c['id']: c for c in candidates}
+    if target_id not in valid_ids:
+        target_id = candidates[0]['id']
     return {
         'relation': rel,
         'target_note_id': target_id,
@@ -353,7 +362,7 @@ def run_l3_reconcile_gate(
             """,
             (
                 decision_id, proposal_uid, verdict, reason_code, judgment['confidence'],
-                judge_model if rel else 'rule-no-candidates', judgment['reason'][:200], judgment['target_note_id'],
+                judge_model if judgment.get('calls_used') else 'rule-no-candidates', judgment['reason'][:200], judgment['target_note_id'],
             ),
         )
 

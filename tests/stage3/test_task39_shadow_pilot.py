@@ -167,6 +167,8 @@ def test_shadow_pilot_50_sessions_writes_only_shadow_tables_and_produces_report(
     assert report["zero_moment_session_ratio"] >= 0.60
     assert report["proposals_generated"] >= 16
     assert report["proposals_admitted_candidate"] >= 16
+    assert "proposals_admitted_new" in report
+    assert "proposals_merged_duplicate" in report
     assert 0 < report["tokens_per_admitted_candidate"] <= 30_000
     assert len(report["samples_for_user_review"]) == 20
     for st in ("extract", "l2a_predict", "l2a_judge", "l2b_predict", "l2b_judge", "l3_reconcile"):
@@ -188,11 +190,12 @@ def test_shadow_pilot_circuit_breaker_drill_and_scrubber(pg_s3_migrated) -> None
     assert len(drill["alerts"]) >= 1
     assert conn.execute("SELECT COUNT(*) FROM pipeline_circuit_state WHERE owner_id = 'owner-drill'").fetchone()[0] == 0
 
-    raw = "Auth Bearer secret_tok_123 key sk-abcdef1234567890 path /home/alice/work owner alice"
+    raw = r"Auth Bearer secret_tok_123 key sk-abcdef1234567890 unix /home/alice/work win C:\Users\bob\proj owner alice"
     cleaned = scrub_pilot_text(raw, extra_terms=["alice"])
     assert "secret_tok_123" not in cleaned
     assert "sk-abcdef1234567890" not in cleaned
     assert "/home/alice" not in cleaned
+    assert "Users\\bob" not in cleaned
     assert "alice" not in cleaned.lower()
 
     from evolvmem.experience_v2.pipeline.scheduler import PipelineScheduler

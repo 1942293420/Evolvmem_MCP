@@ -9,7 +9,7 @@ from typing import Any, Callable, Literal, Sequence
 
 from evolvmem.experience_v2.control.agent_identity import AgentAttribution
 from evolvmem.experience_v2.control.reputation_policy import TrustedChannel
-from evolvmem.experience_v2.gate.dedupe import run_l1_dedupe
+from evolvmem.experience_v2.gate.dedupe import assess_l1_shadow, run_l1_dedupe
 from evolvmem.experience_v2.gate.propose import ProposalPolicyError, ProposalService
 from evolvmem.experience_v2.gate.reconcile import assess_l3_shadow, run_l3_reconcile_gate
 from evolvmem.experience_v2.gate.rules import evaluate_l0_fields, run_l0_gate
@@ -262,25 +262,35 @@ class PipelineScheduler:
         )
         tokens_total = 0
         proposals_cnt = 0
+        pending_items: list[tuple[Any, ...]] = []
         for mom, ext in zip(moments, extracted):
             toks = ext.tokens_used
             if ext.skipped:
                 tokens_total += toks
-                conn.execute(
-                    """
-                    INSERT INTO shadow_pilot_items(
-                        run_id, session_id, moment_kind, stage_outcome, gate_layer, gate_verdict, reason_code, tokens_used
-                    ) VALUES (%s, %s, %s, 'skipped_extract', 'extract', 'reject', %s, %s)
-                    """,
-                    (run_id, session.summary.session_id, mom.kind, ext.skip_reason[:64], toks),
-                )
+                pending_items.append((
+                    run_id, session.summary.session_id, mom.kind, 'skipped_extract',
+                    '', '', '', '', '', '', '[]', 'extract', 'reject', ext.skip_reason[:64], toks,
+                ))
                 continue
 
             proposals_cnt += 1
             p = ext.payload
             l0_verdict, l0_reason, _ = evaluate_l0_fields(p, evidence_verifier=self._verifier, require_evidence=True)
-            layer, verdict, reason = 'L0', l0_verdict, (l0_reason or '')
-            if l0_verdict == 'pass':
+            layer, verdict, reason, emb = 'L0', l0_verdict, (l0_reason or ''), None
+            if l0_verdict == 'pass' and self.embedder is not None:
+                l1 = assess_l1_shadow(
+                    conn,
+                    owner_id=self.owner_id,
+                    category=p['category'],
+                    problem=p['problem'],
+                    solution=p['solution'],
+                    reusable_experience=p['reusable_experience'],
+                    embedder=self.embedder,
+                )
+                emb = l1['embedding']
+                if l1['verdict'] == 'merge':
+                    layer, verdict, reason = 'L1', 'merge', 'duplicate'
+            if layer == 'L0' and l0_verdict == 'pass':
                 l2 = assess_value_cascade(
                     conn,
                     problem=p['problem'],
@@ -310,6 +320,7 @@ class PipelineScheduler:
                         reusable_experience=p['reusable_experience'],
                         category=p['category'],
                         scope=p.get('scope'),
+                        embedding=emb,
                         track=self.track,
                         session_id=session.summary.session_id,
                         is_shadow=True,
@@ -317,25 +328,30 @@ class PipelineScheduler:
                     )
                     toks += int(l3.get('tokens_used', 0))
                     layer = 'L3'
-                    verdict = 'merge' if l3.get('relation') == 'duplicate' else 'pass'
-                    reason = str(l3.get('relation') or 'candidate_admit')
+                    rel = l3.get('relation')
+                    verdict = 'merge' if rel == 'duplicate' else 'pass'
+                    reason = str(rel or 'novel')
 
             tokens_total += toks
-            conn.execute(
-                """
-                INSERT INTO shadow_pilot_items(
-                    run_id, session_id, moment_kind, stage_outcome, category, kind,
-                    problem, solution, reusable_experience, misbelief, evidence_json,
-                    gate_layer, gate_verdict, reason_code, tokens_used
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
-                """,
-                (
-                    run_id, session.summary.session_id, mom.kind, f'{layer}_{verdict}',
-                    p['category'], p['kind'], p['problem'], p['solution'], p['reusable_experience'],
-                    p.get('misbelief', ''), json.dumps(p['evidence'], ensure_ascii=False),
-                    layer, verdict, reason, toks,
-                ),
-            )
+            pending_items.append((
+                run_id, session.summary.session_id, mom.kind, f'{layer}_{verdict}',
+                p['category'], p['kind'], p['problem'], p['solution'], p['reusable_experience'],
+                p.get('misbelief', ''), json.dumps(p['evidence'], ensure_ascii=False),
+                layer, verdict, reason, toks,
+            ))
+
+        with conn.transaction():
+            for row_vals in pending_items:
+                conn.execute(
+                    """
+                    INSERT INTO shadow_pilot_items(
+                        run_id, session_id, moment_kind, stage_outcome, category, kind,
+                        problem, solution, reusable_experience, misbelief, evidence_json,
+                        gate_layer, gate_verdict, reason_code, tokens_used
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+                    """,
+                    row_vals,
+                )
         return proposals_cnt, tokens_total
 
     def _run_live_moments(self, conn, *, session: HistorySession, segment_hash: str, moments, valid_indices: list[int]) -> tuple[int, int]:
@@ -500,15 +516,14 @@ class PipelineScheduler:
 
         valid_indices = [r.event_index for r in session.records]
         try:
-            with conn.transaction():
-                if shadow_mode:
-                    props, toks = self._run_shadow_moments(
-                        conn, run_id=shadow_run_id or f'shadow-{sid}', session=session, moments=moments, valid_indices=valid_indices,
-                    )
-                else:
-                    props, toks = self._run_live_moments(
-                        conn, session=session, segment_hash=seg_hash, moments=moments, valid_indices=valid_indices,
-                    )
+            if shadow_mode:
+                props, toks = self._run_shadow_moments(
+                    conn, run_id=shadow_run_id or f'shadow-{sid}', session=session, moments=moments, valid_indices=valid_indices,
+                )
+            else:
+                props, toks = self._run_live_moments(
+                    conn, session=session, segment_hash=seg_hash, moments=moments, valid_indices=valid_indices,
+                )
         except BudgetDeferred as exc:
             _upsert_segment_run(
                 conn,

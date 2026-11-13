@@ -254,3 +254,53 @@ def test_r7_budget_deferral_r9_circuit_breaker_and_shadow_isolation(pg_s3_migrat
     assert scan_unauthorized_experience_notes_writes(Path(".")) == []
     assert scan_unmetered_llm_calls(Path("evolvmem/experience_v2")) == []
     assert scan_direct_sqlite_in_pipeline(Path("evolvmem/experience_v2/pipeline")) == []
+
+
+def test_r8_llm_calls_not_rolled_back_on_partial_budget_defer_or_transport_error(pg_s3_migrated) -> None:
+    import pytest
+    from evolvmem.experience_v2.llm_meter import LlmTransportError
+    from evolvmem.experience_v2.pipeline.scheduler import PipelineScheduler
+
+    conn, *_ = pg_s3_migrated
+    t0 = datetime(2026, 11, 13, 12, 0, tzinfo=timezone.utc)
+    sess = _session_with_failure_fix("archive:3809", extra_fail=True)
+    calls, flash, strong, judge = _fake_transports()
+
+    # Case A: extract succeeds cleanly, L2a triggers daily budget deferral -> extract call must stay metered in llm_calls!
+    sched = PipelineScheduler(
+        history_reader=InMemoryHistoryReader([sess]),
+        policy=ProductPolicy(experience_pipeline_enabled=True),
+        owner_id="owner-38-r8",
+        flash_model="deepseek-v4-flash",
+        strong_model="mimo-v2.6-flash",
+        judge_model="mimo-v2.6-flash",
+        flash_transport=flash,
+        strong_transport=strong,
+        judge_transport=judge,
+        budget=BudgetConfig(live_daily_tokens=100_000, stage_daily_limits={'l2a_predict': 5}, session_max_tokens=30_000),
+    )
+    res = sched.process_session_if_ready(conn, "archive:3809", is_closed=True, last_message_at=t0, now=t0, shadow_mode=True, shadow_run_id="r8-defer")
+    assert res["status"] == "deferred"
+    metered_cnt = conn.execute("SELECT COUNT(*) FROM llm_calls WHERE session_id = 'archive:3809' AND is_shadow = true").fetchone()[0]
+    assert metered_cnt >= 1
+
+    # Case B: transport error during extract -> error:* row in llm_calls must NOT be rolled back!
+    def boom_flash(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        raise RuntimeError("gateway_503")
+
+    err_sess = _session_with_failure_fix("archive:3810")
+    err_sched = PipelineScheduler(
+        history_reader=InMemoryHistoryReader([err_sess]),
+        policy=ProductPolicy(experience_pipeline_enabled=True),
+        owner_id="owner-38-r8-err",
+        flash_model="deepseek-v4-flash",
+        strong_model="mimo-v2.6-flash",
+        judge_model="mimo-v2.6-flash",
+        flash_transport=boom_flash,
+        strong_transport=strong,
+        judge_transport=judge,
+    )
+    with pytest.raises(LlmTransportError):
+        err_sched.process_session_if_ready(conn, "archive:3810", is_closed=True, last_message_at=t0, now=t0, shadow_mode=True, shadow_run_id="r8-err")
+    err_rows = conn.execute("SELECT outcome FROM llm_calls WHERE session_id = 'archive:3810' AND is_shadow = true").fetchall()
+    assert len(err_rows) == 1 and err_rows[0][0] == "error:RuntimeError"
