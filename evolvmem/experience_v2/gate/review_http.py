@@ -11,6 +11,15 @@ from evolvmem.experience_v2.pg_experience_store import (
 )
 
 
+def _resolve_shadow_mode(policy: Any) -> bool:
+    if hasattr(policy, 'shadow_mode'):
+        return bool(policy.shadow_mode)
+    mode = getattr(policy, 'experience_gate_mode', 'review')
+    if isinstance(mode, dict):
+        return not (bool(mode) and all(v == 'auto' for v in mode.values()))
+    return mode != 'auto'
+
+
 def _err(code: str, status: int) -> tuple[int, str, dict[str, Any]]:
     return status, 'application/json', {'ok': False, 'error': code}
 
@@ -38,7 +47,7 @@ def dispatch_review_inbox(
         settings = load_pg_experience_settings()
         svc = ReviewInboxService(
             ticket_secret=settings.ticket_secret,
-            shadow_mode=bool(getattr(policy, 'shadow_mode', True)),
+            shadow_mode=_resolve_shadow_mode(policy),
         )
         with open_experience_conn(settings, role='coordinator') as conn:
             path = rel_path.rstrip('/') or '/'

@@ -18,7 +18,7 @@ from evolvmem.experience_v2.writer import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _issue_gated_ticket(conn, secret: bytes, req_tag: str, *, owner_id: str = 'jiangli', agent_client: str = 'codex', model: str = 'gpt-5'):
+def _issue_gated_ticket(conn, secret: bytes, req_tag: str, *, owner_id: str = 'owner-alpha', agent_client: str = 'codex', model: str = 'gpt-5'):
     puid = f'prop-{req_tag}'
     did = f'dec-{req_tag}'
     conn.execute(
@@ -86,8 +86,8 @@ def test_model_rollback_requires_dry_run_preserves_state_and_reverses_only_targe
         _issue_gated_ticket(conn, secret, 'n2', agent_client='claude-code', model='claude-sonnet-4-5'),
         Op(
             action='create',
-            owner_id='jiangli',
-            actor_id='jiangli',
+            owner_id='owner-alpha',
+            actor_id='owner-alpha',
             request_id='seed-n2',
             category='系统环境经验',
             problem='Valid note owned by healthy model',
@@ -106,8 +106,8 @@ def test_model_rollback_requires_dry_run_preserves_state_and_reverses_only_targe
         _issue_gated_ticket(conn, secret, 'n4', agent_client='claude-code', model='claude-sonnet-4-5'),
         Op(
             action='create',
-            owner_id='jiangli',
-            actor_id='jiangli',
+            owner_id='owner-alpha',
+            actor_id='owner-alpha',
             request_id='seed-n4',
             category='业务经验',
             problem='Independent healthy model insight',
@@ -127,8 +127,8 @@ def test_model_rollback_requires_dry_run_preserves_state_and_reverses_only_targe
         _issue_gated_ticket(conn, secret, 'n3', agent_client='claude-code', model='claude-sonnet-4-5'),
         Op(
             action='create',
-            owner_id='jiangli',
-            actor_id='jiangli',
+            owner_id='owner-alpha',
+            actor_id='owner-alpha',
             request_id='seed-n3',
             category='前端经验',
             problem='Original N3 problem',
@@ -148,8 +148,8 @@ def test_model_rollback_requires_dry_run_preserves_state_and_reverses_only_targe
         _issue_gated_ticket(conn, secret, 'n1', agent_client='codex', model='bad-model-v1'),
         Op(
             action='create',
-            owner_id='jiangli',
-            actor_id='jiangli',
+            owner_id='owner-alpha',
+            actor_id='owner-alpha',
             request_id='bad-create-n1',
             category='系统环境经验',
             problem='Hallucinated create by bad-model-v1',
@@ -168,8 +168,8 @@ def test_model_rollback_requires_dry_run_preserves_state_and_reverses_only_targe
         _issue_gated_ticket(conn, secret, 'n2-merge', agent_client='codex', model='bad-model-v1'),
         Op(
             action='merge_evidence',
-            owner_id='jiangli',
-            actor_id='jiangli',
+            owner_id='owner-alpha',
+            actor_id='owner-alpha',
             request_id='bad-merge-n2',
             note_id=n2_id,
             evidence=[{'ref': 'sess:bad-merge', 'quote': 'noisy'}],
@@ -183,8 +183,8 @@ def test_model_rollback_requires_dry_run_preserves_state_and_reverses_only_targe
         _issue_gated_ticket(conn, secret, 'n3-upd', agent_client='codex', model='bad-model-v1'),
         Op(
             action='update',
-            owner_id='jiangli',
-            actor_id='jiangli',
+            owner_id='owner-alpha',
+            actor_id='owner-alpha',
             request_id='bad-update-n3',
             note_id=n3_id,
             category='前端经验',
@@ -204,14 +204,14 @@ def test_model_rollback_requires_dry_run_preserves_state_and_reverses_only_targe
 
     # Cannot execute without dry-run RollbackPlan
     with pytest.raises(RollbackPlanRequiredError) as no_plan:
-        svc.execute_model_rollback(conn, plan=None, actor_id='jiangli', request_id='rb-noplan')  # type: ignore[arg-type]
+        svc.execute_model_rollback(conn, plan=None, actor_id='owner-alpha', request_id='rb-noplan')  # type: ignore[arg-type]
     assert no_plan.value.code == 'dry_run_required'
 
     # Dry-run plan must leave all tables bit-for-bit identical
     before_dry = _dump_pg_state(conn)
     plan = svc.plan_model_rollback(
         conn,
-        owner_id='jiangli',
+        owner_id='owner-alpha',
         agent_client='codex',
         model='bad-model-v1',
         since=since,
@@ -224,11 +224,11 @@ def test_model_rollback_requires_dry_run_preserves_state_and_reverses_only_targe
     # Tampered plan signature must fail
     tampered = replace(plan, signature='0' * 64)
     with pytest.raises(RollbackPlanRequiredError) as bad_sig:
-        svc.execute_model_rollback(conn, plan=tampered, actor_id='jiangli', request_id='rb-tampered')
+        svc.execute_model_rollback(conn, plan=tampered, actor_id='owner-alpha', request_id='rb-tampered')
     assert bad_sig.value.code == 'invalid_plan_signature'
 
     # Execute approved dry-run plan
-    res = svc.execute_model_rollback(conn, plan=plan, actor_id='jiangli', request_id='rb-exec-1')
+    res = svc.execute_model_rollback(conn, plan=plan, actor_id='owner-alpha', request_id='rb-exec-1')
     assert res['ok'] is True
     assert res['reverted_events'] == 3
 
@@ -251,7 +251,7 @@ def test_model_rollback_requires_dry_run_preserves_state_and_reverses_only_targe
     # Double-rollback prevention: rolled_back_by_seq set -> second dry-run returns 0 ops
     plan_again = svc.plan_model_rollback(
         conn,
-        owner_id='jiangli',
+        owner_id='owner-alpha',
         agent_client='codex',
         model='bad-model-v1',
         since=since,

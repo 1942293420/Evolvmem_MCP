@@ -98,8 +98,10 @@ def test_migrate_manual_experiences_preserves_id_revision_deleted_events_and_no_
     assert receipt['events_verified_count'] == 4
     assert receipt['unexplained_diff_count'] == 0
 
-    # Verify raw note text never leaks into receipt JSON
+    # Verify raw note text and plaintext owner_id never leak into receipt JSON
     receipt_json = json.dumps(receipt, ensure_ascii=False)
+    assert 'user-alpha' not in receipt_json
+    assert 'owner_sha256_prefix' in receipt['note_digests'][0]
     for n in notes:
         assert n['problem'] not in receipt_json
         assert n['solution'] not in receipt_json

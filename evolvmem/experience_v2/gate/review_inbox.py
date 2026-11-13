@@ -49,11 +49,20 @@ def _build_evidence_preview(evidence_json: Any) -> list[dict[str, str]]:
     for entry in items[:8]:
         if not isinstance(entry, dict):
             continue
-        preview.append({
-            'kind': str(entry.get('kind') or 'session'),
-            'ref': str(entry.get('ref') or entry.get('session_id') or ''),
-            'quote': str(entry.get('quote') or entry.get('snippet') or '')[:400],
-        })
+        ref = str(entry.get('ref') or entry.get('source') or entry.get('session_id') or '').strip()
+        lib = str(entry.get('library') or '').strip()
+        if lib:
+            ref = f'{lib}:{ref}' if ref and not ref.startswith(f'{lib}:') else (ref or lib)
+        ev_id = entry.get('event')
+        if ev_id is not None:
+            ev_tag = f'#{ev_id}'
+            if ref and ev_tag not in ref:
+                ref = f'{ref}{ev_tag}'
+            elif not ref:
+                ref = f'event:{ev_id}'
+        kind = str(entry.get('kind') or ('history' if entry.get('source') else 'session'))
+        quote = str(entry.get('quote') or entry.get('snippet') or entry.get('detail') or '')[:400]
+        preview.append({'kind': kind, 'ref': ref, 'quote': quote})
     return preview
 
 
@@ -214,7 +223,7 @@ class ReviewInboxService:
         self._validate_decision_inputs(user_verdict, user_reason, edited_payload)
         row = conn.execute(
             """
-            SELECT uid, category, kind, problem, solution, reusable_experience,
+            SELECT uid, op, target_uid, category, kind, problem, solution, reusable_experience,
                    misbelief, scope, evidence_json, source_kind, source_track,
                    agent_client, model, device_id, session_id, state, importance
             FROM experience_proposals
@@ -234,7 +243,7 @@ class ReviewInboxService:
             raise ReviewInboxError('proposal_already_reviewed', 409)
 
         (
-            _uid, category, kind, problem, solution, reusable_experience,
+            _uid, prop_op, target_uid, category, kind, problem, solution, reusable_experience,
             misbelief, scope, evidence_json, source_kind, source_track,
             agent_client, model, device_id, session_id, _state, importance,
         ) = row
@@ -245,19 +254,56 @@ class ReviewInboxService:
         applied_note: dict[str, Any] | None = None
 
         if user_verdict in ADMITTING_VERDICTS:
-            edits = edited_payload or {}
-            final_cat = str(edits.get('category') or category)
-            if final_cat not in CATEGORIES:
-                raise ReviewInboxError('invalid_category', 400)
-            final_problem = str(edits.get('problem') if 'problem' in edits else problem).strip()
-            final_solution = str(edits.get('solution') if 'solution' in edits else solution).strip()
-            final_reusable = str(
-                edits.get('reusable_experience') if 'reusable_experience' in edits else reusable_experience
-            ).strip()
-            if not (final_problem and final_solution and final_reusable):
-                raise ReviewInboxError('empty_experience_fields', 400)
-            final_importance = int(edits.get('importance') if 'importance' in edits else importance)
-            final_importance = max(1, min(10, final_importance))
+            clean_target = str(target_uid).strip() if target_uid else ''
+            if prop_op in ('update', 'retire') and not clean_target:
+                raise ReviewInboxError('missing_target_uid', 400)
+
+            origin = _SOURCE_KIND_TO_ORIGIN.get(source_kind, 'agent')
+            if prop_op == 'retire':
+                write_op = Op(
+                    action='retire',
+                    note_id=clean_target,
+                    owner_id=owner_id,
+                    actor_id=reviewer_id,
+                    request_id=f'review:{review_id}',
+                    origin=origin,
+                    source_device_id=device_id or '',
+                    agent_client=agent_client or '',
+                    model=model or '',
+                )
+            else:
+                edits = edited_payload or {}
+                final_cat = str(edits.get('category') or category)
+                if final_cat not in CATEGORIES:
+                    raise ReviewInboxError('invalid_category', 400)
+                final_problem = str(edits.get('problem') if 'problem' in edits else problem).strip()
+                final_solution = str(edits.get('solution') if 'solution' in edits else solution).strip()
+                final_reusable = str(
+                    edits.get('reusable_experience') if 'reusable_experience' in edits else reusable_experience
+                ).strip()
+                if not (final_problem and final_solution and final_reusable):
+                    raise ReviewInboxError('empty_experience_fields', 400)
+                final_importance = max(1, min(10, int(edits.get('importance') if 'importance' in edits else importance)))
+                write_op = Op(
+                    action=('update' if prop_op == 'update' else 'create'),
+                    note_id=(clean_target if prop_op == 'update' else None),
+                    owner_id=owner_id,
+                    actor_id=reviewer_id,
+                    request_id=f'review:{review_id}',
+                    category=final_cat,
+                    problem=final_problem,
+                    solution=final_solution,
+                    reusable_experience=final_reusable,
+                    origin=origin,
+                    kind=kind,
+                    misbelief=misbelief or '',
+                    scope=scope if isinstance(scope, dict) else {},
+                    evidence=evidence_json if isinstance(evidence_json, list) else [],
+                    importance=final_importance,
+                    source_device_id=device_id or '',
+                    agent_client=agent_client or '',
+                    model=model or '',
+                )
 
             decision_id = f'dec-{uuid.uuid4().hex[:16]}'
             conn.execute(
@@ -274,31 +320,8 @@ class ReviewInboxService:
                 decision_id=decision_id,
                 lane='gated',
             )
-            origin = _SOURCE_KIND_TO_ORIGIN.get(source_kind, 'agent')
             try:
-                write_res = self._writer.apply(
-                    conn,
-                    ticket,
-                    Op(
-                        action='create',
-                        owner_id=owner_id,
-                        actor_id=reviewer_id,
-                        request_id=f'review:{review_id}',
-                        category=final_cat,
-                        problem=final_problem,
-                        solution=final_solution,
-                        reusable_experience=final_reusable,
-                        origin=origin,
-                        kind=kind,
-                        misbelief=misbelief or '',
-                        scope=scope if isinstance(scope, dict) else {},
-                        evidence=evidence_json if isinstance(evidence_json, list) else [],
-                        importance=final_importance,
-                        source_device_id=device_id or '',
-                        agent_client=agent_client or '',
-                        model=model or '',
-                    ),
-                )
+                write_res = self._writer.apply(conn, ticket, write_op)
                 applied_note = write_res['experience']
             except ExperienceWriteError as exc:
                 raise ReviewInboxError(exc.code, exc.status) from None
