@@ -50,7 +50,7 @@ class AdmissionTicket:
 
 @dataclass(frozen=True)
 class Op:
-    action: Literal['create', 'update', 'delete', 'retire', 'restore', 'merge_evidence', 'import_manual', 'rollback']
+    action: Literal['create', 'update', 'delete', 'retire', 'restore', 'merge_evidence', 'import_manual', 'rollback', 'reconcile_state']
     owner_id: str
     actor_id: str
     request_id: str
@@ -78,6 +78,8 @@ class Op:
     revision: int | None = None
     target_event_seq: int | None = None
     restore_snapshot: dict[str, Any] | None = None
+    valid_from: Any = None
+    valid_until: Any = None
 
 
 def _secret_bytes(secret: bytes | str) -> bytes:
@@ -169,7 +171,7 @@ class ExperienceWriter:
         ).hexdigest()
         if not hmac.compare_digest(ticket.signature, expected_sig):
             raise TicketVerificationError('invalid_ticket_signature')
-        if op.action in ('create', 'update', 'delete', 'retire', 'merge_evidence') and op.origin in ('agent', 'pipeline') and ticket.lane != 'gated':
+        if op.action in ('create', 'update', 'delete', 'retire', 'merge_evidence', 'reconcile_state') and op.origin in ('agent', 'pipeline') and ticket.lane != 'gated':
             raise TicketVerificationError('automated_write_requires_gated_ticket')
         if ticket.lane == 'gated':
             row = conn.execute(
@@ -207,6 +209,9 @@ class ExperienceWriter:
             'status': op.status,
             'target_event_seq': op.target_event_seq,
         }
+        if op.action == 'reconcile_state' or op.valid_from is not None or op.valid_until is not None:
+            canonical['valid_from'] = op.valid_from
+            canonical['valid_until'] = op.valid_until
         return hashlib.sha256(_json_canon(canonical).encode('utf-8')).hexdigest()
 
     def apply(self, conn, ticket: AdmissionTicket | None, op: Op) -> dict[str, Any]:
@@ -264,13 +269,13 @@ class ExperienceWriter:
                     INSERT INTO experience_notes(
                         id, owner_id, category, problem, solution, reusable_experience,
                         origin, kind, misbelief, scope, evidence, occurrence_count,
-                        importance, pinned, status, embedding, proposal_uid,
+                        importance, pinned, status, valid_from, valid_until, embedding, proposal_uid,
                         source_actor, source_device_id, source_agent, source_model,
                         revision, deleted_at, created_at, updated_at
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s::jsonb, %s::jsonb, 1,
-                        %s, %s, %s, %s::vector, %s,
+                        %s, %s, %s, %s, %s, %s::vector, %s,
                         %s, %s, %s, %s,
                         %s, %s, %s, %s
                     )
@@ -280,7 +285,7 @@ class ExperienceWriter:
                         op.solution.strip(), op.reusable_experience.strip(),
                         op.origin, op.kind, op.misbelief,
                         _json_canon(op.scope), _json_canon(op.evidence),
-                        op.importance, op.pinned, op.status, vec, proposal_uid,
+                        op.importance, op.pinned, op.status, op.valid_from, op.valid_until, vec, proposal_uid,
                         op.actor_id, op.source_device_id, op.agent_client, op.model,
                         rev, op.deleted_at, c_at, u_at,
                     ),
@@ -346,6 +351,29 @@ class ExperienceWriter:
                         WHERE owner_id = %s AND id = %s
                         """,
                         (_json_canon(merged_ev), now, op.owner_id, target_id),
+                    )
+                elif op.action == 'reconcile_state':
+                    conn.execute(
+                        """
+                        UPDATE experience_notes
+                        SET status = COALESCE(%s, status),
+                            scope = CASE WHEN %s THEN %s::jsonb ELSE scope END,
+                            valid_from = COALESCE(%s, valid_from),
+                            valid_until = COALESCE(%s, valid_until),
+                            revision = revision + 1,
+                            updated_at = %s
+                        WHERE owner_id = %s AND id = %s
+                        """,
+                        (
+                            op.status,
+                            bool(op.scope),
+                            _json_canon(op.scope),
+                            op.valid_from,
+                            op.valid_until,
+                            now,
+                            op.owner_id,
+                            target_id,
+                        ),
                     )
                 elif op.action == 'rollback':
                     snap = op.restore_snapshot
