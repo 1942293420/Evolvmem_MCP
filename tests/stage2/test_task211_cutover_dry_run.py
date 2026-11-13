@@ -175,3 +175,128 @@ def test_task211_ast_and_file_line_limit():
     assert scan_unauthorized_experience_notes_writes(REPO_ROOT) == []
     if SCRIPT.exists():
         assert len(SCRIPT.read_text(encoding='utf-8').splitlines()) <= 600
+
+def test_experience_pg_config_isolated_from_control_and_l1_migration_embeddings(pg_exp_schema, tmp_path: Path, monkeypatch):
+    conn, schema, dsn = pg_exp_schema
+    from evolvmem import console_access
+    from evolvmem.experience_v2.pg_experience_store import load_pg_experience_settings, open_experience_conn
+    from evolvmem.experience_v2.schema import apply_experience_migrations
+    from evolvmem.experience_v2.manual_migrator import migrate_manual_experiences
+
+    apply_experience_migrations(conn)
+    conn.commit()
+    conn.close()
+
+    import os
+    pw_file = tmp_path / 'exp_pw'
+    pw_file.write_text(Path('/tmp/evolvmem-pg-test-s2.pw').read_text(encoding='utf-8').strip(), encoding='utf-8')
+    os.chmod(pw_file, 0o600)
+    ticket_file = tmp_path / 'ticket_pw'
+    ticket_file.write_text('ticket-secret-xyz', encoding='utf-8')
+    os.chmod(ticket_file, 0o600)
+    cfg_file = tmp_path / 'experience-v2.json'
+    cfg_file.write_text(json.dumps({
+        'host': '127.0.0.1',
+        'port': 55433,
+        'database': 'postgres',
+        'coordinator_role': 'postgres',
+        'coordinator_password_ref': 'coord',
+        'reader_role': 'postgres',
+        'reader_password_ref': 'coord',
+        'allow_loopback_disable_ssl': True,
+        'lock_timeout_ms': 600,
+        'statement_timeout_ms': 2500,
+        'secret_files': {'coord': str(pw_file), 'experience_ticket': str(ticket_file)},
+    }), encoding='utf-8')
+
+    monkeypatch.delenv('EVOLVMEM_EXPERIENCE_PG_DSN', raising=False)
+    monkeypatch.delenv('EVOLVMEM_CONSOLE_PG_CONFIG', raising=False)
+    monkeypatch.delenv('EVOLVMEM_CONTROL_BACKEND', raising=False)
+    monkeypatch.setenv('EVOLVMEM_EXPERIENCE_PG_CONFIG', str(cfg_file))
+
+    assert console_access.is_pg_control_configured() is False
+    settings = load_pg_experience_settings()
+    assert settings.control_config is not None
+    assert settings.ticket_secret == b'ticket-secret-xyz'
+    with open_experience_conn(settings, role='reader') as rconn:
+        assert rconn.execute('SELECT 1').fetchone()[0] == 1
+
+    import psycopg
+    sqlite_db = tmp_path / 'mig.db'
+    _create_synthetic_sqlite(sqlite_db)
+    vec = [0.5] + [0.0] * 767
+    with psycopg.connect(dsn, options=f'-c search_path={schema},public') as mconn:
+        apply_experience_migrations(mconn)
+        res = migrate_manual_experiences(
+            sqlite_db, mconn, secret=b's3cr3t', owner_filter='synthetic_owner',
+            embeddings_by_id={'manual-11111111111111111111111111111111': vec},
+        )
+        mconn.commit()
+        assert res['notes_verified_count'] == 1
+        row = mconn.execute('SELECT embedding IS NOT NULL FROM experience_notes WHERE id = %s', ('manual-11111111111111111111111111111111',)).fetchone()
+        assert row and row[0] is True
+
+
+def test_live_gate_wiring_and_multi_db_evidence_verifier(pg_exp_schema, tmp_path: Path, monkeypatch):
+    conn, schema, dsn = pg_exp_schema
+    from evolvmem.experience_v2.control.agent_identity import AgentAttribution
+    from evolvmem.experience_v2.gate.rules import SqliteHistoryEvidenceVerifier
+    from evolvmem.experience_v2.mcp_tools import call_experience_v2_tool
+    from evolvmem.experience_v2.schema import apply_experience_migrations
+
+    apply_experience_migrations(conn)
+    conn.commit()
+    conn.close()
+
+    hist_db = tmp_path / 'hist.db'
+    with sqlite3.connect(hist_db) as sconn:
+        sconn.execute('CREATE TABLE session_archives (id INTEGER PRIMARY KEY, external_session_id TEXT)')
+        sconn.execute('INSERT INTO session_archives (id, external_session_id) VALUES (101, "sess-101")')
+        sconn.commit()
+
+    verifier = SqliteHistoryEvidenceVerifier([tmp_path / 'missing.db', hist_db])
+    assert verifier.verify_all([{'library': 'personal', 'source': 'archive:101', 'event': 1}])[0] is True
+
+    policy_file = tmp_path / 'policy.json'
+    policy_file.write_text(json.dumps({'console_enabled': True, 'experience_v2_enabled': True}), encoding='utf-8')
+    monkeypatch.setenv('EVOLVMEM_PRODUCT_POLICY_FILE', str(policy_file))
+    monkeypatch.setenv('EVOLVMEM_EXPERIENCE_PG_DSN', str(dsn))
+    monkeypatch.setenv('EVOLVMEM_EXPERIENCE_PG_SCHEMA', schema)
+
+    attr = AgentAttribution(actor='u1', agent_id='a1', client='codex', model='unknown-m')
+    class _FakeDocEmbedder:
+        is_loaded = True
+        def encode_document(self, text: str) -> list[float]:
+            return [1.0, 0.0, 0.0]
+
+    bad = call_experience_v2_tool(
+        'experience_propose',
+        {
+            'op': 'add', 'category': '系统环境经验', 'kind': 'pitfall',
+            'problem': '用户要求检查容器配置',
+            'solution': '查看了配置并已修复',
+            'reusable_experience': '按要求排查配置',
+            'evidence': [{'library': 'personal', 'source': 'archive:101', 'event': 1}],
+            'request_id': 'req-bad-l0-001',
+        },
+        owner_id='u1', actor_id='u1', attribution=attr,
+        history_db_paths=[tmp_path / 'missing.db', hist_db], embedder=_FakeDocEmbedder(),
+    )
+    assert bad['ok'] is True
+    assert bad['state'] == 'rejected'
+
+    good = call_experience_v2_tool(
+        'experience_propose',
+        {
+            'op': 'add', 'category': '系统环境经验', 'kind': 'pitfall',
+            'problem': '容器 DNS 超时导致内网不通',
+            'solution': '固定 daemon resolv 后重启',
+            'reusable_experience': '容器超时先核对 DNS 解析链',
+            'evidence': [{'library': 'personal', 'source': 'archive:101', 'event': 1}],
+            'request_id': 'req-good-l0-002',
+        },
+        owner_id='u1', actor_id='u1', attribution=attr,
+        history_db_paths=[hist_db], embedder=_FakeDocEmbedder(),
+    )
+    assert good['ok'] is True
+    assert good['state'] == 'review'

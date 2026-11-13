@@ -126,7 +126,7 @@ def load_pg_experience_settings(environ=None) -> PgExperienceSettings:
     if dsn:
         return PgExperienceSettings(dsn=dsn, schema=schema, ticket_secret=secret)
 
-    cfg_path = (env.get('EVOLVMEM_CONSOLE_PG_CONFIG') or '').strip()
+    cfg_path = (env.get('EVOLVMEM_EXPERIENCE_PG_CONFIG') or env.get('EVOLVMEM_CONSOLE_PG_CONFIG') or '').strip()
     if cfg_path:
         try:
             cfg = PgControlConfig.from_file(cfg_path)
@@ -135,7 +135,7 @@ def load_pg_experience_settings(environ=None) -> PgExperienceSettings:
         if not secret_file and 'experience_ticket' in cfg.secret_files:
             resolver = FileSecretResolver(cfg.secret_files)
             try:
-                resolved = resolver.resolve('experience_ticket').strip().encode('utf-8')
+                resolved = resolver('experience_ticket').strip().encode('utf-8')
                 if not resolved:
                     raise ValueError('empty_secret')
                 secret = resolved
@@ -157,7 +157,7 @@ def open_experience_conn(settings: PgExperienceSettings | None = None, *, role: 
             conn = psycopg.connect(cfg.dsn, **kwargs)
         elif cfg.control_config is not None:
             cc = cfg.control_config
-            connector = loopback_psycopg_connector(cc.allow_loopback_disable_ssl)
+            connector = loopback_psycopg_connector(allow_loopback_disable_ssl=cc.allow_loopback_disable_ssl)
             resolver = FileSecretResolver(cc.secret_files)
             user = cc.reader_role if role == 'reader' else cc.coordinator_role
             ref = cc.reader_password_ref if role == 'reader' else cc.coordinator_password_ref
@@ -166,7 +166,7 @@ def open_experience_conn(settings: PgExperienceSettings | None = None, *, role: 
                 port=cc.port,
                 dbname=cc.database,
                 user=user,
-                password=resolver.resolve(ref),
+                password=resolver(ref),
                 connect_timeout=2,
             )
         else:
@@ -177,9 +177,11 @@ def open_experience_conn(settings: PgExperienceSettings | None = None, *, role: 
         raise PgExperienceUnavailableError('pg_experience_unavailable') from None
 
     try:
+        lock_ms = int(cfg.control_config.lock_timeout_ms) if cfg.control_config is not None else 500
+        stmt_ms = int(cfg.control_config.statement_timeout_ms) if cfg.control_config is not None else 2000
         with conn:
-            conn.execute('SET lock_timeout = 500')
-            conn.execute('SET statement_timeout = 2000')
+            conn.execute(f'SET lock_timeout = {lock_ms}')
+            conn.execute(f'SET statement_timeout = {stmt_ms}')
             yield conn
     except PgExperienceUnavailableError:
         raise

@@ -253,6 +253,7 @@ def migrate_manual_experiences(
     *,
     secret: bytes | str,
     owner_filter: str | None = None,
+    embeddings_by_id: dict[str, list[float]] | None = None,
 ) -> dict[str, Any]:
     """Migrate SQLite manual_experience_* rows into PG through ExperienceWriter."""
     notes, events, requests = _read_sqlite_source(sqlite_path, owner_filter)
@@ -289,6 +290,7 @@ def migrate_manual_experiences(
             solution=note['solution'],
             reusable_experience=note['reusable_experience'],
             origin='manual',
+            embedding=(embeddings_by_id.get(note_id) if embeddings_by_id else None),
             revision=int(note['revision']),
             deleted_at=_iso_utc(note['deleted_at']),
             created_at=_iso_utc(note['created_at']),

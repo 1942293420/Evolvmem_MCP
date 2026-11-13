@@ -362,6 +362,11 @@ class MemoryMCPServer:
             )
             return exp_v2_mcp.call_experience_v2_tool(
                 tool_name, args, owner_id=source['user_id'], actor_id=source['user_id'], attribution=attr,
+                history_db_paths=(
+                    self.config.data_dir / 'memory.db',
+                    os.environ.get('EVOLVMEM_HISTORY_CANDIDATE_DB') or '',
+                ),
+                embedder=(self.engine if getattr(self.engine, 'is_loaded', False) else None),
             )
         except manual_experience_mcp.ManualMcpError as exc:
             return {'error': str(exc)}

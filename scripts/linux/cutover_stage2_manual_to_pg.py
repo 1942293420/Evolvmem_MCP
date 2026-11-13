@@ -51,12 +51,16 @@ def _run_migration_into_schema(
     owner_id: str | None,
     secret: bytes,
     cleanup_schema: bool,
+    embeddings_by_id: dict[str, list[float]] | None = None,
 ) -> dict:
     if not _SCHEMA_RE.fullmatch(schema):
         raise ValueError('invalid_schema')
     with psycopg.connect(conninfo, autocommit=True) as admin:
-        admin.execute('CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public')
-        admin.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+        has_vec = admin.execute("SELECT 1 FROM pg_extension WHERE extname = 'vector'").fetchone()
+        if not has_vec:
+            admin.execute('CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public')
+        if schema != 'public':
+            admin.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
     try:
         with psycopg.connect(conninfo, options=f'-c search_path={schema},public') as conn:
             apply_experience_migrations(conn)
@@ -65,6 +69,7 @@ def _run_migration_into_schema(
                 conn,
                 secret=secret,
                 owner_filter=owner_id,
+                embeddings_by_id=embeddings_by_id,
             )
             conn.commit()
         return {
@@ -103,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--schema', default=None)
     parser.add_argument('--policy-file', default=None)
     parser.add_argument('--secret-file', default=None)
+    parser.add_argument('--embeddings-json', default=None)
     parser.add_argument('--receipt-out', default=None)
     parser.add_argument('--dry-run', action='store_true', default=False)
     parser.add_argument('--cleanup-dry-run-schema', action='store_true', default=False)
@@ -128,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
         else secrets.token_bytes(32)
     )
     conninfo, redacted_target = _build_conn_params(args)
+    embeddings_by_id = None
+    if args.embeddings_json:
+        emb_raw = json.loads(Path(args.embeddings_json).expanduser().read_text(encoding='utf-8'))
+        if isinstance(emb_raw, dict):
+            embeddings_by_id = emb_raw
     verification = _run_migration_into_schema(
         conninfo=conninfo,
         schema=schema,
@@ -135,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         owner_id=args.owner_id,
         secret=secret,
         cleanup_schema=(mode == 'dry_run' and args.cleanup_dry_run_schema),
+        embeddings_by_id=embeddings_by_id,
     )
 
     policy_updated = False
