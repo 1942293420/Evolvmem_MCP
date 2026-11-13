@@ -343,7 +343,26 @@ class LanTools:
                 schema['properties']['request_id'] = {'type': 'string', 'maxLength': 128}
                 schema['required'] = [k for k in schema.get('required', []) if k != 'request_id']
         result.update(deepcopy(manual_experience_mcp.MANUAL_EXPERIENCE_SPECS))
+        from evolvmem.product_policy import load_policy
+        if load_policy().experience_v2_enabled:
+            from evolvmem.experience_v2.mcp_tools import EXPERIENCE_V2_MCP_SPECS
+            result.update(deepcopy(EXPERIENCE_V2_MCP_SPECS))
         return result
+
+    def _experience_v2(self, user, name, args):
+        from evolvmem.experience_v2 import mcp_tools as exp_v2_mcp
+        from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
+        attr = self._get_attribution(user) or resolve_mcp_client_info(None, actor=user, default_client='unknown')
+        if name == 'experience_propose':
+            validate_request_id(args.get('request_id'))
+            if self.runtime.settings.authenticate(args.get('request_id')) is not None:
+                raise LanError('invalid_request_id')
+        try:
+            return exp_v2_mcp.call_experience_v2_tool(
+                name, args, owner_id=user, actor_id=user, attribution=attr,
+            )
+        except manual_experience_mcp.ManualMcpError as exc:
+            raise LanError(str(exc)) from None
 
     def _manual_experience(self, user, name, args):
         space = args.pop('space', 'personal')
@@ -421,6 +440,9 @@ class LanTools:
             raise LanError('identity_override_forbidden')
         if name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
             return self._manual_experience(user, name, args)
+        from evolvmem.experience_v2 import mcp_tools as exp_v2_mcp
+        if name in exp_v2_mcp.EXPERIENCE_V2_MCP_SPECS:
+            return self._experience_v2(user, name, args)
         space = args.pop('space', 'both' if name in SEARCH else 'personal')
         if space not in ('personal', 'public', 'both') or (space == 'both' and name not in SEARCH):
             raise LanError('invalid_space')
