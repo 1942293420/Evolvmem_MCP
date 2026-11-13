@@ -300,3 +300,71 @@ def test_live_gate_wiring_and_multi_db_evidence_verifier(pg_exp_schema, tmp_path
     )
     assert good['ok'] is True
     assert good['state'] == 'review'
+
+
+def test_pg_experience_store_accepts_sqlite3_row_source(monkeypatch):
+    import contextlib
+    import sqlite3
+    import pytest
+    from types import SimpleNamespace
+    from evolvmem.experience_v2 import pg_experience_store as mod
+    from evolvmem.experience_v2.writer import ExperienceWriteError
+
+    sconn = sqlite3.connect(':memory:')
+    sconn.row_factory = sqlite3.Row
+    row = sconn.execute("SELECT 'owner_u' AS user_id, '/tmp' AS data_dir").fetchone()
+
+    class _FakeCursor:
+        def __init__(self, sql: str):
+            self._sql = sql
+        def fetchone(self):
+            if 'SUM(' in self._sql:
+                return (0, 0)
+            if 'count(*)' in self._sql:
+                return (0,)
+            return None
+        def fetchall(self):
+            return []
+
+    class _FakeConn:
+        def execute(self, sql, params=()):
+            return _FakeCursor(sql)
+
+    @contextlib.contextmanager
+    def _fake_open_conn(_settings=None, *, role='reader'):
+        yield _FakeConn()
+
+    monkeypatch.setattr(mod, 'open_experience_conn', _fake_open_conn)
+    store = mod.PgExperienceStore(SimpleNamespace())
+    res = store.read(row, {}, category='', query='', page=1, page_size=10, deleted=0)
+    assert res['connected'] is True
+    assert res['total'] == 0
+
+    with pytest.raises(ExperienceWriteError) as exc_info:
+        store.write(row, 'wrong_actor', {'action': 'create'}, {})
+    assert exc_info.value.status == 403
+
+
+def test_lan_tools_experience_v2_attribution_lookup(monkeypatch):
+    import threading
+    from pathlib import Path
+    from types import SimpleNamespace
+    from evolvmem.lan_tools import LanTools
+    from evolvmem.experience_v2 import mcp_tools as exp_v2_mcp
+
+    monkeypatch.setattr(
+        exp_v2_mcp,
+        'call_experience_v2_tool',
+        lambda *a, **kw: {'ok': True, 'next_cursor': 38, 'events': []},
+    )
+    lt = object.__new__(LanTools)
+    lt._attribution_lock = threading.RLock()
+    lt._attributions = {}
+    lt._latest_user_attribution = {}
+    lt.runtime = SimpleNamespace(
+        _namespace_for=lambda u, s: Path('/tmp'),
+        _shared_engine=None,
+        settings=SimpleNamespace(authenticate=lambda x: None),
+    )
+    out = lt._experience_v2('u1', 'experience_changes_since', {'cursor': 0})
+    assert out['next_cursor'] == 38

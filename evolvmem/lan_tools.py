@@ -352,8 +352,8 @@ class LanTools:
 
     def _experience_v2(self, user, name, args):
         from evolvmem.experience_v2 import mcp_tools as exp_v2_mcp
-        from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
-        attr = self._get_attribution(user) or resolve_mcp_client_info(None, actor=user, default_client='unknown')
+        from evolvmem.experience_v2.control.agent_identity import get_active_attribution, resolve_mcp_client_info
+        attr = get_active_attribution() or self.attribution_for(user) or resolve_mcp_client_info(None, actor=user, default_client='unknown')
         if name == 'experience_propose':
             validate_request_id(args.get('request_id'))
             if self.runtime.settings.authenticate(args.get('request_id')) is not None:

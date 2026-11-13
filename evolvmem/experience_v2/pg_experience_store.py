@@ -204,6 +204,16 @@ def check_available(settings: PgExperienceSettings | None = None) -> None:
             raise PgExperienceUnavailableError('pg_experience_schema_missing')
 
 
+def _source_user_id(source) -> str | None:
+    if not source:
+        return None
+    try:
+        val = source['user_id']
+    except (KeyError, IndexError, TypeError):
+        return None
+    return str(val) if val else None
+
+
 class PgExperienceStore:
     """Drop-in PG backend for manual_experiences read/write contracts."""
 
@@ -217,7 +227,8 @@ class PgExperienceStore:
              deleted: int, item_id=None, search=None) -> dict:
         if item_id is not None and (not isinstance(item_id, str) or not PG_NOTE_ID.fullmatch(item_id)):
             raise ExperienceWriteError('experience_not_found', 404)
-        if not source or not source.get('user_id'):
+        owner = _source_user_id(source)
+        if not owner:
             if item_id is not None:
                 raise ExperienceWriteError('experience_not_found', 404)
             return {
@@ -225,8 +236,6 @@ class PgExperienceStore:
                 'origin': 'manual', 'rows': [], 'total': 0, 'page': page,
                 'page_size': page_size, 'summary': _summary(), 'reason': 'experience_not_connected',
             }
-
-        owner = source['user_id']
         result = {
             'ok': True, 'connected': True, 'experience_connected': True,
             'origin': 'manual', 'rows': [], 'total': 0, 'page': page,
@@ -313,12 +322,11 @@ class PgExperienceStore:
             return result
 
     def write(self, source, actor_id, body: dict, submitted: dict, *, validate_new=None) -> tuple[int, dict]:
-        if not source or actor_id != source.get('user_id'):
+        owner = _source_user_id(source)
+        if not owner or actor_id != owner:
             raise ExperienceWriteError('experience_management_forbidden', 403)
         if body['action'] != 'create' and not PG_NOTE_ID.fullmatch(body['id']):
             raise ExperienceWriteError('invalid_experience_id', 400)
-
-        owner = source['user_id']
         settings = self._settings()
         issuer = TicketIssuer(settings.ticket_secret, gate_id='manual_experiences')
         writer = ExperienceWriter(settings.ticket_secret)
