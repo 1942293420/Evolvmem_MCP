@@ -121,15 +121,19 @@
     const bAcc=document.getElementById('rv-batch-accept');
     if(bAcc)bAcc.onclick=async()=>{
       if(!selected.size)return;
-      await apiPost('/review-inbox/batch',{proposal_uids:[...selected],user_verdict:'accept'});
-      selected.clear();await loadInbox();
+      try{
+        await apiPost('/review-inbox/batch',{proposal_uids:[...selected],user_verdict:'accept'});
+        selected.clear();await loadInbox();
+      }catch(e){const m=document.getElementById('rv-msg');if(m)m.textContent='操作失败: '+e.message;}
     };
     const bRej=document.getElementById('rv-batch-reject');
     if(bRej)bRej.onclick=async()=>{
       if(!selected.size)return;
-      const reason=document.getElementById('rv-batch-reason')?.value||'other';
-      await apiPost('/review-inbox/batch',{proposal_uids:[...selected],user_verdict:'reject',user_reason:reason});
-      selected.clear();await loadInbox();
+      try{
+        const reason=document.getElementById('rv-batch-reason')?.value||'other';
+        await apiPost('/review-inbox/batch',{proposal_uids:[...selected],user_verdict:'reject',user_reason:reason});
+        selected.clear();await loadInbox();
+      }catch(e){const m=document.getElementById('rv-msg');if(m)m.textContent='操作失败: '+e.message;}
     };
   }
 

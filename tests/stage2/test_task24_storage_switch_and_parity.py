@@ -21,7 +21,7 @@ def _write_policy(path: Path, data: dict) -> Path:
     return path
 
 
-def _seed_sqlite_note(db_path: Path, owner_id: str = 'jiangli') -> None:
+def _seed_sqlite_note(db_path: Path, owner_id: str = 'owner-alpha') -> None:
     conn = sqlite3.connect(db_path)
     try:
         for sql in manual_experiences.DDL:

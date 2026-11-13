@@ -50,7 +50,7 @@ class AdmissionTicket:
 
 @dataclass(frozen=True)
 class Op:
-    action: Literal['create', 'update', 'delete', 'restore', 'merge_evidence', 'import_manual', 'rollback']
+    action: Literal['create', 'update', 'delete', 'retire', 'restore', 'merge_evidence', 'import_manual', 'rollback']
     owner_id: str
     actor_id: str
     request_id: str
@@ -169,7 +169,7 @@ class ExperienceWriter:
         ).hexdigest()
         if not hmac.compare_digest(ticket.signature, expected_sig):
             raise TicketVerificationError('invalid_ticket_signature')
-        if op.action in ('create', 'merge_evidence') and op.origin in ('agent', 'pipeline') and ticket.lane != 'gated':
+        if op.action in ('create', 'update', 'delete', 'retire', 'merge_evidence') and op.origin in ('agent', 'pipeline') and ticket.lane != 'gated':
             raise TicketVerificationError('automated_write_requires_gated_ticket')
         if ticket.lane == 'gated':
             row = conn.execute(
@@ -297,7 +297,7 @@ class ExperienceWriter:
                 before_note = _row_to_note(existing)
                 if op.action != 'rollback' and op.expected_revision is not None and before_note['revision'] != op.expected_revision:
                     raise ExperienceWriteError('experience_revision_conflict', 409)
-                if op.action in ('update', 'delete') and before_note['deleted_at'] is not None:
+                if op.action in ('update', 'delete', 'retire') and before_note['deleted_at'] is not None:
                     raise ExperienceWriteError('experience_state_conflict', 409)
                 if op.action == 'restore' and before_note['deleted_at'] is None:
                     raise ExperienceWriteError('experience_state_conflict', 409)
@@ -326,6 +326,15 @@ class ExperienceWriter:
                         WHERE owner_id = %s AND id = %s
                         """,
                         (now if op.action == 'delete' else None, now, op.owner_id, target_id),
+                    )
+                elif op.action == 'retire':
+                    conn.execute(
+                        """
+                        UPDATE experience_notes
+                        SET status = 'retired', deleted_at = %s, revision = revision + 1, updated_at = %s
+                        WHERE owner_id = %s AND id = %s
+                        """,
+                        (now, now, op.owner_id, target_id),
                     )
                 elif op.action == 'merge_evidence':
                     merged_ev = list(before_note['evidence']) + list(op.evidence)

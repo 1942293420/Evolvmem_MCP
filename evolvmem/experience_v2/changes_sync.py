@@ -115,7 +115,7 @@ def changes_since(
     for row in page:
         seq, event_id, action, note_id, agent_client, model, after_json, created_at = row[:8]
         n_status, n_deleted_at, n_cat, n_prob, n_sol, n_reusable, n_rev = row[8:]
-        tombstone = bool(n_deleted_at is not None or n_status == 'retired' or action == 'delete')
+        tombstone = bool(n_deleted_at is not None or n_status == 'retired' or action in ('delete', 'retire'))
         changes.append({
             'seq': int(seq),
             'event_id': event_id,

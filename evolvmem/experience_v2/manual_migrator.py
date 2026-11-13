@@ -201,7 +201,7 @@ def verify_manual_migration(
         verified_notes.append(
             {
                 'id': nid,
-                'owner_id': n['owner_id'],
+                'owner_sha256_prefix': hashlib.sha256(str(n['owner_id']).encode('utf-8')).hexdigest()[:12],
                 'category': n['category'],
                 'revision': int(n['revision']),
                 'deleted': n['deleted_at'] is not None,

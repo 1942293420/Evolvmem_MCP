@@ -49,24 +49,27 @@ def _http(port: int, path: str, *, actor: str | None = 'owner', method: str = 'G
 def _seed_proposal(
     conn,
     *,
-    owner_id: str = 'jiangli',
+    owner_id: str = 'owner-alpha',
+    op: str = 'add',
+    target_uid: str | None = None,
     source_track: str = 'live',
     state: str = 'review',
     problem: str = 'PG migration dry-run requires isolated schema',
+    evidence: list[dict] | None = None,
     gate_verdict: str = 'pass',
     gate_reason: str = 'low_confidence',
     gate_confidence: float = 0.72,
 ) -> str:
     uid = f'prop-{uuid.uuid4().hex[:12]}'
-    ev = [{'kind': 'command_output', 'ref': f'session://{uid[:8]}', 'quote': 'pytest tests/stage2 -> passed'}]
+    ev = evidence if evidence is not None else [{'kind': 'command_output', 'ref': f'session://{uid[:8]}', 'quote': 'pytest tests/stage2 -> passed'}]
     conn.execute(
         """
         INSERT INTO experience_proposals (
-            uid, owner_id, op, category, kind, problem, solution, reusable_experience,
+            uid, owner_id, op, target_uid, category, kind, problem, solution, reusable_experience,
             misbelief, scope, payload_json, evidence_json, source_kind, source_track,
             agent_client, model, device_id, actor_id, session_id, request_id, state, importance
         ) VALUES (
-            %s, %s, 'add', '系统环境经验', 'pitfall', %s,
+            %s, %s, %s, %s, '系统环境经验', 'pitfall', %s,
             'Create an isolated test schema via UUID prefix and drop it in finally.',
             'Always isolate PG integration tests per schema rather than touching production schema.',
             'Sharing one static schema avoids cleanup.', '{"repo":"evolvmem"}'::jsonb, %s::jsonb, %s::jsonb,
@@ -74,7 +77,7 @@ def _seed_proposal(
         )
         """,
         (
-            uid, owner_id, problem,
+            uid, owner_id, op, target_uid, problem,
             json.dumps({'problem': problem}, ensure_ascii=False),
             json.dumps(ev, ensure_ascii=False),
             source_track, owner_id, f'sess-{uid[:8]}', f'req-{uid}', state,
@@ -108,7 +111,7 @@ def test_review_inbox_tracks_shadow_mode_and_decisions(pg_exp_schema):
     svc = ReviewInboxService(ticket_secret=secret, shadow_mode=True)
 
     # Track isolation + shadow masking
-    live_res = svc.list_inbox(conn, owner_id='jiangli', source_track='live')
+    live_res = svc.list_inbox(conn, owner_id='owner-alpha', source_track='live')
     assert live_res['shadow_mode'] is True
     assert live_res['counts'] == {'live': 3, 'backfill': 2}
     assert {item['uid'] for item in live_res['items']} == {p_live_1, p_live_2, p_live_edit}
@@ -120,11 +123,11 @@ def test_review_inbox_tracks_shadow_mode_and_decisions(pg_exp_schema):
         assert item.get('gate_confidence') is None
         assert item.get('gate_reason') is None
 
-    backfill_res = svc.list_inbox(conn, owner_id='jiangli', source_track='backfill')
+    backfill_res = svc.list_inbox(conn, owner_id='owner-alpha', source_track='backfill')
     assert {item['uid'] for item in backfill_res['items']} == {p_backfill_1, p_backfill_2}
 
     # Accept -> writes PG experience_notes through gated AdmissionTicket
-    res_acc = svc.decide(conn, owner_id='jiangli', reviewer_id='jiangli', proposal_uid=p_live_1, user_verdict='accept', note='verified in review')
+    res_acc = svc.decide(conn, owner_id='owner-alpha', reviewer_id='owner-alpha', proposal_uid=p_live_1, user_verdict='accept', note='verified in review')
     assert res_acc['ok'] is True
     assert res_acc['note']['id'].startswith('exp-')
     # Internal gate judgment was persisted into review_decisions after user submitted decision
@@ -137,8 +140,8 @@ def test_review_inbox_tracks_shadow_mode_and_decisions(pg_exp_schema):
     # Edit accept -> updates content saved in experience_notes & edited_payload
     res_edit = svc.decide(
         conn,
-        owner_id='jiangli',
-        reviewer_id='jiangli',
+        owner_id='owner-alpha',
+        reviewer_id='owner-alpha',
         proposal_uid=p_live_edit,
         user_verdict='edit_accept',
         note='clarified problem statement',
@@ -155,37 +158,35 @@ def test_review_inbox_tracks_shadow_mode_and_decisions(pg_exp_schema):
 
     from evolvmem.experience_v2.gate.review_inbox import ReviewInboxError
     with pytest.raises(ReviewInboxError) as bad_reason:
-        svc.decide(conn, owner_id='jiangli', reviewer_id='jiangli', proposal_uid=p_live_2, user_verdict='reject', user_reason='not_a_valid_code')
+        svc.decide(conn, owner_id='owner-alpha', reviewer_id='owner-alpha', proposal_uid=p_live_2, user_verdict='reject', user_reason='not_a_valid_code')
     assert bad_reason.value.code == 'invalid_reason_code'
     # Reject -> does NOT write to experience_notes
     note_count_before = conn.execute('SELECT COUNT(*) FROM experience_notes').fetchone()[0]
-    res_rej = svc.decide(conn, owner_id='jiangli', reviewer_id='jiangli', proposal_uid=p_live_2, user_verdict='reject', user_reason='wrong_scope')
+    res_rej = svc.decide(conn, owner_id='owner-alpha', reviewer_id='owner-alpha', proposal_uid=p_live_2, user_verdict='reject', user_reason='wrong_scope')
     assert res_rej['state'] == 'rejected'
     assert conn.execute('SELECT COUNT(*) FROM experience_notes').fetchone()[0] == note_count_before
 
     # Rescue -> admits rejected backfill item via L4 ticket without leakage into live stats
-    res_rescue = svc.decide(conn, owner_id='jiangli', reviewer_id='jiangli', proposal_uid=p_backfill_1, user_verdict='rescue', note='rescued legitimate pitfall')
+    res_rescue = svc.decide(conn, owner_id='owner-alpha', reviewer_id='owner-alpha', proposal_uid=p_backfill_1, user_verdict='rescue', note='rescued legitimate pitfall')
     assert res_rescue['note']['id'].startswith('exp-')
     assert res_rescue['state'] == 'accepted'
 
     # Batch reject remaining quarantined backfill item
     batch_res = svc.batch_decide(
         conn,
-        owner_id='jiangli',
-        reviewer_id='jiangli',
+        owner_id='owner-alpha',
+        reviewer_id='owner-alpha',
         proposal_uids=[p_backfill_2],
         user_verdict='reject',
         user_reason='other',
     )
     assert batch_res['processed'] == 1
-    assert svc.list_inbox(conn, owner_id='jiangli', source_track='live')['items'] == []
+    assert svc.list_inbox(conn, owner_id='owner-alpha', source_track='live')['items'] == []
 
 
 def test_review_inbox_http_routes_auth_csrf_and_fail_closed(pg_exp_schema, tmp_path, monkeypatch):
     conn, schema, dsn = pg_exp_schema
     apply_experience_migrations(conn)
-    p_live = _seed_proposal(conn, owner_id='jiangli', source_track='live', state='review')
-    p_back = _seed_proposal(conn, owner_id='jiangli', source_track='backfill', state='review')
 
     secret_file = tmp_path / 'ticket.secret'
     secret_file.write_text('task28-http-ticket-secret', encoding='utf-8')
@@ -204,6 +205,11 @@ def test_review_inbox_http_routes_auth_csrf_and_fail_closed(pg_exp_schema, tmp_p
     }), encoding='utf-8')
     fix.start()
     try:
+        s_me, me_body = _http(fix.server.server_port, '/api/knowledge-console/me', actor='owner')
+        assert s_me == 200
+        owner_uid = me_body['current_user']['id']
+        p_live = _seed_proposal(conn, owner_id=owner_uid, source_track='live', state='review')
+        p_back = _seed_proposal(conn, owner_id=owner_uid, source_track='backfill', state='review')
         port = fix.server.server_port
         # Static assets & HTML shell include review inbox
         s_js, body_js = _http(port, '/review-inbox.js')
@@ -271,6 +277,82 @@ def test_review_inbox_http_routes_auth_csrf_and_fail_closed(pg_exp_schema, tmp_p
     finally:
         fix.close()
 
+
+
+def test_review_inbox_canonical_evidence_and_update_retire_ops(pg_exp_schema):
+    from evolvmem.experience_v2.changes_sync import changes_since
+    from evolvmem.experience_v2.gate.review_inbox import ReviewInboxService
+
+    conn, _schema, _dsn = pg_exp_schema
+    apply_experience_migrations(conn)
+    secret = b'test-stage2-task28-canonical-secret'
+    svc = ReviewInboxService(ticket_secret=secret, shadow_mode=True)
+    owner = 'owner-alpha'
+
+    # 1. Canonical §5.3 evidence format renders non-empty ref
+    p_add = _seed_proposal(
+        conn,
+        owner_id=owner,
+        op='add',
+        source_track='live',
+        state='review',
+        evidence=[{'library': 'personal', 'source': 'archive:17473', 'event': 12}],
+    )
+    listed = svc.list_inbox(conn, owner_id=owner, source_track='live')
+    item_add = next(i for i in listed['items'] if i['uid'] == p_add)
+    assert item_add['evidence_preview'] == [{'kind': 'history', 'ref': 'personal:archive:17473#12', 'quote': ''}]
+
+    res_add = svc.decide(conn, owner_id=owner, reviewer_id=owner, proposal_uid=p_add, user_verdict='accept')
+    n_base = res_add['note']
+    assert conn.execute('SELECT COUNT(*) FROM experience_notes WHERE owner_id = %s', (owner,)).fetchone()[0] == 1
+
+    # 2. Accepting op='update' updates existing note in-place without creating duplicate
+    p_upd = _seed_proposal(
+        conn,
+        owner_id=owner,
+        op='update',
+        target_uid=n_base['id'],
+        source_track='live',
+        state='review',
+        problem='Updated canonical problem',
+    )
+    res_upd = svc.decide(
+        conn,
+        owner_id=owner,
+        reviewer_id=owner,
+        proposal_uid=p_upd,
+        user_verdict='edit_accept',
+        edited_payload={
+            'category': '系统环境经验',
+            'problem': 'Updated canonical problem (edited)',
+            'solution': 'Updated solution steps.',
+            'reusable_experience': 'Updated reusable checklist.',
+        },
+    )
+    assert res_upd['note']['id'] == n_base['id']
+    assert res_upd['note']['revision'] == 2
+    assert res_upd['note']['problem'] == 'Updated canonical problem (edited)'
+    assert conn.execute('SELECT COUNT(*) FROM experience_notes WHERE owner_id = %s', (owner,)).fetchone()[0] == 1
+
+    # 3. Accepting op='retire' retires target_uid in-place and marks tombstone in changes_since
+    p_ret = _seed_proposal(
+        conn,
+        owner_id=owner,
+        op='retire',
+        target_uid=n_base['id'],
+        source_track='live',
+        state='review',
+        problem='Obsolete note to retire',
+    )
+    res_ret = svc.decide(conn, owner_id=owner, reviewer_id=owner, proposal_uid=p_ret, user_verdict='accept')
+    assert res_ret['note']['id'] == n_base['id']
+    assert res_ret['note']['status'] == 'retired'
+    assert res_ret['note']['deleted_at'] is not None
+    assert conn.execute('SELECT COUNT(*) FROM experience_notes WHERE owner_id = %s', (owner,)).fetchone()[0] == 1
+
+    feed = changes_since(conn, owner_id=owner, cursor=0)
+    assert feed['changes'][-1]['action'] == 'retire'
+    assert feed['changes'][-1]['tombstone'] is True
 
 def test_task28_ast_and_file_line_limits():
     assert scan_unauthorized_experience_notes_writes(REPO_ROOT) == []

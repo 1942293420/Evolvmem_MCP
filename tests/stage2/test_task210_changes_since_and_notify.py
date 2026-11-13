@@ -22,7 +22,7 @@ def _setup_mcp_env(tmp_path: Path, schema: str, dsn: str, monkeypatch, *, exp_v2
     owner_dir = tmp_path / 'owner_data'
     owner_dir.mkdir(parents=True)
     registry = tmp_path / 'console' / 'users.db'
-    svc = ConsoleService(registry, 'jiangli', owner_dir, tmp_path / 'lan', {})
+    svc = ConsoleService(registry, 'owner-alpha', owner_dir, tmp_path / 'lan', {})
     svc.bootstrap('test-owner-openid', 'Owner')
 
     secret_file = tmp_path / 'ticket.secret'
@@ -37,7 +37,7 @@ def _setup_mcp_env(tmp_path: Path, schema: str, dsn: str, monkeypatch, *, exp_v2
 
     monkeypatch.setenv('EVOLVMEM_PRODUCT_POLICY_FILE', str(policy_file))
     monkeypatch.setenv('EVOLVMEM_CONSOLE_REGISTRY', str(registry))
-    monkeypatch.setenv('EVOLVMEM_CONSOLE_OWNER_ID', 'jiangli')
+    monkeypatch.setenv('EVOLVMEM_CONSOLE_OWNER_ID', 'owner-alpha')
     monkeypatch.setenv('EVOLVMEM_EXPERIENCE_PG_DSN', str(dsn))
     monkeypatch.setenv('EVOLVMEM_EXPERIENCE_PG_SCHEMA', schema)
     monkeypatch.setenv('EVOLVMEM_EXPERIENCE_TICKET_SECRET_FILE', str(secret_file))
@@ -84,8 +84,8 @@ def test_pg_listen_notify_wakes_on_experience_write(pg_exp_schema):
             ticket,
             Op(
                 action='create',
-                owner_id='jiangli',
-                actor_id='jiangli',
+                owner_id='owner-alpha',
+                actor_id='owner-alpha',
                 request_id='notify-req-1',
                 category='系统环境经验',
                 problem='PG LISTEN/NOTIFY verification probe',
@@ -98,7 +98,7 @@ def test_pg_listen_notify_wakes_on_experience_write(pg_exp_schema):
         events = listener.poll(timeout=1.0)
         assert len(events) >= 1
         assert any(
-            ev.get('note_id') == res['experience']['id'] and ev.get('owner_id') == 'jiangli'
+            ev.get('note_id') == res['experience']['id'] and ev.get('owner_id') == 'owner-alpha'
             for ev in events
         )
 
@@ -118,8 +118,8 @@ def test_cross_agent_changes_since_recall_impressions_and_fail_closed(pg_exp_sch
         t1,
         Op(
             action='create',
-            owner_id='jiangli',
-            actor_id='jiangli',
+            owner_id='owner-alpha',
+            actor_id='owner-alpha',
             request_id='agent-a-n1',
             category='系统环境经验',
             problem='PostgreSQL isolated schema search_path failure',
@@ -152,8 +152,8 @@ def test_cross_agent_changes_since_recall_impressions_and_fail_closed(pg_exp_sch
         t2,
         Op(
             action='create',
-            owner_id='jiangli',
-            actor_id='jiangli',
+            owner_id='owner-alpha',
+            actor_id='owner-alpha',
             request_id='agent-a-n2',
             category='业务经验',
             problem='Windows hook cursor advances before empty turn',
@@ -198,7 +198,7 @@ def test_cross_agent_changes_since_recall_impressions_and_fail_closed(pg_exp_sch
     assert any(r['id'] == n1['id'] for r in recalled.get('results', []))
     imps = conn.execute(
         'SELECT item_uid, channel, agent_client, model FROM retrieval_impressions WHERE owner_id = %s',
-        ('jiangli',),
+        ('owner-alpha',),
     ).fetchall()
     assert any(row[0] == n1['id'] and row[1] == 'mcp' and row[2] == 'claude' for row in imps)
 
