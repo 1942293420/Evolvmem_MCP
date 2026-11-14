@@ -52,27 +52,30 @@ def plan_scoped_sessions(
     """List matching sessions across pages ordered strictly newest-to-oldest UTC."""
     proj_filter = scope_value if scope_kind == 'project' else None
     max_items = max(1, int(fetch_limit))
-    step = max(1, min(int(page_size), max_items))
-    raw: list[HistorySessionSummary] = []
+    step = max(1, min(int(page_size), max_items)) if scope_kind == 'project' else max(1, int(page_size))
+    filtered: list[HistorySessionSummary] = []
     seen_pages: set[str] = set()
     offset = 0
-    while len(raw) < max_items:
+    while len(filtered) < max_items:
         page = history_reader.list_sessions(project=proj_filter, limit=step, offset=offset)
         if not page:
             break
         for item in page:
-            if item.source_ref not in seen_pages:
-                seen_pages.add(item.source_ref)
-                raw.append(item)
+            if item.source_ref in seen_pages:
+                continue
+            seen_pages.add(item.source_ref)
+            if item.source_ref in exclude_source_refs:
+                continue
+            if _matches_scope(item, scope_kind, scope_value):
+                filtered.append(item)
         if len(page) < step:
             break
+        if scope_kind == 'month' and all(
+            f'{dt.year:04d}-{dt.month:02d}' < scope_value
+            for dt in (_canon_utc_dt(item.created_at) for item in page)
+        ):
+            break
         offset += len(page)
-    filtered: list[HistorySessionSummary] = []
-    for item in raw:
-        if item.source_ref in exclude_source_refs:
-            continue
-        if _matches_scope(item, scope_kind, scope_value):
-            filtered.append(item)
     filtered.sort(key=lambda s: (_canon_utc_dt(s.created_at), s.source_ref), reverse=True)
     return filtered[:max_items]
 

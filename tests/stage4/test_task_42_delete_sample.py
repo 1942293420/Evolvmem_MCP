@@ -183,3 +183,35 @@ def test_scrub_pilot_text_redacts_feishu_oc_and_short_win_device_ids():
     assert '[REDACTED_FEISHU_ID]' in out
     assert '<device-id>' in out
     assert 'win-x64' in out
+
+def test_scrub_pilot_text_cjk_adjacent_truncated_and_preserves_safe_tokens():
+    raw = (
+        'device_id为win-01c2ee8f-41d1-479c-ba46-97c08c527bca，执行器win-d3f1f26a已离线；'
+        '截断 win-01c2ee8… 与 win-01c2ee… 在 DESKTOP-OTTJ1G2、desktop-ottj1g2-p0-01、laptop-6gvmjvjo-01；'
+        '访问omp.xlwms.com失败，飞书 cli_a92c3ff4… cli_aa3228aaf… 短链 https://xp… 与 http://1…；'
+        '保留标识 on_transferable on_control cli_version win-x64。'
+    )
+    out = scrub_pilot_text(raw)
+    for leaked in (
+        'win-01c2ee8f-41d1-479c-ba46-97c08c527bca',
+        'win-d3f1f26a',
+        'win-01c2ee8…',
+        'win-01c2ee…',
+        'DESKTOP-OTTJ1G2',
+        'desktop-ottj1g2-p0-01',
+        'laptop-6gvmjvjo-01',
+        'omp.xlwms.com',
+        'cli_a92c3ff4…',
+        'cli_aa3228aaf…',
+        'https://xp…',
+        'http://1…',
+    ):
+        assert leaked not in out, f'leaked: {leaked} in {out}'
+    assert '<device-id>' in out
+    assert '<host-id>' in out
+    assert '<internal-host>' in out
+    assert '<internal-url>' in out
+    assert 'http://<lan-host>' in out
+    assert '[REDACTED_FEISHU_ID]' in out
+    for safe in ('on_transferable', 'on_control', 'cli_version', 'win-x64'):
+        assert safe in out, f'safe token clobbered: {safe} in {out}'

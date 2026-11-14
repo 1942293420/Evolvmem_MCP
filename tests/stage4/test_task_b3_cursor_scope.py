@@ -227,3 +227,19 @@ def test_execute_scoped_backfill_stops_cursor_on_failed_or_not_found(pg_s4_migra
     assert cur2['completed'] is True
     assert res2['ordered_source_refs'] == ['f-2']
     assert cur2['processed_count'] == 3
+
+def test_plan_scoped_sessions_month_paginates_past_newer_months():
+    sessions = [
+        _sess('nov-03', project='p', created_at='2026-11-03T10:00:00Z'),
+        _sess('nov-02', project='p', created_at='2026-11-02T10:00:00Z'),
+        _sess('nov-01', project='p', created_at='2026-11-01T10:00:00Z'),
+        _sess('oct-20', project='p', created_at='2026-10-20T10:00:00Z'),
+        _sess('oct-10', project='p', created_at='2026-10-10T10:00:00Z'),
+        _sess('oct-05', project='p', created_at='2026-10-05T10:00:00Z'),
+        _sess('sep-29', project='p', created_at='2026-09-29T10:00:00Z'),
+    ]
+    reader = InMemoryHistoryReader(sessions)
+    planned = plan_scoped_sessions(
+        reader, scope_kind='month', scope_value='2026-10', fetch_limit=2, page_size=2,
+    )
+    assert [s.source_ref for s in planned] == ['oct-20', 'oct-10']
