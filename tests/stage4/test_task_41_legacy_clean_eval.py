@@ -201,23 +201,25 @@ def test_evaluate_legacy_clean_l0_l1_l2_and_zero_mutations(pg_s4_migrated, tmp_p
     _build_legacy_sqlite(db_path)
 
     # Seed 1 active manual note matching capability_memories:10 ('tenant_id')
-    writer = ExperienceWriter(conn, b's4-t41-secret')
+    writer = ExperienceWriter(b's4-t41-secret')
     issuer = TicketIssuer(b's4-t41-secret')
     tkt = issuer.issue(proposal_uid='p-manual-1', decision_id='d-manual-1', lane='user_fast')
     emb = _DetEmbedder()
-    writer.commit(
+    writer.apply(
+        conn,
         tkt,
         Op(
-            kind='INSERT',
-            payload={
-                'owner_id': 'owner-41',
-                'origin': 'manual',
-                'category': '业务经验',
-                'problem': '计费请求缺失 tenant_id 导致失败',
-                'solution': '调用前注入 tenant_id 请求头',
-                'reusable_experience': '内部计费接口必传 tenant_id',
-                'embedding': emb.encode_document('tenant_id'),
-            },
+            action='create',
+            owner_id='owner-41',
+            actor_id='owner-41',
+            request_id='s4-t41-seed-1',
+            origin='manual',
+            category='业务经验',
+            kind='procedure',
+            problem='计费请求缺失 tenant_id 导致失败',
+            solution='调用前注入 tenant_id 请求头',
+            reusable_experience='内部计费接口必传 tenant_id',
+            embedding=emb.encode_document('tenant_id'),
         ),
     )
 
@@ -267,3 +269,52 @@ def test_evaluate_legacy_clean_l0_l1_l2_and_zero_mutations(pg_s4_migrated, tmp_p
     assert conn.execute('SELECT COUNT(*) FROM experience_notes').fetchone()[0] == notes_before
     assert conn.execute('SELECT COUNT(*) FROM experience_proposals').fetchone()[0] == props_before
     assert res['llm_usage']['calls'] > 0
+
+
+def test_evaluate_legacy_clean_preflight_and_multiworker(pg_s4_migrated, tmp_path: Path):
+    import psycopg
+    conn, schema, dsn = pg_s4_migrated
+    db_path = tmp_path / 'legacy_mw.db'
+    _build_legacy_sqlite(db_path)
+
+    def flash(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        user_msg = messages[-1]['content']
+        if '索赔' in user_msg and '模型盲测答案' in user_msg:
+            return {'text': json.dumps({'consistent': False, 'confidence': 0.9, 'detail': 'miss'}), 'input_tokens': 20, 'output_tokens': 10}
+        if 'pgvector' in user_msg and '模型盲测答案' in user_msg:
+            return {'text': json.dumps({'consistent': True, 'confidence': 0.9, 'detail': 'known'}), 'input_tokens': 20, 'output_tokens': 10}
+        return {'text': 'guess', 'input_tokens': 20, 'output_tokens': 10}
+
+    def strong(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        return {'text': json.dumps({'consistent': False, 'confidence': 0.9, 'detail': 'miss'}), 'input_tokens': 20, 'output_tokens': 10}
+
+    emb = _DetEmbedder()
+    pre = evaluate_legacy_clean(
+        sqlite_path=db_path,
+        conn=conn,
+        owner_id='owner-41',
+        flash_model='deepseek-v4-flash',
+        strong_model='deepseek-chat',
+        flash_transport=flash,
+        batch_encode_fn=lambda texts: [emb.encode_document(t) for t in texts],
+        preflight_only=True,
+    )
+    assert pre['preflight_only'] is True
+    assert pre['total_candidates'] == 10
+    assert pre['l1_survivor_count'] == 3  # ci:1, ci:2, cm:10 (no manual note seeded)
+
+    res = evaluate_legacy_clean(
+        sqlite_path=db_path,
+        conn=conn,
+        owner_id='owner-41',
+        flash_model='deepseek-v4-flash',
+        strong_model='deepseek-chat',
+        flash_transport=flash,
+        strong_transport=strong,
+        batch_encode_fn=lambda texts: [emb.encode_document(t) for t in texts],
+        max_workers=2,
+        conn_factory=lambda: psycopg.connect(dsn, options=f'-c search_path={schema},public'),
+    )
+    assert res['live_tables_mutated'] is False
+    assert res['llm_usage']['calls'] > 0
+    assert len(res['keep_manifest']) + len(res['delete_manifest']) == 10
