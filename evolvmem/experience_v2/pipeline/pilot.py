@@ -41,7 +41,7 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'/home/[A-Za-z0-9._-]+'), '/home/<owner>'),
     (re.compile(r'[A-Za-z]:\\Users\\[A-Za-z0-9._-]+'), r'C:\\Users\\<owner>'),
     (re.compile(r'github\.com([:/])(?!<owner>)[A-Za-z0-9._-]+', re.IGNORECASE), r'github.com\1<owner>'),
-    (re.compile(r'\bwin-[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b', re.IGNORECASE), '<device-id>'),
+    (re.compile(r'\bwin-[0-9a-fA-F]{8,}(?:-[0-9a-fA-F]{4}){0,3}(?:-[0-9a-fA-F]{12})?\b', re.IGNORECASE), '<device-id>'),
     (re.compile(r"(device[-_]?id\s*[:=]\s*[\"']?)(?!<device-id>)[A-Za-z0-9._-]{8,}([\"']?)", re.IGNORECASE), r'\1<device-id>\2'),
     (re.compile(r"https?://[A-Za-z0-9.-]*(?:xlwms|lingdongsz|lingxing)\.com(?::\d+)?(?:/[^\s\"'<>，。；;）)\]]*)?", re.IGNORECASE), '<internal-url>'),
     (re.compile(r'\b[A-Za-z0-9.-]*(?:xlwms|lingdongsz|lingxing)\.com\b', re.IGNORECASE), '<internal-host>'),
@@ -60,7 +60,7 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?<![0-9.])192\.(?:168(?:\.\d{1,3})?|\d{0,3})?(?=$|…|\s|[,，。.;；:：\"'()（）\[\]<]|[\u4e00-\u9fff])"), '<lan-host>'),
     (re.compile(r"(?<![0-9.])127\.(?:0(?:\.\d{1,3}){0,2})?(?=$|…|\s|[,，。.;；:：\"'()（）\[\]<]|[\u4e00-\u9fff])"), '<local-host>'),
     (re.compile(r"(https?://)(?:192|127)(?=$|…|[/\s\"'<>])", re.IGNORECASE), r'\1<lan-host>'),
-    (re.compile(r'(?<![A-Za-z0-9_])(?:ou|cli)_[A-Za-z0-9]{10,}(?![A-Za-z0-9_])'), '[REDACTED_FEISHU_ID]'),
+    (re.compile(r'(?<![A-Za-z0-9_])(?:ou|oc|on|om|cli)_[A-Za-z0-9]{10,}(?![A-Za-z0-9_])'), '[REDACTED_FEISHU_ID]'),
 )
 
 
