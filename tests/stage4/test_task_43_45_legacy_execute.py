@@ -20,6 +20,7 @@ from evolvmem.experience_v2.clean.executor import (
 )
 from evolvmem.experience_v2.clean.legacy_reader import read_legacy_experience_candidates
 from evolvmem.experience_v2.clean.migrator import (
+    _RESCUE_16405_RULE,
     legacy_pg_note_id,
     migrate_kept_legacy_to_pg,
     prepare_legacy_keep_units,
@@ -187,7 +188,7 @@ def _build_realistic_sqlite_and_vectors(tmp_path: Path) -> Path:
     # Standalone learning_memories: id=16405 (rescued to keep!) and id=20001 (deleted, keeping parent context_item fact intact!)
     conn.execute("INSERT INTO context_items(id, identity_key, content_type, project, status, created_at, updated_at) VALUES (16405, 'lm-16405', 'fact', 'pricing', 'active', ?, ?)", (now, now))
     conn.execute("INSERT INTO context_layers(item_id, layer, content, content_hash, generator, created_at, updated_at) VALUES (16405, 'l0', 'fact: 物流费兜底字段口径', 'h4', 'g', ?, ?)", (now, now))
-    conn.execute("INSERT INTO learning_memories(item_id, category, payload) VALUES (16405, 'reference', ?)", (json.dumps({'source_session': 'conv:16405', 'content': '产品物流费兜底沿用原脚本的参考-墨西哥物流费字段，当前其他国家也会用到。', 'l0': '助手说明兜底字段沿用情况，未经用户确认。'}),))
+    conn.execute("INSERT INTO learning_memories(item_id, category, payload) VALUES (16405, 'reference', ?)", (json.dumps({'source_session': 'conv:16405', 'content': '产品物流费兜底沿用原脚本的参考-墨西哥物流费字段，当前其他国家也会用到。', 'rationale': '助手说明兜底字段沿用情况，未经用户确认。'}),))
 
     conn.execute("INSERT INTO context_items(id, identity_key, content_type, project, status, created_at, updated_at) VALUES (20001, 'lm-20001', 'fact', 'pricing', 'active', ?, ?)", (now, now))
     conn.execute("INSERT INTO learning_memories(item_id, category, payload) VALUES (20001, 'reference', ?)", (json.dumps({'source_session': 'conv:20001', 'content': '可删除的临时静态参考记录'}),))
@@ -287,7 +288,7 @@ def test_rescue_backup_delete_migrate_and_registry_end_to_end(pg_s4_migrated, tm
     assert len(units) == 3
     by_lid = {u['legacy_id']: u for u in units}
     assert any(ev.get('merged_child_legacy_id') == 'learning_memories:5938' for ev in by_lid['context_items:5938']['evidence'])
-    assert '未经用户确认' not in by_lid['learning_memories:16405']['reusable_experience']
+    assert by_lid['learning_memories:16405']['reusable_experience'] == _RESCUE_16405_RULE
 
     # Refuse SQLite delete without valid backup receipt
     with pytest.raises(ValueError, match='backup'):
@@ -295,6 +296,12 @@ def test_rescue_backup_delete_migrate_and_registry_end_to_end(pg_s4_migrated, tm
             db_path, tmp_path, [x['legacy_id'] for x in del_final],
             backup_receipt={'path': str(tmp_path / 'missing.jsonl.gz'), 'sha256': '0', 'exported_count': 3},
         )
+
+    # Reject non-experience context_items before mutating child tables
+    bad_gz = tmp_path / 'bad-non-exp.jsonl.gz'
+    bad_receipt = export_deleted_legacy_backup(db_path, ['context_items:202'], bad_gz, retain_days=30)
+    with pytest.raises(ValueError, match='non_experience_context_item_in_delete_ids'):
+        delete_approved_legacy_sqlite_and_vectors(db_path, tmp_path, ['context_items:202'], backup_receipt=bad_receipt)
 
     # Task 4.3a: Export .jsonl.gz backup first
     gz_path = tmp_path / 'deleted-backup.jsonl.gz'
