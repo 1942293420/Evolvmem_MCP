@@ -40,7 +40,8 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'/home/[A-Za-z0-9._-]+'), '/home/<owner>'),
     (re.compile(r'[A-Za-z]:\\Users\\[A-Za-z0-9._-]+'), r'C:\\Users\\<owner>'),
     (re.compile(r'[A-Za-z]:\\Users\\[A-Za-z0-9._-]+'), r'C:\\Users\\<owner>'),
-    (re.compile(r'\b192\.168\.\d{1,3}\.\d{1,3}\b'), '<lan-host>'),
+    (re.compile(r'(?<![0-9.])192\.168\.\d{1,3}\.\d{1,3}(?![0-9.])'), '<lan-host>'),
+    (re.compile(r'(?<![A-Za-z0-9_])(?:ou|cli)_[A-Za-z0-9]{10,}(?![A-Za-z0-9_])'), '[REDACTED_FEISHU_ID]'),
 )
 
 
