@@ -4,6 +4,7 @@ from __future__ import annotations
 import ast
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
@@ -15,6 +16,18 @@ from evolvmem.config import Config
 
 _ARCHIVE_REF_RE = re.compile(r'^archive:([1-9][0-9]*)\Z')
 _BLOCK_REF_RE = re.compile(r'^block:([A-Za-z0-9_.:-]+)\Z')
+
+
+def _canon_utc_dt(raw: str | None) -> datetime:
+    text = str(raw or '').strip()
+    if not text:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    norm = text[:-1] + '+00:00' if text.endswith(('Z', 'z')) else text
+    try:
+        dt = datetime.fromisoformat(norm)
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -94,8 +107,9 @@ class InMemoryHistoryReader:
         if adapter is not None:
             items = [s for s in items if s.adapter == adapter]
         if since is not None:
-            items = [s for s in items if s.created_at >= since]
-        items.sort(key=lambda s: (s.created_at, s.source_ref), reverse=True)
+            since_dt = _canon_utc_dt(since)
+            items = [s for s in items if _canon_utc_dt(s.created_at) >= since_dt]
+        items.sort(key=lambda s: (_canon_utc_dt(s.created_at), s.source_ref), reverse=True)
         return items[max(0, offset):max(0, offset) + max(0, limit)]
 
     def get_session(self, source_ref: str) -> HistorySession | None:
@@ -317,6 +331,13 @@ class SqliteHistoryReader:
         offset: int = 0,
         dedupe_logical_sessions: bool = True,
     ) -> list[HistorySessionSummary]:
+        off = max(0, int(offset))
+        lim = max(0, int(limit))
+        if lim == 0:
+            return []
+        fetch_n = off + lim
+        since_dt = _canon_utc_dt(since) if since is not None else None
+        since_floor_date = (since_dt - timedelta(days=1)).strftime('%Y-%m-%d') if since_dt is not None else None
         results: list[HistorySessionSummary] = []
         if self.memory_db and self.memory_db.is_file():
             with self._connect(self.memory_db) as conn:
@@ -347,17 +368,17 @@ class SqliteHistoryReader:
                     if adapter is not None:
                         clauses.append('sa.adapter = ?')
                         params.append(adapter)
-                    if since is not None:
+                    if since_floor_date is not None:
                         clauses.append('sa.created_at >= ?')
-                        params.append(since)
+                        params.append(since_floor_date)
                     where = ' AND '.join(clauses)
                     join_sql = 'LEFT JOIN lan_session_uploads lsu ON lsu.archive_id = sa.id ' if has_uploads else ''
                     fmt_col = 'lsu.source_format AS upload_fmt' if has_uploads else 'NULL AS upload_fmt'
                     rows = conn.execute(
                         f'SELECT sa.id, sa.project, sa.adapter, sa.external_session_id, sa.payload_path, sa.created_at, {fmt_col} '
                         f'FROM session_archives sa {join_sql}'
-                        f'WHERE {where} ORDER BY sa.created_at DESC, sa.id DESC LIMIT ? OFFSET ?',
-                        (*params, max(0, int(limit)), max(0, int(offset))),
+                        f'WHERE {where} ORDER BY sa.created_at DESC, sa.id DESC LIMIT ?',
+                        (*params, fetch_n),
                     ).fetchall()
                     for r in rows:
                         adp = str(r['adapter'])
@@ -374,21 +395,22 @@ class SqliteHistoryReader:
                                 has_raw_bytes=bool(has_key and r['payload_path']),
                             )
                         )
-        if len(results) < limit and self.candidate_db and self.candidate_db.is_file():
+        if self.candidate_db and self.candidate_db.is_file():
             with self._connect(self.candidate_db) as conn:
                 clauses = ['message_count > 0']
                 params = []
                 if adapter is not None:
                     clauses.append('adapter = ?')
                     params.append(adapter)
-                if since is not None:
+                if since_floor_date is not None:
                     clauses.append('observed_first_at >= ?')
-                    params.append(since)
+                    params.append(since_floor_date)
                 rows = conn.execute(
                     f"SELECT block_id, adapter, native_session_id, observed_first_at, projects FROM blocks "
-                    f"WHERE {' AND '.join(clauses)} ORDER BY observed_first_at DESC, block_id DESC LIMIT ? OFFSET ?",
-                    (*params, max(0, int(limit) * 3 if project else int(limit)), max(0, int(offset))),
+                    f"WHERE {' AND '.join(clauses)} ORDER BY observed_first_at DESC, block_id DESC LIMIT ?",
+                    (*params, fetch_n * 3 if project else fetch_n),
                 ).fetchall()
+                added_blocks = 0
                 for r in rows:
                     try:
                         projs = json.loads(r['projects'] or '[]')
@@ -411,9 +433,13 @@ class SqliteHistoryReader:
                             has_raw_bytes=False,
                         )
                     )
-                    if len(results) >= limit:
+                    added_blocks += 1
+                    if added_blocks >= fetch_n:
                         break
-        return results
+        if since_dt is not None:
+            results = [s for s in results if _canon_utc_dt(s.created_at) >= since_dt]
+        results.sort(key=lambda s: (_canon_utc_dt(s.created_at), s.source_ref), reverse=True)
+        return results[off:fetch_n]
 
     def get_session(self, source_ref: str) -> HistorySession | None:
         m_arch = _ARCHIVE_REF_RE.fullmatch(str(source_ref or ''))

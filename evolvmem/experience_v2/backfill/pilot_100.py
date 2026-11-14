@@ -54,14 +54,15 @@ def run_backfill_pilot_batch(
     max_call_row = conn.execute('SELECT COALESCE(MAX(id), 0) FROM llm_calls').fetchone()
     after_call_id = int(max_call_row[0]) if max_call_row else 0
 
-    conn.execute(
-        """
-        INSERT INTO shadow_pilot_runs(run_id, owner_id, track, pipeline_version)
-        VALUES (%s, %s, 'backfill', %s)
-        ON CONFLICT (run_id) DO NOTHING
-        """,
-        (rid, owner_id, pipeline_version),
-    )
+    with conn.transaction():
+        conn.execute(
+            """
+            INSERT INTO shadow_pilot_runs(run_id, owner_id, track, pipeline_version)
+            VALUES (%s, %s, 'backfill', %s)
+            ON CONFLICT (run_id) DO NOTHING
+            """,
+            (rid, owner_id, pipeline_version),
+        )
 
     runner = BackfillRunner(
         history_reader=history_reader,
@@ -135,7 +136,7 @@ def run_backfill_pilot_batch(
     props_after = int(conn.execute('SELECT COUNT(*) FROM experience_proposals').fetchone()[0])
     notes_after = int(conn.execute('SELECT COUNT(*) FROM experience_notes').fetchone()[0])
 
-    extra_terms = [x for x in (os.environ.get('USER', ''), *extra_scrub_terms) if x]
+    extra_terms = [x for x in (os.environ.get('USER', ''), os.environ.get('USERNAME', ''), *extra_scrub_terms) if x]
     raw_samples = _select_user_samples(conn, run_id=rid, sample_size=max(20, int(sample_size)), extra_scrub_terms=extra_terms)
     enriched = enrich_pilot_samples(
         raw_samples,
@@ -187,23 +188,24 @@ def run_backfill_pilot_batch(
         'generated_at': datetime.now(timezone.utc).isoformat(),
     }
 
-    conn.execute(
-        """
-        UPDATE shadow_pilot_runs
-        SET sessions_total = %s,
-            sessions_zero_moments = %s,
-            moments_detected = %s,
-            proposals_generated = %s,
-            proposals_admitted_candidate = %s,
-            tokens_total = %s,
-            llm_calls_total = %s,
-            report_json = %s::jsonb
-        WHERE run_id = %s
-        """,
-        (
-            sessions_total, zero_moments, moments_detected, proposals_generated,
-            admitted_cand, tokens_total, calls_total,
-            json.dumps(report, ensure_ascii=False), rid,
-        ),
-    )
+    with conn.transaction():
+        conn.execute(
+            """
+            UPDATE shadow_pilot_runs
+            SET sessions_total = %s,
+                sessions_zero_moments = %s,
+                moments_detected = %s,
+                proposals_generated = %s,
+                proposals_admitted_candidate = %s,
+                tokens_total = %s,
+                llm_calls_total = %s,
+                report_json = %s::jsonb
+            WHERE run_id = %s
+            """,
+            (
+                sessions_total, zero_moments, moments_detected, proposals_generated,
+                admitted_cand, tokens_total, calls_total,
+                json.dumps(report, ensure_ascii=False), rid,
+            ),
+        )
     return report

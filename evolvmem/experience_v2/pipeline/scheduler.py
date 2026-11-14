@@ -213,7 +213,7 @@ class PipelineScheduler:
         track: Literal['live', 'backfill'] = 'live',
         ticket_secret: bytes | str = b'stage3-pipeline-secret',
         budget: BudgetConfig | None = None,
-        gate_mode: str = 'review',
+        gate_mode: str | dict[str, str] = 'review',
     ) -> None:
         self.history_reader = history_reader
         self.policy = policy
@@ -427,21 +427,22 @@ class PipelineScheduler:
             l0 = run_l0_gate(conn, uid, evidence_verifier=self._verifier, require_evidence=True)
             if l0['verdict'] != 'pass':
                 continue
+            mode = self.gate_mode.get(p['category'], 'review') if isinstance(self.gate_mode, dict) else (self.gate_mode or 'review')
             if self.embedder is not None:
-                l1 = run_l1_dedupe(conn, uid, embedder=self.embedder, ticket_issuer=self._issuer, writer=self._writer, gate_mode=self.gate_mode)
+                l1 = run_l1_dedupe(conn, uid, embedder=self.embedder, ticket_issuer=self._issuer, writer=self._writer, gate_mode=mode)
                 if l1['verdict'] != 'pass':
                     continue
             l2 = run_l2_value_gate(
                 conn, uid, flash_model=self.flash_model, strong_model=self.strong_model,
                 flash_transport=self.flash_transport, strong_transport=self.strong_transport,
-                gate_mode=self.gate_mode, budget=self.budget,
+                gate_mode=mode, budget=self.budget,
             )
             tokens_total += int(l2.get('tokens_used', 0))
             if l2['verdict'] != 'pass':
                 continue
             l3 = run_l3_reconcile_gate(
                 conn, uid, judge_model=self.judge_model, judge_transport=self.judge_transport,
-                writer=self._writer, ticket_issuer=self._issuer, gate_mode=self.gate_mode, budget=self.budget,
+                writer=self._writer, ticket_issuer=self._issuer, gate_mode=mode, budget=self.budget,
             )
             tokens_total += int(l3.get('tokens_used', 0))
         return proposals_cnt, tokens_total
@@ -458,7 +459,7 @@ class PipelineScheduler:
         shadow_run_id: str | None = None,
     ) -> dict[str, Any]:
         enabled = self.policy.experience_backfill_enabled if self.track == 'backfill' else self.policy.experience_pipeline_enabled
-        if not shadow_mode and not enabled:
+        if not shadow_mode and (not self.policy.valid or not enabled):
             return {'status': 'disabled', 'llm_calls': 0}
 
         ready, trig_reason = should_trigger_session(is_closed=is_closed, last_message_at=last_message_at, now=now)

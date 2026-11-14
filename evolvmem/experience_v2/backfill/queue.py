@@ -14,6 +14,19 @@ NIGHT_WINDOW_END_HOUR = 7
 DEFAULT_BACKFILL_TZ = 'Asia/Shanghai'
 
 
+
+def _norm_utc_iso(raw: str | None) -> str:
+    text = str(raw or '').strip()
+    if not text:
+        return ''
+    norm = text[:-1] + '+00:00' if text.endswith(('Z', 'z')) else text
+    try:
+        dt = datetime.fromisoformat(norm)
+    except ValueError:
+        return text
+    utc = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+    return utc.isoformat().replace('+00:00', 'Z')
+
 def is_within_night_window(
     now: datetime,
     *,
@@ -48,7 +61,7 @@ class BackfillQueue:
         tz_name: str = DEFAULT_BACKFILL_TZ,
     ) -> dict[str, Any]:
         """Enforce independent backfill switch and 01:00-07:00 night window for live runs."""
-        if not shadow_mode and not policy.experience_backfill_enabled:
+        if not shadow_mode and (not policy.valid or not policy.experience_backfill_enabled):
             return {'allowed': False, 'status': 'disabled', 'llm_calls': 0}
         if not shadow_mode and enforce_night_window and not is_within_night_window(now, tz_name=tz_name):
             return {'allowed': False, 'status': 'outside_night_window', 'llm_calls': 0}
@@ -79,7 +92,7 @@ class BackfillQueue:
                     """,
                     (
                         jid, self.owner_id, scope_kind, scope_value,
-                        s.source_ref, s.session_id, s.created_at or '', bool(is_shadow),
+                        s.source_ref, s.session_id, _norm_utc_iso(s.created_at), bool(is_shadow),
                     ),
                 ).fetchone()
                 if res is not None:
@@ -107,7 +120,7 @@ class BackfillQueue:
                   AND scope_value = %s
                   AND is_shadow = %s
                   AND status = 'queued'
-                ORDER BY session_created_at DESC, source_ref DESC
+                ORDER BY (CASE WHEN session_created_at = '' THEN to_timestamp(0) ELSE session_created_at::timestamptz END) DESC, source_ref DESC
                 LIMIT %s
                 FOR UPDATE SKIP LOCKED
                 """,
@@ -153,6 +166,57 @@ class BackfillQueue:
                 """,
                 (status, int(moments_count), int(proposals_count), int(tokens_spent), error_code[:120], self.owner_id, job_id),
             )
+
+
+
+    def requeue_retryable_jobs(
+        self,
+        conn,
+        *,
+        scope_kind: Literal['project', 'month'],
+        scope_value: str,
+        source_refs: Sequence[str],
+        is_shadow: bool = False,
+    ) -> int:
+        """Reset failed or deferred jobs in the given scope batch back to queued for retry."""
+        refs = [str(x) for x in source_refs if x]
+        if not refs:
+            return 0
+        with conn.transaction():
+            res = conn.execute(
+                """
+                UPDATE backfill_jobs
+                SET status = 'queued',
+                    updated_at = now()
+                WHERE owner_id = %s
+                  AND scope_kind = %s
+                  AND scope_value = %s
+                  AND is_shadow = %s
+                  AND status IN ('failed', 'deferred')
+                  AND source_ref = ANY(%s)
+                """,
+                (self.owner_id, scope_kind, scope_value, bool(is_shadow), refs),
+            )
+            return int(res.rowcount or 0)
+
+    def requeue_jobs(self, conn, *, job_ids: Sequence[str]) -> int:
+        """Return unexecuted claimed running jobs back to queued cleanly."""
+        ids = [str(x) for x in job_ids if x]
+        if not ids:
+            return 0
+        with conn.transaction():
+            res = conn.execute(
+                """
+                UPDATE backfill_jobs
+                SET status = 'queued',
+                    updated_at = now()
+                WHERE owner_id = %s
+                  AND job_id = ANY(%s)
+                  AND status = 'running'
+                """,
+                (self.owner_id, ids),
+            )
+            return int(res.rowcount or 0)
 
     def requeue_deferred_jobs(
         self,

@@ -46,13 +46,13 @@ def get_track_precedents(
         """,
         (owner_id, source_track, category, safe_limit),
     ).fetchall()
-    extra = [os.environ.get('USER', '')]
+    extra = [os.environ.get('USER', ''), os.environ.get('USERNAME', '')]
     return [
         {
             'review_id': row[0],
             'gate_verdict': row[1],
             'user_verdict': row[2],
-            'user_reason': row[3],
+            'user_reason': scrub_pilot_text(row[3], extra_terms=extra) if row[3] is not None else None,
             'admitted': row[2] in ADMITTING_VERDICTS,
             'kind': row[4],
             'problem': scrub_pilot_text(row[5], extra_terms=extra),

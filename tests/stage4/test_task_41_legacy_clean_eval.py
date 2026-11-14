@@ -318,3 +318,154 @@ def test_evaluate_legacy_clean_preflight_and_multiworker(pg_s4_migrated, tmp_pat
     assert res['live_tables_mutated'] is False
     assert res['llm_usage']['calls'] > 0
     assert len(res['keep_manifest']) + len(res['delete_manifest']) == 10
+
+
+def test_evaluate_legacy_clean_l1_cap_budget_deferred_rollback_and_manual_origin(pg_s4_migrated, tmp_path: Path):
+    import evolvmem.experience_v2.clean.evaluator as eval_mod
+    from evolvmem.experience_v2.llm_meter import BudgetConfig
+
+    conn, _schema, _dsn = pg_s4_migrated
+    db_path = tmp_path / 'legacy_redlines.db'
+    _build_legacy_sqlite(db_path)
+
+    # Seed ONLY an origin='pipeline' note matching 'tenant_id'; should NOT count as manual note
+    conn.execute(
+        """
+        INSERT INTO experience_proposals(
+            uid, owner_id, op, category, kind, problem, solution, reusable_experience,
+            misbelief, scope, payload_json, evidence_json, source_kind, source_track,
+            agent_client, model, actor_id, request_id, state
+        ) VALUES (
+            'p-pipe-1', 'owner-41-iso', 'add', '业务经验', 'procedure',
+            '计费请求缺失 tenant_id 导致失败', '调用前注入 tenant_id 请求头', '内部计费接口必传 tenant_id',
+            '', '{}'::jsonb, '[]'::jsonb, '[{"library":"dev","source":"archive:1","event":1}]'::jsonb,
+            'pipeline', 'live', 'codex', 'deepseek-v4-flash', 'owner-41-iso', 'req-p-pipe-1', 'accepted'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO proposal_decisions(decision_id, proposal_uid, layer, verdict)
+        VALUES ('d-pipe-1', 'p-pipe-1', 'L3', 'pass')
+        """
+    )
+    writer = ExperienceWriter(b's4-t41-secret')
+    issuer = TicketIssuer(b's4-t41-secret')
+    tkt = issuer.issue(proposal_uid='p-pipe-1', decision_id='d-pipe-1', lane='gated')
+    emb = _DetEmbedder()
+    writer.apply(
+        conn,
+        tkt,
+        Op(
+            action='create',
+            owner_id='owner-41-iso',
+            actor_id='owner-41-iso',
+            request_id='s4-t41-pipe-only',
+            origin='pipeline',
+            category='业务经验',
+            kind='procedure',
+            problem='计费请求缺失 tenant_id 导致失败',
+            solution='调用前注入 tenant_id 请求头',
+            reusable_experience='内部计费接口必传 tenant_id',
+            embedding=emb.encode_document('tenant_id'),
+        ),
+    )
+
+    assert hasattr(eval_mod, 'L1_SURVIVOR_CAP') and eval_mod.L1_SURVIVOR_CAP == 1800
+
+    calls = {'n': 0}
+    def flash(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        calls['n'] += 1
+        user_msg = messages[-1]['content']
+        if '索赔' in user_msg:
+            return {'text': json.dumps({'consistent': False, 'confidence': 0.92, 'detail': 'wrong'}), 'input_tokens': 40, 'output_tokens': 20}
+        return {'text': json.dumps({'consistent': True, 'confidence': 0.95, 'detail': 'known'}), 'input_tokens': 40, 'output_tokens': 20}
+
+    def strong(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        calls['n'] += 1
+        return {'text': json.dumps({'consistent': False, 'confidence': 0.95, 'detail': 'keep'}), 'input_tokens': 40, 'output_tokens': 20}
+
+    # Preflight works above l1_survivor_cap=2; full run refuses before L2 calls
+    pre = evaluate_legacy_clean(
+        sqlite_path=db_path, conn=conn, owner_id='owner-41-iso',
+        flash_model='deepseek-v4-flash', strong_model='deepseek-chat',
+        flash_transport=flash, embedder=emb, preflight_only=True, l1_survivor_cap=2,
+    )
+    assert pre['l1_survivor_count'] == 3
+    assert calls['n'] == 0
+    with pytest.raises(ValueError, match='l1_survivor_cap_exceeded'):
+        evaluate_legacy_clean(
+            sqlite_path=db_path, conn=conn, owner_id='owner-41-iso',
+            flash_model='deepseek-v4-flash', strong_model='deepseek-chat',
+            flash_transport=flash, strong_transport=strong, embedder=emb,
+            l1_survivor_cap=2,
+        )
+    assert calls['n'] == 0
+
+    # Manual origin check: pipeline-only note does NOT trigger duplicate_of_active_manual_note
+    full_no_manual = evaluate_legacy_clean(
+        sqlite_path=db_path, conn=conn, owner_id='owner-41-iso',
+        flash_model='deepseek-v4-flash', strong_model='deepseek-chat',
+        flash_transport=flash, strong_transport=strong, embedder=emb,
+    )
+    del_reasons = {r['legacy_id']: r['reason_code'] for r in full_no_manual['delete_manifest']}
+    assert del_reasons.get('capability_memories:10') != 'duplicate_of_active_manual_note'
+
+    # BudgetDeferred halts remaining L2 calls cleanly without crash or false deletion
+    def_calls = {'n': 0}
+    def expensive_flash(model: str, messages: list[dict], max_output_tokens: int) -> dict:
+        def_calls['n'] += 1
+        return {'text': json.dumps({'consistent': False, 'confidence': 0.9, 'detail': 'keep'}), 'input_tokens': 60, 'output_tokens': 40}
+
+    def_res = evaluate_legacy_clean(
+        sqlite_path=db_path, conn=conn, owner_id='owner-41-def',
+        flash_model='deepseek-v4-flash', strong_model='deepseek-chat',
+        flash_transport=expensive_flash, strong_transport=strong, embedder=emb,
+        budget=BudgetConfig(backfill_daily_tokens=1),
+    )
+    assert def_res['status'] == 'deferred'
+    assert len(def_res['deferred_manifest']) >= 1
+    assert (
+        len(def_res['keep_manifest'])
+        + len(def_res['delete_manifest'])
+        + len(def_res['deferred_manifest'])
+    ) == 10
+    assert def_calls['n'] == 0
+
+    # Multi-worker exception rolls back worker conn (never commits on error)
+    import psycopg
+    proxies = []
+    class _ConnProxy:
+        def __init__(self, inner):
+            self._inner = inner
+            self.commits = 0
+            self.rollbacks = 0
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+        def execute(self, sql, params=None):
+            if 'INSERT INTO llm_calls' in str(sql):
+                raise RuntimeError('unexpected_db_boom')
+            return self._inner.execute(sql, params)
+        def commit(self):
+            self.commits += 1
+            return self._inner.commit()
+        def rollback(self):
+            self.rollbacks += 1
+            return self._inner.rollback()
+        def close(self):
+            return self._inner.close()
+
+    def _make_proxy():
+        px = _ConnProxy(psycopg.connect(_dsn, options=f'-c search_path={_schema},public'))
+        proxies.append(px)
+        return px
+
+    with pytest.raises(RuntimeError, match='unexpected_db_boom'):
+        evaluate_legacy_clean(
+            sqlite_path=db_path, conn=conn, owner_id='owner-41-rb',
+            flash_model='deepseek-v4-flash', strong_model='deepseek-chat',
+            flash_transport=flash, strong_transport=strong, embedder=emb,
+            max_workers=2, conn_factory=_make_proxy,
+        )
+    assert proxies and sum(px.rollbacks for px in proxies) >= 1
+    assert sum(px.commits for px in proxies) == 0

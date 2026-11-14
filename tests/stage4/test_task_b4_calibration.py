@@ -94,3 +94,41 @@ def test_backfill_and_live_calibrations_and_precedents_never_cross(pg_s4_migrate
         ).fetchall()
     }
     assert snap_tracks == {'live': 'auto', 'backfill': 'review'}
+
+
+def test_get_track_precedents_scrubs_user_reason_and_windows_username(pg_s4_migrated, monkeypatch):
+    conn, _schema, _dsn = pg_s4_migrated
+    monkeypatch.delenv('USER', raising=False)
+    monkeypatch.setenv('USERNAME', 'WinTester')
+
+    uid = 'prop-b4-scrub'
+    rev_id = 'rev-b4-scrub'
+    conn.execute(
+        """
+        INSERT INTO experience_proposals(
+            uid, owner_id, op, category, kind, problem, solution, reusable_experience,
+            misbelief, scope, payload_json, evidence_json, source_kind, source_track,
+            agent_client, model, actor_id, request_id, state
+        ) VALUES (
+            %s, 'owner-b4s', 'add', '业务经验', 'pitfall', 'WinTester problem', '做法', '经验',
+            '', '{}'::jsonb, '[]'::jsonb, '[{"library":"dev","source":"archive:1","event":1}]'::jsonb,
+            'pipeline', 'backfill', 'codex', 'deepseek-v4-flash', 'owner-b4s', 'req-b4s', 'review'
+        )
+        """,
+        (uid,),
+    )
+    conn.execute(
+        """
+        INSERT INTO review_decisions(
+            review_id, owner_id, reviewer_id, proposal_uid, category, source_track,
+            gate_verdict, gate_confidence, gate_reason, user_verdict, user_reason
+        ) VALUES (%s, 'owner-b4s', 'owner-b4s', %s, '业务经验', 'backfill', 'pass', 0.9, NULL, 'reject', %s)
+        """,
+        (rev_id, uid, 'Host 192.168.1.99 key sk-secretkey99999 WinTester rejected'),
+    )
+    precs = get_track_precedents(conn, owner_id='owner-b4s', source_track='backfill', category='业务经验')
+    assert len(precs) == 1
+    reason = precs[0]['user_reason'] or ''
+    assert '192.168.1.99' not in reason
+    assert 'sk-secretkey' not in reason
+    assert 'WinTester' not in reason

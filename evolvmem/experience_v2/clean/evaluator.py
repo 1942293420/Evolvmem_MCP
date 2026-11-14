@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import re
+import threading
 import time
 from typing import Any, Callable, Sequence
 
@@ -20,7 +21,7 @@ from evolvmem.experience_v2.gate.dedupe import (
 )
 from evolvmem.experience_v2.gate.rules import _contains_secret, evaluate_l0_fields
 from evolvmem.experience_v2.gate.value import assess_value_cascade
-from evolvmem.experience_v2.llm_meter import BudgetConfig, LlmTransportError
+from evolvmem.experience_v2.llm_meter import BudgetConfig, BudgetDeferred, LlmTransportError
 from evolvmem.experience_v2.pipeline.pilot import scrub_pilot_text
 
 _EPHEMERAL_TASK_RE = re.compile(
@@ -36,12 +37,11 @@ _DELIVERY_LOG_RE = re.compile(
     r'|方案与部分实施|已切换并验证|现状汇总|进度汇报|开发到什么地步|用户要求关闭|首屏主卡'
     r'|改为可搜索.*条|批次结果[:：]已入库'
 )
-_FEISHU_ID_RE = re.compile(r'(?<![A-Za-z0-9_])(?:ou|cli)_[A-Za-z0-9]{10,}(?![A-Za-z0-9_])')
+L1_SURVIVOR_CAP = 1800
 
 
 def _scrub(text: Any, extra_terms: Sequence[str]) -> str:
-    cleaned = scrub_pilot_text(text, extra_terms=extra_terms)
-    return _FEISHU_ID_RE.sub('[REDACTED_FEISHU_ID]', cleaned)
+    return scrub_pilot_text(text, extra_terms=extra_terms)
 
 
 def _dot(a: list[float], b: list[float]) -> float:
@@ -121,7 +121,7 @@ def _load_active_manual_vecs(
         """
         SELECT id, problem, solution, reusable_experience, embedding::text
         FROM experience_notes
-        WHERE owner_id = %s AND status = 'active' AND deleted_at IS NULL
+        WHERE owner_id = %s AND status = 'active' AND origin = 'manual' AND deleted_at IS NULL
         """,
         (owner_id,),
     ).fetchall()
@@ -196,6 +196,7 @@ def evaluate_legacy_clean(
     budget: BudgetConfig | None = None,
     extra_scrub_terms: Sequence[str] = (),
     preflight_only: bool = False,
+    l1_survivor_cap: int = L1_SURVIVOR_CAP,
 ) -> dict[str, Any]:
     """Run read-only L0 -> L1 -> L2 legacy cleanup evaluation without mutating SQLite or live notes."""
     notes_before = int(conn.execute('SELECT COUNT(*) FROM experience_notes').fetchone()[0])
@@ -322,15 +323,24 @@ def evaluate_legacy_clean(
             'l0_l1_deleted_count': len(delete_entries),
             'l1_survivor_count': len(l1_survivors),
             'l1_survivor_by_table': dict(Counter(r.source_table for r in l1_survivors)),
+            'l1_survivor_cap': int(l1_survivor_cap),
             'reason_counts': reason_counts,
         }
 
+    if len(l1_survivors) > int(l1_survivor_cap):
+        raise ValueError(f'l1_survivor_cap_exceeded:{len(l1_survivors)}>{int(l1_survivor_cap)}')
+
     active_budget = budget or BudgetConfig()
+    stop_l2 = threading.Event()
 
     def _run_l2_one(r: LegacyExperienceRecord, use_conn) -> dict[str, Any]:
+        if stop_l2.is_set():
+            return {'record': r, 'deferred': True, 'detail': 'budget_deferred'}
         scope = {'project': r.project} if r.project else {}
         last_exc: Exception | None = None
         for attempt in range(3):
+            if stop_l2.is_set():
+                return {'record': r, 'deferred': True, 'detail': 'budget_deferred'}
             try:
                 outcome = assess_value_cascade(
                     use_conn,
@@ -348,6 +358,9 @@ def evaluate_legacy_clean(
                     budget=active_budget,
                 )
                 return {'record': r, 'outcome': outcome}
+            except BudgetDeferred as exc:
+                stop_l2.set()
+                return {'record': r, 'deferred': True, 'detail': f'{exc.scope}:{exc.detail}'}
             except LlmTransportError as exc:
                 last_exc = exc
                 if attempt < 2:
@@ -369,7 +382,7 @@ def evaluate_legacy_clean(
                 return res
             except Exception:
                 if not getattr(wconn, 'autocommit', False):
-                    wconn.commit()
+                    wconn.rollback()
                 raise
             finally:
                 wconn.close()
@@ -381,8 +394,24 @@ def evaluate_legacy_clean(
 
     keep_by_id: dict[str, dict[str, Any]] = {}
     delete_by_id: dict[str, dict[str, Any]] = {}
+    deferred_entries: list[dict[str, Any]] = []
+    deferred_by_id: dict[str, dict[str, Any]] = {}
     for item in l2_results:
         r = item['record']
+        if item.get('deferred'):
+            entry = _manifest_entry(
+                r,
+                gate_layer='L2',
+                reason_code='budget_deferred',
+                detail=str(item.get('detail') or 'budget_deferred'),
+                l2_tier='deferred',
+                confidence=0.0,
+                judge_model='',
+                extra_terms=extra_scrub_terms,
+            )
+            deferred_entries.append(entry)
+            deferred_by_id[r.legacy_id] = entry
+            continue
         out = item['outcome']
         if out.verdict == 'pass':
             entry = _manifest_entry(
@@ -429,6 +458,19 @@ def evaluate_legacy_clean(
                     extra_terms=extra_scrub_terms,
                 )
             )
+        elif parent_id in deferred_by_id:
+            deferred_entries.append(
+                _manifest_entry(
+                    child,
+                    gate_layer='L2',
+                    reason_code='budget_deferred',
+                    detail=f'父经验受预算延后未评估 ({parent_id})',
+                    l2_tier='deferred',
+                    confidence=0.0,
+                    judge_model='fk-inherit',
+                    extra_terms=extra_scrub_terms,
+                )
+            )
         else:
             p_del = delete_by_id.get(parent_id)
             delete_entries.append(
@@ -466,14 +508,20 @@ def evaluate_legacy_clean(
         'l0_pass_count': len(l0_pass),
         'l1_survivor_count': len(l1_survivors),
         'deferred_fk_children': len(deferred_children),
+        'deferred_count': len(deferred_entries),
+        'l1_survivor_cap': int(l1_survivor_cap),
         'delete_by_layer': layer_counts,
         'delete_by_reason': reason_counts,
         'keep_by_table': dict(Counter(e['source_table'] for e in keep_entries)),
         'delete_by_table': dict(Counter(e['source_table'] for e in delete_entries)),
     }
     return {
+        'status': 'deferred' if deferred_entries else 'completed',
+        'deferred_count': len(deferred_entries),
+        'l1_survivor_cap': int(l1_survivor_cap),
         'keep_manifest': keep_entries,
         'delete_manifest': delete_entries,
+        'deferred_manifest': deferred_entries,
         'summary': summary,
         'live_tables_mutated': (notes_after != notes_before or props_after != props_before),
         'llm_usage': {
