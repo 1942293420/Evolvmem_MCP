@@ -38,21 +38,50 @@ def archive_wal_segment(src_path: Path, archive_dir: Path, segment_name: str) ->
     dst = archive_dir / segment_name
     digest_file = archive_dir / f"{segment_name}.sha256"
 
+    def _fsync_dir(dirpath: Path) -> None:
+        dfd = os.open(dirpath, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+
+    def _write_0600(target: Path, text: str) -> None:
+        dtmp = target.parent / f".{target.name}.{os.getpid()}.tmp"
+        dfd = os.open(dtmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(dfd, text.encode("utf-8"))
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+        os.replace(dtmp, target)
+        _fsync_dir(target.parent)
+
     if dst.exists():
         existing_hash = _sha256_file(dst)
         if existing_hash != src_hash:
             raise ValueError(f"wal_checksum_conflict:{segment_name}")
         if not digest_file.exists():
-            digest_file.write_text(f"{src_hash}  {segment_name}\n", encoding="utf-8")
-            digest_file.chmod(0o600)
+            _write_0600(digest_file, f"{src_hash}  {segment_name}\n")
         return {"status": "already_archived_verified", "segment": segment_name, "sha256": src_hash}
 
     tmp = archive_dir / f".{segment_name}.{os.getpid()}.tmp"
-    shutil.copy2(src, tmp)
-    tmp.chmod(0o600)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with src.open("rb") as src_fh:
+            while True:
+                chunk = src_fh.read(65536)
+                if not chunk:
+                    break
+                view = memoryview(chunk)
+                while view:
+                    n = os.write(fd, view)
+                    view = view[n:]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     os.replace(tmp, dst)
-    digest_file.write_text(f"{src_hash}  {segment_name}\n", encoding="utf-8")
-    digest_file.chmod(0o600)
+    _fsync_dir(archive_dir)
+    _write_0600(digest_file, f"{src_hash}  {segment_name}\n")
     return {"status": "archived", "segment": segment_name, "sha256": src_hash, "bytes": dst.stat().st_size}
 
 
@@ -74,14 +103,20 @@ def take_base_backup(
     backup_dir.chmod(0o700)
 
     pw = password_file.read_text(encoding="utf-8").strip()
+    if "\n" in pw or "\r" in pw:
+        raise ValueError("invalid_multiline_password_file")
     in_container_tmp = f"/tmp/em_basebak_{os.getpid()}_{secrets.token_hex(4)}"
     try:
         cmd = [
-            "docker", "exec", "-e", f"PGPASSWORD={pw}", container_name,
-            "pg_basebackup", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres",
-            "-D", in_container_tmp, "-Ft", "-z", "-Xs", "--checkpoint=fast",
+            "docker", "exec", "-i", container_name,
+            "sh", "-c",
+            (
+                "IFS= read -r PGPASSWORD; export PGPASSWORD; "
+                'exec pg_basebackup -h 127.0.0.1 -p 5432 -U postgres -D "$1" -Ft -z -Xs --checkpoint=fast'
+            ),
+            "sh", in_container_tmp,
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        res = subprocess.run(cmd, input=f"{pw}\n", capture_output=True, text=True, check=False)
         if res.returncode != 0:
             raise RuntimeError(f"pg_basebackup_failed:{res.stderr.strip()}")
         cp = subprocess.run(
@@ -209,9 +244,10 @@ def run_pitr_restore_drill(
                         promoted = True
                         pre_row = conn.execute(pre_target_sql).fetchone()
                         post_row = conn.execute(post_target_sql).fetchone()
+                        reached = bool(promoted and pre_row is not None and post_row is None)
                         return {
-                            "ok": True,
-                            "pitr_target_reached": True,
+                            "ok": reached,
+                            "pitr_target_reached": reached,
                             "promoted": promoted,
                             "target_time_iso": target_time_iso,
                             "restore_port": restore_port,
@@ -230,11 +266,12 @@ def run_pitr_restore_drill(
 
 def generate_prod_wal_config_patch() -> dict[str, Any]:
     """Emit ready-to-apply WAL archiving config for Stage 5B without touching production."""
+    archive_dir = "/var/lib/evolvmem_wal_archive"
     archive_cmd = (
-        "test ! -f /var/lib/evolvmem_wal_archive/%f && "
-        "cp %p /var/lib/evolvmem_wal_archive/.%f.tmp && "
-        "chmod 600 /var/lib/evolvmem_wal_archive/.%f.tmp && "
-        "mv -n /var/lib/evolvmem_wal_archive/.%f.tmp /var/lib/evolvmem_wal_archive/%f"
+        f"umask 077 && if [ -f {archive_dir}/%f ]; then cmp -s %p {archive_dir}/%f; "
+        f"else cp %p {archive_dir}/.%f.$$.tmp && chmod 600 {archive_dir}/.%f.$$.tmp && "
+        f"sync {archive_dir}/.%f.$$.tmp && mv -n {archive_dir}/.%f.$$.tmp {archive_dir}/%f && "
+        f"cmp -s %p {archive_dir}/%f || {{ rm -f {archive_dir}/.%f.$$.tmp; exit 1; }}; fi"
     )
     return {
         "requires_prod_restart": True,

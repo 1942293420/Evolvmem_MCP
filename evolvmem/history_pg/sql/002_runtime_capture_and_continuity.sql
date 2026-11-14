@@ -353,6 +353,9 @@ CREATE INDEX IF NOT EXISTS idx_em_rt_archives_proj_state ON em_runtime.session_a
 CREATE INDEX IF NOT EXISTS idx_em_rt_uploads_dev ON em_runtime.lan_session_uploads (device_id, session_id);
 CREATE INDEX IF NOT EXISTS idx_em_rt_layers_tsv ON em_runtime.context_layers USING gin (search_tsv);
 CREATE INDEX IF NOT EXISTS idx_em_rt_layers_hnsw ON em_runtime.context_layers USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_em_rt_ctx_identity ON em_runtime.context_items (identity_key);
+CREATE INDEX IF NOT EXISTS idx_em_rt_uploads_archive ON em_runtime.lan_session_uploads (archive_id);
+CREATE INDEX IF NOT EXISTS idx_em_rt_journal_replay ON em_runtime.cutover_write_journal (library_key, replayed_to_sqlite, seq);
 CREATE INDEX IF NOT EXISTS idx_em_rt_ws_proj ON em_runtime.continuity_workstreams (project, status);
 
 INSERT INTO em_runtime.schema_migrations (version, migration_name)

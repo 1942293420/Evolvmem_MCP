@@ -18,6 +18,7 @@ HISTORY_SQL_FILES = (
     "001_organized_history_schema.sql",
     "002_runtime_capture_and_continuity.sql",
 )
+_DDL_TIMEOUTS = {"statement_timeout_ms": 60000, "lock_timeout_ms": 30000}
 
 
 def _quote_sql_ident(name: str) -> str:
@@ -31,7 +32,7 @@ def ensure_databases_exist(config: PgHistoryConfig, *, include_control: bool = F
     if include_control and config.control_db not in targets:
         targets.insert(0, config.control_db)
     created_or_present: list[str] = []
-    with config.connect("postgres", autocommit=True) as conn:
+    with config.connect("postgres", autocommit=True, **_DDL_TIMEOUTS) as conn:
         existing = {r[0] for r in conn.execute("SELECT datname FROM pg_database").fetchall()}
         for db_name in targets:
             if db_name not in existing:
@@ -44,7 +45,7 @@ def _ensure_control_roles(config: PgHistoryConfig) -> None:
     """Create owner (NOLOGIN non-superuser) and service login roles for em_control."""
     coord_pw = config.control_coordinator_password or secrets.token_urlsafe(18)
     reader_pw = config.control_reader_password or secrets.token_urlsafe(18)
-    with config.connect("postgres", autocommit=True) as conn:
+    with config.connect("postgres", autocommit=True, **_DDL_TIMEOUTS) as conn:
         for role_sql in (
             sql.SQL(
                 "DO $$ BEGIN "
@@ -100,14 +101,22 @@ def _run_control_psql(config: PgHistoryConfig, database_name: str, owner_role: s
         psql_args.extend(["-v", f"{key}={value}"])
 
     host_psql = shutil.which("psql")
+    payload = f"SET ROLE {_quote_sql_ident(owner_role)};\n" + sql_path.read_text(encoding="utf-8")
     if host_psql:
         cmd = [host_psql, *psql_args[1:], "-h", config.host, "-p", str(config.port)]
     elif config.container_name:
-        cmd = ["docker", "exec", "-i", "-e", f"PGPASSWORD={config.admin_password}", config.container_name, *psql_args]
+        if "\n" in config.admin_password or "\r" in config.admin_password:
+            raise ValueError("invalid_multiline_admin_password")
+        cmd = [
+            "docker", "exec", "-i", config.container_name,
+            "sh", "-c", 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec "$@"',
+            "sh", *psql_args,
+        ]
+        payload = f"{config.admin_password}\n{payload}"
+        env.pop("PGPASSWORD", None)
     else:
         raise RuntimeError("psql_unavailable_and_container_name_unset")
 
-    payload = f"SET ROLE {_quote_sql_ident(owner_role)};\n" + sql_path.read_text(encoding="utf-8")
     res = subprocess.run(cmd, input=payload, text=True, capture_output=True, env=env, check=False)
     if res.returncode != 0:
         raise RuntimeError(f"control_psql_failed({sql_path.name}): {res.stderr.strip()}")
@@ -122,7 +131,7 @@ def apply_history_schemas(config: PgHistoryConfig, *, include_control: bool = Fa
 
     if include_control:
         _ensure_control_roles(config)
-        with config.connect(config.control_db) as conn:
+        with config.connect(config.control_db, **_DDL_TIMEOUTS) as conn:
             has_ctrl = bool(conn.execute(
                 "SELECT EXISTS ("
                 "SELECT 1 FROM information_schema.tables "
@@ -146,12 +155,89 @@ def apply_history_schemas(config: PgHistoryConfig, *, include_control: bool = Fa
         else:
             applied[config.control_db] = [f"already_at_v{ver}"]
 
+    _ensure_history_roles(config)
     for db_name in config.all_business_dbs():
         steps: list[str] = []
-        with config.connect(db_name, autocommit=True) as conn:
+        with config.connect(db_name, autocommit=True, **_DDL_TIMEOUTS) as conn:
             for fname in HISTORY_SQL_FILES:
                 sql_text = (SQL_DIR / fname).read_text(encoding="utf-8")
                 conn.execute(sql_text)
                 steps.append(fname)
+            _grant_business_db_privileges(conn, config, db_name)
         applied[db_name] = steps
     return applied
+
+
+def _ensure_history_roles(config: PgHistoryConfig) -> None:
+    """Create NOLOGIN owner role plus least-privilege writer/reader login roles."""
+    _, writer_pw = config.role_credentials("writer")
+    _, reader_pw = config.role_credentials("reader")
+    owner_role = config.history_owner_role
+    writer_role = config.history_writer_role
+    reader_role = config.history_reader_role
+    with config.connect("postgres", autocommit=True, **_DDL_TIMEOUTS) as conn:
+        for role_sql in (
+            sql.SQL(
+                "DO $$ BEGIN "
+                "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {lit}) THEN "
+                "CREATE ROLE {ident} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; "
+                "END IF; END $$;"
+            ).format(lit=sql.Literal(owner_role), ident=sql.Identifier(owner_role)),
+            sql.SQL(
+                "DO $$ BEGIN "
+                "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {lit}) THEN "
+                "CREATE ROLE {ident} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD {pw}; "
+                "ELSE ALTER ROLE {ident} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD {pw}; "
+                "END IF; END $$;"
+            ).format(lit=sql.Literal(writer_role), ident=sql.Identifier(writer_role), pw=sql.Literal(writer_pw)),
+            sql.SQL(
+                "DO $$ BEGIN "
+                "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {lit}) THEN "
+                "CREATE ROLE {ident} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD {pw}; "
+                "ELSE ALTER ROLE {ident} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD {pw}; "
+                "END IF; END $$;"
+            ).format(lit=sql.Literal(reader_role), ident=sql.Identifier(reader_role), pw=sql.Literal(reader_pw)),
+            sql.SQL("GRANT {owner_id} TO {admin_id};").format(
+                owner_id=sql.Identifier(owner_role), admin_id=sql.Identifier(config.admin_user),
+            ),
+        ):
+            conn.execute(role_sql)
+
+
+def _grant_business_db_privileges(conn: Any, config: PgHistoryConfig, db_name: str) -> None:
+    """Enforce PUBLIC revocation and writer/reader table & sequence least-privilege grants."""
+    db_id = sql.Identifier(db_name)
+    admin_id = sql.Identifier(config.admin_user)
+    writer_id = sql.Identifier(config.history_writer_role)
+    reader_id = sql.Identifier(config.history_reader_role)
+    for stmt in (
+        sql.SQL("REVOKE ALL ON DATABASE {db_id} FROM PUBLIC;").format(db_id=db_id),
+        sql.SQL("REVOKE ALL ON SCHEMA public, em_history, em_runtime FROM PUBLIC;"),
+        sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA em_history, em_runtime FROM PUBLIC;"),
+        sql.SQL("REVOKE ALL ON ALL SEQUENCES IN SCHEMA em_history, em_runtime FROM PUBLIC;"),
+        sql.SQL("GRANT CONNECT, TEMPORARY ON DATABASE {db_id} TO {writer_id};").format(db_id=db_id, writer_id=writer_id),
+        sql.SQL("GRANT CONNECT ON DATABASE {db_id} TO {reader_id};").format(db_id=db_id, reader_id=reader_id),
+        sql.SQL("GRANT USAGE ON SCHEMA public, em_history, em_runtime TO {writer_id}, {reader_id};").format(
+            writer_id=writer_id, reader_id=reader_id,
+        ),
+        sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA em_history, em_runtime TO {reader_id};").format(reader_id=reader_id),
+        sql.SQL("GRANT SELECT ON ALL SEQUENCES IN SCHEMA em_history, em_runtime TO {reader_id};").format(reader_id=reader_id),
+        sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA em_history, em_runtime TO {writer_id};").format(
+            writer_id=writer_id,
+        ),
+        sql.SQL("GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA em_history, em_runtime TO {writer_id};").format(
+            writer_id=writer_id,
+        ),
+        sql.SQL("ALTER DEFAULT PRIVILEGES FOR ROLE {admin_id} IN SCHEMA em_history, em_runtime GRANT SELECT ON TABLES TO {reader_id};").format(
+            admin_id=admin_id, reader_id=reader_id,
+        ),
+        sql.SQL(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE {admin_id} IN SCHEMA em_history, em_runtime "
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {writer_id};"
+        ).format(admin_id=admin_id, writer_id=writer_id),
+        sql.SQL(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE {admin_id} IN SCHEMA em_history, em_runtime "
+            "GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {writer_id};"
+        ).format(admin_id=admin_id, writer_id=writer_id),
+    ):
+        conn.execute(stmt)

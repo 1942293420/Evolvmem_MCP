@@ -115,6 +115,8 @@ def take_online_snapshots(sources: dict[str, Path], snapshot_dir: Path) -> dict[
         tmp = snapshot_dir / f".{key}.db.{os.getpid()}.tmp"
         if tmp.exists():
             tmp.unlink()
+        tfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.close(tfd)
         src_conn = sqlite3.connect(f"file:{src_path}?mode=ro", uri=True, timeout=30.0)
         try:
             dst_conn = sqlite3.connect(str(tmp))

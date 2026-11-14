@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import secrets
 import sqlite3
 from typing import Any, Iterable
 import uuid
@@ -68,14 +70,24 @@ def _mark_checkpoint(pg_conn: psycopg.Connection, src_db: str, tbl: str, target_
     )
 
 
+def _write_secret_0600(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, value.encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+
+
 def open_control_store(cfg: PgHistoryConfig) -> PgConsoleStore:
     pw = cfg.control_coordinator_password or cfg.admin_password
     sec_dir = cfg.cas_root / ".secrets"
-    sec_dir.mkdir(parents=True, exist_ok=True)
-    sec_dir.chmod(0o700)
     sec_file = sec_dir / f"coord_{cfg.port}.pw"
-    sec_file.write_text(pw, encoding="utf-8")
-    sec_file.chmod(0o600)
+    _write_secret_0600(sec_file, pw)
     ctrl_cfg = PgControlConfig.from_dict({
         "host": cfg.host,
         "port": cfg.port,
@@ -103,7 +115,12 @@ def import_control(cfg: PgHistoryConfig, snapshots: dict[str, Any], pg_hist: psy
 
         def _pg_env(uid: str) -> dict[str, str]:
             raw = json.loads((libs.get(uid) or {}).get("history_environ") or "{}")
-            raw["EVOLVMEM_HISTORY_PG_DB"] = cfg.resolve_user_history_db(uid)
+            if uid == "public":
+                raw["EVOLVMEM_HISTORY_PG_DB"] = cfg.shared_public_db
+            elif uid in cfg.user_history_dbs:
+                raw["EVOLVMEM_HISTORY_PG_DB"] = cfg.resolve_user_history_db(uid)
+            else:
+                raise KeyError(f"unmapped_history_user_db:{uid}")
             raw["EVOLVMEM_HISTORY_CANDIDATE_NAMESPACE"] = "personal" if uid == owner_id else uid
             return {k: str(v) for k, v in raw.items() if isinstance(v, str)}
 
@@ -155,9 +172,16 @@ def import_control(cfg: PgHistoryConfig, snapshots: dict[str, Any], pg_hist: psy
             audit_cnt = int(sconn.execute("SELECT COUNT(*) FROM console_audit").fetchone()[0])
 
         if not _checkpoint_done(pg_hist, "users", "confirmed_devices", cfg.control_db, sha):
+            dev_sec_dir = cfg.cas_root / ".secrets" / "devices"
+            dev_sec_dir.mkdir(parents=True, exist_ok=True)
+            dev_sec_dir.chmod(0o700)
             for dev_id in sorted(cfg.device_dbs):
                 dev_uuid = str(uuid.uuid5(_DEV_NS, dev_id))
-                seed_tok = hashlib.sha256(f"stage5-imported-device:{dev_id}".encode()).hexdigest()
+                tok_file = dev_sec_dir / f"{hashlib.sha256(dev_id.encode('utf-8')).hexdigest()[:24]}.tok"
+                seed_tok = tok_file.read_text(encoding="utf-8").strip() if tok_file.is_file() else ""
+                if not seed_tok:
+                    seed_tok = secrets.token_urlsafe(32)
+                    _write_secret_0600(tok_file, seed_tok)
                 store.register_trusted_device(
                     owner_id, device_id=dev_uuid, external_device_id=dev_id,
                     token=seed_tok, unrestricted_own_projects=True,

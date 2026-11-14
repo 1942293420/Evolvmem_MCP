@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import gzip
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -16,6 +17,20 @@ from evolvmem.experience_v2.pipeline.history_reader import (
 from evolvmem.history_pg.config import PgHistoryConfig, load_pg_history_config
 
 _PTR_SRC_RE = re.compile(r"^(archive|session_archive|block):([^\s#]+)(?:#(?:msg|L)=?(\d+))?$")
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+_TRASH_PROJ_SQL = "COALESCE(NULLIF(tp.project, ''), tp.key)"
+_VISIBLE_BLOCK_SQL = (
+    "NOT EXISTS (SELECT 1 FROM em_history.management_trash t WHERE t.kind = 'block' AND t.key = b.block_id) "
+    "AND NOT ("
+    "  EXISTS (SELECT 1 FROM em_history.block_projects bp WHERE bp.block_id = b.block_id) "
+    "  AND NOT EXISTS ("
+    "    SELECT 1 FROM em_history.block_projects bp "
+    "    WHERE bp.block_id = b.block_id "
+    "      AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind = 'project' AND " + _TRASH_PROJ_SQL + " = bp.project) "
+    "      AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tpb WHERE tpb.kind = 'project_block' AND tpb.project = bp.project AND tpb.key = b.block_id)"
+    "  )"
+    ")"
+)
 
 
 def _parse_iso(ts: Any) -> datetime | None:
@@ -29,6 +44,49 @@ def _parse_iso(ts: Any) -> datetime | None:
         return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def _flatten_content(val: Any) -> str:
+    if isinstance(val, str):
+        return val
+    if isinstance(val, list):
+        parts: list[str] = []
+        for item in val:
+            if isinstance(item, dict):
+                txt = item.get("text") or item.get("content") or item.get("input_text") or ""
+                if txt:
+                    parts.append(str(txt))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts)
+    if isinstance(val, dict):
+        return str(val.get("text") or val.get("content") or "")
+    return "" if val is None else str(val)
+
+
+def _extract_role_and_text(ev: dict[str, Any]) -> tuple[str, str]:
+    role = str(ev.get("role") or "")
+    text = _flatten_content(ev.get("content") if ev.get("content") is not None else ev.get("text"))
+    payload = ev.get("payload")
+    if isinstance(payload, dict):
+        msg = payload.get("message") if isinstance(payload.get("message"), dict) else None
+        if not role:
+            role = str((msg or {}).get("role") or payload.get("role") or payload.get("type") or "")
+        if not text:
+            src = (msg or {}).get("content") if msg is not None else (
+                payload.get("content") if payload.get("content") is not None else (payload.get("text") or payload.get("summary"))
+            )
+            text = _flatten_content(src)
+    for container_key in ("data", "item", "message"):
+        sub = ev.get(container_key)
+        if isinstance(sub, dict):
+            if not role:
+                role = str(sub.get("role") or sub.get("type") or "")
+            if not text:
+                text = _flatten_content(sub.get("content") if sub.get("content") is not None else sub.get("text"))
+    if not role:
+        role = str(ev.get("type") or "unknown")
+    return role, text
 
 
 def _load_jsonl_records(path: Path) -> tuple[list[HistoryRawRecord], bytes]:
@@ -50,8 +108,7 @@ def _load_jsonl_records(path: Path) -> tuple[list[HistoryRawRecord], bytes]:
                 ev = {"text": raw}
             if not isinstance(ev, dict):
                 ev = {"value": ev}
-            role = str(ev.get("role") or ev.get("type") or "unknown")
-            text = str(ev.get("content") or ev.get("text") or "")
+            role, text = _extract_role_and_text(ev)
             records.append(HistoryRawRecord(event_index=idx, role=role, content=text, raw_event=ev))
     return records, raw_bytes
 
@@ -59,17 +116,22 @@ def _load_jsonl_records(path: Path) -> tuple[list[HistoryRawRecord], bytes]:
 class PgHistoryReader:
     """HistoryReader Protocol implementation over PG em_runtime + em_history + CAS blobs."""
 
-    def __init__(self, pg_config: PgHistoryConfig | None = None, *, dbname: str | None = None, user_id: str = "jiangli", library: str = "personal") -> None:
+    def __init__(self, pg_config: PgHistoryConfig | None = None, *, dbname: str | None = None, user_id: str = "", library: str = "personal") -> None:
         self._cfg = pg_config if pg_config is not None else load_pg_history_config()
         self._dbname = dbname or self._cfg.resolve_user_history_db(user_id)
         self._library = library
 
     def _resolve_blob_path(self, cas_sha: str, payload_path: str) -> Path | None:
-        if cas_sha:
-            for suffix in (".jsonl", ".jsonl.gz"):
-                cand = self._cfg.cas_root / cas_sha[:2] / f"{cas_sha}{suffix}"
-                if cand.is_file():
-                    return cand
+        sha = (cas_sha or "").strip().lower()
+        if sha and _HEX64_RE.match(sha):
+            for base_dir in (
+                self._cfg.cas_root / sha[:2] / sha[2:4],
+                self._cfg.cas_root / sha[:2],
+            ):
+                for suffix in (".jsonl", ".jsonl.gz", "", ".gz"):
+                    cand = base_dir / f"{sha}{suffix}"
+                    if cand.is_file():
+                        return cand
         if payload_path:
             p = Path(payload_path)
             if p.is_file():
@@ -86,7 +148,11 @@ class PgHistoryReader:
         offset: int = 0,
         dedupe_logical_sessions: bool = True,
     ) -> list[HistorySessionSummary]:
-        clauses = ["a.state = 'available'"]
+        clauses = [
+            "a.state = 'available'",
+            f"NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind = 'project' AND {_TRASH_PROJ_SQL} = a.project)",
+            "NOT EXISTS (SELECT 1 FROM em_history.management_trash tb WHERE tb.kind = 'block' AND tb.key = ('archive:' || a.id::text))",
+        ]
         params: list[Any] = []
         if project:
             clauses.append("a.project = %s")
@@ -95,27 +161,38 @@ class PgHistoryReader:
             clauses.append("a.adapter = %s")
             params.append(adapter)
         since_dt = _parse_iso(since)
+        if since_dt is not None:
+            clauses.append("(a.created_at <> '' AND a.created_at::timestamptz >= %s)")
+            params.append(since_dt)
         where_sql = " AND ".join(clauses)
-        params.extend([max(1, int(limit)), max(0, int(offset))])
-        sql_txt = (
+        base_select = (
             "SELECT a.id, a.project, a.adapter, a.external_session_id, a.created_at, a.payload_path, a.cas_blob_sha256, "
-            "COALESCE(u.source_format, CASE WHEN a.adapter='dsh' THEN 'dsh-jsonl' ELSE a.adapter || '-jsonl' END) "
+            "COALESCE(u.source_format, CASE WHEN a.adapter='dsh' THEN 'dsh-jsonl' ELSE a.adapter || '-jsonl' END) AS src_fmt "
             "FROM em_runtime.session_archives a "
-            "LEFT JOIN em_runtime.lan_session_uploads u ON u.archive_id = a.id "
-            f"WHERE {where_sql} ORDER BY a.created_at DESC, a.id DESC LIMIT %s OFFSET %s"
+            "LEFT JOIN LATERAL ("
+            "  SELECT lu.source_format FROM em_runtime.lan_session_uploads lu "
+            "  WHERE lu.archive_id = a.id ORDER BY lu.received_at DESC LIMIT 1"
+            ") u ON true "
+            f"WHERE {where_sql}"
         )
+        if dedupe_logical_sessions:
+            dedup_inner = (
+                "SELECT DISTINCT ON (sub.adapter, sub.external_session_id) * FROM ("
+                + base_select +
+                ") sub ORDER BY sub.adapter, sub.external_session_id, sub.created_at DESC, sub.id DESC"
+            )
+            sql_txt = (
+                "SELECT * FROM (" + dedup_inner + ") d "
+                "ORDER BY d.created_at DESC, d.id DESC LIMIT %s OFFSET %s"
+            )
+        else:
+            sql_txt = base_select + " ORDER BY a.created_at DESC, a.id DESC LIMIT %s OFFSET %s"
+        params.extend([max(1, int(limit)), max(0, int(offset))])
+
         out: list[HistorySessionSummary] = []
-        seen_logical: set[tuple[str, str]] = set()
-        with self._cfg.connect(self._dbname) as conn:
+        with self._cfg.connect(self._dbname, role_kind="reader") as conn:
             for row in conn.execute(sql_txt, params).fetchall():
                 aid, proj, adp, ext_id, created_at, pay_path, cas_sha, src_fmt = row
-                if since_dt is not None:
-                    cdt = _parse_iso(created_at)
-                    if cdt is not None and cdt < since_dt:
-                        continue
-                if dedupe_logical_sessions and (adp, ext_id) in seen_logical:
-                    continue
-                seen_logical.add((adp, ext_id))
                 has_blob = self._resolve_blob_path(str(cas_sha or ""), str(pay_path or "")) is not None
                 out.append(HistorySessionSummary(
                     session_id=str(ext_id),
@@ -137,10 +214,12 @@ class PgHistoryReader:
                 aid = int(aid_str)
             except ValueError:
                 return None
-            with self._cfg.connect(self._dbname) as conn:
+            with self._cfg.connect(self._dbname, role_kind="reader") as conn:
                 row = conn.execute(
-                    "SELECT id, project, adapter, external_session_id, payload_path, cas_blob_sha256, created_at "
-                    "FROM em_runtime.session_archives WHERE id = %s AND state = 'available'",
+                    "SELECT a.id, a.project, a.adapter, a.external_session_id, a.payload_path, a.cas_blob_sha256, a.created_at "
+                    "FROM em_runtime.session_archives a WHERE a.id = %s AND a.state = 'available' "
+                    f"AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind = 'project' AND {_TRASH_PROJ_SQL} = a.project) "
+                    "AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tb WHERE tb.kind = 'block' AND tb.key = ('archive:' || a.id::text))",
                     (aid,),
                 ).fetchone()
                 if not row:
@@ -183,10 +262,10 @@ class PgHistoryReader:
 
         if source_ref.startswith("block:"):
             bid = source_ref.split(":", 1)[1].split("#", 1)[0]
-            with self._cfg.connect(self._dbname) as conn:
+            with self._cfg.connect(self._dbname, role_kind="reader") as conn:
                 brow = conn.execute(
-                    "SELECT block_id, adapter, native_session_id, observed_first_at, projects "
-                    "FROM em_history.blocks WHERE block_id = %s",
+                    "SELECT b.block_id, b.adapter, b.native_session_id, b.observed_first_at, b.projects "
+                    f"FROM em_history.blocks b WHERE b.block_id = %s AND {_VISIBLE_BLOCK_SQL}",
                     (bid,),
                 ).fetchone()
                 if not brow:
@@ -254,7 +333,12 @@ class PgHistoryEvidenceVerifier:
     """EvidenceVerifier Protocol over PgHistoryReader with detailed mismatch reasons."""
 
     def __init__(self, reader: PgHistoryReader | None = None) -> None:
-        self._reader = reader if reader is not None else PgHistoryReader()
+        if reader is not None:
+            self._reader = reader
+        else:
+            dbname = str(os.environ.get("EVOLVMEM_HISTORY_PG_DB") or "").strip() or None
+            uid = str(os.environ.get("EVOLVMEM_CONSOLE_OWNER_ID") or "").strip()
+            self._reader = PgHistoryReader(dbname=dbname, user_id=uid)
 
     def verify_all(self, evidence: list[dict[str, Any]]) -> tuple[bool, str]:
         if not isinstance(evidence, list) or not evidence:
