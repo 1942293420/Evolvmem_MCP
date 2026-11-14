@@ -37,11 +37,7 @@ class BackfillRunner:
         self.owner_id = owner_id
         self.policy = policy
         self.queue = BackfillQueue(owner_id=owner_id)
-        effective_mode = 'review'
-        if isinstance(gate_mode, str):
-            effective_mode = gate_mode
-        elif isinstance(gate_mode, dict) and gate_mode:
-            effective_mode = next(iter(gate_mode.values()))
+        effective_mode: str | dict[str, str] = gate_mode if isinstance(gate_mode, (str, dict)) else 'review'
         self.scheduler = PipelineScheduler(
             history_reader=history_reader,
             policy=policy,
@@ -72,6 +68,7 @@ class BackfillRunner:
         shadow_run_id: str | None = None,
         enforce_night_window: bool = True,
         on_job_done: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
+        clock_fn: Callable[[], datetime] | None = None,
     ) -> dict[str, Any]:
         """Claim queued backfill jobs and run them via Stage 3 components under track='backfill'."""
         ts = now or datetime.now(timezone.utc)
@@ -111,18 +108,29 @@ class BackfillRunner:
         total_toks = 0
         deferred = 0
         completed_cnt = 0
+        gate_stop_status = ''
 
-        for job in jobs:
-            try:
-                res = self.scheduler.process_session_if_ready(
-                    conn,
-                    job['source_ref'],
-                    is_closed=True,
-                    last_message_at=ts,
-                    now=ts,
-                    shadow_mode=shadow_mode,
-                    shadow_run_id=shadow_run_id,
+        for idx, job in enumerate(jobs):
+            live_now = clock_fn() if clock_fn is not None else (ts if now is not None else datetime.now(timezone.utc))
+            if not shadow_mode:
+                step_gate = self.queue.check_run_gate(
+                    policy=self.policy, now=live_now, shadow_mode=False, enforce_night_window=enforce_night_window,
                 )
+                if not step_gate['allowed']:
+                    self.queue.requeue_jobs(conn, job_ids=[j['job_id'] for j in jobs[idx:]])
+                    gate_stop_status = str(step_gate['status'])
+                    break
+            try:
+                with conn.transaction():
+                    res = self.scheduler.process_session_if_ready(
+                        conn,
+                        job['source_ref'],
+                        is_closed=True,
+                        last_message_at=live_now,
+                        now=live_now,
+                        shadow_mode=shadow_mode,
+                        shadow_run_id=shadow_run_id,
+                    )
             except BudgetDeferred as exc:
                 res = {'status': 'deferred', 'reason': str(exc) or 'budget_deferred'}
             except Exception as exc:
@@ -134,6 +142,12 @@ class BackfillRunner:
                     conn, job_id=job['job_id'], status='deferred',
                     error_code=str(res.get('reason') or 'deferred'),
                 )
+                self.queue.requeue_jobs(conn, job_ids=[j['job_id'] for j in jobs[idx + 1:]])
+                row_summary = {'job': job, 'result': res}
+                results.append(row_summary)
+                if on_job_done is not None:
+                    on_job_done(job, res)
+                break
             elif st == 'skipped_zero_moments':
                 completed_cnt += 1
                 self.queue.mark_job_result(conn, job_id=job['job_id'], status='skipped_zero_moments')
@@ -158,9 +172,10 @@ class BackfillRunner:
             if on_job_done is not None:
                 on_job_done(job, res)
 
+        out_status = gate_stop_status or ('completed' if deferred == 0 else 'partial_deferred')
         return {
-            'status': 'completed' if deferred == 0 else 'partial_deferred',
-            'processed': len(jobs),
+            'status': out_status,
+            'processed': len(results),
             'completed': completed_cnt,
             'proposals': total_props,
             'deferred': deferred,

@@ -1,11 +1,12 @@
 """Task 4.2: Seeded 50-item random delete sampling, scrubbing, and zero-write verification."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import random
-import sqlite3
 from typing import Any, Sequence
 
+from evolvmem.experience_v2.clean.legacy_reader import open_sqlite_readonly
 from evolvmem.experience_v2.pipeline.pilot import scrub_pilot_text
 
 
@@ -23,7 +24,9 @@ def sample_delete_manifest(
     k = min(max(1, int(sample_size)), len(items))
     rng = random.Random(int(seed))
     picked = rng.sample(items, k) if k < len(items) else items
-    terms = tuple(str(x) for x in extra_scrub_terms if x)
+    terms = tuple(
+        str(x) for x in (os.environ.get('USER', ''), os.environ.get('USERNAME', ''), *extra_scrub_terms) if x
+    )
 
     out: list[dict[str, Any]] = []
     for idx, entry in enumerate(picked, 1):
@@ -47,10 +50,8 @@ def sample_delete_manifest(
 
 def read_legacy_table_counts(sqlite_path: Path | str) -> dict[str, int]:
     """Read exact legacy table row counts via strict read-only SQLite URI mode."""
-    path = Path(sqlite_path).resolve()
-    conn = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
+    conn = open_sqlite_readonly(sqlite_path)
     try:
-        conn.execute('PRAGMA query_only = ON')
         ci = int(conn.execute("SELECT COUNT(*) FROM context_items WHERE content_type = 'experience'").fetchone()[0])
         cm = int(conn.execute('SELECT COUNT(*) FROM capability_memories').fetchone()[0])
         lm = int(conn.execute('SELECT COUNT(*) FROM learning_memories').fetchone()[0])

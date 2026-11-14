@@ -117,3 +117,55 @@ def test_sample_delete_manifest_scrubs_cjk_adjacent_lan_ip_and_feishu_id():
     assert 'cli_a92c3ff4a9391bd2' not in blob
     assert 'ou_abc1234567890def' not in blob
     assert '<lan-host>' in blob
+
+
+def test_sample_delete_manifest_scrubs_enterprise_urls_accounts_ids_and_truncated_ips(monkeypatch):
+    import ast
+    import evolvmem.experience_v2.clean.sampler as sampler_mod
+
+    monkeypatch.delenv('USER', raising=False)
+    monkeypatch.setenv('USERNAME', 'WinUser99')
+    entries = [
+        {
+            'legacy_id': 'capability_memories:1001',
+            'source_table': 'capability_memories',
+            'legacy_status': 'active',
+            'legacy_category': 'architecture',
+            'problem': '仓库 https://github.com/1942293420/Evolvmem_MCP 与 device_id:"win-01c2ee8f-41d1-479c-ba46-97c08c527bca"',
+            'solution': '世晟登录页已填入账号 SHENGWEI，短信发送至尾号8792的手机，联系 13975085505，服务 https://omp.xlwms.com/wms/stock/sku',
+            'raw_preview': '入口192. 地址127.… 127.0.0.1:19387 10.12.34.56 172.18.0.5 tenant https://acnv6w0sy3br.feishu.cn/docx/1',
+            'gate_layer': 'L0',
+            'reason_code': 'secret_or_host_specific_config',
+            'detail': 'WinUser99 running PostgreSQL 10.2.0 on internal',
+        }
+    ]
+    sample = sample_delete_manifest(entries, sample_size=50, seed=20261114)
+    blob = json.dumps(sample, ensure_ascii=False)
+    for leaked in (
+        '1942293420',
+        'win-01c2ee8f-41d1-479c-ba46-97c08c527bca',
+        'SHENGWEI',
+        '8792',
+        '13975085505',
+        'omp.xlwms.com',
+        'acnv6w0sy3br',
+        '127.0.0.1',
+        '10.12.34.56',
+        '172.18.0.5',
+        '192.',
+        '127.',
+        'WinUser99',
+    ):
+        assert leaked not in blob, f'leaked: {leaked} in {blob}'
+    assert '10.2.0' in blob
+    assert '<device-id>' in blob
+    assert 'github.com/<owner>/Evolvmem_MCP' in blob
+
+    tree = ast.parse(Path(sampler_mod.__file__).read_text(encoding='utf-8'))
+    imports = [
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    ]
+    assert 'sqlite3' not in imports

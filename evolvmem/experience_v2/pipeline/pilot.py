@@ -33,14 +33,33 @@ STAGE_ORDER: tuple[str, ...] = (
     'l3_reconcile',
 )
 
+_IGNORED_ENV_USERS = frozenset({'root', 'app', 'user', 'admin', 'administrator', 'ubuntu', 'runner', 'nobody', 'system'})
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'Bearer\s+[A-Za-z0-9._-]+', re.IGNORECASE), 'Bearer [REDACTED]'),
     (re.compile(r'sk-[A-Za-z0-9_-]{8,}'), '[REDACTED_KEY]'),
     (re.compile(r'(?:api[-_]?key|token|password|secret)\s*[:=]\s*["\']?[A-Za-z0-9._-]{6,}["\']?', re.IGNORECASE), '[REDACTED_CRED]'),
     (re.compile(r'/home/[A-Za-z0-9._-]+'), '/home/<owner>'),
     (re.compile(r'[A-Za-z]:\\Users\\[A-Za-z0-9._-]+'), r'C:\\Users\\<owner>'),
-    (re.compile(r'[A-Za-z]:\\Users\\[A-Za-z0-9._-]+'), r'C:\\Users\\<owner>'),
+    (re.compile(r'github\.com([:/])(?!<owner>)[A-Za-z0-9._-]+', re.IGNORECASE), r'github.com\1<owner>'),
+    (re.compile(r'\bwin-[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b', re.IGNORECASE), '<device-id>'),
+    (re.compile(r"(device[-_]?id\s*[:=]\s*[\"']?)(?!<device-id>)[A-Za-z0-9._-]{8,}([\"']?)", re.IGNORECASE), r'\1<device-id>\2'),
+    (re.compile(r"https?://[A-Za-z0-9.-]*(?:xlwms|lingdongsz|lingxing)\.com(?::\d+)?(?:/[^\s\"'<>，。；;）)\]]*)?", re.IGNORECASE), '<internal-url>'),
+    (re.compile(r'\b[A-Za-z0-9.-]*(?:xlwms|lingdongsz|lingxing)\.com\b', re.IGNORECASE), '<internal-host>'),
+    (re.compile(r"https?://(?:omp|xinyue|xpmcp)\.[A-Za-z0-9.-]*(?:/[^\s\"'<>，。；;）)\]]*)?", re.IGNORECASE), '<internal-url>'),
+    (re.compile(r"https?://(?!(?:open|www|docs)\.)[A-Za-z0-9-]{8,}\.feishu\.cn(?:/[^\s\"'<>，。；;）)\]]*)?", re.IGNORECASE), 'https://<tenant>.feishu.cn'),
+    (re.compile(r'(?!(?:open|www|docs)\.)\b[A-Za-z0-9-]{8,}\.feishu\.cn\b', re.IGNORECASE), '<tenant>.feishu.cn'),
+    (re.compile(r"https?://acnv6w0[A-Za-z0-9.-]*(?:/[^\s\"'<>，。；;）)\]]*)?", re.IGNORECASE), 'https://<tenant>.feishu.cn'),
+    (re.compile(r'(?:账号|用户名|账户)\s*[:：]?\s*(?!\[REDACTED\])[A-Za-z0-9._@-]{2,}'), '账号 [REDACTED]'),
+    (re.compile(r'尾号\s*\d{4}'), '尾号[REDACTED]'),
+    (re.compile(r'(?<!\d)1[356789]\d{9}(?!\d)'), '[REDACTED_PHONE]'),
+    (re.compile(r'(?!(?:git|nobody|noreply)@)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'), '<email>'),
     (re.compile(r'(?<![0-9.])192\.168\.\d{1,3}\.\d{1,3}(?![0-9.])'), '<lan-host>'),
+    (re.compile(r'(?<![0-9.])10\.\d{1,3}\.\d{1,3}\.\d{1,3}(?![0-9.])'), '<lan-host>'),
+    (re.compile(r'(?<![0-9.])172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}(?![0-9.])'), '<lan-host>'),
+    (re.compile(r'(?<![0-9.])127\.\d{1,3}\.\d{1,3}\.\d{1,3}(?![0-9.])'), '<local-host>'),
+    (re.compile(r"(?<![0-9.])192\.(?:168(?:\.\d{1,3})?|\d{0,3})?(?=$|…|\s|[,，。.;；:：\"'()（）\[\]<]|[\u4e00-\u9fff])"), '<lan-host>'),
+    (re.compile(r"(?<![0-9.])127\.(?:0(?:\.\d{1,3}){0,2})?(?=$|…|\s|[,，。.;；:：\"'()（）\[\]<]|[\u4e00-\u9fff])"), '<local-host>'),
+    (re.compile(r"(https?://)(?:192|127)(?=$|…|[/\s\"'<>])", re.IGNORECASE), r'\1<lan-host>'),
     (re.compile(r'(?<![A-Za-z0-9_])(?:ou|cli)_[A-Za-z0-9]{10,}(?![A-Za-z0-9_])'), '[REDACTED_FEISHU_ID]'),
 )
 
@@ -50,11 +69,15 @@ class _DrillRollback(Exception):
 
 
 def scrub_pilot_text(text: Any, *, extra_terms: Sequence[str] = ()) -> str:
-    """Redact credentials, home directories, LAN IPs and caller-supplied usernames."""
+    """Redact credentials, internal URLs, home dirs, private/truncated IPs and owner names."""
     out = str(text or '')
     for pat, repl in _SECRET_PATTERNS:
         out = pat.sub(repl, out)
-    for term in extra_terms:
+    env_terms = [
+        v for k in ('USER', 'USERNAME')
+        if (v := str(os.environ.get(k, '')).strip()) and v.lower() not in _IGNORED_ENV_USERS
+    ]
+    for term in (*env_terms, *extra_terms):
         clean = str(term or '').strip()
         if len(clean) >= 2:
             out = re.sub(re.escape(clean), '<owner>', out, flags=re.IGNORECASE)

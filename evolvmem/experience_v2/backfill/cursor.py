@@ -6,7 +6,8 @@ import re
 from typing import Any, Callable, Literal, Sequence
 
 from evolvmem.experience_v2.backfill.runner import BackfillRunner
-from evolvmem.experience_v2.pipeline.history_reader import HistoryReader, HistorySessionSummary
+from evolvmem.experience_v2.backfill.queue import _norm_utc_iso
+from evolvmem.experience_v2.pipeline.history_reader import HistoryReader, HistorySessionSummary, _canon_utc_dt
 
 _MONTH_RE = re.compile(r'^\d{4}-(0[1-9]|1[0-2])\Z')
 
@@ -35,7 +36,8 @@ def validate_backfill_scope(*, project: str | None = None, month: str | None = N
 def _matches_scope(summary: HistorySessionSummary, scope_kind: str, scope_value: str) -> bool:
     if scope_kind == 'project':
         return (summary.project or '').strip() == scope_value
-    return (summary.created_at or '').strip()[:7] == scope_value
+    utc_iso = _norm_utc_iso(summary.created_at) or (summary.created_at or '')
+    return utc_iso.strip()[:7] == scope_value
 
 
 def plan_scoped_sessions(
@@ -45,20 +47,34 @@ def plan_scoped_sessions(
     scope_value: str,
     exclude_source_refs: set[str] | frozenset[str] = frozenset(),
     fetch_limit: int = 20_000,
+    page_size: int = 2000,
 ) -> list[HistorySessionSummary]:
-    """List matching sessions ordered strictly newest-to-oldest (created_at DESC, source_ref DESC)."""
+    """List matching sessions across pages ordered strictly newest-to-oldest UTC."""
     proj_filter = scope_value if scope_kind == 'project' else None
-    raw = history_reader.list_sessions(project=proj_filter, limit=fetch_limit, offset=0)
-    seen: set[str] = set()
+    max_items = max(1, int(fetch_limit))
+    step = max(1, min(int(page_size), max_items))
+    raw: list[HistorySessionSummary] = []
+    seen_pages: set[str] = set()
+    offset = 0
+    while len(raw) < max_items:
+        page = history_reader.list_sessions(project=proj_filter, limit=step, offset=offset)
+        if not page:
+            break
+        for item in page:
+            if item.source_ref not in seen_pages:
+                seen_pages.add(item.source_ref)
+                raw.append(item)
+        if len(page) < step:
+            break
+        offset += len(page)
     filtered: list[HistorySessionSummary] = []
     for item in raw:
-        if item.source_ref in exclude_source_refs or item.source_ref in seen:
+        if item.source_ref in exclude_source_refs:
             continue
         if _matches_scope(item, scope_kind, scope_value):
-            seen.add(item.source_ref)
             filtered.append(item)
-    filtered.sort(key=lambda s: (s.created_at or '', s.source_ref), reverse=True)
-    return filtered
+    filtered.sort(key=lambda s: (_canon_utc_dt(s.created_at), s.source_ref), reverse=True)
+    return filtered[:max_items]
 
 
 class BackfillCursorStore:
@@ -105,7 +121,8 @@ class BackfillCursorStore:
         boundary = (str(cursor.get('last_created_at') or ''), str(cursor.get('last_source_ref') or ''))
         if not boundary[1]:
             return list(sessions)
-        return [s for s in sessions if (s.created_at or '', s.source_ref) < boundary]
+        b_key = (_canon_utc_dt(boundary[0]), boundary[1])
+        return [s for s in sessions if (_canon_utc_dt(s.created_at), s.source_ref) < b_key]
 
     def advance_cursor(
         self,
@@ -211,6 +228,13 @@ def execute_scoped_backfill(
 
     batch = remaining[: max(1, int(max_sessions))]
     runner.queue.enqueue_sessions(conn, scope_kind=scope_kind, scope_value=scope_value, sessions=batch, is_shadow=shadow_mode)
+    runner.queue.requeue_retryable_jobs(
+        conn,
+        scope_kind=scope_kind,
+        scope_value=scope_value,
+        source_refs=[s.source_ref for s in batch],
+        is_shadow=shadow_mode,
+    )
     run_res = runner.run_queued_batch(
         conn,
         scope_kind=scope_kind,
@@ -223,22 +247,29 @@ def execute_scoped_backfill(
         on_job_done=on_job_done,
     )
 
-    ordered_refs: list[str] = []
+    _TERMINAL_OK = ('completed', 'skipped_zero_moments')
+    ordered_refs = [entry['job']['source_ref'] for entry in run_res.get('results', [])]
+    status_rows = conn.execute(
+        """
+        SELECT source_ref, status FROM backfill_jobs
+        WHERE owner_id = %s AND scope_kind = %s AND scope_value = %s
+          AND is_shadow = %s AND source_ref = ANY(%s)
+        """,
+        (runner.owner_id, scope_kind, scope_value, bool(shadow_mode), [s.source_ref for s in batch]),
+    ).fetchall()
+    job_statuses = {str(r[0]): str(r[1]) for r in status_rows}
     progressed: list[tuple[str, str]] = []
-    hit_defer = False
-    for entry in run_res.get('results', []):
-        job = entry['job']
-        res = entry['result']
-        ordered_refs.append(job['source_ref'])
-        if res.get('status') == 'deferred':
-            hit_defer = True
+    stopped_early = False
+    for sess_sum in batch:
+        if job_statuses.get(sess_sum.source_ref) not in _TERMINAL_OK:
+            stopped_early = True
             break
-        progressed.append((job['session_created_at'], job['source_ref']))
+        progressed.append((_norm_utc_iso(sess_sum.created_at), sess_sum.source_ref))
 
     new_cursor = cursor
     if progressed:
         last_ts, last_ref = progressed[-1]
-        is_done = (not hit_defer) and (len(remaining) <= len(batch)) and (len(progressed) == len(batch))
+        is_done = (not stopped_early) and (len(remaining) <= len(batch)) and (len(progressed) == len(batch))
         new_cursor = store.advance_cursor(
             conn,
             scope_kind=scope_kind,

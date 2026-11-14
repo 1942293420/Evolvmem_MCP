@@ -175,3 +175,131 @@ def test_live_worker_cutover_floor_db_owner_resolution_and_idempotency(pg_s3_mig
     assert res2['already_processed'] == 1
     assert res2['llm_calls'] == 0
     assert calls == calls_after
+
+
+def test_live_worker_resolve_transports_multi_slot_deepseek_and_mimo_fallback(monkeypatch):
+    from evolvmem.experience_v2.llm_meter import LlmEndpoint
+    import evolvmem.experience_v2.pipeline.live_worker as lw
+
+    seen_urls: list[str] = []
+    monkeypatch.setattr(lw, 'default_http_transport', lambda ep: (lambda m, msgs, mt, _u=ep.base_url: (seen_urls.append(_u), {'text': '{}', 'input_tokens': 1, 'output_tokens': 1})[1]))
+
+    # Case A: distinct flash and strong slots sharing provider='deepseek'
+    endpoints_ds = {
+        'flash': LlmEndpoint(provider='deepseek', model='ds-fast-custom', base_url='http://ds-flash/v1', api_key='k'),
+        'strong': LlmEndpoint(provider='deepseek', model='ds-strong-custom', base_url='http://ds-strong/v1', api_key='k'),
+        'primary': LlmEndpoint(provider='deepseek', model='ds-fast-custom', base_url='http://ds-flash/v1', api_key='k'),
+    }
+    monkeypatch.setattr(lw, 'load_llm_endpoints_from_file', lambda: endpoints_ds)
+    f_tr, s_tr, j_tr = lw._resolve_transports('deepseek-v4-flash', 'deepseek-chat', 'deepseek-chat', None, None, None)
+    f_tr('deepseek-v4-flash', [], 10)
+    s_tr('deepseek-chat', [], 10)
+    j_tr('deepseek-chat', [], 10)
+    assert seen_urls == ['http://ds-flash/v1', 'http://ds-strong/v1', 'http://ds-strong/v1']
+
+    # Case B: strong aliased from fallback (provider='mimo') -> deepseek-chat routes to deepseek primary, not mimo
+    seen_urls.clear()
+    endpoints_mixed = {
+        'primary': LlmEndpoint(provider='deepseek', model='deepseek-v4-flash', base_url='http://ds-primary/v1', api_key='k'),
+        'flash': LlmEndpoint(provider='deepseek', model='deepseek-v4-flash', base_url='http://ds-primary/v1', api_key='k'),
+        'fallback': LlmEndpoint(provider='mimo', model='mimo-v2.6-flash', base_url='http://mimo-fb/v1', api_key='k'),
+        'strong': LlmEndpoint(provider='mimo', model='mimo-v2.6-flash', base_url='http://mimo-fb/v1', api_key='k'),
+    }
+    monkeypatch.setattr(lw, 'load_llm_endpoints_from_file', lambda: endpoints_mixed)
+    f2, s2, j2 = lw._resolve_transports('deepseek-v4-flash', 'deepseek-chat', 'deepseek-chat', None, None, None)
+    f2('deepseek-v4-flash', [], 10)
+    s2('deepseek-chat', [], 10)
+    j2('deepseek-chat', [], 10)
+    assert seen_urls == ['http://ds-primary/v1', 'http://ds-primary/v1', 'http://ds-primary/v1']
+
+
+def test_live_worker_block_idle_wait_pagination_savepoint_isolation_and_dict_gate_mode(pg_s3_migrated, monkeypatch):
+    from evolvmem.experience_v2.pipeline.live_worker import run_live_pipeline_tick
+    import evolvmem.experience_v2.pipeline.live_worker as lw
+
+    conn, *_ = pg_s3_migrated
+    secret = b'lw-rev-test-secret'
+    tkt = TicketIssuer(secret).issue(proposal_uid='p-lw-seed2', decision_id='d-lw-seed2', lane='user_fast')
+    ExperienceWriter(secret).apply(conn, tkt, Op(
+        action='create', owner_id='owner-lw2', actor_id='owner-lw2', request_id='lw-seed-2',
+        category='系统环境经验', problem='P0', solution='S0', reusable_experience='R0',
+    ))
+
+    # 1. Non-archive block session waits for 30m idle timeout
+    blk = HistorySession(
+        summary=HistorySessionSummary(
+            session_id='block:b-active', adapter='dsh', source_format='messages', project='ops',
+            source_ref='block:b-active', library='personal', external_session_id='b-active',
+            created_at='2026-11-14T10:05:00Z',
+        ),
+        records=(
+            HistoryRawRecord(event_index=1, role='user', content='Check gateway timeout on block', raw_event={'recorded_at': '2026-11-14T10:05:00Z'}),
+            HistoryRawRecord(event_index=2, role='tool', content='exit_code=1\nGatewayTimeoutError', raw_event={'recorded_at': '2026-11-14T10:06:00Z'}),
+            HistoryRawRecord(event_index=3, role='assistant', content='Offload loop to worker.', raw_event={'recorded_at': '2026-11-14T10:07:00Z'}),
+            HistoryRawRecord(event_index=4, role='tool', content='exit_code=0\nok', raw_event={'recorded_at': '2026-11-14T10:08:00Z'}),
+        ),
+    )
+    calls, flash, strong, judge = _live_fake_transports()
+    wait_res = run_live_pipeline_tick(
+        conn, history_reader=InMemoryHistoryReader([blk]), since='2026-11-14T10:00:00Z',
+        owner_id='owner-lw2', policy=ProductPolicy(experience_pipeline_enabled=True, experience_gate_mode={'业务经验': 'auto'}),
+        now=datetime(2026, 11, 14, 10, 15, 0, tzinfo=timezone.utc),
+        flash_transport=flash, strong_transport=strong, judge_transport=judge,
+        embedder=_DummyEmbedder(), ticket_secret=secret,
+    )
+    assert wait_res['active_wait'] == 1
+    assert wait_res['llm_calls'] == 0
+
+    done_blk = run_live_pipeline_tick(
+        conn, history_reader=InMemoryHistoryReader([blk]), since='2026-11-14T10:00:00Z',
+        owner_id='owner-lw2', policy=ProductPolicy(experience_pipeline_enabled=True, experience_gate_mode={'业务经验': 'auto'}),
+        now=datetime(2026, 11, 14, 10, 40, 0, tzinfo=timezone.utc),
+        flash_transport=flash, strong_transport=strong, judge_transport=judge,
+        embedder=_DummyEmbedder(), ticket_secret=secret,
+    )
+    assert done_blk['completed'] == 1
+    assert conn.execute("SELECT state FROM experience_proposals WHERE owner_id = 'owner-lw2'").fetchone()[0] == 'accepted'
+
+    # 2. Pagination across burst sessions > limit without dropping any session + savepoint error isolation
+    burst_sessions = [
+        _make_live_session(f'archive:{8200 + i}', created_at=f'2026-11-14T11:0{i}:00Z')
+        for i in range(5)
+    ]
+    burst_reader = InMemoryHistoryReader(burst_sessions)
+    pol_rev = ProductPolicy(experience_pipeline_enabled=True, experience_gate_mode='review')
+    t1 = run_live_pipeline_tick(
+        conn, history_reader=burst_reader, since='2026-11-14T11:00:00Z', owner_id='owner-lw-burst',
+        policy=pol_rev, limit=2, now=datetime(2026, 11, 14, 12, 0, 0, tzinfo=timezone.utc),
+        flash_transport=flash, strong_transport=strong, judge_transport=judge, embedder=_DummyEmbedder(), ticket_secret=secret,
+    )
+    t2 = run_live_pipeline_tick(
+        conn, history_reader=burst_reader, since='2026-11-14T11:00:00Z', owner_id='owner-lw-burst',
+        policy=pol_rev, limit=2, now=datetime(2026, 11, 14, 12, 1, 0, tzinfo=timezone.utc),
+        flash_transport=flash, strong_transport=strong, judge_transport=judge, embedder=_DummyEmbedder(), ticket_secret=secret,
+    )
+    t3 = run_live_pipeline_tick(
+        conn, history_reader=burst_reader, since='2026-11-14T11:00:00Z', owner_id='owner-lw-burst',
+        policy=pol_rev, limit=2, now=datetime(2026, 11, 14, 12, 2, 0, tzinfo=timezone.utc),
+        flash_transport=flash, strong_transport=strong, judge_transport=judge, embedder=_DummyEmbedder(), ticket_secret=secret,
+    )
+    assert t1['completed'] == 2 and t2['completed'] == 2 and t3['completed'] == 1
+    assert conn.execute("SELECT COUNT(*) FROM pipeline_segment_runs WHERE owner_id = 'owner-lw-burst'").fetchone()[0] == 5
+
+    # 3. Unexpected exception isolated per session savepoint
+    class _FlakySched(lw.PipelineScheduler):
+        def process_session_if_ready(self, c, source_ref, **kw):
+            if source_ref == 'archive:9001':
+                c.execute('SELECT * FROM broken_savepoint_table_check')
+            return super().process_session_if_ready(c, source_ref, **kw)
+
+    monkeypatch.setattr(lw, 'PipelineScheduler', _FlakySched)
+    iso_reader = InMemoryHistoryReader([
+        _make_live_session('archive:9001', created_at='2026-11-14T13:01:00Z'),
+        _make_live_session('archive:9002', created_at='2026-11-14T13:02:00Z'),
+    ])
+    iso_res = run_live_pipeline_tick(
+        conn, history_reader=iso_reader, since='2026-11-14T13:00:00Z', owner_id='owner-lw-iso',
+        policy=pol_rev, limit=10, now=datetime(2026, 11, 14, 13, 10, 0, tzinfo=timezone.utc),
+        flash_transport=flash, strong_transport=strong, judge_transport=judge, embedder=_DummyEmbedder(), ticket_secret=secret,
+    )
+    assert iso_res['errors'] == 1 and iso_res['completed'] == 1
