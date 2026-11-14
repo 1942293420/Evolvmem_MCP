@@ -385,3 +385,100 @@ def test_lan_stdio_mcp_route_and_changes_since_request_id_strip(tmp_path, monkey
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_pg_candidate_reader_relative_attachment_and_traversal_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cas_root = tmp_path / "cas"
+    att_root = cas_root / "attachments"
+    sec_dir = cas_root / ".secrets"
+    override_root = tmp_path / "override_att"
+    sec_dir.mkdir(parents=True)
+    leak_file = sec_dir / "leak.bin"
+    leak_file.write_bytes(b"top-secret")
+    leak_sha = hashlib.sha256(b"top-secret").hexdigest()
+
+    raw_png = b"\x89PNG\r\n\x1a\nfake-png-5b"
+    png_sha = hashlib.sha256(raw_png).hexdigest()
+    rel_sub = Path("bc") / f"{png_sha}.png"
+    (att_root / rel_sub).parent.mkdir(parents=True)
+    (att_root / rel_sub).write_bytes(raw_png)
+
+    alt_bytes = b"override-png-5b"
+    alt_sha = hashlib.sha256(alt_bytes).hexdigest()
+    alt_rel = Path("ab") / f"{alt_sha}.png"
+    (override_root / alt_rel).parent.mkdir(parents=True)
+    (override_root / alt_rel).write_bytes(alt_bytes)
+
+    sym_sha = hashlib.sha256(b"sym-5b").hexdigest()
+    sym_rel = Path("ff") / f"{sym_sha}.bin"
+    (att_root / sym_rel).parent.mkdir(parents=True)
+    (att_root / sym_rel).symlink_to(leak_file)
+
+    tamper_sha = hashlib.sha256(b"original").hexdigest()
+    tamper_rel = Path("de") / f"{tamper_sha}.bin"
+    (att_root / tamper_rel).parent.mkdir(parents=True)
+    (att_root / tamper_rel).write_bytes(b"tampered")
+
+    records: dict[str, tuple[tuple[Any, ...], list[tuple[Any, ...]]]] = {
+        png_sha: (
+            (png_sha, "image/png", len(raw_png), str(rel_sub).replace("\\", "/"), 1, 10, 10),
+            [("blk-vis", json.dumps([{"sha256": png_sha}]), True)],
+        ),
+        alt_sha: (
+            (alt_sha, "image/png", len(alt_bytes), str(alt_rel).replace("\\", "/"), 1, 10, 10),
+            [("blk-vis", json.dumps([{"sha256": alt_sha}]), True)],
+        ),
+        leak_sha: (
+            (leak_sha, "application/octet-stream", 10, "../.secrets/leak.bin", 1, None, None),
+            [("blk-vis", json.dumps([{"sha256": leak_sha}]), True)],
+        ),
+        sym_sha: (
+            (sym_sha, "application/octet-stream", 10, str(sym_rel).replace("\\", "/"), 1, None, None),
+            [("blk-vis", json.dumps([{"sha256": sym_sha}]), True)],
+        ),
+        tamper_sha: (
+            (tamper_sha, "application/octet-stream", 8, str(tamper_rel).replace("\\", "/"), 1, None, None),
+            [("blk-vis", json.dumps([{"sha256": tamper_sha}]), True)],
+        ),
+    }
+
+    class _DummyConn:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def execute(self, sql_str, params=()):
+            sha = params[0].strip("%") if "LIKE" in sql_str else params[0]
+            rec = records.get(sha)
+            class _Cur:
+                def __init__(self, r):
+                    self._r = r
+                def fetchone(self):
+                    return self._r
+                def fetchall(self):
+                    return self._r or []
+            if "FROM em_history.attachments" in sql_str:
+                return _Cur(rec[0] if rec else None)
+            return _Cur(rec[1] if rec else [])
+
+    cfg = PgHistoryConfig(cas_root=cas_root, user_history_dbs={"owner1": "db_owner1"})
+    monkeypatch.setattr(PgHistoryConfig, "connect", lambda self, dbname, role_kind="reader": _DummyConn())
+    base_env = {"EVOLVMEM_CONSOLE_OWNER_ID": "owner1", "EVOLVMEM_HISTORY_CANDIDATE_NAMESPACE": "personal"}
+
+    st1, c1, b1 = handle_pg_history_view("GET", f"/history/attachment/{png_sha}", {}, owner_verified=True, environ=base_env, pg_config=cfg)
+    assert (st1, c1, b1) == (200, "image/png", raw_png)
+
+    st2, c2, b2 = handle_pg_history_view(
+        "GET", f"/history/attachment/{alt_sha}", {}, owner_verified=True,
+        environ={**base_env, "EVOLVMEM_HISTORY_ATTACHMENTS_DIR": str(override_root)}, pg_config=cfg,
+    )
+    assert (st2, c2, b2) == (200, "image/png", alt_bytes)
+
+    assert handle_pg_history_view("GET", f"/history/attachment/{leak_sha}", {}, owner_verified=True, environ=base_env, pg_config=cfg)[0] == 404
+    assert handle_pg_history_view("GET", f"/history/attachment/{sym_sha}", {}, owner_verified=True, environ=base_env, pg_config=cfg)[0] == 404
+
+    records[png_sha] = (records[png_sha][0], [("blk-del", json.dumps([{"sha256": png_sha}]), False)])
+    assert handle_pg_history_view("GET", f"/history/attachment/{png_sha}", {}, owner_verified=True, environ=base_env, pg_config=cfg)[0] == 404
+
+    st6, _, b6 = handle_pg_history_view("GET", f"/history/attachment/{tamper_sha}", {}, owner_verified=True, environ=base_env, pg_config=cfg)
+    assert st6 == 409 and json.loads(b6)["error"] == "attachment_conflict"

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import mimetypes
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -38,10 +39,21 @@ def _escape_like(q: str) -> str:
 class PgHistoryCandidateReader:
     """Drop-in PostgreSQL replacement for SQLite HistoryCandidateReader & ManagedReader."""
 
-    def __init__(self, pg_config: PgHistoryConfig | None = None, *, dbname: str | None = None, user_id: str = "", embedder: Any = None) -> None:
+    def __init__(
+        self,
+        pg_config: PgHistoryConfig | None = None,
+        *,
+        dbname: str | None = None,
+        user_id: str = "",
+        embedder: Any = None,
+        attachments_dir: Path | str | None = None,
+    ) -> None:
         self._cfg = pg_config if pg_config is not None else load_pg_history_config()
         self._dbname = dbname or self._cfg.resolve_user_history_db(user_id)
         self._embedder = embedder
+        env_att = os.environ.get("EVOLVMEM_HISTORY_ATTACHMENTS_DIR", "").strip()
+        raw_att = attachments_dir or (Path(env_att) if env_att else (self._cfg.cas_root / "attachments"))
+        self._attachments_dir = Path(raw_att).expanduser()
 
     def __enter__(self) -> PgHistoryCandidateReader:
         return self
@@ -218,19 +230,64 @@ class PgHistoryCandidateReader:
             ],
         }
 
+    def _resolve_attachment_file(self, raw_path: str | None) -> Path | None:
+        if not raw_path:
+            return None
+        p = Path(raw_path)
+        if ".." in p.parts:
+            return None
+        try:
+            if p.is_absolute():
+                cand = p.resolve()
+                return cand if cand.is_file() and ".secrets" not in cand.parts else None
+            root = self._attachments_dir.resolve()
+            cand = (root / p).resolve()
+            return cand if cand.is_relative_to(root) and cand.is_file() else None
+        except OSError:
+            return None
+
     def attachment(self, sha256: str) -> dict[str, Any] | None:
+        if not isinstance(sha256, str) or not (16 <= len(sha256) <= 128) or not all(c in "0123456789abcdef" for c in sha256):
+            return None
         with self._cfg.connect(self._dbname, role_kind="reader") as conn:
             row = conn.execute(
                 "SELECT sha256, mime_type, bytes, path, format_ok, width, height FROM em_history.attachments WHERE sha256 = %s",
                 (sha256,),
             ).fetchone()
-        if not row:
+            if not row:
+                return None
+            msg_rows = conn.execute(
+                "SELECT m.block_id, m.attachments, (" + _VISIBLE_BLOCK_SQL + ") AS vis "
+                "FROM em_history.messages m JOIN em_history.blocks b ON b.block_id = m.block_id "
+                "WHERE m.attachments LIKE %s ESCAPE '\\'",
+                ("%" + _escape_like(sha256) + "%",),
+            ).fetchall()
+        matching = []
+        for mr in msg_rows:
+            try:
+                parsed = json.loads(mr[1] or "[]")
+            except (TypeError, ValueError):
+                parsed = []
+            if isinstance(parsed, list) and any(
+                (a == sha256 or (isinstance(a, dict) and a.get("sha256") == sha256))
+                for a in parsed
+            ):
+                matching.append(mr)
+        if matching and not any(bool(mr[2]) for mr in matching):
             return None
-        p = Path(row[3]) if row[3] else None
-        if p is not None and p.is_file():
-            mime = row[1] or (mimetypes.guess_type(str(p))[0] or "application/octet-stream")
-            return {"sha256": row[0], "mime_type": mime, "bytes": int(row[2] or p.stat().st_size), "path": str(p)}
-        return {"sha256": row[0], "mime_type": row[1] or "application/octet-stream", "bytes": int(row[2] or 0), "path": row[3]}
+        resolved = self._resolve_attachment_file(row[3])
+        if resolved is None:
+            return None
+        digest = hashlib.sha256()
+        size = 0
+        with resolved.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(chunk)
+                size += len(chunk)
+        if digest.hexdigest() != row[0] or (row[2] and size != int(row[2])):
+            raise ValueError("attachment_conflict")
+        mime = row[1] or (mimetypes.guess_type(str(resolved))[0] or "application/octet-stream")
+        return {"sha256": row[0], "mime_type": mime, "bytes": size, "path": str(resolved)}
 
     def coverage_report(self, report_key: str) -> dict[str, Any]:
         with self._cfg.connect(self._dbname, role_kind="reader") as conn:
