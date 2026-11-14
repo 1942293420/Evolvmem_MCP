@@ -123,12 +123,7 @@ def test_worker_respects_policy_night_window_and_pre_cutover_month_cursor(pg_s4_
     assert r_n1['llm_calls'] > 0
     assert conn.execute("SELECT COUNT(*) FROM llm_calls WHERE track = 'live'").fetchone()[0] == 0
 
-    # Advance 2026-11 cursor to completed -> next tick automatically picks 2026-10!
-    BackfillCursorStore(owner_id='owner-bf').advance_cursor(
-        conn, scope_kind='month', scope_value='2026-11',
-        last_created_at='2026-11-12T08:00:00Z', last_source_ref='s-nov-pre',
-        delta_processed=0, completed=True, is_shadow=False,
-    )
+    assert r_n1['cursor']['completed'] is True
     r_n2 = run_backfill_worker_tick(
         conn, history_reader=reader, before='2026-11-14T12:39:04Z', owner_id='owner-bf',
         policy=pol_on, now=night_now, max_sessions=10,

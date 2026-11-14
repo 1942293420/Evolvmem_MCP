@@ -353,6 +353,16 @@ def delete_approved_legacy_sqlite_and_vectors(
         pre_mem = int(conn.execute('SELECT COUNT(*) FROM memories').fetchone()[0]) if 'memories' in existing else 0
 
         _assert_no_protected_ci_refs(conn, existing, ci_ids)
+        for batch in _chunks(ci_ids):
+            ph = ','.join('?' for _ in batch)
+            non_exp_cnt = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM context_items WHERE id IN ({ph}) AND content_type != 'experience'",
+                    tuple(batch),
+                ).fetchone()[0]
+            )
+            if non_exp_cnt > 0:
+                raise ValueError(f'non_experience_context_item_in_delete_ids:{non_exp_cnt}')
         deleted_counts = {'context_items': 0, 'capability_memories': 0, 'learning_memories': 0}
 
         with conn:
