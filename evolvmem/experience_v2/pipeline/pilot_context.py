@@ -12,7 +12,6 @@ from evolvmem.experience_v2.pipeline.moments import detect_key_moments
 
 _WIN_USER_RE = re.compile(r'[A-Za-z]:\\Users\\([^\\/:*?"<>|\r\n]+)')
 _SNIPPET_IDX_RE = re.compile(r'^\[(\d+)\]', re.M)
-_FEISHU_ID_RE = re.compile(r'\b(?:cli|ou)_[A-Za-z0-9]{10,}\b')
 _BOILERPLATE_RE = (
     re.compile(r'<!--\s*BEGIN EVOLVMEM MEMORY\s*-->[\s\S]*?<!--\s*END EVOLVMEM MEMORY\s*-->', re.I),
     re.compile(r'#\s*AGENTS\.md instructions[^\n]*\n(?:<INSTRUCTIONS>[\s\S]*?</INSTRUCTIONS>)?', re.I),
@@ -37,7 +36,7 @@ def _clip(text: str, limit: int = 600) -> str:
 
 
 def _scrub(text: Any, *, scrub_fn: Callable[..., str], terms: Sequence[str]) -> str:
-    return _FEISHU_ID_RE.sub('[REDACTED_ID]', scrub_fn(text, extra_terms=terms))
+    return scrub_fn(text, extra_terms=terms)
 
 
 def _extract_raw_meta(raw_bytes: bytes | None) -> dict[str, str]:

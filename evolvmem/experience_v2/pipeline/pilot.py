@@ -41,13 +41,14 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'/home/[A-Za-z0-9._-]+'), '/home/<owner>'),
     (re.compile(r'[A-Za-z]:\\Users\\[A-Za-z0-9._-]+'), r'C:\\Users\\<owner>'),
     (re.compile(r'github\.com([:/])(?!<owner>)[A-Za-z0-9._-]+', re.IGNORECASE), r'github.com\1<owner>'),
-    (re.compile(r'\bwin-[0-9a-fA-F]{8,}(?:-[0-9a-fA-F]{4}){0,3}(?:-[0-9a-fA-F]{12})?\b', re.IGNORECASE), '<device-id>'),
+    (re.compile(r'(?<![A-Za-z0-9])win-(?:[0-9a-fA-F]{8,}(?:-[0-9a-fA-F]{4}){0,3}(?:-[0-9a-fA-F]{12})?(?:…|\.{3})?|[0-9a-fA-F]{6,}(?:…|\.{3}))(?![A-Za-z0-9-])', re.IGNORECASE), '<device-id>'),
+    (re.compile(r'(?<![A-Za-z0-9])(?:DESKTOP|LAPTOP)-[A-Za-z0-9]{5,}(?:-[A-Za-z0-9]{2,})*(?:…|\.{3})?(?![A-Za-z0-9-])', re.IGNORECASE), '<host-id>'),
     (re.compile(r"(device[-_]?id\s*[:=]\s*[\"']?)(?!<device-id>)[A-Za-z0-9._-]{8,}([\"']?)", re.IGNORECASE), r'\1<device-id>\2'),
     (re.compile(r"https?://[A-Za-z0-9.-]*(?:xlwms|lingdongsz|lingxing)\.com(?::\d+)?(?:/[^\s\"'<>，。；;）)\]]*)?", re.IGNORECASE), '<internal-url>'),
-    (re.compile(r'\b[A-Za-z0-9.-]*(?:xlwms|lingdongsz|lingxing)\.com\b', re.IGNORECASE), '<internal-host>'),
-    (re.compile(r"https?://(?:omp|xinyue|xpmcp)\.[A-Za-z0-9.-]*(?:/[^\s\"'<>，。；;）)\]]*)?", re.IGNORECASE), '<internal-url>'),
+    (re.compile(r'(?<![A-Za-z0-9.-])[A-Za-z0-9.-]*(?:xlwms|lingdongsz|lingxing)\.com(?![A-Za-z0-9-])', re.IGNORECASE), '<internal-host>'),
+    (re.compile(r"https?://(?:omp|xinyue|xpmcp|xp)(?:\.[A-Za-z0-9.-]*(?:/[^\s\"'<>，。；;）)\]]*)?|…|\.{3})", re.IGNORECASE), '<internal-url>'),
     (re.compile(r"https?://(?!(?:open|www|docs)\.)[A-Za-z0-9-]{8,}\.feishu\.cn(?:/[^\s\"'<>，。；;）)\]]*)?", re.IGNORECASE), 'https://<tenant>.feishu.cn'),
-    (re.compile(r'(?!(?:open|www|docs)\.)\b[A-Za-z0-9-]{8,}\.feishu\.cn\b', re.IGNORECASE), '<tenant>.feishu.cn'),
+    (re.compile(r'(?!(?:open|www|docs)\.)(?<![A-Za-z0-9.-])[A-Za-z0-9-]{8,}\.feishu\.cn(?![A-Za-z0-9-])', re.IGNORECASE), '<tenant>.feishu.cn'),
     (re.compile(r"https?://acnv6w0[A-Za-z0-9.-]*(?:/[^\s\"'<>，。；;）)\]]*)?", re.IGNORECASE), 'https://<tenant>.feishu.cn'),
     (re.compile(r'(?:账号|用户名|账户)\s*[:：]?\s*(?!\[REDACTED\])[A-Za-z0-9._@-]{2,}'), '账号 [REDACTED]'),
     (re.compile(r'尾号\s*\d{4}'), '尾号[REDACTED]'),
@@ -60,7 +61,8 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?<![0-9.])192\.(?:168(?:\.\d{1,3})?|\d{0,3})?(?=$|…|\s|[,，。.;；:：\"'()（）\[\]<]|[\u4e00-\u9fff])"), '<lan-host>'),
     (re.compile(r"(?<![0-9.])127\.(?:0(?:\.\d{1,3}){0,2})?(?=$|…|\s|[,，。.;；:：\"'()（）\[\]<]|[\u4e00-\u9fff])"), '<local-host>'),
     (re.compile(r"(https?://)(?:192|127)(?=$|…|[/\s\"'<>])", re.IGNORECASE), r'\1<lan-host>'),
-    (re.compile(r'(?<![A-Za-z0-9_])(?:ou|oc|on|om|cli)_[A-Za-z0-9]{10,}(?![A-Za-z0-9_])'), '[REDACTED_FEISHU_ID]'),
+    (re.compile(r"(https?://)(?:192|127|10|1)(?:…|\.{3})", re.IGNORECASE), r'\1<lan-host>'),
+    (re.compile(r'(?<![A-Za-z0-9_])(?:ou|oc|on|om|cli)_(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{6,}(?:…|\.{3})?(?![A-Za-z0-9_])'), '[REDACTED_FEISHU_ID]'),
 )
 
 
