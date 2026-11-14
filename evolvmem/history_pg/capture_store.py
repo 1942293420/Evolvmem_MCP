@@ -9,12 +9,14 @@ import os
 from pathlib import Path
 import re
 import time
+from types import SimpleNamespace
 from typing import Any
 import uuid
 
 import psycopg
 from psycopg.rows import dict_row
 
+from evolvmem.archive_storage import ArchiveStorage, MAGIC as ARCHIVE_MAGIC
 from evolvmem.history_pg.config import PgHistoryConfig, PgHistoryPool
 from evolvmem.lan_sharing import LanError, validate_request_id
 from evolvmem.product_policy import load_policy
@@ -61,11 +63,65 @@ def _sync_dir(path: Path) -> None:
 class PgCaptureStore:
     """Handles session archive intake and status strictly via PostgreSQL + CAS."""
 
-    def __init__(self, config: PgHistoryConfig, *, pool: PgHistoryPool | None = None) -> None:
+    def __init__(self, config: PgHistoryConfig, *, pool: PgHistoryPool | None = None, data_dir: Path | str | None = None) -> None:
         self.config = config
         self.pool = pool or PgHistoryPool(config)
         self.cas_root = Path(config.cas_root)
         self.cas_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        raw_dir = str(data_dir).strip() if data_dir is not None else ""
+        if not raw_dir:
+            raw_dir = str(os.environ.get("EVOLVMEM_DATA_DIR") or "").strip()
+        self.data_dir: Path | None = Path(raw_dir).expanduser() if raw_dir else None
+
+    def _read_existing_archive(self, raw_path: str) -> bytes:
+        raw_str = str(raw_path or "").strip()
+        if not raw_str:
+            raise LanError("archive_payload_unavailable")
+        cand = Path(raw_str).expanduser()
+        if ".." in cand.parts:
+            raise LanError("archive_payload_unavailable")
+        if cand.is_absolute():
+            if cand.is_symlink():
+                raise LanError("archive_payload_unavailable")
+            allowed = [self.cas_root.resolve()] + ([self.data_dir.resolve()] if self.data_dir else [])
+            target = cand.resolve()
+            if not target.is_file() or not any(target.is_relative_to(root) for root in allowed):
+                raise LanError("archive_payload_unavailable")
+        else:
+            if self.data_dir is None:
+                raise LanError("archive_payload_unavailable")
+            cur = self.data_dir
+            for part in cand.parts:
+                cur = cur / part
+                if cur.is_symlink():
+                    raise LanError("archive_payload_unavailable")
+            data_root = self.data_dir.resolve()
+            target = (self.data_dir / cand).resolve()
+            if not target.is_relative_to(data_root) or not target.is_file():
+                raise LanError("archive_payload_unavailable")
+        blob = target.read_bytes()
+        if not blob.startswith(ARCHIVE_MAGIC):
+            return blob
+        key_dir = self.data_dir if (self.data_dir is not None and (self.data_dir / "archive.key").is_file()) else None
+        if key_dir is None:
+            key_dir = next((p for p in target.parents if (p / "archive.key").is_file()), None)
+        if key_dir is None:
+            raise LanError("archive_payload_unavailable")
+        try:
+            key = (key_dir / "archive.key").read_bytes()
+            if len(key) != 32:
+                raise LanError("archive_payload_unavailable")
+            unpacked = ArchiveStorage(SimpleNamespace(data_dir=key_dir), key).unpack(blob)
+        except (ValueError, OSError) as exc:
+            raise LanError("archive_payload_unavailable") from exc
+        if unpacked.lstrip().startswith("{"):
+            try:
+                env = json.loads(unpacked)
+                if isinstance(env, dict) and isinstance(env.get("transcript"), str):
+                    return env["transcript"].encode("utf-8")
+            except ValueError:
+                pass
+        return unpacked.encode("utf-8")
 
     def _stage_path(self, device_id: str, session_id: str, sha256: str) -> Path:
         key_hash = hashlib.sha256(f"{device_id}|{session_id}|{sha256}".encode("utf-8")).hexdigest()
@@ -187,11 +243,13 @@ class PgCaptureStore:
                 raise LanError("upload_metadata_conflict")
 
             stage = self._stage_path(dev_id, sess_id, digest)
+            existing_payload_path = ""
             if row is not None and row.get("archive_id"):
                 arch = conn.execute("SELECT payload_path FROM em_runtime.session_archives WHERE id=%s", (row["archive_id"],)).fetchone()
-                if arch is None or not Path(arch["payload_path"]).exists():
+                if arch is None or not arch.get("payload_path"):
                     raise LanError("archive_payload_unavailable")
-                raw = Path(arch["payload_path"]).read_bytes()
+                existing_payload_path = str(arch["payload_path"])
+                raw = self._read_existing_archive(existing_payload_path)
             else:
                 raw = stage.read_bytes() if stage.exists() else b""
 
@@ -310,7 +368,7 @@ class PgCaptureStore:
                     payload={
                         "archive": {
                             "id": archive_id, "project": project, "adapter": adapter_name(fmt),
-                            "payload_path": cas_path_str or str(self._cas_path(digest)),
+                            "payload_path": cas_path_str or existing_payload_path or str(self._cas_path(digest)),
                             "payload_sha256": digest, "created_at": _utc_now(),
                         },
                         "storage": {"archive_id": archive_id, "manifest_sha256": digest, "content_sha256": digest, "logical_bytes": total},

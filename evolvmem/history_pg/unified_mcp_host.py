@@ -113,7 +113,7 @@ class UnifiedMcpHost:
         self.tokens = dict(tokens or {})
         self.request_timeout_seconds = max(0.1, float(request_timeout_seconds))
         self.pool = pool or PgHistoryPool(pg_config)
-        self.capture = PgCaptureStore(pg_config, pool=self.pool)
+        self.capture = PgCaptureStore(pg_config, pool=self.pool, data_dir=self.data_dir or None)
         self.continuity = PgContinuityStore(pg_config, pool=self.pool)
         self.allow_sleep_probe = bool(allow_sleep_probe or os.environ.get("EVOLVMEM_ALLOW_STAGE5_PROBES") == "1")
         self._lock = threading.Lock()

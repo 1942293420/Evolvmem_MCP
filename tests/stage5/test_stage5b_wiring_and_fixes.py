@@ -207,8 +207,8 @@ def test_unified_mcp_host_experience_manual_and_cli_backfill(tmp_path: Path, mon
         }), encoding="utf-8")
 
         store = PgConsoleStore(PgControlConfig.from_file(ctrl_file))
-        if store.get_user_source("jiangli", "jiangli") is None:
-            store.create_user("jiangli", "jiangli", data_dir=str(tmp_path / "dd"))
+        if not store.registry_ready("jiangli"):
+            store.bootstrap("jiangli", f"oid-{uuid.uuid4().hex}", "Owner", str(tmp_path / "dd"), {"EVOLVMEM_HISTORY_PG_DB": cfg.history_migration_db})
         owner_principal = store.get_user_source("jiangli", "jiangli")["principal_id"]
 
         pol_file = tmp_path / "policy.json"
@@ -482,3 +482,45 @@ def test_pg_candidate_reader_relative_attachment_and_traversal_guard(tmp_path: P
 
     st6, _, b6 = handle_pg_history_view("GET", f"/history/attachment/{tamper_sha}", {}, owner_verified=True, environ=base_env, pg_config=cfg)
     assert st6 == 409 and json.loads(b6)["error"] == "attachment_conflict"
+def test_pg_capture_store_migrated_encrypted_archive_and_traversal_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evolvmem.history_pg.capture_store import PgCaptureStore
+    from evolvmem.history_pg.unified_mcp_host import UnifiedMcpHost
+
+    monkeypatch.setenv("EVOLVMEM_DATA_DIR", str(tmp_path / "unused_env"))
+    cas_root = tmp_path / "cas"
+    data_dir = tmp_path / "data"
+    arch_dir = data_dir / "session_archives"
+    arch_dir.mkdir(parents=True)
+    key = os.urandom(32)
+    (data_dir / "archive.key").write_bytes(key)
+    transcript = '{"type":"session_meta","payload":{"id":"s-mig"}}\n{"type":"event_msg","payload":{"text":"迁移测试"}}\n'
+    blob, _ = ArchiveStorage(Config(data_dir=data_dir, apply_environment=False), key).pack(
+        json.dumps({"transcript": transcript}, ensure_ascii=False)
+    )
+    rel_arch = "session_archives/migrated.bin"
+    (data_dir / rel_arch).write_bytes(blob)
+    plain_abs = cas_root / "ab" / "cd" / "plain.jsonl"
+    plain_abs.parent.mkdir(parents=True)
+    plain_abs.write_bytes(transcript.encode("utf-8"))
+
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"secret")
+    sym_rel = arch_dir / "sym.bin"
+    sym_rel.symlink_to(outside)
+
+    class _DummyPool:
+        pass
+
+    cfg = PgHistoryConfig(cas_root=cas_root, user_history_dbs={"owner1": "db_owner1"})
+    cap = PgCaptureStore(cfg, pool=_DummyPool(), data_dir=data_dir)
+    assert cap._read_existing_archive(rel_arch) == transcript.encode("utf-8")
+    assert cap._read_existing_archive(str(plain_abs)) == transcript.encode("utf-8")
+    for bad in ("", "../outside.bin", "session_archives/../outside.bin", "session_archives/sym.bin", str(outside)):
+        with pytest.raises(LanError, match="archive_payload_unavailable"):
+            cap._read_existing_archive(bad)
+
+    pw_f = tmp_path / "p.pw"
+    pw_f.write_text("x", encoding="utf-8")
+    ctrl_cfg = PgControlConfig.from_dict({"host": "127.0.0.1", "port": 55432, "database": "d", "coordinator_role": "c", "coordinator_password_ref": "k", "secret_files": {"k": str(pw_f)}, "allow_loopback_disable_ssl": True})
+    host = UnifiedMcpHost(cfg, ctrl_cfg, owner_id="owner1", pool=_DummyPool(), data_dir=data_dir)
+    assert host.capture.data_dir == data_dir
