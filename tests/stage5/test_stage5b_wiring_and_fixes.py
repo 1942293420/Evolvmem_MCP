@@ -301,3 +301,87 @@ def test_unified_mcp_host_experience_manual_and_cli_backfill(tmp_path: Path, mon
     finally:
         with cfg.connect("postgres", autocommit=True, statement_timeout_ms=60000, lock_timeout_ms=30000) as pconn:
             pconn.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(exp_db)))
+
+
+def test_lan_stdio_mcp_route_and_changes_since_request_id_strip(tmp_path, monkeypatch):
+    import threading
+    from types import SimpleNamespace
+    from evolvmem import lan_server
+    from evolvmem.history_pg.unified_mcp_host import UnifiedMcpHost
+
+    pw_f = tmp_path / "pw"
+    pw_f.write_text("dummy", encoding="utf-8")
+    pw_f.chmod(0o600)
+    ctrl_cfg = PgControlConfig.from_dict({
+        "host": "127.0.0.1", "port": 55434, "database": "evolvmem_control",
+        "coordinator_role": "c", "coordinator_password_ref": "c",
+        "reader_role": "r", "reader_password_ref": "r",
+        "secret_files": {"c": str(pw_f), "r": str(pw_f)},
+        "allow_loopback_disable_ssl": True,
+    })
+    tok = "tok-stdio-5b-test"
+    tok_sha = hashlib.sha256(tok.encode("utf-8")).hexdigest()
+    host = UnifiedMcpHost(PgHistoryConfig(), ctrl_cfg, owner_id="owner1", tokens={tok_sha: {"user_id": "owner1", "device_id": "dev1"}})
+    host.control_store = SimpleNamespace(
+        get_user_source=lambda owner, uid: {"id": "owner1", "principal_id": "11111111-1111-1111-1111-111111111111", "enabled": True} if uid == "owner1" else None,
+        user_enabled=lambda owner, uid: uid == "owner1",
+    )
+    host._exp_settings = lambda: object()
+
+    seen_calls = []
+    def _fake_v2(name, req_args, **kwargs):
+        seen_calls.append((name, dict(req_args)))
+        assert name == "experience_changes_since"
+        assert "request_id" not in req_args
+        return {"changes": [], "next_seq": 0}
+
+    monkeypatch.setattr("evolvmem.history_pg.unified_mcp_host.exp_v2_mcp.call_experience_v2_tool", _fake_v2)
+
+    server = lan_server.make_http_server(None, host="127.0.0.1", port=0, library_host=host, allow_legacy=False)
+    thr = threading.Thread(target=server.serve_forever, daemon=True)
+    thr.start()
+    try:
+        tok_file = tmp_path / "tok_file"
+        tok_file.write_text(tok, encoding="utf-8")
+        tok_file.chmod(0o600)
+
+        for route in ("/mcp", "/library/mcp"):
+            client_cfg = tmp_path / f"client_{route.strip('/').replace('/', '_')}.json"
+            client_cfg.write_text(json.dumps({"url": f"http://127.0.0.1:{server.server_port}{route}", "token_file": str(tok_file)}), encoding="utf-8")
+            data_dir = tmp_path / f"data_{route.strip('/').replace('/', '_')}"
+            data_dir.mkdir()
+            (data_dir / "config.json").write_text(json.dumps({"lan_mcp_client_config": str(client_cfg)}), encoding="utf-8")
+            reqs = [
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+                {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "experience_changes_since", "arguments": {"since_seq": 0}}},
+            ]
+            proc = subprocess.run(
+                [sys.executable, "-c", "from evolvmem import mcp_server; mcp_server.main()"],
+                input="\n".join(json.dumps(r) for r in reqs) + "\n",
+                text=True, capture_output=True, timeout=15, env={**os.environ, "EVOLVMEM_DATA_DIR": str(data_dir)},
+            )
+            assert proc.returncode == 0, proc.stderr
+            resps = [json.loads(line) for line in proc.stdout.splitlines()]
+            assert [r["id"] for r in resps] == [1, 2, 3], resps
+            assert "experience_changes_since" in {t["name"] for t in resps[1]["result"]["tools"]}
+            assert not resps[2]["result"].get("isError"), resps[2]
+
+        assert len(seen_calls) == 2
+
+        bad_cfg = tmp_path / "client_evil.json"
+        bad_cfg.write_text(json.dumps({"url": f"http://127.0.0.1:{server.server_port}/evil", "token_file": str(tok_file)}), encoding="utf-8")
+        bad_dir = tmp_path / "data_evil"
+        bad_dir.mkdir()
+        (bad_dir / "config.json").write_text(json.dumps({"lan_mcp_client_config": str(bad_cfg)}), encoding="utf-8")
+        proc_bad = subprocess.run(
+            [sys.executable, "-c", "from evolvmem import mcp_server; mcp_server.main()"],
+            input=json.dumps({"jsonrpc": "2.0", "id": 9, "method": "tools/list", "params": {}}) + "\n",
+            text=True, capture_output=True, timeout=15, env={**os.environ, "EVOLVMEM_DATA_DIR": str(bad_dir)},
+        )
+        assert proc_bad.returncode == 0, proc_bad.stderr
+        assert tok not in proc_bad.stdout and tok not in proc_bad.stderr
+        assert json.loads(proc_bad.stdout.strip())["error"]["message"] == "LAN MCP unavailable"
+    finally:
+        server.shutdown()
+        server.server_close()
