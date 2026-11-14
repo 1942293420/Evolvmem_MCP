@@ -7,6 +7,7 @@ import sqlite3
 
 import pytest
 
+from evolvmem.experience_v2.pipeline.pilot import scrub_pilot_text
 from evolvmem.experience_v2.clean.sampler import (
     assert_zero_sqlite_writes,
     sample_delete_manifest,
@@ -169,3 +170,16 @@ def test_sample_delete_manifest_scrubs_enterprise_urls_accounts_ids_and_truncate
         for alias in node.names
     ]
     assert 'sqlite3' not in imports
+
+def test_scrub_pilot_text_redacts_feishu_oc_and_short_win_device_ids():
+    raw = (
+        '群 oc_5756d9312c50d21eef44cdfd62f39c25 执行器 win-d3f1f26a '
+        'package executor-enrollment-win-145a6243.zip on win-x64'
+    )
+    out = scrub_pilot_text(raw)
+    assert 'oc_5756d9312c50d21eef44cdfd62f39c25' not in out
+    assert 'win-d3f1f26a' not in out
+    assert 'win-145a6243' not in out
+    assert '[REDACTED_FEISHU_ID]' in out
+    assert '<device-id>' in out
+    assert 'win-x64' in out
