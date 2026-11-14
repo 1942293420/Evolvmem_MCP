@@ -182,7 +182,8 @@ class PgCaptureStore:
     ) -> None:
         conn.execute(
             "INSERT INTO em_runtime.cutover_write_journal (library_key, request_id, actor_id, op_type, target_table, target_key, payload) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb) ON CONFLICT (library_key, request_id, op_type, target_key) DO NOTHING",
+            "VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb) ON CONFLICT (library_key, request_id, op_type, target_key) DO UPDATE SET "
+            "payload=EXCLUDED.payload, replayed_to_sqlite=false, created_at=clock_timestamp()",
             (library_key, request_id, actor_id, op_type, target_table, target_key, json.dumps(payload, ensure_ascii=False)),
         )
 
@@ -223,9 +224,7 @@ class PgCaptureStore:
                 "SELECT payload_hash, result FROM em_runtime.lan_write_requests WHERE user_id=%s AND tool='session_archive_upload' AND request_id=%s",
                 (user_id, req_id),
             ).fetchone()
-            if prev_req is not None:
-                if prev_req["payload_hash"] != payload_hash:
-                    raise LanError("request_id_conflict")
+            if prev_req is not None and prev_req["payload_hash"] == payload_hash:
                 return json.loads(prev_req["result"])
 
             row = conn.execute(
@@ -237,10 +236,17 @@ class PgCaptureStore:
                 (dev_id, sess_id),
             ).fetchone()
             declared_proj = str(args.get("project") or "")
-            if row is not None and (
-                int(row["total_bytes"]) != total or row["declared_project"] != declared_proj or row["source_format"] != fmt
-            ):
-                raise LanError("upload_metadata_conflict")
+            if row is not None:
+                if (
+                    int(row["total_bytes"]) != total
+                    or row["declared_project"] != declared_proj
+                    or row["source_format"] != fmt
+                ):
+                    raise LanError("upload_metadata_conflict")
+                if order is not None and row.get("source_order") is not None and int(row["source_order"]) != order:
+                    floor = int(head["source_order"]) if (head is not None and head.get("source_order") is not None) else None
+                    if not (decl_curr == digest and order > int(row["source_order"]) and (floor is None or order > floor)):
+                        raise LanError("upload_metadata_conflict")
 
             stage = self._stage_path(dev_id, sess_id, digest)
             existing_payload_path = ""
@@ -383,7 +389,9 @@ class PgCaptureStore:
                     },
                 )
             conn.execute(
-                "INSERT INTO em_runtime.lan_write_requests (user_id, tool, request_id, payload_hash, result) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                "INSERT INTO em_runtime.lan_write_requests (user_id, tool, request_id, payload_hash, result) "
+                "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (user_id, tool, request_id) DO UPDATE SET "
+                "payload_hash=EXCLUDED.payload_hash, result=EXCLUDED.result, created_at=clock_timestamp()",
                 (user_id, "session_archive_upload", req_id, payload_hash, json.dumps(receipt, ensure_ascii=False)),
             )
         if unlink_stage is not None:
