@@ -14,6 +14,8 @@ from evolvmem.experience_v2.pipeline.history_reader import (
     HistorySession,
     HistorySessionSummary,
 )
+from evolvmem.archive_storage import ArchiveStorage, MAGIC as _ARCHIVE_MAGIC
+from evolvmem.config import Config
 from evolvmem.history_pg.config import PgHistoryConfig, load_pg_history_config
 
 _PTR_SRC_RE = re.compile(r"^(archive|session_archive|block):([^\s#]+)(?:#(?:msg|L)=?(\d+))?$")
@@ -89,37 +91,93 @@ def _extract_role_and_text(ev: dict[str, Any]) -> tuple[str, str]:
     return role, text
 
 
-def _load_jsonl_records(path: Path) -> tuple[list[HistoryRawRecord], bytes]:
+def _find_archive_key_dir(path: Path, data_dir: Path | None) -> Path | None:
+    if data_dir is not None and (data_dir / "archive.key").is_file():
+        return data_dir
+    for anc in path.parents:
+        if (anc / "archive.key").is_file():
+            return anc
+    return None
+
+
+def _parse_lines_to_records(text: str) -> list[HistoryRawRecord]:
+    records: list[HistoryRawRecord] = []
+    idx = 0
+    for line in text.splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        idx += 1
+        try:
+            ev = json.loads(raw)
+        except ValueError:
+            ev = {"text": raw}
+        if not isinstance(ev, dict):
+            ev = {"value": ev}
+        role, msg_text = _extract_role_and_text(ev)
+        records.append(HistoryRawRecord(event_index=idx, role=role, content=msg_text, raw_event=ev))
+    return records
+
+
+def _load_jsonl_records(path: Path, *, data_dir: Path | None = None) -> tuple[list[HistoryRawRecord], bytes]:
     if not path.is_file():
         return [], b""
     raw_bytes = path.read_bytes()
-    opener = gzip.open if path.name.endswith(".gz") else open
-    records: list[HistoryRawRecord] = []
-    with opener(path, "rt", encoding="utf-8", errors="replace") as fh:
-        idx = 0
-        for line in fh:
-            raw = line.strip()
-            if not raw:
-                continue
-            idx += 1
+    envelope_conv: Any = None
+    if raw_bytes.startswith(_ARCHIVE_MAGIC):
+        key_dir = _find_archive_key_dir(path, data_dir)
+        if key_dir is None:
+            return [], raw_bytes
+        key = (key_dir / "archive.key").read_bytes()
+        if len(key) != 32:
+            return [], raw_bytes
+        unpacked = ArchiveStorage(Config(data_dir=key_dir, apply_environment=False), key).unpack(raw_bytes)
+        text = unpacked
+        raw_bytes = unpacked.encode("utf-8")
+        stripped = unpacked.lstrip()
+        if stripped.startswith("{") and "\n" not in unpacked.strip():
             try:
-                ev = json.loads(raw)
+                env = json.loads(unpacked)
+                if isinstance(env, dict) and isinstance(env.get("transcript"), str):
+                    envelope_conv = env.get("conversation") or env.get("messages")
+                    text = env["transcript"]
             except ValueError:
-                ev = {"text": raw}
-            if not isinstance(ev, dict):
-                ev = {"value": ev}
-            role, text = _extract_role_and_text(ev)
-            records.append(HistoryRawRecord(event_index=idx, role=role, content=text, raw_event=ev))
+                pass
+    elif raw_bytes[:2] == b"\x1f\x8b" or path.name.endswith(".gz"):
+        text = gzip.decompress(raw_bytes).decode("utf-8", errors="replace")
+    else:
+        text = raw_bytes.decode("utf-8", errors="replace")
+
+    records = _parse_lines_to_records(text)
+    if not records and isinstance(envelope_conv, list):
+        records = [
+            HistoryRawRecord(
+                event_index=i, role=str(m.get("role") or "unknown") if isinstance(m, dict) else "unknown",
+                content=str(m.get("content") or "") if isinstance(m, dict) else str(m),
+                raw_event=m if isinstance(m, dict) else {"content": m},
+            )
+            for i, m in enumerate(envelope_conv, start=1)
+        ]
     return records, raw_bytes
 
 
 class PgHistoryReader:
     """HistoryReader Protocol implementation over PG em_runtime + em_history + CAS blobs."""
 
-    def __init__(self, pg_config: PgHistoryConfig | None = None, *, dbname: str | None = None, user_id: str = "", library: str = "personal") -> None:
+    def __init__(
+        self,
+        pg_config: PgHistoryConfig | None = None,
+        *,
+        dbname: str | None = None,
+        user_id: str = "",
+        library: str = "personal",
+        data_dir: Path | str | None = None,
+    ) -> None:
         self._cfg = pg_config if pg_config is not None else load_pg_history_config()
         self._dbname = dbname or self._cfg.resolve_user_history_db(user_id)
         self._library = library
+        dd_raw = data_dir if data_dir is not None else os.environ.get("EVOLVMEM_DATA_DIR")
+        self._data_dir = Path(dd_raw).expanduser().resolve() if dd_raw else None
 
     def _resolve_blob_path(self, cas_sha: str, payload_path: str) -> Path | None:
         sha = (cas_sha or "").strip().lower()
@@ -136,6 +194,10 @@ class PgHistoryReader:
             p = Path(payload_path)
             if p.is_file():
                 return p
+            if not p.is_absolute() and self._data_dir is not None:
+                rel_p = (self._data_dir / p).resolve()
+                if rel_p.is_relative_to(self._data_dir) and rel_p.is_file():
+                    return rel_p
         return None
 
     def list_sessions(
@@ -226,7 +288,7 @@ class PgHistoryReader:
                     return None
                 _, proj, adp, ext_id, pay_path, cas_sha, created_at = row
                 blob = self._resolve_blob_path(str(cas_sha or ""), str(pay_path or ""))
-                records, raw_bytes = _load_jsonl_records(blob) if blob is not None else ([], b"")
+                records, raw_bytes = _load_jsonl_records(blob, data_dir=self._data_dir) if blob is not None else ([], b"")
                 if not records:
                     ch_row = conn.execute(
                         "SELECT messages FROM em_runtime.conversation_history WHERE archive_id = %s",

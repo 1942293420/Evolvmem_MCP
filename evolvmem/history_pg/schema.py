@@ -208,9 +208,13 @@ def _grant_business_db_privileges(conn: Any, config: PgHistoryConfig, db_name: s
     """Enforce PUBLIC revocation and writer/reader table & sequence least-privilege grants."""
     db_id = sql.Identifier(db_name)
     admin_id = sql.Identifier(config.admin_user)
+    owner_id = sql.Identifier(config.history_owner_role)
     writer_id = sql.Identifier(config.history_writer_role)
     reader_id = sql.Identifier(config.history_reader_role)
     for stmt in (
+        sql.SQL("ALTER SCHEMA em_history OWNER TO {owner_id};").format(owner_id=owner_id),
+        sql.SQL("ALTER SCHEMA em_runtime OWNER TO {owner_id};").format(owner_id=owner_id),
+        sql.SQL("GRANT USAGE ON SCHEMA em_history, em_runtime TO {owner_id};").format(owner_id=owner_id),
         sql.SQL("REVOKE ALL ON DATABASE {db_id} FROM PUBLIC;").format(db_id=db_id),
         sql.SQL("REVOKE ALL ON SCHEMA public, em_history, em_runtime FROM PUBLIC;"),
         sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA em_history, em_runtime FROM PUBLIC;"),

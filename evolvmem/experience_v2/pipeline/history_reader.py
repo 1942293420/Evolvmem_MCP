@@ -516,16 +516,17 @@ def open_history_reader(
         from evolvmem.experience_v2.pipeline.pg_history_reader import PgHistoryReader
         from evolvmem.history_pg.config import load_pg_history_config
 
+        dd = Path(data_dir).expanduser()
         cfg_obj = pg_config if pg_config is not None else load_pg_history_config()
         if library == 'personal':
             dbname = str(os.environ.get('EVOLVMEM_HISTORY_PG_DB') or '').strip() or None
             owner_uid = str(os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID') or '').strip()
             if dbname:
-                return PgHistoryReader(cfg_obj, dbname=dbname, user_id=owner_uid, library=library)
+                return PgHistoryReader(cfg_obj, dbname=dbname, user_id=owner_uid, library=library, data_dir=dd)
             if owner_uid:
-                return PgHistoryReader(cfg_obj, user_id=owner_uid, library=library)
-            return PgHistoryReader(cfg_obj, dbname=cfg_obj.history_migration_db, user_id='', library=library)
-        return PgHistoryReader(cfg_obj, user_id=library, library=library)
+                return PgHistoryReader(cfg_obj, user_id=owner_uid, library=library, data_dir=dd)
+            return PgHistoryReader(cfg_obj, dbname=cfg_obj.history_migration_db, user_id='', library=library, data_dir=dd)
+        return PgHistoryReader(cfg_obj, user_id=library, library=library, data_dir=dd)
     dd = Path(data_dir).expanduser()
     cand = candidate_db if candidate_db is not None else (dd / 'candidate.db')
     return SqliteHistoryReader(

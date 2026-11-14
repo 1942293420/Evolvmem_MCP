@@ -151,6 +151,7 @@ def call_experience_v2_tool(
     gate_hook=None,
     history_db_paths: Sequence[Path | str] | None = None,
     embedder: Any = None,
+    settings: Any = None,
 ) -> dict[str, Any]:
     if not isinstance(args, dict):
         raise ManualMcpError('invalid_arguments')
@@ -166,7 +167,7 @@ def call_experience_v2_tool(
 
     pre_vec = _precompute_vector(embedder, args) if (tool_name == 'experience_propose' and gate_hook is None and history_db_paths is not None) else None
     try:
-        settings = load_pg_experience_settings()
+        settings = settings if settings is not None else load_pg_experience_settings()
         if tool_name == 'experience_propose' and gate_hook is None and history_db_paths is not None:
             gate_hook = _build_live_gate_hook(
                 owner_id=owner_id,
@@ -213,11 +214,12 @@ def call_pg_experience_recall(
     owner_id: str,
     attribution: AgentAttribution | None = None,
     channel: str = 'mcp',
+    settings: Any = None,
 ) -> dict[str, Any]:
     if not isinstance(args, dict):
         return {'error': 'invalid_arguments'}
     try:
-        with open_experience_conn(role='coordinator') as conn:
+        with open_experience_conn(settings, role='coordinator') as conn:
             return recall_pg_experiences(
                 conn,
                 owner_id=owner_id,
