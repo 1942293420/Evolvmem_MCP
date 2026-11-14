@@ -62,7 +62,8 @@ def _reader_from_env(environ: dict[str, Any] | None, pg_config: PgHistoryConfig 
         user_id = ns
     else:
         raise ValueError("missing_history_pg_target")
-    return PgHistoryCandidateReader(cfg, dbname=dbname, user_id=user_id)
+    att_dir = str(env.get("EVOLVMEM_HISTORY_ATTACHMENTS_DIR") or os.environ.get("EVOLVMEM_HISTORY_ATTACHMENTS_DIR") or "").strip() or None
+    return PgHistoryCandidateReader(cfg, dbname=dbname, user_id=user_id, attachments_dir=att_dir)
 
 
 def dispatch_pg_history_api(
@@ -162,7 +163,9 @@ def handle_pg_history_view(
             with _reader_from_env(environ, pg_config) as reader:
                 meta = reader.attachment(m.group(1))
         except ValueError as exc:
-            return 400, "application/json", json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+            msg = str(exc)
+            status = 409 if "conflict" in msg.lower() else 400
+            return status, "application/json", json.dumps({"ok": False, "error": msg}, ensure_ascii=False)
         if not meta or not meta.get("path") or not Path(meta["path"]).is_file():
             return 404, "text/plain", b"attachment_not_found"
         raw = Path(meta["path"]).read_bytes()
