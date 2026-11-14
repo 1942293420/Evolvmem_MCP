@@ -497,3 +497,15 @@ def scan_direct_sqlite_in_pipeline(pipeline_dir: Path) -> list[dict[str, Any]]:
             elif isinstance(node, ast.ImportFrom) and node.module == 'sqlite3':
                 violations.append({'file': str(path), 'line': node.lineno, 'kind': 'sqlite3_import'})
     return violations
+
+
+def open_history_reader(data_dir: Path, *, candidate_db: Path | None = None, library: str = 'personal') -> SqliteHistoryReader:
+    """Construct a read-only SqliteHistoryReader from data_dir and optional candidate_db override."""
+    dd = Path(data_dir).expanduser()
+    cand = candidate_db if candidate_db is not None else (dd / 'candidate.db')
+    return SqliteHistoryReader(
+        memory_db=dd / 'memory.db',
+        candidate_db=cand if cand.is_file() else None,
+        data_dir=dd,
+        library=library,
+    )
