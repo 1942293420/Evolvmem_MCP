@@ -212,6 +212,8 @@ class UnifiedMcpHost:
             return {**res, "count": len(items), "llm_calls": 0}
         if name in _EXP_V2_TOOLS:
             req_args = dict(args)
+            if name == "experience_changes_since":
+                req_args.pop("request_id", None)
             if name == "experience_propose":
                 req_id = req_args.get("request_id")
                 if not isinstance(req_id, str) or len(req_id) < 8 or len(req_id) > 128:

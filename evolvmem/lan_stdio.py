@@ -14,7 +14,7 @@ def run(config_path):
     try:
         config = json.loads(Path(config_path).read_text())
         url = urlsplit(config['url'])
-        if url.path != '/owner/mcp' or not ipaddress.ip_address(url.hostname).is_loopback:
+        if url.path not in ('/owner/mcp', '/mcp', '/library/mcp') or not ipaddress.ip_address(url.hostname).is_loopback:
             raise ValueError('invalid owner URL')
         client = JsonClient(config['url'], config['token_file'])
     except Exception:
