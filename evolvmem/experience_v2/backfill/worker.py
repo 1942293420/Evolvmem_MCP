@@ -214,7 +214,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     data_dir = Path(args.data_dir).expanduser()
     cand_env = (os.environ.get('EVOLVMEM_HISTORY_CANDIDATE_DB') or '').strip()
-    reader = open_history_reader(data_dir, candidate_db=Path(cand_env).expanduser() if cand_env else None)
+    reader = open_history_reader(data_dir, candidate_db=Path(cand_env).expanduser() if cand_env else None, policy=policy)
     settings = load_pg_experience_settings()
     with open_experience_conn(settings, role='coordinator') as conn:
         result = run_backfill_worker_tick(

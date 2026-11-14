@@ -230,6 +230,10 @@ def dispatch(method: str, path: str, params: dict, headers, environ: dict | None
     session passed the owner identity rule. The personal token remains a
     headless-verification fallback and is never required by the normal UI.
     """
+    from evolvmem.product_policy import load_policy
+    if load_policy().history_pg_enabled or (environ or {}).get('EVOLVMEM_HISTORY_PG_DB'):
+        from evolvmem.history_pg.history_web_pg import dispatch_pg_history_api
+        return dispatch_pg_history_api(method, path, params, headers, environ=environ, owner_verified=owner_verified)
     try:
         clean = path.rstrip("/") or "/"
         if str(method).upper() == "POST" and clean in (PREFIX + "/management/delete", PREFIX + "/management/restore"):

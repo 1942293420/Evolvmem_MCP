@@ -12,6 +12,7 @@ HISTORY_KEYS = frozenset({
     'EVOLVMEM_HISTORY_MANAGEMENT_DB',
     'EVOLVMEM_HISTORY_COVERAGE_FILE',
     'EVOLVMEM_HISTORY_ACCEPTED_AUDIT_FILE',
+    'EVOLVMEM_HISTORY_PG_DB',
 })
 
 
@@ -42,6 +43,13 @@ def validate_history_paths(env: dict[str, str], registry_path: Path | None = Non
 
 
 def read_history_count(env: dict[str, str]) -> int:
+    from evolvmem.product_policy import load_policy
+    if load_policy().history_pg_enabled or env.get('EVOLVMEM_HISTORY_PG_DB'):
+        from evolvmem.history_pg.candidate_reader import PgHistoryCandidateReader
+        ns = str(env.get('EVOLVMEM_HISTORY_CANDIDATE_NAMESPACE') or 'jiangli')
+        uid = 'jiangli' if ns == 'personal' else ns
+        with PgHistoryCandidateReader(dbname=env.get('EVOLVMEM_HISTORY_PG_DB') or None, user_id=uid) as reader:
+            return reader.visible_block_count()
     from evolvmem.history_candidate_read import open_reader
 
     with open_reader(dict(env)) as reader:
@@ -52,10 +60,14 @@ def read_history_count(env: dict[str, str]) -> int:
 
 
 def read_or_manage_history(owner_id: str, source, suffix: str, method: str, body: dict, error_cls):
+    from evolvmem.product_policy import load_policy
     raw_env = source['history_environ'] if source else '{}'
     env = json.loads(raw_env) if isinstance(raw_env, str) else dict(raw_env or {})
     candidate = env.get('EVOLVMEM_HISTORY_CANDIDATE_DB')
-    connected = bool(
+    pg_connected = bool(load_policy().history_pg_enabled or env.get('EVOLVMEM_HISTORY_PG_DB'))
+    if pg_connected:
+        env.setdefault('EVOLVMEM_HISTORY_CANDIDATE_NAMESPACE', owner_id)
+    connected = pg_connected or bool(
         candidate and Path(candidate).is_file() and env.get('EVOLVMEM_HISTORY_CANDIDATE_TOKEN_FILE')
     )
     if not connected:
