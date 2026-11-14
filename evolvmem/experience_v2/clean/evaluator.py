@@ -27,7 +27,7 @@ _EPHEMERAL_TASK_RE = re.compile(
     r'本轮|本次(?:会话|整理|改造|排查)|留到下一步|刚才|今天先|下一轮再|待后续处理'
 )
 _HOST_SPECIFIC_RE = re.compile(
-    r'\b192\.168\.\d{1,3}\.\d{1,3}\b|\bssh\s+-p\s+\d+|/workspace/|colleague@',
+    r'(?<![0-9.])192\.168\.\d{1,3}\.\d{1,3}(?![0-9.])|\bssh\s+-p\s+\d+|/workspace/|colleague@',
     re.IGNORECASE,
 )
 _DELIVERY_LOG_RE = re.compile(
@@ -36,7 +36,7 @@ _DELIVERY_LOG_RE = re.compile(
     r'|方案与部分实施|已切换并验证|现状汇总|进度汇报|开发到什么地步|用户要求关闭|首屏主卡'
     r'|改为可搜索.*条|批次结果[:：]已入库'
 )
-_FEISHU_ID_RE = re.compile(r'\b(?:ou|cli)_[A-Za-z0-9]{10,}\b')
+_FEISHU_ID_RE = re.compile(r'(?<![A-Za-z0-9_])(?:ou|cli)_[A-Za-z0-9]{10,}(?![A-Za-z0-9_])')
 
 
 def _scrub(text: Any, extra_terms: Sequence[str]) -> str:

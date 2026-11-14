@@ -93,3 +93,27 @@ def test_assert_zero_sqlite_writes_detects_or_confirms_counts(tmp_path: Path):
     c.close()
     with pytest.raises(RuntimeError, match='SQLITE_COUNT_CHANGED'):
         assert_zero_sqlite_writes(db_path, pre_counts)
+
+
+def test_sample_delete_manifest_scrubs_cjk_adjacent_lan_ip_and_feishu_id():
+    entries = [
+        {
+            'legacy_id': 'capability_memories:999',
+            'source_table': 'capability_memories',
+            'legacy_status': 'active',
+            'legacy_category': 'architecture',
+            'problem': '入口192.168.1.135:2223绑定机器人cli_a92c3ff4a9391bd2说明',
+            'solution': '用户ou_abc1234567890def访问192.168.1.3接口',
+            'raw_preview': '入口192.168.1.135/app',
+            'gate_layer': 'L0',
+            'reason_code': 'secret_or_host_specific_config',
+            'detail': '检测到内网地址192.168.1.135',
+        }
+    ]
+    sample = sample_delete_manifest(entries, sample_size=50, seed=20261114)
+    blob = json.dumps(sample, ensure_ascii=False)
+    assert '192.168.1.135' not in blob
+    assert '192.168.1.3' not in blob
+    assert 'cli_a92c3ff4a9391bd2' not in blob
+    assert 'ou_abc1234567890def' not in blob
+    assert '<lan-host>' in blob
