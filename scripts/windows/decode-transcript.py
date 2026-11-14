@@ -5,7 +5,8 @@ One frame is decoded incrementally and concatenated frames are supported.
 """
 import sys
 
-MAX_BYTES = 128 * 1024 * 1024
+MAX_WINDOW_BYTES = 128 * 1024 * 1024
+MAX_BYTES = 512 * 1024 * 1024
 
 
 def decode(path, output, *, header=False, limit=MAX_BYTES):
@@ -18,7 +19,7 @@ def decode(path, output, *, header=False, limit=MAX_BYTES):
         while compressed := source.read(1024):
             while compressed:
                 if frame is None or frame.eof:
-                    frame = zstandard.ZstdDecompressor(max_window_size=MAX_BYTES).decompressobj()
+                    frame = zstandard.ZstdDecompressor(max_window_size=MAX_WINDOW_BYTES).decompressobj()
                 decoded = frame.decompress(compressed)
                 seen = True
                 if header and b"\n" in decoded:
