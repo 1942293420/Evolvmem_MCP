@@ -189,6 +189,7 @@ def test_scrub_pilot_text_cjk_adjacent_truncated_and_preserves_safe_tokens():
         'device_id为win-01c2ee8f-41d1-479c-ba46-97c08c527bca，执行器win-d3f1f26a已离线；'
         '截断 win-01c2ee8… 与 win-01c2ee… 在 DESKTOP-OTTJ1G2、desktop-ottj1g2-p0-01、laptop-6gvmjvjo-01；'
         '访问omp.xlwms.com失败，飞书 cli_a92c3ff4… cli_aa3228aaf… 短链 https://xp… 与 http://1…；'
+        '路径 C:\\\\Users\\\\MSI\\\\... 与 C:/Users/Alice/run.py；'
         '保留标识 on_transferable on_control cli_version win-x64。'
     )
     out = scrub_pilot_text(raw)
@@ -205,6 +206,8 @@ def test_scrub_pilot_text_cjk_adjacent_truncated_and_preserves_safe_tokens():
         'cli_aa3228aaf…',
         'https://xp…',
         'http://1…',
+        'MSI',
+        'Alice',
     ):
         assert leaked not in out, f'leaked: {leaked} in {out}'
     assert '<device-id>' in out

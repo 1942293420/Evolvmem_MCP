@@ -39,7 +39,7 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'sk-[A-Za-z0-9_-]{8,}'), '[REDACTED_KEY]'),
     (re.compile(r'(?:api[-_]?key|token|password|secret)\s*[:=]\s*["\']?[A-Za-z0-9._-]{6,}["\']?', re.IGNORECASE), '[REDACTED_CRED]'),
     (re.compile(r'/home/[A-Za-z0-9._-]+'), '/home/<owner>'),
-    (re.compile(r'[A-Za-z]:\\Users\\[A-Za-z0-9._-]+'), r'C:\\Users\\<owner>'),
+    (re.compile(r'[A-Za-z]:(?:\\+|/+)Users(?:\\+|/+)[A-Za-z0-9._-]+', re.IGNORECASE), r'C:\\Users\\<owner>'),
     (re.compile(r'github\.com([:/])(?!<owner>)[A-Za-z0-9._-]+', re.IGNORECASE), r'github.com\1<owner>'),
     (re.compile(r'(?<![A-Za-z0-9])win-(?:[0-9a-fA-F]{8,}(?:-[0-9a-fA-F]{4}){0,3}(?:-[0-9a-fA-F]{12})?(?:…|\.{3})?|[0-9a-fA-F]{6,}(?:…|\.{3}))(?![A-Za-z0-9-])', re.IGNORECASE), '<device-id>'),
     (re.compile(r'(?<![A-Za-z0-9])(?:DESKTOP|LAPTOP)-[A-Za-z0-9]{5,}(?:-[A-Za-z0-9]{2,})*(?:…|\.{3})?(?![A-Za-z0-9-])', re.IGNORECASE), '<host-id>'),
