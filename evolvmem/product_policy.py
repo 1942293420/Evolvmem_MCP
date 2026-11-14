@@ -20,6 +20,7 @@ _BOOL_NAMES = frozenset({
     'experience_v2_enabled',
     'experience_pipeline_enabled',
     'experience_backfill_enabled',
+    'history_pg_enabled',
 })
 _ALL_NAMES = _BOOL_NAMES | {'experience_gate_mode'}
 
@@ -41,6 +42,7 @@ class ProductPolicy:
     experience_gate_mode: str | dict[str, str] = 'review'
     experience_pipeline_enabled: bool = False
     experience_backfill_enabled: bool = False
+    history_pg_enabled: bool = False
 
     def as_dict(self):
         out = {
@@ -54,6 +56,7 @@ class ProductPolicy:
                 'experience_gate_mode',
                 'experience_pipeline_enabled',
                 'experience_backfill_enabled',
+                'history_pg_enabled',
             )
         }
         if isinstance(out['experience_gate_mode'], dict):
@@ -103,7 +106,7 @@ def load_policy() -> ProductPolicy:
             return ProductPolicy()
     except (OSError, ValueError, UnicodeError):
         pass
-    return ProductPolicy(False, False, False, False, 'policy_unavailable', False, 'review', False, False)
+    return ProductPolicy(False, False, False, False, 'policy_unavailable', False, 'review', False, False, False)
 
 
 def require_ai_processing(*, task_history_grant=None) -> None:

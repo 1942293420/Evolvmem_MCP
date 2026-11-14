@@ -490,7 +490,7 @@ class ConsoleService:
         if path in ('/matrix', '/neural-matrix') and method == 'GET':
             peers = [{'id': r['id'], 'display_name': r['display_name'], 'enabled': bool(r['enabled']), 'lan_enabled': bool(r['lan_enabled'])}
                      for r in (users if actor['is_admin'] else [actor])]
-            from evolvmem.neural_matrix import read_matrix
+            from evolvmem.history_pg.matrix_reader import read_matrix
             return actor, '', '', (200, JSON, read_matrix(dict(actor), dict(actor), self.owner_data_dir, self.lan_data_dir, peers))
         match = re.fullmatch(r'/libraries/([^/]+)/(history|experiences)(/.*)?', path)
         if not match:

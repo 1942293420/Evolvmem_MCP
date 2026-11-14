@@ -12,7 +12,7 @@ from evolvmem.experience_v2.llm_meter import (
     BudgetConfig, BudgetDeferred, LlmEndpoint, LlmTransportError, default_http_transport, load_llm_endpoints_from_file,
 )
 from evolvmem.experience_v2.pg_experience_store import load_pg_experience_settings, open_experience_conn
-from evolvmem.experience_v2.pipeline.history_reader import HistoryReader, HistorySessionSummary, SqliteHistoryReader
+from evolvmem.experience_v2.pipeline.history_reader import HistoryReader, HistorySessionSummary, SqliteHistoryReader, open_history_reader
 from evolvmem.experience_v2.pipeline.scheduler import DEFAULT_PIPELINE_VERSION, PipelineScheduler, evaluate_circuit_breaker
 from evolvmem.product_policy import ProductPolicy, load_policy
 
@@ -278,9 +278,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     data_dir = Path(args.data_dir).expanduser()
     cand_env = (os.environ.get('EVOLVMEM_HISTORY_CANDIDATE_DB') or '').strip()
     candidate_db = Path(cand_env).expanduser() if cand_env else (data_dir / 'candidate.db')
-    reader = SqliteHistoryReader(
-        memory_db=data_dir / 'memory.db', candidate_db=candidate_db if candidate_db.is_file() else None,
-        data_dir=data_dir, library='personal',
+    reader = open_history_reader(
+        data_dir, candidate_db=candidate_db if candidate_db.is_file() else None,
+        library='personal', policy=policy,
     )
     settings = load_pg_experience_settings()
     with open_experience_conn(settings, role='coordinator') as conn:

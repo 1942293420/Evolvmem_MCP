@@ -107,8 +107,17 @@ def _build_live_gate_hook(
     gate_mode: str | dict[str, str],
     category: str,
 ):
-    existing = [Path(p) for p in history_db_paths if p and str(p).strip() and Path(p).is_file()]
-    verifier = SqliteHistoryEvidenceVerifier(existing) if existing else None
+    verifier = None
+    try:
+        from evolvmem.product_policy import load_policy
+        if load_policy().history_pg_enabled:
+            from evolvmem.experience_v2.pipeline.pg_history_reader import PgHistoryEvidenceVerifier
+            verifier = PgHistoryEvidenceVerifier()
+    except Exception:
+        verifier = None
+    if verifier is None:
+        existing = [Path(p) for p in history_db_paths if p and str(p).strip() and Path(p).is_file()]
+        verifier = SqliteHistoryEvidenceVerifier(existing) if existing else None
 
     def _hook(conn, uid: str) -> dict[str, Any]:
         l0 = run_l0_gate(conn, uid, evidence_verifier=verifier, require_evidence=True)

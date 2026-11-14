@@ -499,8 +499,22 @@ def scan_direct_sqlite_in_pipeline(pipeline_dir: Path) -> list[dict[str, Any]]:
     return violations
 
 
-def open_history_reader(data_dir: Path, *, candidate_db: Path | None = None, library: str = 'personal') -> SqliteHistoryReader:
-    """Construct a read-only SqliteHistoryReader from data_dir and optional candidate_db override."""
+def open_history_reader(
+    data_dir: Path,
+    *,
+    candidate_db: Path | None = None,
+    library: str = 'personal',
+    policy: Any = None,
+    pg_config: Any = None,
+) -> HistoryReader:
+    """Construct a HistoryReader, routing to PG when history_pg_enabled is True."""
+    from evolvmem.product_policy import load_policy
+
+    active_policy = policy if policy is not None else load_policy()
+    if pg_config is not None or bool(getattr(active_policy, 'history_pg_enabled', False)):
+        from evolvmem.experience_v2.pipeline.pg_history_reader import PgHistoryReader
+
+        return PgHistoryReader(pg_config, user_id='jiangli' if library == 'personal' else library)
     dd = Path(data_dir).expanduser()
     cand = candidate_db if candidate_db is not None else (dd / 'candidate.db')
     return SqliteHistoryReader(

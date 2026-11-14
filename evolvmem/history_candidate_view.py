@@ -270,6 +270,12 @@ def render_block(reader, block_id: str, page: int = 1, page_size: int = 50) -> s
 def handle(method: str, path: str, params: dict, *, owner_verified: bool,
            auth_enabled: bool = True, environ: dict | None = None):
     """Return ``(status, content_type, body)`` for the HTML/attachment entry."""
+    from evolvmem.product_policy import load_policy
+    if load_policy().history_pg_enabled or (environ or {}).get('EVOLVMEM_HISTORY_PG_DB'):
+        from evolvmem.history_pg.history_web_pg import handle_pg_history_view
+        return handle_pg_history_view(
+            method, path, params, owner_verified=owner_verified, auth_enabled=auth_enabled, environ=environ,
+        )
     method = str(method).upper()
     if method != 'GET':
         return 405, 'application/json', {'ok': False, 'error': 'history_candidate_method_not_allowed'}
