@@ -47,7 +47,7 @@ def _authorize_personal_get(hdr_lc: dict[str, Any], environ: dict[str, Any] | No
 
 
 def _reader_from_env(environ: dict[str, Any] | None, pg_config: PgHistoryConfig | None) -> PgHistoryCandidateReader:
-    env = dict(environ or {})
+    env = os.environ if environ is None else environ
     cfg = pg_config if pg_config is not None else load_pg_history_config()
     dbname = str(env.get("EVOLVMEM_HISTORY_PG_DB") or "").strip() or None
     ns = str(env.get("EVOLVMEM_HISTORY_CANDIDATE_NAMESPACE") or "").strip()
@@ -155,7 +155,7 @@ def handle_pg_history_view(
 ) -> tuple[int, str, Any]:
     del auth_enabled
     if not owner_verified:
-        return 403, "application/json", {"ok": False, "error": "forbidden"}
+        return 403, "application/json", json.dumps({"ok": False, "error": "forbidden"}, ensure_ascii=False)
     clean = path.rstrip("/") or "/"
     if m := _ATT_RE.match(clean):
         try:

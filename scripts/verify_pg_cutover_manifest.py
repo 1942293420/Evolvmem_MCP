@@ -15,7 +15,7 @@ def run_verification(
     mode: str = "migrated",
     acceptance_dir: Path | None = None,
 ) -> dict[str, Any]:
-    if mode not in ("migrated", "candidate"):
+    if mode not in ("migrated", "candidate", "cutover"):
         raise ValueError(f"invalid_mode:{mode}")
     m = json.loads(manifest_path.read_text(encoding="utf-8"))
     r = json.loads(reconciliation_path.read_text(encoding="utf-8"))
@@ -30,12 +30,13 @@ def run_verification(
         errors.append("reconciliation_not_ok")
     if r.get("content_digests_match") is not True:
         errors.append("content_digests_mismatch")
-    if mode == "candidate":
+    if mode in ("candidate", "cutover"):
         counts = r.get("counts") or {}
         if int(counts.get("blocks_embedded", 0)) < int(counts.get("blocks_pg", 1)):
             errors.append("blocks_embeddings_incomplete")
         if int(counts.get("projects_embedded", 0)) < int(counts.get("projects_pg", 1)):
             errors.append("projects_embeddings_incomplete")
+    if mode == "candidate":
         adir = acceptance_dir or manifest_path.parent
         for fname in (
             "web-mcp-feature-acceptance.json",
@@ -75,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Verify Stage 5 PG cutover manifest & reconciliation")
     ap.add_argument("--manifest", type=Path, required=True)
     ap.add_argument("--reconciliation", type=Path, required=True)
-    ap.add_argument("--mode", choices=["migrated", "candidate"], default="migrated")
+    ap.add_argument("--mode", choices=["migrated", "candidate", "cutover"], default="migrated")
     ap.add_argument("--acceptance-dir", type=Path, default=None)
     ap.add_argument("--output", type=Path, default=None)
     args = ap.parse_args(argv)

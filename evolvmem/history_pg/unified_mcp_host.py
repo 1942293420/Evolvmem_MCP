@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -13,19 +14,38 @@ import uuid
 
 import psycopg.errors
 
+from evolvmem import manual_experience_mcp, manual_experiences
+from evolvmem.experience_v2 import mcp_tools as exp_v2_mcp
+from evolvmem.experience_v2.control.agent_identity import resolve_mcp_client_info
 from evolvmem.experience_v2.control.pg_console_store import PgConsoleStore, PgControlConfig
+from evolvmem.experience_v2.pg_experience_store import (
+    PgExperienceStore,
+    PgExperienceUnavailableError,
+    load_pg_experience_settings,
+)
+from evolvmem.experience_v2.pipeline.pg_history_reader import PgHistoryEvidenceVerifier, PgHistoryReader
+from evolvmem.experience_v2.writer import ExperienceWriteError
 from evolvmem.history_pg.candidate_reader import PgHistoryCandidateReader
 from evolvmem.history_pg.capture_store import PgCaptureStore
-from evolvmem.history_pg.config import HistoryPgBusyError, PgHistoryConfig, PgHistoryPool, PoolLimits
+from evolvmem.history_pg.config import (
+    HistoryPgBusyError,
+    PgHistoryConfig,
+    PgHistoryPool,
+    PoolLimits,
+    load_pg_history_config,
+)
 from evolvmem.history_pg.continuity_store import PgContinuityStore
 from evolvmem.lan_sharing import LanError
 from evolvmem.library_foundation import FoundationError, RequestIdentity
 
+_EXP_V2_TOOLS = tuple(exp_v2_mcp.EXPERIENCE_V2_MCP_SPECS.keys())
+_MANUAL_EXP_TOOLS = tuple(manual_experience_mcp.MANUAL_EXPERIENCE_SPECS.keys())
 _TOOL_NAMES = (
     "memory_status", "context_session_start", "context_project_recall", "context_search", "context_read", "context_status",
     "continuity_begin", "continuity_find", "continuity_resume", "continuity_checkpoint", "continuity_list",
     "experience_recall", "session_archive_upload", "session_archive_status", "session_archive_assign", "session_archive_retry",
     "history_projects", "history_search", "history_block",
+    *_EXP_V2_TOOLS, *_MANUAL_EXP_TOOLS,
 )
 
 
@@ -80,8 +100,12 @@ class UnifiedMcpHost:
         request_timeout_seconds: float = 3.0,
         pool: PgHistoryPool | None = None,
         allow_sleep_probe: bool = False,
+        experience_config_path: Path | str | None = None,
+        data_dir: Path | str | None = None,
     ) -> None:
         self.pg_config = pg_config
+        self.experience_config_path = str(experience_config_path) if experience_config_path else ""
+        self.data_dir = str(Path(data_dir).expanduser()) if data_dir else ""
         if not (owner_id or "").strip():
             raise ValueError("missing_owner_id")
         self.control_store = PgConsoleStore(control_config)
@@ -135,19 +159,30 @@ class UnifiedMcpHost:
         return uid
 
     def _tool_specs(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "name": name,
-                "description": f"PG-backed EvolvMem tool: {name}",
-                "inputSchema": {"type": "object", "properties": {}, "additionalProperties": True},
-                "annotations": {"readOnlyHint": name in (
-                    "memory_status", "context_session_start", "context_project_recall", "context_search",
-                    "context_read", "context_status", "continuity_resume", "continuity_find", "continuity_list",
-                    "experience_recall", "session_archive_status", "history_projects", "history_search", "history_block",
-                )},
-            }
-            for name in _TOOL_NAMES
-        ]
+        specs: list[dict[str, Any]] = []
+        for name in _TOOL_NAMES:
+            if name in exp_v2_mcp.EXPERIENCE_V2_MCP_SPECS:
+                specs.append(deepcopy(exp_v2_mcp.EXPERIENCE_V2_MCP_SPECS[name]))
+            elif name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
+                specs.append(deepcopy(manual_experience_mcp.MANUAL_EXPERIENCE_SPECS[name]))
+            else:
+                specs.append({
+                    "name": name,
+                    "description": f"PG-backed EvolvMem tool: {name}",
+                    "inputSchema": {"type": "object", "properties": {}, "additionalProperties": True},
+                    "annotations": {"readOnlyHint": name in (
+                        "memory_status", "context_session_start", "context_project_recall", "context_search",
+                        "context_read", "context_status", "continuity_resume", "continuity_find", "continuity_list",
+                        "experience_recall", "session_archive_status", "history_projects", "history_search", "history_block",
+                    )},
+                })
+        return specs
+
+    def _exp_settings(self):
+        env_override = dict(os.environ)
+        if self.experience_config_path and not env_override.get("EVOLVMEM_EXPERIENCE_PG_CONFIG"):
+            env_override["EVOLVMEM_EXPERIENCE_PG_CONFIG"] = self.experience_config_path
+        return load_pg_experience_settings(env_override)
 
     def _handle_tool(self, user_id: str, identity: RequestIdentity, name: str, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
         if name == "memory_status" and self.allow_sleep_probe and isinstance(args.get("_sleep_seconds"), (int, float)):
@@ -163,7 +198,88 @@ class UnifiedMcpHost:
             }[name]
             return fn(user_id, args, statement_timeout_ms=timeout_ms)
         if name == "experience_recall":
-            return {"results": [], "cases": [], "methods": [], "count": 0, "llm_calls": 0}
+            try:
+                exp_settings = self._exp_settings()
+            except PgExperienceUnavailableError as exc:
+                if str(exc) == "pg_experience_unconfigured":
+                    return {"results": [], "cases": [], "methods": [], "count": 0, "llm_calls": 0}
+                raise LanError("pg_experience_unavailable") from exc
+            attr = resolve_mcp_client_info(None, actor=user_id, default_client="unified-mcp")
+            res = exp_v2_mcp.call_pg_experience_recall(args, owner_id=user_id, attribution=attr, settings=exp_settings)
+            if isinstance(res, dict) and res.get("error"):
+                raise LanError(str(res["error"]))
+            items = list(res.get("results") or [])
+            return {**res, "count": len(items), "llm_calls": 0}
+        if name in _EXP_V2_TOOLS:
+            req_args = dict(args)
+            if name == "experience_propose":
+                req_id = req_args.get("request_id")
+                if not isinstance(req_id, str) or len(req_id) < 8 or len(req_id) > 128:
+                    raise LanError("invalid_request_id")
+                tok_sha = hashlib.sha256(req_id.encode("utf-8")).hexdigest()
+                if tok_sha in self.tokens:
+                    raise LanError("invalid_request_id")
+            attr = resolve_mcp_client_info(None, actor=user_id, default_client="unified-mcp")
+            gate_hook = None
+            if name == "experience_propose":
+                verifier = PgHistoryEvidenceVerifier(PgHistoryReader(self.pg_config, user_id=user_id, data_dir=self.data_dir or None))
+                def _pg_gate(conn, uid):
+                    l0 = exp_v2_mcp.run_l0_gate(conn, uid, evidence_verifier=verifier, require_evidence=True)
+                    if l0["verdict"] != "pass":
+                        return l0
+                    conn.execute("UPDATE experience_proposals SET state = 'review', updated_at = now() WHERE uid = %s", (uid,))
+                    return l0
+                gate_hook = _pg_gate
+            try:
+                exp_settings = self._exp_settings()
+                return exp_v2_mcp.call_experience_v2_tool(
+                    name, req_args, owner_id=user_id, actor_id=user_id, attribution=attr,
+                    gate_hook=gate_hook, settings=exp_settings,
+                )
+            except PgExperienceUnavailableError as exc:
+                raise LanError("pg_experience_unavailable") from exc
+            except manual_experience_mcp.ManualMcpError as exc:
+                raise LanError(str(exc)) from exc
+        if name in _MANUAL_EXP_TOOLS:
+            req_args = dict(args)
+            space = req_args.pop("space", "personal")
+            if space == "public":
+                raise LanError("public_write_forbidden")
+            if space != "personal":
+                raise LanError("invalid_space")
+            if name != "manual_experience_save":
+                req_args.pop("request_id", None)
+            spec = manual_experience_mcp.MANUAL_EXPERIENCE_SPECS[name]["inputSchema"]
+            if set(req_args) - set(spec["properties"]) or set(spec.get("required", [])) - set(req_args):
+                raise LanError("invalid_arguments")
+            if "category" in req_args and req_args["category"] not in manual_experiences.CATEGORIES:
+                raise LanError("invalid_arguments")
+            try:
+                settings = self._exp_settings()
+                store = PgExperienceStore(settings)
+                src = {"user_id": user_id}
+                if name == "manual_experience_save":
+                    from evolvmem.experience_v2.pg_experience_store import PG_NOTE_ID
+                    body = manual_experiences._write_params_with({**req_args, "action": "create"}, PG_NOTE_ID)
+                    _, out = store.write(src, user_id, body, req_args, validate_new=manual_experience_mcp._validate_save_text)
+                    return out
+                cat, qry, pg_num, pg_sz, del_flag = manual_experiences._read_params({**req_args, "page_size": 10})
+                res = store.read(src, {**req_args, "page_size": 10}, category=cat, query=qry, page=pg_num, page_size=pg_sz, deleted=del_flag)
+                for row in res["rows"]:
+                    trunc = []
+                    for field, lim in (("problem", 300), ("solution", 600), ("reusable_experience", 600)):
+                        if len(row[field]) > lim:
+                            row[field] = row[field][:lim - 1] + "…"
+                            trunc.append(field)
+                    if trunc:
+                        row["truncated_fields"] = trunc
+                return {"ok": True, "rows": res["rows"], "total": res["total"]}
+            except PgExperienceUnavailableError as exc:
+                raise LanError("pg_experience_unavailable") from exc
+            except ExperienceWriteError as exc:
+                raise LanError(exc.code) from exc
+            except (manual_experience_mcp.ManualMcpError, manual_experiences.ManualExperienceError) as exc:
+                raise LanError(getattr(exc, "code", str(exc))) from exc
         if name in ("history_projects", "history_search", "history_block"):
             with PgHistoryCandidateReader(
                 self.pg_config,
@@ -253,7 +369,15 @@ def main() -> int:
     ap.add_argument("--config", required=True)
     args = ap.parse_args()
     raw = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    pg_cfg = _build_pg_cfg(raw["pg_config"])
+    if raw.get("pg_config_path"):
+        os.environ.setdefault("EVOLVMEM_HISTORY_PG_CONFIG", str(raw["pg_config_path"]))
+    if raw.get("experience_config_path"):
+        os.environ.setdefault("EVOLVMEM_EXPERIENCE_PG_CONFIG", str(raw["experience_config_path"]))
+    if raw.get("data_dir"):
+        os.environ.setdefault("EVOLVMEM_DATA_DIR", str(raw["data_dir"]))
+    if raw.get("owner_id"):
+        os.environ.setdefault("EVOLVMEM_CONSOLE_OWNER_ID", str(raw["owner_id"]).strip())
+    pg_cfg = load_pg_history_config(Path(raw["pg_config_path"])) if raw.get("pg_config_path") else _build_pg_cfg(raw["pg_config"])
     ctrl_cfg = PgControlConfig.from_file(Path(raw["control_config_path"]))
     host = UnifiedMcpHost(
         pg_cfg, ctrl_cfg,
@@ -261,6 +385,8 @@ def main() -> int:
         tokens=raw.get("tokens") or {},
         request_timeout_seconds=float(raw.get("request_timeout_seconds", 3.0)),
         allow_sleep_probe=bool(raw.get("allow_sleep_probe", False)),
+        experience_config_path=raw.get("experience_config_path"),
+        data_dir=raw.get("data_dir"),
     )
     server = lan_server.make_http_server(None, host=args.host, port=args.port, library_host=host, allow_legacy=False)
     server.serve_forever()

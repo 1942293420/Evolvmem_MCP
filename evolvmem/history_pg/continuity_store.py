@@ -140,7 +140,10 @@ class PgContinuityStore:
         ws_path = str(args.get("workspace_path") or "").strip()
         dev_id = str(args.get("device_id") or "").strip()
         query = str(args.get("query") or "").strip()
-        max_chars = max(200, min(int(args.get("max_chars") or 3200), 16000))
+        try:
+            max_chars = max(200, min(int(args.get("max_chars") or 3200), 16000))
+        except (TypeError, ValueError) as exc:
+            raise LanError("invalid_arguments") from exc
         fp = _ws_fp(ws_path, dev_id) if ws_path and dev_id else ""
 
         dbname = self.config.resolve_user_history_db(user_id)

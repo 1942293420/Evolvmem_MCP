@@ -184,15 +184,26 @@ def run_continuity_backfill(
     return {"ok": True, "processed": processed, "skipped": skipped, "errors": errors, "llm_usage": {"calls": 0, "tokens": 0}}
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    from evolvmem.product_policy import load_policy
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--pg-config", default="")
-    ap.add_argument("--user", default="jiangli")
+    ap.add_argument("--user", "--user-id", dest="user", default="jiangli")
     ap.add_argument("--limit", type=int, default=50)
-    args = ap.parse_args()
+    ap.add_argument("--log-file", default="")
+    args = ap.parse_args(argv)
+    if not load_policy().history_pg_enabled:
+        return 0
     cfg = load_pg_history_config(args.pg_config or None)
     out = run_continuity_backfill(cfg, args.user, limit=args.limit)
-    print(json.dumps(out, ensure_ascii=False))
+    line = json.dumps(out, ensure_ascii=False)
+    if args.log_file:
+        lp = Path(args.log_file).expanduser()
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        with lp.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    print(line)
     return 0
 
 

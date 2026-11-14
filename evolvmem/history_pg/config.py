@@ -238,7 +238,7 @@ def load_pg_history_config(path: Path | str | None = None, *, allow_prod: bool =
     def _pw(ref_key: str, direct_key: str, default: str = "") -> str:
         ref = raw.get(ref_key)
         if ref and resolver is not None:
-            return resolver.resolve(str(ref))
+            return resolver(str(ref))
         return str(raw.get(direct_key, default))
 
     limits_raw = dict(raw.get("pool_limits") or {})

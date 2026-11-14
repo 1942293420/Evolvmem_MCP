@@ -272,7 +272,8 @@ class PgHistoryCandidateReader:
         with self._cfg.connect(self._dbname, role_kind="reader") as conn:
             proj_sql = (
                 "AND EXISTS (SELECT 1 FROM em_history.block_projects bp WHERE bp.block_id = b.block_id AND bp.project = %s "
-                f"AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind = 'project' AND {_TRASH_PROJ_SQL} = bp.project)) "
+                f"AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind = 'project' AND {_TRASH_PROJ_SQL} = bp.project) "
+                "AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tpb WHERE tpb.kind = 'project_block' AND tpb.project = bp.project AND tpb.key = b.block_id)) "
                 if project else ""
             )
             if q:
