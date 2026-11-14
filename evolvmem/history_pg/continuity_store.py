@@ -27,6 +27,10 @@ def _layer_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _escape_like(q: str) -> str:
+    return q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class PgContinuityStore:
     """PostgreSQL runtime continuity and session-start context operations."""
 
@@ -112,7 +116,7 @@ class PgContinuityStore:
 
     def memory_status(self, user_id: str, args: dict[str, Any], *, statement_timeout_ms: int | None = None) -> dict[str, Any]:
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="reader", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
             rev = self._memory_revision(conn)
             if args.get("detail") == "revision":
@@ -140,7 +144,7 @@ class PgContinuityStore:
         fp = _ws_fp(ws_path, dev_id) if ws_path and dev_id else ""
 
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="reader", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
             rev = self._memory_revision(conn)
             ws_row = None
@@ -148,12 +152,16 @@ class PgContinuityStore:
                 ws_row = conn.execute(
                     "SELECT w.* FROM em_runtime.continuity_focus f "
                     "JOIN em_runtime.continuity_workstreams w ON w.id = f.workstream_id "
-                    "WHERE f.project=%s AND f.workspace_fingerprint=%s LIMIT 1",
+                    "WHERE f.project=%s AND f.workspace_fingerprint=%s "
+                    "AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind='project' AND COALESCE(NULLIF(tp.project,''),tp.key)=w.project) "
+                    "LIMIT 1",
                     (project, fp),
                 ).fetchone()
             if ws_row is None and project:
                 ws_row = conn.execute(
-                    "SELECT * FROM em_runtime.continuity_workstreams WHERE project=%s AND status='open' ORDER BY updated_at DESC LIMIT 1",
+                    "SELECT * FROM em_runtime.continuity_workstreams w WHERE w.project=%s AND w.status='open' "
+                    "AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind='project' AND COALESCE(NULLIF(tp.project,''),tp.key)=w.project) "
+                    "ORDER BY w.updated_at DESC LIMIT 1",
                     (project,),
                 ).fetchone()
 
@@ -176,6 +184,7 @@ class PgContinuityStore:
                 "FROM em_runtime.context_items ci "
                 "LEFT JOIN em_runtime.context_layers cl ON cl.item_id = ci.id AND cl.layer = 'l1' "
                 "WHERE ci.status='active' AND (%s = '' OR ci.project = %s) "
+                "AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind='project' AND COALESCE(NULLIF(tp.project,''),tp.key)=ci.project) "
                 "ORDER BY ci.updated_at DESC LIMIT 8",
                 (project, project),
             ).fetchall()
@@ -191,9 +200,11 @@ class PgContinuityStore:
             if not lines and query:
                 hits = conn.execute(
                     "SELECT b.block_id, b.title, b.projects FROM em_history.blocks b "
-                    "WHERE NOT EXISTS ("
-                    "SELECT 1 FROM em_history.management_trash t WHERE t.kind = 'block' AND t.key = b.block_id"
-                    ") ORDER BY b.observed_last_at DESC LIMIT 3"
+                    "WHERE NOT EXISTS (SELECT 1 FROM em_history.management_trash t WHERE t.kind = 'block' AND t.key = b.block_id) "
+                    "AND NOT (EXISTS (SELECT 1 FROM em_history.block_projects bp WHERE bp.block_id = b.block_id) "
+                    "AND NOT EXISTS (SELECT 1 FROM em_history.block_projects bp WHERE bp.block_id = b.block_id "
+                    "AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind='project' AND COALESCE(NULLIF(tp.project,''),tp.key)=bp.project))) "
+                    "ORDER BY b.observed_last_at DESC LIMIT 3"
                 ).fetchall()
                 for h in hits:
                     lines.append(f"- [history:{h['block_id']}] {h['title']}")
@@ -215,16 +226,21 @@ class PgContinuityStore:
 
     def context_project_recall(self, user_id: str, args: dict[str, Any], *, statement_timeout_ms: int | None = None) -> dict[str, Any]:
         query = str(args.get("query") or "").strip()
-        max_chars = max(200, min(int(args.get("max_chars") or 1200), 8000))
+        try:
+            max_chars = max(200, min(int(args.get("max_chars") or 1200), 8000))
+        except (TypeError, ValueError) as exc:
+            raise LanError("invalid_arguments") from exc
+        pat = f"%{_escape_like(query)}%"
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="reader", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
             rows = conn.execute(
                 "SELECT p.project, p.display_name, p.summary "
                 "FROM em_history.projects p "
-                "WHERE (%s = '' OR p.project ILIKE %s OR p.display_name ILIKE %s OR p.summary ILIKE %s) "
+                "WHERE (%s = '' OR p.project ILIKE %s ESCAPE '\\' OR p.display_name ILIKE %s ESCAPE '\\' OR p.summary ILIKE %s ESCAPE '\\') "
+                "AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind='project' AND COALESCE(NULLIF(tp.project,''),tp.key)=p.project) "
                 "ORDER BY p.block_count DESC LIMIT 5",
-                (query, f"%{query}%", f"%{query}%", f"%{query}%"),
+                (query, pat, pat, pat),
             ).fetchall()
             lines = [f"{r['project']}: {r['display_name']} - {(r['summary'] or '')[:160]}" for r in rows]
             return {"block": "\n".join(lines)[:max_chars], "matched_projects": [r["project"] for r in rows]}
@@ -232,29 +248,39 @@ class PgContinuityStore:
     def context_search(self, user_id: str, args: dict[str, Any], *, statement_timeout_ms: int | None = None) -> dict[str, Any]:
         query = str(args.get("query") or "").strip()
         project = str(args.get("project") or "").strip()
-        top_k = max(1, min(int(args.get("top_k") or 10), 20))
+        try:
+            top_k = max(1, min(int(args.get("top_k") or 10), 20))
+        except (TypeError, ValueError) as exc:
+            raise LanError("invalid_arguments") from exc
+        pat = f"%{_escape_like(query)}%"
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="reader", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
             rows = conn.execute(
                 "SELECT ci.id, ci.project, ci.content_type, LEFT(cl.content, 300) AS snippet "
                 "FROM em_runtime.context_items ci JOIN em_runtime.context_layers cl ON cl.item_id = ci.id "
-                "WHERE ci.status='active' AND cl.layer='l1' AND (%s='' OR ci.project=%s) AND (%s='' OR cl.content ILIKE %s) "
+                "WHERE ci.status='active' AND cl.layer='l1' AND (%s='' OR ci.project=%s) AND (%s='' OR cl.content ILIKE %s ESCAPE '\\') "
                 "ORDER BY ci.updated_at DESC LIMIT %s",
-                (project, project, query, f"%{query}%", top_k),
+                (project, project, query, pat, top_k),
             ).fetchall()
             results = [{"id": int(r["id"]), "project": r["project"], "content_type": r["content_type"], "snippet": r["snippet"], "score": 1.0} for r in rows]
             return {"results": results, "count": len(results)}
 
     def context_read(self, user_id: str, args: dict[str, Any], *, statement_timeout_ms: int | None = None) -> dict[str, Any]:
-        item_id = int(args.get("id") or 0)
+        try:
+            item_id = int(args.get("id") or 0)
+        except (TypeError, ValueError) as exc:
+            raise LanError("invalid_arguments") from exc
         layer = str(args.get("layer") or "L1").lower()
+        if item_id <= 0 or layer not in ("l0", "l1", "l2"):
+            raise LanError("invalid_arguments")
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="reader", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
             row = conn.execute(
                 "SELECT ci.id, ci.project, cl.layer, cl.content FROM em_runtime.context_items ci "
-                "JOIN em_runtime.context_layers cl ON cl.item_id = ci.id WHERE ci.id=%s AND cl.layer=%s LIMIT 1",
+                "JOIN em_runtime.context_layers cl ON cl.item_id = ci.id "
+                "WHERE ci.id=%s AND cl.layer=%s AND ci.status <> 'deleted' LIMIT 1",
                 (item_id, layer),
             ).fetchone()
             if row is None:
@@ -273,9 +299,18 @@ class PgContinuityStore:
         now_utc = _utc_now()
         payload_hash = hashlib.sha256(json.dumps(args, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
+        raw_repo = args.get("repo_snapshot")
+        if raw_repo is None:
+            repo: dict[str, Any] = {}
+        elif isinstance(raw_repo, dict):
+            repo = raw_repo
+        else:
+            raise LanError("invalid_arguments")
+
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="writer", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))", (project, fp))
             prev = conn.execute(
                 "SELECT payload_hash, result FROM em_runtime.lan_write_requests WHERE user_id=%s AND tool=%s AND request_id=%s",
                 (user_id, op_name, req_id),
@@ -293,23 +328,24 @@ class PgContinuityStore:
             ws_id = ws["id"] if ws else f"ws-{uuid.uuid4().hex[:16]}"
             before_rev = int(ws["checkpoint_revision"]) if ws else 0
             after_rev = before_rev + 1
+            before_sv = int(ws["state_version"]) if ws else 0
+            after_sv = before_sv + 1
             l0 = summary[:180]
             l1 = f"{summary}\nNext: {next_step}".strip() if next_step else summary
             l2 = json.dumps({"summary": summary, "next_step": next_step, "device_id": dev_id}, ensure_ascii=False)
             cid = self._upsert_checkpoint_item(conn, project=project, ws_id=ws_id, l0=l0, l1=l1, l2=l2, now_utc=now_utc)
-            repo = args.get("repo_snapshot") or {}
             if ws is None:
                 conn.execute(
                     "INSERT INTO em_runtime.continuity_workstreams "
                     "(id, project, workspace_fingerprint, current_context_id, checkpoint_revision, state_version, status, "
                     "repo_kind, repo_branch, repo_root_commit, repo_head_commit, created_at, updated_at) "
-                    "VALUES (%s,%s,%s,%s,%s,1,'open',%s,%s,%s,%s,%s,%s)",
-                    (ws_id, project, fp, cid, after_rev, ("git" if str(repo.get("kind") or "") == "git" else "non_git"), str(repo.get("branch") or ""), str(repo.get("root_commit") or ""), str(repo.get("head_commit") or ""), now_utc, now_utc),
+                    "VALUES (%s,%s,%s,%s,%s,%s,'open',%s,%s,%s,%s,%s,%s)",
+                    (ws_id, project, fp, cid, after_rev, after_sv, ("git" if str(repo.get("kind") or "") == "git" else "non_git"), str(repo.get("branch") or ""), str(repo.get("root_commit") or ""), str(repo.get("head_commit") or ""), now_utc, now_utc),
                 )
             else:
                 conn.execute(
-                    "UPDATE em_runtime.continuity_workstreams SET current_context_id=%s, checkpoint_revision=%s, state_version=state_version+1, updated_at=%s WHERE id=%s",
-                    (cid, after_rev, now_utc, ws_id),
+                    "UPDATE em_runtime.continuity_workstreams SET current_context_id=%s, checkpoint_revision=%s, state_version=%s, updated_at=%s WHERE id=%s",
+                    (cid, after_rev, after_sv, now_utc, ws_id),
                 )
             conn.execute(
                 "INSERT INTO em_runtime.continuity_focus (project, workspace_fingerprint, workstream_id, revision, updated_at) "
@@ -319,7 +355,7 @@ class PgContinuityStore:
             conn.execute(
                 "INSERT INTO em_runtime.continuity_events (workstream_id, event_type, before_revision, after_revision, before_state_version, after_state_version, error_code, created_at) "
                 "VALUES (%s,%s,%s,%s,%s,%s,'',%s)",
-                (ws_id, op_name, before_rev, after_rev, before_rev, after_rev, now_utc),
+                (ws_id, op_name, before_rev, after_rev, before_sv, after_sv, now_utc),
             )
             conn.execute(
                 "INSERT INTO em_runtime.lan_memory_revision (id, revision) VALUES (1, 1) "
@@ -346,9 +382,10 @@ class PgContinuityStore:
         dev_id = str(args.get("device_id") or "").strip()
         fp = _ws_fp(ws_path, dev_id) if ws_path and dev_id else ""
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="reader", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
             ws = None
+            staleness = "fresh"
             if fp and project:
                 ws = conn.execute(
                     "SELECT * FROM em_runtime.continuity_workstreams WHERE project=%s AND workspace_fingerprint=%s ORDER BY updated_at DESC LIMIT 1",
@@ -359,6 +396,8 @@ class PgContinuityStore:
                     "SELECT * FROM em_runtime.continuity_workstreams WHERE project=%s ORDER BY updated_at DESC LIMIT 1",
                     (project,),
                 ).fetchone()
+                if ws is not None and fp:
+                    staleness = "workspace_mismatch"
             if ws is None:
                 return {"found": False, "staleness": "none", "checkpoint": {}}
             layers = conn.execute("SELECT layer, content FROM em_runtime.context_layers WHERE item_id=%s", (ws["current_context_id"],)).fetchall()
@@ -368,14 +407,14 @@ class PgContinuityStore:
                 "workstream_id": ws["id"],
                 "project": ws["project"],
                 "checkpoint_revision": int(ws["checkpoint_revision"]),
-                "staleness": "fresh",
+                "staleness": staleness,
                 "checkpoint": ckpt,
             }
 
     def continuity_list(self, user_id: str, args: dict[str, Any], *, statement_timeout_ms: int | None = None) -> dict[str, Any]:
         project = str(args.get("project") or "").strip()
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="reader", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
             rows = conn.execute(
                 "SELECT id, project, checkpoint_revision, status, updated_at FROM em_runtime.continuity_workstreams "

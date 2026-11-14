@@ -11,6 +11,12 @@ from psycopg.rows import dict_row
 from evolvmem.history_pg.config import PgHistoryConfig
 
 
+def _has_sq_table(sq_conn: sqlite3.Connection, name: str) -> bool:
+    return sq_conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
+
+
 def _replay_archive(pg_conn, sq_conn: sqlite3.Connection, row: dict[str, Any]) -> bool:
     aid = int(row["target_key"])
     arch = pg_conn.execute(
@@ -68,6 +74,48 @@ def _replay_archive(pg_conn, sq_conn: sqlite3.Connection, row: dict[str, Any]) -
                 (hd["device_id"], hd["session_id"], hd["sha256"], hd["source_order"]),
             )
     return sq_conn.execute("SELECT 1 FROM session_archives WHERE id = ?", (aid,)).fetchone() is not None
+
+
+def _replay_assign(pg_conn, sq_conn: sqlite3.Connection, row: dict[str, Any]) -> bool:
+    p = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
+    dev_id = str(p.get("device_id") or "")
+    sess_id = str(p.get("session_id") or "")
+    sha = str(p.get("sha256") or "")
+    proj = str(p.get("project") or "")
+    if not (dev_id and sess_id and sha and proj):
+        return False
+    sq_conn.execute(
+        "UPDATE lan_session_uploads SET project=? WHERE device_id=? AND session_id=? AND sha256=?",
+        (proj, dev_id, sess_id, sha),
+    )
+    aid = p.get("archive_id")
+    if aid is None:
+        up_sq = sq_conn.execute(
+            "SELECT archive_id FROM lan_session_uploads WHERE device_id=? AND session_id=? AND sha256=?",
+            (dev_id, sess_id, sha),
+        ).fetchone()
+        if up_sq is not None and up_sq[0] is not None:
+            aid = int(up_sq[0])
+        else:
+            up_pg = pg_conn.execute(
+                "SELECT archive_id FROM em_runtime.lan_session_uploads WHERE device_id=%s AND session_id=%s AND sha256=%s",
+                (dev_id, sess_id, sha),
+            ).fetchone()
+            if up_pg is not None and up_pg.get("archive_id") is not None:
+                aid = int(up_pg["archive_id"])
+    if aid is not None:
+        sq_conn.execute("UPDATE session_archives SET project=? WHERE id=?", (proj, int(aid)))
+    up_ok = sq_conn.execute(
+        "SELECT 1 FROM lan_session_uploads WHERE device_id=? AND session_id=? AND sha256=? AND project=?",
+        (dev_id, sess_id, sha, proj),
+    ).fetchone() is not None
+    if not up_ok:
+        return False
+    if aid is not None:
+        has_sa = sq_conn.execute("SELECT 1 FROM session_archives WHERE id=?", (int(aid),)).fetchone() is not None
+        if has_sa and sq_conn.execute("SELECT 1 FROM session_archives WHERE id=? AND project=?", (int(aid), proj)).fetchone() is None:
+            return False
+    return True
 
 
 def _replay_continuity(pg_conn, sq_conn: sqlite3.Connection, row: dict[str, Any]) -> bool:
@@ -128,6 +176,21 @@ def _replay_continuity(pg_conn, sq_conn: sqlite3.Connection, row: dict[str, Any]
             "ON CONFLICT(project, workspace_fingerprint) DO UPDATE SET workstream_id=excluded.workstream_id, revision=excluded.revision, updated_at=excluded.updated_at",
             (fo["project"], fo["workspace_fingerprint"], fo["workstream_id"], int(fo["revision"]), fo["updated_at"]),
         )
+    if _has_sq_table(sq_conn, "continuity_events"):
+        for ev in pg_conn.execute(
+            "SELECT id, workstream_id, event_type, before_revision, after_revision, before_state_version, after_state_version, error_code, created_at "
+            "FROM em_runtime.continuity_events WHERE workstream_id=%s ORDER BY id ASC",
+            (ws_id,),
+        ).fetchall():
+            sq_conn.execute(
+                "INSERT INTO continuity_events(id, workstream_id, event_type, before_revision, after_revision, before_state_version, after_state_version, error_code, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                (
+                    int(ev["id"]), ev["workstream_id"], ev["event_type"],
+                    ev["before_revision"], ev["after_revision"], ev["before_state_version"],
+                    ev["after_state_version"], ev["error_code"], ev["created_at"],
+                ),
+            )
     if row["op_type"] == "continuity_backfill" and payload.get("device_id") and payload.get("session_id"):
         bf = pg_conn.execute(
             "SELECT device_id, session_id, applied_revision, workstream_id FROM em_runtime.lan_session_backfills WHERE device_id=%s AND session_id=%s",
@@ -142,25 +205,52 @@ def _replay_continuity(pg_conn, sq_conn: sqlite3.Connection, row: dict[str, Any]
     return sq_conn.execute("SELECT 1 FROM continuity_workstreams WHERE id = ?", (ws_id,)).fetchone() is not None
 
 
+def _sync_runtime_aux(pg_conn, sq_conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    req_id = str(row.get("request_id") or "")
+    if req_id and _has_sq_table(sq_conn, "lan_write_requests"):
+        for w in pg_conn.execute(
+            "SELECT user_id, tool, request_id, payload_hash, result FROM em_runtime.lan_write_requests WHERE request_id = %s",
+            (req_id,),
+        ).fetchall():
+            sq_conn.execute(
+                'INSERT INTO lan_write_requests("user", tool, request_id, payload_hash, result) '
+                'VALUES (?,?,?,?,?) ON CONFLICT("user", tool, request_id) DO NOTHING',
+                (w["user_id"], w["tool"], w["request_id"], w["payload_hash"], w["result"]),
+            )
+    if _has_sq_table(sq_conn, "lan_memory_revision"):
+        rev_row = pg_conn.execute("SELECT revision FROM em_runtime.lan_memory_revision WHERE id = 1").fetchone()
+        if rev_row is not None:
+            sq_conn.execute(
+                "INSERT INTO lan_memory_revision(id, revision) VALUES (1, ?) "
+                "ON CONFLICT(id) DO UPDATE SET revision = MAX(lan_memory_revision.revision, excluded.revision)",
+                (int(rev_row["revision"]),),
+            )
+
+
 def _replay_management(pg_conn, mgmt_conn: sqlite3.Connection | None, row: dict[str, Any]) -> bool:
     if mgmt_conn is None:
-        return True
+        return False
     p = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
     kind, proj, key = str(p.get("kind") or ""), str(p.get("project") or ""), str(p.get("key") or "")
-    if row["op_type"] == "history_manage_delete":
+    op_type = str(row["op_type"])
+    if op_type == "history_manage_delete":
         mgmt_conn.execute(
             "INSERT INTO trash(kind, project, key, title, deleted_at) VALUES (?,?,?,?,?) ON CONFLICT(kind, project, key) DO NOTHING",
             (kind, proj, key, str(p.get("title") or ""), str(p.get("deleted_at") or "")),
         )
-    elif row["op_type"] == "history_manage_restore":
+    elif op_type == "history_manage_restore":
         mgmt_conn.execute("DELETE FROM trash WHERE kind=? AND project=? AND key=?", (kind, proj, key))
+    else:
+        return False
     op = pg_conn.execute("SELECT request_id, fingerprint, result, created_at FROM em_history.management_operations WHERE request_id=%s", (row["request_id"],)).fetchone()
     if op is not None:
         mgmt_conn.execute(
             "INSERT INTO operations(request_id, fingerprint, result, created_at) VALUES (?,?,?,?) ON CONFLICT(request_id) DO NOTHING",
             (op["request_id"], op["fingerprint"], op["result"], op["created_at"]),
         )
-    return mgmt_conn.execute("SELECT 1 FROM operations WHERE request_id=?", (row["request_id"],)).fetchone() is not None
+    has_op = mgmt_conn.execute("SELECT 1 FROM operations WHERE request_id=?", (row["request_id"],)).fetchone() is not None
+    has_trash = mgmt_conn.execute("SELECT 1 FROM trash WHERE kind=? AND project=? AND key=?", (kind, proj, key)).fetchone() is not None
+    return bool(has_op and (has_trash if op_type == "history_manage_delete" else not has_trash))
 
 
 def replay_library_journal_to_sqlite(
@@ -179,7 +269,7 @@ def replay_library_journal_to_sqlite(
     sq_conn = sqlite3.connect(str(runtime_sqlite_path), timeout=10.0)
     mgmt_conn = sqlite3.connect(str(management_sqlite_path), timeout=10.0) if management_sqlite_path is not None else None
     try:
-        with cfg.connect(dbname) as pg_conn:
+        with cfg.connect(dbname, role_kind="writer", statement_timeout_ms=60000, lock_timeout_ms=10000) as pg_conn:
             pg_conn.row_factory = dict_row
             rows = pg_conn.execute(
                 "SELECT seq, library_key, request_id, op_type, target_table, target_key, payload "
@@ -189,19 +279,18 @@ def replay_library_journal_to_sqlite(
             ).fetchall()
             for r in rows:
                 op = str(r["op_type"])
-                ok = True
+                ok = False
+                is_rt = False
                 if op == "session_archive_upload":
-                    ok = _replay_archive(pg_conn, sq_conn, r)
+                    ok, is_rt = _replay_archive(pg_conn, sq_conn, r), True
+                elif op == "session_archive_assign":
+                    ok, is_rt = _replay_assign(pg_conn, sq_conn, r), True
                 elif op in ("continuity_begin", "continuity_checkpoint", "continuity_backfill"):
-                    ok = _replay_continuity(pg_conn, sq_conn, r)
+                    ok, is_rt = _replay_continuity(pg_conn, sq_conn, r), True
                 elif op in ("history_manage_delete", "history_manage_restore"):
                     ok = _replay_management(pg_conn, mgmt_conn, r)
-                elif op == "session_archive_assign":
-                    p = r["payload"] if isinstance(r["payload"], dict) else json.loads(r["payload"])
-                    sq_conn.execute(
-                        "UPDATE lan_session_uploads SET project=? WHERE device_id=? AND session_id=? AND sha256=?",
-                        (p["project"], p["device_id"], p["session_id"], p["sha256"]),
-                    )
+                if ok and is_rt:
+                    _sync_runtime_aux(pg_conn, sq_conn, r)
                 if not ok:
                     lost_writes += 1
                 else:

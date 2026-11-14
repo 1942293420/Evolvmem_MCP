@@ -12,6 +12,7 @@ import threading
 from typing import Iterator
 
 import psycopg
+import psycopg.conninfo
 
 from evolvmem.experience_v2.control.migrations import loopback_psycopg_connector
 from evolvmem.library_startup import FileSecretResolver
@@ -76,6 +77,11 @@ class PgHistoryConfig:
     control_coordinator_password: str = ""
     control_reader_role: str = "evolvmem_control_reader"
     control_reader_password: str = ""
+    history_owner_role: str = "evolvmem_history_owner"
+    history_writer_role: str = "evolvmem_history_writer"
+    history_writer_password: str = ""
+    history_reader_role: str = "evolvmem_history_reader"
+    history_reader_password: str = ""
     container_name: str = ""
     allow_prod: bool = False
     secret_files: dict[str, str] = field(default_factory=dict)
@@ -100,26 +106,54 @@ class PgHistoryConfig:
         return tuple(seen.keys())
 
     def resolve_user_history_db(self, user_id: str) -> str:
-        uid = user_id.strip()
+        uid = (user_id or "").strip()
+        if not uid:
+            raise ValueError("missing_user_history_id")
         if uid in self.user_history_dbs:
             return _safe_ident(self.user_history_dbs[uid], label="user_db")
         if uid == "public":
             return _safe_ident(self.shared_public_db, label="shared_db")
-        return _safe_ident(self.history_migration_db, label="migration_db")
+        raise ValueError(f"unmapped_user_history_db:{uid!r}")
 
     def resolve_device_db(self, device_id: str) -> str:
-        did = device_id.strip()
+        did = (device_id or "").strip()
+        if not did:
+            raise ValueError("missing_device_id")
         if did in self.device_dbs:
             return _safe_ident(self.device_dbs[did], label="device_db")
         return device_db_name_for_id(did)
 
-    def admin_dsn(self, dbname: str = "postgres") -> str:
+    def role_credentials(self, role_kind: str = "admin") -> tuple[str, str]:
+        kind = (role_kind or "admin").strip().lower()
+        if kind == "admin":
+            return _safe_ident(self.admin_user, label="admin_user"), self.admin_password
+        if kind == "writer":
+            pw = self.history_writer_password or ("" if self.allow_prod else self.admin_password)
+            if not pw:
+                raise ValueError("missing_history_writer_password")
+            return _safe_ident(self.history_writer_role, label="history_writer_role"), pw
+        if kind == "reader":
+            pw = self.history_reader_password or ("" if self.allow_prod else self.admin_password)
+            if not pw:
+                raise ValueError("missing_history_reader_password")
+            return _safe_ident(self.history_reader_role, label="history_reader_role"), pw
+        raise ValueError(f"unsupported_role_kind:{role_kind!r}")
+
+    def role_dsn(self, dbname: str, *, role_kind: str = "reader") -> DatabaseRoleDsn:
         _safe_ident(dbname, label="dbname")
+        u, p = self.role_credentials(role_kind)
+        return DatabaseRoleDsn(dbname=dbname, user=u, password=p)
+
+    def dsn_for_role(self, dbname: str, *, role_kind: str = "reader") -> str:
+        _safe_ident(dbname, label="dbname")
+        user, pw = self.role_credentials(role_kind)
         ssl = "disable" if self.allow_loopback_disable_ssl and self.host in ("127.0.0.1", "::1", "localhost") else "require"
-        return (
-            f"host={self.host} port={self.port} dbname={dbname} "
-            f"user={self.admin_user} password={self.admin_password} sslmode={ssl}"
+        return psycopg.conninfo.make_conninfo(
+            host=self.host, port=str(self.port), dbname=dbname, user=user, password=pw, sslmode=ssl,
         )
+
+    def admin_dsn(self, dbname: str = "postgres") -> str:
+        return self.dsn_for_role(dbname, role_kind="admin")
 
     def connect(
         self,
@@ -127,19 +161,21 @@ class PgHistoryConfig:
         *,
         user: str | None = None,
         password: str | None = None,
+        role_kind: str = "admin",
         autocommit: bool = False,
         statement_timeout_ms: int | None = None,
         lock_timeout_ms: int | None = None,
     ) -> psycopg.Connection:
         self.validate_non_prod_target()
         _safe_ident(dbname, label="dbname")
+        default_user, default_pw = self.role_credentials(role_kind)
         connector = loopback_psycopg_connector(allow_loopback_disable_ssl=self.allow_loopback_disable_ssl)
         conn = connector(
             host=self.host,
             port=self.port,
             dbname=dbname,
-            user=user or self.admin_user,
-            password=self.admin_password if password is None else password,
+            user=user or default_user,
+            password=default_pw if password is None else password,
             autocommit=autocommit,
         )
         stmt_ms = self.pool_limits.statement_timeout_ms if statement_timeout_ms is None else int(statement_timeout_ms)
@@ -163,6 +199,7 @@ class PgHistoryPool:
         *,
         user: str | None = None,
         password: str | None = None,
+        role_kind: str = "admin",
         autocommit: bool = False,
         statement_timeout_ms: int | None = None,
     ) -> Iterator[psycopg.Connection]:
@@ -171,7 +208,7 @@ class PgHistoryPool:
         conn: psycopg.Connection | None = None
         try:
             conn = self.config.connect(
-                dbname, user=user, password=password, autocommit=autocommit,
+                dbname, user=user, password=password, role_kind=role_kind, autocommit=autocommit,
                 statement_timeout_ms=statement_timeout_ms,
             )
             yield conn
@@ -219,7 +256,7 @@ def load_pg_history_config(path: Path | str | None = None, *, allow_prod: bool =
         control_db=str(raw.get("control_db", "evolvmem_control")),
         history_migration_db=str(raw.get("history_migration_db", "evolvmem_history_migration")),
         shared_public_db=str(raw.get("shared_public_db", "evolvmem_shared_public")),
-        user_history_dbs=dict(raw.get("user_history_dbs") or {"jiangli": "evolvmem_history_migration"}),
+        user_history_dbs=dict(raw["user_history_dbs"]) if raw.get("user_history_dbs") is not None else {"jiangli": "evolvmem_history_migration"},
         device_dbs=dict(raw.get("device_dbs") or {}),
         cas_root=Path(raw.get("cas_root", "~/.local/share/evolvmem-pg-cas")).expanduser(),
         pool_limits=limits,
@@ -229,6 +266,11 @@ def load_pg_history_config(path: Path | str | None = None, *, allow_prod: bool =
         control_coordinator_password=_pw("coordinator_password_ref", "coordinator_password", ""),
         control_reader_role=str(raw.get("control_reader_role", "evolvmem_control_reader")),
         control_reader_password=_pw("reader_password_ref", "reader_password", ""),
+        history_owner_role=str(raw.get("history_owner_role", "evolvmem_history_owner")),
+        history_writer_role=str(raw.get("history_writer_role", "evolvmem_history_writer")),
+        history_writer_password=_pw("history_writer_password_ref", "history_writer_password", ""),
+        history_reader_role=str(raw.get("history_reader_role", "evolvmem_history_reader")),
+        history_reader_password=_pw("history_reader_password_ref", "history_reader_password", ""),
         container_name=str(raw.get("container_name", "")),
         allow_prod=bool(allow_prod or raw.get("allow_prod", False)),
         secret_files=secrets_map,

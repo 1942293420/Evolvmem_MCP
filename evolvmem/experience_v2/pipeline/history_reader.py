@@ -512,9 +512,20 @@ def open_history_reader(
 
     active_policy = policy if policy is not None else load_policy()
     if pg_config is not None or bool(getattr(active_policy, 'history_pg_enabled', False)):
+        import os
         from evolvmem.experience_v2.pipeline.pg_history_reader import PgHistoryReader
+        from evolvmem.history_pg.config import load_pg_history_config
 
-        return PgHistoryReader(pg_config, user_id='jiangli' if library == 'personal' else library)
+        cfg_obj = pg_config if pg_config is not None else load_pg_history_config()
+        if library == 'personal':
+            dbname = str(os.environ.get('EVOLVMEM_HISTORY_PG_DB') or '').strip() or None
+            owner_uid = str(os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID') or '').strip()
+            if dbname:
+                return PgHistoryReader(cfg_obj, dbname=dbname, user_id=owner_uid, library=library)
+            if owner_uid:
+                return PgHistoryReader(cfg_obj, user_id=owner_uid, library=library)
+            return PgHistoryReader(cfg_obj, dbname=cfg_obj.history_migration_db, user_id='', library=library)
+        return PgHistoryReader(cfg_obj, user_id=library, library=library)
     dd = Path(data_dir).expanduser()
     cand = candidate_db if candidate_db is not None else (dd / 'candidate.db')
     return SqliteHistoryReader(

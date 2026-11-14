@@ -28,10 +28,14 @@ def run_verification(
         errors.append(f"unexplained_diffs:{r.get('unexplained_diff_count')}")
     if r.get("ok") is not True:
         errors.append("reconciliation_not_ok")
+    if r.get("content_digests_match") is not True:
+        errors.append("content_digests_mismatch")
     if mode == "candidate":
         counts = r.get("counts") or {}
         if int(counts.get("blocks_embedded", 0)) < int(counts.get("blocks_pg", 1)):
             errors.append("blocks_embeddings_incomplete")
+        if int(counts.get("projects_embedded", 0)) < int(counts.get("projects_pg", 1)):
+            errors.append("projects_embeddings_incomplete")
         adir = acceptance_dir or manifest_path.parent
         for fname in (
             "web-mcp-feature-acceptance.json",

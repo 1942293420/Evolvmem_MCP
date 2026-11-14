@@ -45,10 +45,22 @@ def validate_history_paths(env: dict[str, str], registry_path: Path | None = Non
 def read_history_count(env: dict[str, str]) -> int:
     from evolvmem.product_policy import load_policy
     if load_policy().history_pg_enabled or env.get('EVOLVMEM_HISTORY_PG_DB'):
+        import os
         from evolvmem.history_pg.candidate_reader import PgHistoryCandidateReader
-        ns = str(env.get('EVOLVMEM_HISTORY_CANDIDATE_NAMESPACE') or 'jiangli')
-        uid = 'jiangli' if ns == 'personal' else ns
-        with PgHistoryCandidateReader(dbname=env.get('EVOLVMEM_HISTORY_PG_DB') or None, user_id=uid) as reader:
+        dbname = str(env.get('EVOLVMEM_HISTORY_PG_DB') or '').strip() or None
+        ns = str(env.get('EVOLVMEM_HISTORY_CANDIDATE_NAMESPACE') or '').strip()
+        owner_uid = str(env.get('EVOLVMEM_CONSOLE_OWNER_ID') or os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID') or '').strip()
+        if dbname:
+            uid = owner_uid or ('' if ns in ('', 'personal') else ns)
+        elif ns == 'personal':
+            if not owner_uid:
+                raise ValueError('missing_console_owner_id')
+            uid = owner_uid
+        elif ns:
+            uid = ns
+        else:
+            raise ValueError('missing_history_pg_target')
+        with PgHistoryCandidateReader(dbname=dbname, user_id=uid) as reader:
             return reader.visible_block_count()
     from evolvmem.history_candidate_read import open_reader
 
@@ -67,6 +79,7 @@ def read_or_manage_history(owner_id: str, source, suffix: str, method: str, body
     pg_connected = bool(load_policy().history_pg_enabled or env.get('EVOLVMEM_HISTORY_PG_DB'))
     if pg_connected:
         env.setdefault('EVOLVMEM_HISTORY_CANDIDATE_NAMESPACE', owner_id)
+        env.setdefault('EVOLVMEM_CONSOLE_OWNER_ID', owner_id)
     connected = pg_connected or bool(
         candidate and Path(candidate).is_file() and env.get('EVOLVMEM_HISTORY_CANDIDATE_TOKEN_FILE')
     )

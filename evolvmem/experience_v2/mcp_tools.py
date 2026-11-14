@@ -101,21 +101,20 @@ def _precompute_vector(embedder: Any, args: dict[str, Any]) -> list[float] | Non
 
 def _build_live_gate_hook(
     *,
+    owner_id: str = '',
     history_db_paths: Sequence[Path | str],
     vec: list[float] | None,
     ticket_secret: bytes,
     gate_mode: str | dict[str, str],
     category: str,
 ):
-    verifier = None
-    try:
-        from evolvmem.product_policy import load_policy
-        if load_policy().history_pg_enabled:
-            from evolvmem.experience_v2.pipeline.pg_history_reader import PgHistoryEvidenceVerifier
-            verifier = PgHistoryEvidenceVerifier()
-    except Exception:
-        verifier = None
-    if verifier is None:
+    from evolvmem.product_policy import load_policy
+    if load_policy().history_pg_enabled:
+        import os
+        from evolvmem.experience_v2.pipeline.pg_history_reader import PgHistoryEvidenceVerifier, PgHistoryReader
+        uid = str(owner_id or os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID') or '').strip()
+        verifier = PgHistoryEvidenceVerifier(PgHistoryReader(user_id=uid))
+    else:
         existing = [Path(p) for p in history_db_paths if p and str(p).strip() and Path(p).is_file()]
         verifier = SqliteHistoryEvidenceVerifier(existing) if existing else None
 
@@ -170,6 +169,7 @@ def call_experience_v2_tool(
         settings = load_pg_experience_settings()
         if tool_name == 'experience_propose' and gate_hook is None and history_db_paths is not None:
             gate_hook = _build_live_gate_hook(
+                owner_id=owner_id,
                 history_db_paths=history_db_paths,
                 vec=pre_vec,
                 ticket_secret=settings.ticket_secret,

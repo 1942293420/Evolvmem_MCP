@@ -159,8 +159,10 @@ class PgCaptureStore:
 
         payload_hash = hashlib.sha256(json.dumps(args, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        unlink_stage: Path | None = None
+        with self.pool.connection(dbname, role_kind="writer", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))", (dev_id, sess_id))
             prev_req = conn.execute(
                 "SELECT payload_hash, result FROM em_runtime.lan_write_requests WHERE user_id=%s AND tool='session_archive_upload' AND request_id=%s",
                 (user_id, req_id),
@@ -225,9 +227,10 @@ class PgCaptureStore:
                 ext_id = hashlib.sha256(json.dumps([dev_id, sess_id]).encode("utf-8")).hexdigest() + ":" + digest
                 now_utc = _utc_now()
                 arch_row = conn.execute(
-                    "INSERT INTO em_runtime.session_archives (project, adapter, external_session_id, payload_path, payload_sha256, state, expires_at, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,'available','',%s) RETURNING id",
-                    (project, adapter_name(fmt), ext_id, cas_path_str, digest, now_utc),
+                    "INSERT INTO em_runtime.session_archives "
+                    "(project, adapter, external_session_id, payload_path, payload_sha256, state, expires_at, created_at, device_id, cas_blob_sha256) "
+                    "VALUES (%s,%s,%s,%s,%s,'available','',%s,%s,%s) RETURNING id",
+                    (project, adapter_name(fmt), ext_id, cas_path_str, digest, now_utc, dev_id, digest),
                 ).fetchone()
                 archive_id = int(arch_row["id"])
                 conn.execute(
@@ -235,7 +238,7 @@ class PgCaptureStore:
                     "VALUES (%s,%s,%s,%s) ON CONFLICT (archive_id) DO NOTHING",
                     (archive_id, digest, digest, total),
                 )
-                stage.unlink(missing_ok=True)
+                unlink_stage = stage
 
             extraction = str(row["extraction_status"]) if row is not None else "not_requested"
             backfill = str(row["backfill_status"]) if row is not None else "pending"
@@ -325,44 +328,49 @@ class PgCaptureStore:
                 "INSERT INTO em_runtime.lan_write_requests (user_id, tool, request_id, payload_hash, result) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                 (user_id, "session_archive_upload", req_id, payload_hash, json.dumps(receipt, ensure_ascii=False)),
             )
-            return receipt
+        if unlink_stage is not None:
+            unlink_stage.unlink(missing_ok=True)
+        return receipt
+
+    def _build_status(self, conn: psycopg.Connection, dev_id: str, sess_id: str, handoff: Any = None) -> dict[str, Any]:
+        head = conn.execute("SELECT * FROM em_runtime.lan_session_heads WHERE device_id=%s AND session_id=%s", (dev_id, sess_id)).fetchone()
+        row = None
+        if head is not None and head.get("sha256"):
+            row = conn.execute(
+                "SELECT * FROM em_runtime.lan_session_uploads WHERE device_id=%s AND session_id=%s AND sha256=%s",
+                (dev_id, sess_id, head["sha256"]),
+            ).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT * FROM em_runtime.lan_session_uploads WHERE device_id=%s AND session_id=%s ORDER BY received_at DESC LIMIT 1",
+                (dev_id, sess_id),
+            ).fetchone()
+        if row is None:
+            result: dict[str, Any] = {"status": "not_found"}
+        else:
+            result = self._receipt(row, head)
+            if row.get("archive_id"):
+                arch = conn.execute("SELECT state FROM em_runtime.session_archives WHERE id=%s", (row["archive_id"],)).fetchone()
+                result["payload_state"] = arch["state"] if arch else "unavailable"
+        if isinstance(handoff, dict):
+            result["handoff"] = {
+                "schema_version": 1,
+                "project": handoff.get("project", ""),
+                "source_sha256": handoff.get("sha256", ""),
+                "source_format": handoff.get("source_format", CODEX_FORMAT),
+                "covers_source": False,
+                "state": "blocked" if not load_policy().ai_processing_enabled else "pending",
+                "reason": "ai_processing_disabled" if not load_policy().ai_processing_enabled else "organization_task_missing",
+            }
+        return result
 
     def status(self, user_id: str, args: dict[str, Any], *, statement_timeout_ms: int | None = None) -> dict[str, Any]:
         dev_id, sess_id = self._identity(args)
         handoff = args.get("handoff")
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="reader", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
-            head = conn.execute("SELECT * FROM em_runtime.lan_session_heads WHERE device_id=%s AND session_id=%s", (dev_id, sess_id)).fetchone()
-            row = None
-            if head is not None and head.get("sha256"):
-                row = conn.execute(
-                    "SELECT * FROM em_runtime.lan_session_uploads WHERE device_id=%s AND session_id=%s AND sha256=%s",
-                    (dev_id, sess_id, head["sha256"]),
-                ).fetchone()
-            if row is None:
-                row = conn.execute(
-                    "SELECT * FROM em_runtime.lan_session_uploads WHERE device_id=%s AND session_id=%s ORDER BY received_at DESC LIMIT 1",
-                    (dev_id, sess_id),
-                ).fetchone()
-            if row is None:
-                result: dict[str, Any] = {"status": "not_found"}
-            else:
-                result = self._receipt(row, head)
-                if row.get("archive_id"):
-                    arch = conn.execute("SELECT state FROM em_runtime.session_archives WHERE id=%s", (row["archive_id"],)).fetchone()
-                    result["payload_state"] = arch["state"] if arch else "unavailable"
-            if isinstance(handoff, dict):
-                result["handoff"] = {
-                    "schema_version": 1,
-                    "project": handoff.get("project", ""),
-                    "source_sha256": handoff.get("sha256", ""),
-                    "source_format": handoff.get("source_format", CODEX_FORMAT),
-                    "covers_source": False,
-                    "state": "blocked" if not load_policy().ai_processing_enabled else "pending",
-                    "reason": "ai_processing_disabled" if not load_policy().ai_processing_enabled else "organization_task_missing",
-                }
-            return result
+            return self._build_status(conn, dev_id, sess_id, handoff)
 
     def assign(self, user_id: str, args: dict[str, Any], *, statement_timeout_ms: int | None = None) -> dict[str, Any]:
         dev_id, sess_id = self._identity(args)
@@ -371,9 +379,19 @@ class PgCaptureStore:
         validate_request_id(req_id)
         if not project or len(project) > 128:
             raise LanError("invalid_arguments")
+        payload_hash = hashlib.sha256(json.dumps(args, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="writer", statement_timeout_ms=statement_timeout_ms) as conn:
             conn.row_factory = dict_row
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))", (dev_id, sess_id))
+            prev_req = conn.execute(
+                "SELECT payload_hash, result FROM em_runtime.lan_write_requests WHERE user_id=%s AND tool='session_archive_assign' AND request_id=%s",
+                (user_id, req_id),
+            ).fetchone()
+            if prev_req is not None:
+                if prev_req["payload_hash"] != payload_hash:
+                    raise LanError("request_id_conflict")
+                return json.loads(prev_req["result"])
             known = conn.execute("SELECT 1 FROM em_runtime.context_project_registry WHERE project=%s AND status='active'", (project,)).fetchone()
             if known is None:
                 raise LanError("project_not_registered")
@@ -392,17 +410,40 @@ class PgCaptureStore:
             self._record_journal(
                 conn, library_key=user_id, request_id=req_id, actor_id=user_id,
                 op_type="session_archive_assign", target_table="em_runtime.lan_session_uploads",
-                target_key=f"{dev_id}:{sess_id}:{row['sha256']}", payload={"device_id": dev_id, "session_id": sess_id, "sha256": row["sha256"], "project": project},
+                target_key=f"{dev_id}:{sess_id}:{row['sha256']}",
+                payload={"device_id": dev_id, "session_id": sess_id, "sha256": row["sha256"], "project": project},
             )
-        return self.status(user_id, {"device_id": dev_id, "session_id": sess_id}, statement_timeout_ms=statement_timeout_ms)
+            receipt = self._build_status(conn, dev_id, sess_id, args.get("handoff"))
+            conn.execute(
+                "INSERT INTO em_runtime.lan_write_requests (user_id, tool, request_id, payload_hash, result) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (user_id, "session_archive_assign", req_id, payload_hash, json.dumps(receipt, ensure_ascii=False)),
+            )
+            return receipt
 
     def retry(self, user_id: str, args: dict[str, Any], *, statement_timeout_ms: int | None = None) -> dict[str, Any]:
         dev_id, sess_id = self._identity(args)
-        validate_request_id(str(args.get("request_id") or ""))
+        req_id = str(args.get("request_id") or "")
+        validate_request_id(req_id)
+        payload_hash = hashlib.sha256(json.dumps(args, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         dbname = self.config.resolve_user_history_db(user_id)
-        with self.pool.connection(dbname, statement_timeout_ms=statement_timeout_ms) as conn:
+        with self.pool.connection(dbname, role_kind="writer", statement_timeout_ms=statement_timeout_ms) as conn:
+            conn.row_factory = dict_row
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))", (dev_id, sess_id))
+            prev_req = conn.execute(
+                "SELECT payload_hash, result FROM em_runtime.lan_write_requests WHERE user_id=%s AND tool='session_archive_retry' AND request_id=%s",
+                (user_id, req_id),
+            ).fetchone()
+            if prev_req is not None:
+                if prev_req["payload_hash"] != payload_hash:
+                    raise LanError("request_id_conflict")
+                return json.loads(prev_req["result"])
             conn.execute(
                 "UPDATE em_runtime.lan_session_uploads SET error='' WHERE device_id=%s AND session_id=%s",
                 (dev_id, sess_id),
             )
-        return self.status(user_id, {"device_id": dev_id, "session_id": sess_id}, statement_timeout_ms=statement_timeout_ms)
+            receipt = self._build_status(conn, dev_id, sess_id, args.get("handoff"))
+            conn.execute(
+                "INSERT INTO em_runtime.lan_write_requests (user_id, tool, request_id, payload_hash, result) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (user_id, "session_archive_retry", req_id, payload_hash, json.dumps(receipt, ensure_ascii=False)),
+            )
+            return receipt

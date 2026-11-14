@@ -218,6 +218,7 @@ CREATE INDEX IF NOT EXISTS idx_em_hist_msgs_tsv ON em_history.messages USING gin
 CREATE INDEX IF NOT EXISTS idx_em_hist_msgs_trgm ON em_history.messages USING gin (content gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_em_hist_msgs_archive ON em_history.messages (archive_id);
 CREATE INDEX IF NOT EXISTS idx_em_hist_msgs_hnsw ON em_history.messages USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_em_hist_bp_project ON em_history.block_projects (project);
 CREATE INDEX IF NOT EXISTS idx_em_hist_proj_hnsw ON em_history.projects USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding IS NOT NULL;
 
 INSERT INTO em_history.schema_migrations (version, migration_name)

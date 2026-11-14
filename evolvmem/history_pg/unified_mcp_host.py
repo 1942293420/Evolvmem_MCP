@@ -16,7 +16,7 @@ import psycopg.errors
 from evolvmem.experience_v2.control.pg_console_store import PgConsoleStore, PgControlConfig
 from evolvmem.history_pg.candidate_reader import PgHistoryCandidateReader
 from evolvmem.history_pg.capture_store import PgCaptureStore
-from evolvmem.history_pg.config import PgHistoryConfig, PgHistoryPool, PoolLimits
+from evolvmem.history_pg.config import HistoryPgBusyError, PgHistoryConfig, PgHistoryPool, PoolLimits
 from evolvmem.history_pg.continuity_store import PgContinuityStore
 from evolvmem.lan_sharing import LanError
 from evolvmem.library_foundation import FoundationError, RequestIdentity
@@ -50,11 +50,16 @@ def _build_pg_cfg(raw: dict[str, Any]) -> PgHistoryConfig:
         control_db=str(raw.get("control_db", "evolvmem_control")),
         history_migration_db=str(raw.get("history_migration_db", "evolvmem_history_migration")),
         shared_public_db=str(raw.get("shared_public_db", "evolvmem_shared_public")),
-        user_history_dbs=dict(raw.get("user_history_dbs") or {"jiangli": "evolvmem_history_migration"}),
+        user_history_dbs=dict(raw["user_history_dbs"]) if "user_history_dbs" in raw and raw["user_history_dbs"] is not None else {},
         device_dbs=dict(raw.get("device_dbs") or {}),
         cas_root=Path(raw.get("cas_root", "~/.local/share/evolvmem-pg-cas")).expanduser(),
         allow_loopback_disable_ssl=bool(raw.get("allow_loopback_disable_ssl", True)),
         control_coordinator_password=str(raw.get("control_coordinator_password", raw.get("admin_password", ""))),
+        history_owner_role=str(raw.get("history_owner_role", "evolvmem_history_owner")),
+        history_writer_role=str(raw.get("history_writer_role", "evolvmem_history_writer")),
+        history_writer_password=str(raw.get("history_writer_password", "")),
+        history_reader_role=str(raw.get("history_reader_role", "evolvmem_history_reader")),
+        history_reader_password=str(raw.get("history_reader_password", "")),
         container_name=str(raw.get("container_name", "")),
         allow_prod=bool(raw.get("allow_prod", False)),
     )
@@ -70,15 +75,17 @@ class UnifiedMcpHost:
         pg_config: PgHistoryConfig,
         control_config: PgControlConfig,
         *,
-        owner_id: str = "jiangli",
+        owner_id: str = "",
         tokens: dict[str, dict[str, str]] | None = None,
         request_timeout_seconds: float = 3.0,
         pool: PgHistoryPool | None = None,
         allow_sleep_probe: bool = False,
     ) -> None:
         self.pg_config = pg_config
+        if not (owner_id or "").strip():
+            raise ValueError("missing_owner_id")
         self.control_store = PgConsoleStore(control_config)
-        self.owner_id = owner_id
+        self.owner_id = owner_id.strip()
         self.tokens = dict(tokens or {})
         self.request_timeout_seconds = max(0.1, float(request_timeout_seconds))
         self.pool = pool or PgHistoryPool(pg_config)
@@ -145,7 +152,7 @@ class UnifiedMcpHost:
     def _handle_tool(self, user_id: str, identity: RequestIdentity, name: str, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
         if name == "memory_status" and self.allow_sleep_probe and isinstance(args.get("_sleep_seconds"), (int, float)):
             sec = float(args["_sleep_seconds"])
-            with self.pool.connection(self.pg_config.resolve_user_history_db(user_id), statement_timeout_ms=timeout_ms) as conn:
+            with self.pool.connection(self.pg_config.resolve_user_history_db(user_id), role_kind="reader", statement_timeout_ms=timeout_ms) as conn:
                 conn.execute("SELECT pg_sleep(%s)", (sec,))
         if name in ("session_archive_upload", "session_archive_status", "session_archive_assign", "session_archive_retry"):
             fn = {
@@ -158,12 +165,18 @@ class UnifiedMcpHost:
         if name == "experience_recall":
             return {"results": [], "cases": [], "methods": [], "count": 0, "llm_calls": 0}
         if name in ("history_projects", "history_search", "history_block"):
-            reader = PgHistoryCandidateReader(self.pg_config, dbname=self.pg_config.resolve_user_history_db(user_id))
-            if name == "history_projects":
-                return {"projects": reader.projects()}
-            if name == "history_search":
-                return {"items": reader.hybrid_search(str(args.get("query") or ""), limit=int(args.get("limit") or 10))}
-            return {"turns": reader.block_turn_page(str(args.get("block_id") or ""))}
+            with PgHistoryCandidateReader(
+                self.pg_config,
+                dbname=self.pg_config.resolve_user_history_db(user_id),
+                user_id=user_id,
+            ) as reader:
+                if name == "history_projects":
+                    return {"projects": reader.projects()}
+                if name == "history_search":
+                    limit_raw = args.get("limit")
+                    limit_val = 10 if limit_raw is None else int(limit_raw)
+                    return {"items": reader.hybrid_search(str(args.get("query") or ""), limit=limit_val)}
+                return {"turns": reader.block_turn_page(str(args.get("block_id") or ""))}
         return self.continuity.dispatch(user_id, name, args, statement_timeout_ms=timeout_ms)
 
     def serve_rpc(self, identity: RequestIdentity, request: dict[str, Any], *, publish, session_id=None, client_hint=None) -> None:
@@ -221,6 +234,12 @@ class UnifiedMcpHost:
             code = exc.code if isinstance(exc, FoundationError) else str(exc)
             err = {"error": code, "authenticated_user": identity.principal_id}
             publish({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": json.dumps(err)}], "isError": True}})
+        except ValueError:
+            err = {"error": "invalid_arguments", "authenticated_user": identity.principal_id}
+            publish({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": json.dumps(err)}], "isError": True}})
+        except HistoryPgBusyError:
+            err = {"error": "pg_busy", "authenticated_user": identity.principal_id}
+            publish({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": json.dumps(err)}], "isError": True}})
         except (psycopg.errors.QueryCanceled, TimeoutError):
             err = {"error": "request_timeout", "authenticated_user": identity.principal_id}
             publish({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": json.dumps(err)}], "isError": True}})
@@ -238,7 +257,7 @@ def main() -> int:
     ctrl_cfg = PgControlConfig.from_file(Path(raw["control_config_path"]))
     host = UnifiedMcpHost(
         pg_cfg, ctrl_cfg,
-        owner_id=str(raw.get("owner_id", "jiangli")),
+        owner_id=str(raw.get("owner_id") or "").strip(),
         tokens=raw.get("tokens") or {},
         request_timeout_seconds=float(raw.get("request_timeout_seconds", 3.0)),
         allow_sleep_probe=bool(raw.get("allow_sleep_probe", False)),

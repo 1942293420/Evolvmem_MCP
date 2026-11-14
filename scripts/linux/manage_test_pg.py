@@ -122,10 +122,10 @@ def main(argv: list[str] | None = None) -> int:
             "-v", f"{wal_dir}:/wal_archive",
         ])
         archive_cmd = (
-            "test ! -f /wal_archive/%f && "
-            "cp %p /wal_archive/.%f.tmp && "
-            "chmod 600 /wal_archive/.%f.tmp && "
-            "mv -n /wal_archive/.%f.tmp /wal_archive/%f"
+            "umask 077 && if [ -f /wal_archive/%f ]; then cmp -s %p /wal_archive/%f; "
+            "else cp %p /wal_archive/.%f.$$.tmp && chmod 600 /wal_archive/.%f.$$.tmp && "
+            "sync /wal_archive/.%f.$$.tmp && mv -n /wal_archive/.%f.$$.tmp /wal_archive/%f && "
+            "cmp -s %p /wal_archive/%f || { rm -f /wal_archive/.%f.$$.tmp; exit 1; }; fi"
         )
         pg_flags.extend([
             "-c", "wal_level=replica",

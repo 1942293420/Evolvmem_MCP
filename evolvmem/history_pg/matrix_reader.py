@@ -24,16 +24,7 @@ def read_matrix(
     *,
     pg_config: PgHistoryConfig | None = None,
 ) -> dict[str, Any]:
-    policy = load_policy()
-    if pg_config is None and not getattr(policy, "history_pg_enabled", False):
-        from evolvmem.neural_matrix import read_matrix as sqlite_read_matrix
-
-        return sqlite_read_matrix(actor, source_row, owner_data_dir, lan_data_dir, lan_peers)
-
-    cfg = pg_config if pg_config is not None else load_pg_history_config()
-    actor_id = str(actor.get("id") or "")
-    target_id = str((source_row or {}).get("id") or actor_id or "jiangli")
-    hist_env = {}
+    hist_env: dict[str, Any] = {}
     if source_row and isinstance(source_row.get("history_environ"), str):
         try:
             hist_env = json.loads(source_row["history_environ"] or "{}")
@@ -41,7 +32,23 @@ def read_matrix(
             hist_env = {}
     elif source_row and isinstance(source_row.get("history_environ"), dict):
         hist_env = dict(source_row["history_environ"])
-    dbname = str(hist_env.get("EVOLVMEM_HISTORY_PG_DB") or cfg.resolve_user_history_db(target_id))
+
+    policy = load_policy()
+    if pg_config is None and not getattr(policy, "history_pg_enabled", False) and not hist_env.get("EVOLVMEM_HISTORY_PG_DB"):
+        from evolvmem.neural_matrix import read_matrix as sqlite_read_matrix
+
+        return sqlite_read_matrix(actor, source_row, owner_data_dir, lan_data_dir, lan_peers)
+
+    cfg = pg_config if pg_config is not None else load_pg_history_config()
+    actor_id = str(actor.get("id") or "")
+    target_id = str((source_row or {}).get("id") or actor_id or "").strip()
+    explicit_db = str(hist_env.get("EVOLVMEM_HISTORY_PG_DB") or "").strip()
+    if explicit_db:
+        dbname = explicit_db
+    elif target_id:
+        dbname = cfg.resolve_user_history_db(target_id)
+    else:
+        raise ValueError("missing_target_user_id")
 
     is_admin = bool(actor.get("is_admin"))
     catalog_rows: list[dict[str, Any]] = []
@@ -72,7 +79,7 @@ def read_matrix(
     handoffs: list[dict[str, Any]] = []
     write_receipts: list[dict[str, Any]] = []
 
-    with cfg.connect(dbname) as conn:
+    with cfg.connect(dbname, role_kind="reader") as conn:
         for key, tbl in (
             ("session_archives", "em_runtime.session_archives"),
             ("lan_uploads", "em_runtime.lan_session_uploads"),
@@ -83,9 +90,24 @@ def read_matrix(
             ("context_items", "em_runtime.context_items"),
             ("continuity_focus", "em_runtime.continuity_focus"),
             ("continuity_workstreams", "em_runtime.continuity_workstreams"),
-            ("memories", "em_history.blocks"),
         ):
             counts[key] = int(conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0] or 0)
+        counts["memories"] = int(conn.execute(
+            "SELECT COUNT(*) FROM em_history.blocks b "
+            "WHERE NOT EXISTS ("
+            "  SELECT 1 FROM em_history.management_trash t "
+            "  WHERE t.kind = 'block' AND t.key = b.block_id"
+            ") AND NOT ("
+            "  EXISTS (SELECT 1 FROM em_history.block_projects bp WHERE bp.block_id = b.block_id) "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM em_history.block_projects bp "
+            "    WHERE bp.block_id = b.block_id AND NOT EXISTS ("
+            "      SELECT 1 FROM em_history.management_trash tp "
+            "      WHERE tp.kind = 'project' AND COALESCE(NULLIF(tp.project, ''), tp.key) = bp.project"
+            "    )"
+            "  )"
+            ")"
+        ).fetchone()[0] or 0)
 
         for did, cnt, latest, sample_sha in conn.execute(
             "SELECT device_id, COUNT(*), MAX(source_order), MAX(sha256) "
@@ -114,6 +136,8 @@ def read_matrix(
                 "payloadHash": str(ph or "")[:16], "meta": "PostgreSQL idempotent",
             })
 
+    exp_status = "ok"
+    exp_error = ""
     try:
         exp_settings = load_pg_experience_settings()
         with open_experience_conn(exp_settings, role="reader") as econn:
@@ -122,8 +146,9 @@ def read_matrix(
                 (target_id,),
             ).fetchone()
             counts["manual_active"] = int(row[0] or 0) if row else 0
-    except Exception:
-        pass
+    except Exception as exc:
+        exp_status = "degraded"
+        exp_error = exc.__class__.__name__
 
     funnel = [
         {"stage": "L0 · Multi-device Archives (PG)", "count": max(counts["session_archives"], counts["lan_uploads"]), "desc": f"Uploads {counts['lan_uploads']} · Archives {counts['session_archives']}"},
@@ -161,6 +186,8 @@ def read_matrix(
         "funnel": funnel,
         "evolutionQueue": [],
         "nebula": {"memories": [], "skills": [], "nebulaLinks": [], "evolutionQueue": []},
+        "experienceNotesStatus": exp_status,
+        "experienceNotesError": exp_error,
         "skillCategories": catalog_categories,
         "skillSync": catalog_sync,
     }
