@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import http.client
 import json
@@ -524,3 +525,39 @@ def test_pg_capture_store_migrated_encrypted_archive_and_traversal_guard(tmp_pat
     ctrl_cfg = PgControlConfig.from_dict({"host": "127.0.0.1", "port": 55432, "database": "d", "coordinator_role": "c", "coordinator_password_ref": "k", "secret_files": {"k": str(pw_f)}, "allow_loopback_disable_ssl": True})
     host = UnifiedMcpHost(cfg, ctrl_cfg, owner_id="owner1", pool=_DummyPool(), data_dir=data_dir)
     assert host.capture.data_dir == data_dir
+
+
+def test_pg_capture_upload_recapture_same_request_id(tmp_path: Path) -> None:
+    from evolvmem.history_pg.capture_store import PgCaptureStore
+
+    cfg = _base_pg_cfg(tmp_path)
+    store = PgCaptureStore(cfg)
+    dev_id, sess_id = f"dev-rc-{uuid.uuid4().hex[:6]}", f"sess-rc-{uuid.uuid4().hex[:6]}"
+    raw_a = ('{"type":"session_meta","payload":{"id":"' + sess_id + '"}}\n{"type":"event_msg","payload":{"text":"vA"}}\n').encode("utf-8")
+    raw_b = ('{"type":"session_meta","payload":{"id":"' + sess_id + '"}}\n{"type":"event_msg","payload":{"text":"vB"}}\n').encode("utf-8")
+    sha_a, sha_b = hashlib.sha256(raw_a).hexdigest(), hashlib.sha256(raw_b).hexdigest()
+    req_a, req_b = f"archive-{uuid.uuid4().hex[:8]}-a-0", f"archive-{uuid.uuid4().hex[:8]}-b-0"
+    r1 = store.upload("jiangli", {
+        "device_id": dev_id, "session_id": sess_id, "project": "", "sha256": sha_a,
+        "total_bytes": len(raw_a), "offset": 0, "content_b64": base64.b64encode(raw_a).decode(),
+        "extract": False, "request_id": req_a, "source_order": 100, "current_sha256": sha_a,
+    })
+    assert r1["status"] == "archived" and r1["current"] is True
+    r2 = store.upload("jiangli", {
+        "device_id": dev_id, "session_id": sess_id, "project": "", "sha256": sha_b,
+        "total_bytes": len(raw_b), "offset": 0, "content_b64": base64.b64encode(raw_b).decode(),
+        "extract": False, "request_id": req_b, "source_order": 200, "current_sha256": sha_b,
+    })
+    assert r2["status"] == "archived" and r2["current"] is True
+    r3 = store.upload("jiangli", {
+        "device_id": dev_id, "session_id": sess_id, "project": "", "sha256": sha_a,
+        "total_bytes": len(raw_a), "offset": 0, "content_b64": base64.b64encode(raw_a).decode(),
+        "extract": False, "request_id": req_a, "source_order": 300, "current_sha256": sha_a,
+    })
+    assert r3["status"] == "archived" and r3["current"] is True and r3["source_order"] == 300 and r3["archive_id"] == r1["archive_id"]
+    with pytest.raises(LanError, match="upload_metadata_conflict"):
+        store.upload("jiangli", {
+            "device_id": dev_id, "session_id": sess_id, "project": "", "sha256": sha_a,
+            "total_bytes": len(raw_a), "offset": 0, "content_b64": base64.b64encode(raw_a).decode(),
+            "extract": False, "request_id": req_a, "source_order": 250, "current_sha256": sha_a,
+        })
