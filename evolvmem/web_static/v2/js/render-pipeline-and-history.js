@@ -173,10 +173,10 @@
     const q = s.histQuery.trim().toLowerCase();
     const visibleProjs = s.historyProjects.filter(function (p) { return s.histScope === "trash" ? p.deleted : !p.deleted; });
     const blocks = s.historyBlocks.filter(function (b) {
-      if (s.histScope === "unassigned" && b.project !== null) return false;
-      if (s.histScope === "projects" && b.project === null) return false;
+      if (s.histScope === "unassigned" && !q && b.project !== null) return false;
+      if (s.histScope === "projects" && !q && b.project === null) return false;
       if (s.histScope === "trash") return false;
-      if (!q) return true;
+      if (!q || s.apiMode === "live") return true;
       return (b.title + b.transcript.join(" ")).toLowerCase().indexOf(q) >= 0;
     });
     const selBlk = blocks.find(function (b) { return b.id === s.selectedBlockId; }) || blocks[0] || null;
@@ -186,9 +186,15 @@
     return `${header}
       <div class="panel" style="padding:14px 18px">
         <div class="filter-bar">
-          <input type="search" id="hist-q" value="${esc(s.histQuery)}" placeholder="三路混合搜索历史会话标题、命令或对话正文…" style="flex:1;min-width:240px" />
+          ${s.histScope === "projects" && !q && s.historyProjects.some(function (p) { return !p.deleted; }) ? `
+            <select id="hist-proj-sel" aria-label="选择项目" style="max-width:240px">
+              ${s.historyProjects.filter(function (p) { return !p.deleted; }).map(function (p) {
+                return `<option value="${esc(p.key)}" ${s.selectedProjectKey === p.key ? "selected" : ""}>${esc(p.title)} (${p.blocks})</option>`;
+              }).join("")}
+            </select>` : ""}
+          <input type="search" id="hist-q" value="${esc(s.histQuery)}" placeholder="三路混合搜索历史会话标题、命令或对话正文…" style="flex:1;min-width:220px" />
           <div class="cat-pills">
-            <button type="button" class="cat-pill ${s.histScope === "projects" ? "active" : ""}" data-act="hist-scope" data-val="projects"><span>项目会话</span><strong>90</strong></button>
+            <button type="button" class="cat-pill ${s.histScope === "projects" ? "active" : ""}" data-act="hist-scope" data-val="projects"><span>项目会话</span><strong>${s.historyProjects.filter(function (p) { return !p.deleted; }).length}</strong></button>
             <button type="button" class="cat-pill ${s.histScope === "unassigned" ? "active" : ""}" data-act="hist-scope" data-val="unassigned"><span>未归属片段</span></button>
             ${w ? `<button type="button" class="cat-pill ${s.histScope === "trash" ? "active" : ""}" data-act="hist-scope" data-val="trash"><span>回收站</span><strong>${s.historyProjects.filter(function (p) { return p.deleted; }).length}</strong></button>` : ""}
           </div>

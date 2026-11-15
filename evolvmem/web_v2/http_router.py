@@ -67,6 +67,11 @@ def _serve_v2_static(handler: Any, req_path: str) -> bool:
     return True
 
 
+def serve_v2_index(handler: Any) -> bool:
+    """Serve Web Console v2 entry page with <base href="/v2/"> for root routes."""
+    return _serve_v2_static(handler, '/v2/index.html')
+
+
 def _dispatch_api(console: Any, policy: Any, method: str, rel: str, params: dict[str, Any], session: Any) -> tuple[int, dict[str, Any]]:
     if method == 'GET' and rel == '/me':
         st, _, res = console.dispatch('GET', '/me', {'inspect': '1'} if params.get('inspect') == '1' else {}, session)

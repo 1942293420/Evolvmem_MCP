@@ -19,6 +19,10 @@ from evolvmem.web_v2.common import (
 _HISTORY_BLOCK_ID_RE = re.compile(r'^[A-Za-z0-9._-]+$')
 
 
+def _valid_project_key(proj: str) -> bool:
+    return bool(proj) and len(proj) <= 256 and '/' not in proj and '..' not in proj and '\x00' not in proj
+
+
 def _safe_policy_dict(policy: Any) -> dict[str, Any]:
     if hasattr(policy, 'as_dict'):
         return dict(policy.as_dict())
@@ -350,9 +354,22 @@ def handle_history(console: Any, session: Any, method: str, params_or_body: dict
     view = str(params_or_body.get('view') or 'projects').strip()
     if view == 'projects':
         path = '/api/history-candidate/projects'
+    elif view == 'project':
+        proj = str(params_or_body.get('project_id') or '').strip()
+        if not _valid_project_key(proj):
+            raise V2ApiError('invalid_project_id', 400)
+        path = f'/api/history-candidate/project/{proj}'
+    elif view == 'search':
+        path = '/api/history-candidate/search'
+    elif view == 'unassigned':
+        path = '/api/history-candidate/unassigned'
+    elif view == 'trash':
+        if not is_owner:
+            raise V2ApiError('owner_only_trash', 403)
+        path = '/api/history-candidate/management/trash'
     elif view == 'coverage':
         proj = str(params_or_body.get('project_id') or '').strip()
-        if not proj or not _HISTORY_BLOCK_ID_RE.fullmatch(proj):
+        if not _valid_project_key(proj):
             raise V2ApiError('invalid_project_id', 400)
         path = f'/api/history-candidate/coverage/{proj}'
     elif view == 'turns':
@@ -364,12 +381,19 @@ def handle_history(console: Any, session: Any, method: str, params_or_body: dict
         raise V2ApiError('invalid_history_view', 400)
 
     try:
-        status, payload = dispatch_pg_history_api('GET', path, params_or_body, {}, environ=env, owner_verified=is_owner)
+        # ACL already enforced by resolve_actor_and_library(need_history=True)
+        status, payload = dispatch_pg_history_api('GET', path, params_or_body, {}, environ=env, owner_verified=True)
+        err = str((payload or {}).get('error') or '')
+        if status == 400 and err.startswith(('unmapped_user_history_db', 'missing_history_pg_target', 'missing_console_owner_id')):
+            return {
+                'http_status': 200, 'ok': True, 'owner_id': owner_id, 'is_owner': is_owner,
+                'pg_connected': False, 'projects': [], 'blocks': [], 'items': [], 'messages': [], 'detail': err,
+            }
         return {'http_status': status, 'owner_id': owner_id, 'is_owner': is_owner, **payload}
     except Exception:
         return {
-            'ok': True, 'owner_id': owner_id, 'is_owner': is_owner,
-            'pg_connected': False, 'projects': [], 'items': [], 'detail': 'history_pg_unconfigured',
+            'http_status': 200, 'ok': True, 'owner_id': owner_id, 'is_owner': is_owner,
+            'pg_connected': False, 'projects': [], 'blocks': [], 'items': [], 'messages': [], 'detail': 'history_pg_unconfigured',
         }
 
 

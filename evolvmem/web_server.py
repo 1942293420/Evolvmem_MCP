@@ -1441,7 +1441,11 @@ def make_handler(service: ContextService):
                 with auth_lock:
                     if auth.handle_get(self, parsed): return
                 if policy.console_enabled:
-                    if parsed.path in ('/', '/index.html', '/designs/signal.html'):
+                    if parsed.path in ('/', '/index.html'):
+                        from evolvmem.web_v2.http_router import serve_v2_index
+                        serve_v2_index(self)
+                        return
+                    if parsed.path in ('/v1', '/v1/', '/designs/signal.html'):
                         self._send_html((_STATIC_INDEX.parent/'knowledge-console.html').read_text(encoding='utf-8'))
                         return
                     if parsed.path in ('/knowledge-console.js','/knowledge-console.css','/history-library.js','/history-library.css','/principles.js','/nebula.js','/review-inbox.js','/review-inbox.css'):

@@ -472,7 +472,13 @@
       return '<span class="badge">' + E.esc(scope[k]) + "</span>";
     }).join("");
   };
-  E.canWrite = function () { return E.state.libraryCtx !== "peer_readonly"; };
+  E.canWrite = function () {
+    const s = E.state;
+    if (s.apiMode === "live") {
+      return !s.libraryCtx || s.libraryCtx === s.ownerId || s.libraryCtx === "shared_public";
+    }
+    return s.libraryCtx !== "peer_readonly";
+  };
   E.toast = function (msg, tone) {
     E.lastToast = { msg: msg, tone: tone || "info" };
     if (typeof root.document === "undefined") return;

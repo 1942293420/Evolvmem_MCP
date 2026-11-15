@@ -335,14 +335,20 @@ def test_web_console_v2_static_api_interceptions_rescue_shadow_and_acl(v2_live_s
     port = v2_live_server['port']
     seeds = v2_live_server['seeds']
 
-    # 1. Static /v2 routes: unauthenticated redirects to login (302); authenticated serves assets + headers
+    # 1. Static / and /v2 routes: unauthenticated redirects to /login (302); / serves v2 + /v1 fallback
+    st_anon_root, hdr_anon_root, _ = _http_req(port, 'GET', '/')
+    assert st_anon_root == 302 and hdr_anon_root.get('location') == '/login'
     st_anon, _, _ = _http_req(port, 'GET', '/v2')
     assert st_anon == 302
 
-    st, hdrs, raw = _http_req(port, 'GET', '/v2', cookie='tok-owner-v2')
-    html = raw.decode('utf-8')
-    assert st == 200 and '<base href="/v2/">' in html
-    assert hdrs.get('cache-control') == 'no-store' and hdrs.get('x-content-type-options') == 'nosniff'
+    for static_path in ('/', '/v2'):
+        st, hdrs, raw = _http_req(port, 'GET', static_path, cookie='tok-owner-v2')
+        html = raw.decode('utf-8')
+        assert st == 200 and '<base href="/v2/">' in html and 'EvolvMem Neural Matrix' in html
+        assert hdrs.get('cache-control') == 'no-store' and hdrs.get('x-content-type-options') == 'nosniff'
+
+    st_v1, _, raw_v1 = _http_req(port, 'GET', '/v1', cookie='tok-owner-v2')
+    assert st_v1 == 200 and 'knowledge-console' in raw_v1.decode('utf-8')
 
     st, _, js_raw = _http_req(port, 'GET', '/v2/js/render-interceptions.js', cookie='tok-owner-v2')
     assert st == 200 and 'renderInterceptionsView' in js_raw.decode('utf-8')
@@ -353,8 +359,9 @@ def test_web_console_v2_static_api_interceptions_rescue_shadow_and_acl(v2_live_s
     st, _, _ = _http_req(port, 'GET', '/api/console-v2/me')
     assert st == 401
 
-    # 2. Owner bootstrap endpoints (/me, /overview, /pipeline, /evolution-and-skills, /control)
-    for ep in ('/me', '/overview', '/pipeline', '/evolution-and-skills', '/control'):
+    # 2. Owner bootstrap & history routes (including UTF-8/space project_id validation)
+    from urllib.parse import quote
+    for ep in ('/me', '/overview', '/pipeline', '/evolution-and-skills', '/control', '/history?view=projects', '/history?view=project&project_id=' + quote('海外仓  仓储费')):
         st, _, raw = _http_req(port, 'GET', f'/api/console-v2{ep}', cookie='tok-owner-v2')
         assert st == 200 and json.loads(raw)['ok'] is True
 

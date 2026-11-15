@@ -247,8 +247,16 @@
       return true;
     }
     if (act === "hist-subtab") { s.histSubtab = ds.sub; return true; }
-    if (act === "hist-scope") { s.histScope = ds.val; return true; }
-    if (act === "select-block") { s.selectedBlockId = ds.id; return true; }
+    if (act === "hist-scope") {
+      s.histScope = ds.val;
+      if (s.apiMode === "live" && E.api) { E.api.loadHistory().then(function () { E.renderAll(); }); return true; }
+      return true;
+    }
+    if (act === "select-block") {
+      s.selectedBlockId = ds.id;
+      if (s.apiMode === "live" && E.api) E.api.loadBlockTurns(ds.id).then(function () { E.renderAll(); });
+      return true;
+    }
     if (act === "evo-subtab") { s.evoSubtab = ds.sub; return true; }
     if (act === "ctrl-subtab") { s.ctrlSubtab = ds.sub; return true; }
     if (act === "open-skill-detail") { s.selectedSkillId = ds.id; return true; }
@@ -404,7 +412,12 @@
       E.toast("回滚执行成功：已退役 " + n + " 条受影响经验", "warn"); return true;
     }
     if (act === "toggle-r9") { s.r9Tripped = !s.r9Tripped; E.toast(s.r9Tripped ? "已模拟触发 R9 自动成本熔断" : "已恢复增量提取调度", s.r9Tripped ? "danger" : "info"); return true; }
-    if (act === "toggle-proj-del") { const p = s.historyProjects.find(function (i) { return i.key === ds.key; }); if (p) { p.deleted = !p.deleted; E.toast(p.deleted ? "项目已移入回收站" : "项目已恢复正常展示"); } return true; }
+    if (act === "toggle-proj-del") {
+      const p = s.historyProjects.find(function (i) { return i.key === ds.key; });
+      if (s.apiMode === "live" && E.api && p) { E.api.manageHistoryProject(p.deleted ? "restore" : "delete", p.key, p.title); return false; }
+      if (p) { p.deleted = !p.deleted; E.toast(p.deleted ? "项目已移入回收站" : "项目已恢复正常展示"); }
+      return true;
+    }
     if (act === "promote-cat") { const c = s.categoriesEvo.find(function (i) { return i.category === ds.cat; }); if (c) { c.mode = c.mode === "review" ? "partial" : "auto"; E.toast(c.category + " 已推进至 " + c.mode); } return true; }
     if (act === "demote-cat") { const c = s.categoriesEvo.find(function (i) { return i.category === ds.cat; }); if (c) { c.mode = "review"; c.liveConcordance = 0.72; E.toast(c.category + " 一致率回落，已退回人工审阅", "danger"); } return true; }
     if (act === "toggle-dormant") { const x = s.experiences.find(function (i) { return i.id === ds.id; }); if (x) { x.status = x.status === "retired" ? "active" : "retired"; E.toast("已切换状态为 " + x.status); } return true; }
@@ -415,8 +428,23 @@
     if (act === "skill-filter") { s.skillFilter = ds.val; return true; }
     if (act === "eval-skill") { const k = s.skills.find(function (i) { return i.id === ds.id; }); if (k) { k.evalReport = { sessions: 10, errorDropPct: -72, tokenSavePct: 31 }; E.toast("反事实回放评测完成：报错率 -72%，Token 节省 +31%"); } return true; }
     if (act === "skill-stage") { const k = s.skills.find(function (i) { return i.id === ds.id; }); if (k) { k.lifecycle = ds.next; E.toast("Skill 状态已更新为 " + ds.next); } return true; }
-    if (act === "toggle-user") { const u = s.controlUsers.find(function (i) { return i.id === ds.id; }); if (u) { u.enabled = !u.enabled; if (!u.enabled) u.activeSessions = 0; E.toast(u.enabled ? "成员已启用" : "成员已停用并吊销会话", "warn"); } return true; }
-    if (act === "toggle-grant") { const g = s.grants[Number(ds.idx)]; if (g) { g[ds.field] = !g[ds.field]; g.revision += 1; } return true; }
+    if (act === "toggle-user") {
+      const u = s.controlUsers.find(function (i) { return i.id === ds.id; });
+      if (s.apiMode === "live" && E.api && u) { E.api.postControlAction({ action: "update_user", id: u.id, enabled: !u.enabled, revision: u.revision }); return false; }
+      if (u) { u.enabled = !u.enabled; if (!u.enabled) u.activeSessions = 0; E.toast(u.enabled ? "成员已启用" : "成员已停用并吊销会话", "warn"); }
+      return true;
+    }
+    if (act === "toggle-grant") {
+      const g = s.grants[Number(ds.idx)];
+      if (s.apiMode === "live" && E.api && g) {
+        const nextHist = ds.field === "historyRead" ? !g.historyRead : g.historyRead;
+        const nextExp = ds.field === "experienceRead" ? !g.experienceRead : g.experienceRead;
+        E.api.postControlAction({ action: "set_grant", viewer_id: g.viewer, owner_id: g.owner, history_read: nextHist, experience_read: nextExp, revision: g.revision });
+        return false;
+      }
+      if (g) { g[ds.field] = !g[ds.field]; g.revision += 1; }
+      return true;
+    }
     if (act === "cmd-jump") { E.applyAction("goto-tab", ds); E.closeModal(); return true; }
     if (act === "open-cmd") { E.openCmdPalette(""); return false; }
     if (act === "close-drawer") { E.closeDrawer(); return false; }
@@ -464,6 +492,7 @@
       else if (t.id === "int-f-q") { s.intFilters.q = t.value; if (s.apiMode === "live" && E.api) E.api.loadInterceptions().then(function () { E.renderAll(); }); else E.renderAll(); }
       else if (t.id === "bf-scope-mode") { s.backfillScopeMode = t.value; s.backfillScopeVal = t.value === "month" ? "2026-10" : "evolvmem-pg-prod"; E.renderAll(); }
       else if (t.id === "bf-scope-val") { s.backfillScopeVal = t.value; E.renderAll(); }
+      else if (t.id === "hist-proj-sel") { s.selectedProjectKey = t.value; if (s.apiMode === "live" && E.api) E.api.loadHistory().then(function () { E.renderAll(); }); else E.renderAll(); }
       else if (t.id === "hist-db-sel") { s.histDb = t.value; E.renderAll(); }
       else if (t.id === "hb-target") { s.handbookTarget = t.value; E.renderAll(); }
       else if (t.classList.contains("hb-chk")) {
@@ -471,12 +500,20 @@
         if (b) { b.selected = t.checked; E.renderAll(); }
       }
     });
+    var _histTimer = null;
     doc.addEventListener("input", function (ev) {
       const s = E.state;
       const t = ev.target;
       if (t.id === "exp-f-q") { s.expFilters.q = t.value; E.renderAll(); }
       else if (t.id === "int-f-q") { s.intFilters.q = t.value; E.renderAll(); }
-      else if (t.id === "hist-q") { s.histQuery = t.value; E.renderAll(); }
+      else if (t.id === "hist-q") {
+        s.histQuery = t.value;
+        E.renderAll();
+        if (s.apiMode === "live" && E.api) {
+          clearTimeout(_histTimer);
+          _histTimer = setTimeout(function () { E.api.loadHistory().then(function () { E.renderAll(); }); }, 280);
+        }
+      }
       else if (t.id === "dormant-slider") { s.dormantSlider = Number(t.value); E.renderAll(); }
       else if (t.id === "err-tester-input") { s.errorInput = t.value; E.renderAll(); }
       else if (t.id === "cmd-search-input") { E.openCmdPalette(t.value); }
@@ -490,7 +527,8 @@
   if (typeof root.document !== "undefined") {
     root.document.addEventListener("DOMContentLoaded", function () {
       const h = (root.location && root.location.hash || "").replace("#", "");
-      if (h && E.MODULES.some(function (m) { return m.id === h; })) E.applyAction("goto-tab", { route: h });
+      if (h === "principles") E.applyAction("goto-tab", { route: "overview" });
+      else if (h && E.MODULES.some(function (m) { return m.id === h; })) E.applyAction("goto-tab", { route: h });
       E.bindEvents();
       E.renderAll();
       if (E.api && E.api.bootstrap) E.api.bootstrap();

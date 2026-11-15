@@ -33,9 +33,10 @@
     const s = E.state;
     const w = E.canWrite();
     const selAgent = s.agents.find(function (a) { return a.agent === s.selectedAgentName; }) || s.agents[0];
-    const pendingLive = s.proposals.filter(function (p) { return p.status === "pending" && p.track === "live"; }).length;
-    const pendingBack = s.proposals.filter(function (p) { return p.status === "pending" && p.track === "backfill"; }).length;
-    const activeExp = s.experiences.filter(function (x) { return x.status === "active"; }).length;
+    const m = s.liveMetrics;
+    const pendingLive = m ? m.pending_live : s.proposals.filter(function (p) { return p.status === "pending" && p.track === "live"; }).length;
+    const pendingBack = m ? m.pending_backfill : s.proposals.filter(function (p) { return p.status === "pending" && p.track === "backfill"; }).length;
+    const activeExp = m ? m.active_notes : (739 + s.experiences.filter(function (x) { return x.status === "active"; }).length);
     const activeSkills = s.skills.filter(function (k) { return k.lifecycle === "active"; }).length;
     const leftAgents = s.agents.slice(0, 2);
     const rightAgents = s.agents.slice(2, 4);
@@ -83,7 +84,7 @@
         </div>
         <div class="kpi-card">
           <div class="kpi-label"><span>已沉淀活跃经验</span><span class="badge badge-ok">权威主库</span></div>
-          <div class="kpi-value">${739 + activeExp} 条</div>
+          <div class="kpi-value">${activeExp} 条</div>
           <div class="kpi-bar"><i style="width:92%"></i></div>
           <div class="kpi-sub">含手工精品与 Stage 4 迁入精华</div>
         </div>

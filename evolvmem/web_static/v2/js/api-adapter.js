@@ -103,12 +103,25 @@
 
     async loadOverview() {
       if (E.state.apiMode !== "live") return;
-      const oid = E.state.libraryCtx === E.state.ownerId ? "" : E.state.libraryCtx;
+      const s = E.state;
+      const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const res = await req("GET", "/overview" + qs({ owner_id: oid }));
       if (res.status === 200 && res.data.ok) {
-        E.state.liveMetrics = res.data.metrics;
-        if (res.data.interception_funnel) E.state.interceptionFunnel = res.data.interception_funnel;
-        if (res.data.policy && typeof res.data.policy.shadow_mode === "boolean") E.state.shadowMode = res.data.policy.shadow_mode;
+        s.liveMetrics = res.data.metrics;
+        if (res.data.interception_funnel) s.interceptionFunnel = res.data.interception_funnel;
+        if (res.data.policy && typeof res.data.policy.shadow_mode === "boolean") s.shadowMode = res.data.policy.shadow_mode;
+        if (Array.isArray(res.data.circuits)) {
+          s.r9Tripped = res.data.circuits.some(function (c) { return !!c.paused; });
+        }
+        if (Array.isArray(res.data.recent_events) && res.data.recent_events.length) {
+          s.changesStream = res.data.recent_events.map(function (e) {
+            return {
+              seq: e.seq, actor: e.agent_client || s.ownerId, model: e.model || "unknown",
+              noteId: e.note_id, action: e.action, ts: (e.created_at || "").slice(0, 16)
+            };
+          });
+          s.changesCursor = s.changesStream[0].seq || s.changesCursor;
+        }
       }
     },
 
@@ -162,29 +175,210 @@
 
     async loadPipeline() {
       if (E.state.apiMode !== "live" || !E.canWrite()) return;
+      const s = E.state;
       const res = await req("GET", "/pipeline");
-      if (res.status === 200 && res.data.ok) E.state.livePipeline = res.data;
+      if (res.status === 200 && res.data.ok) {
+        s.livePipeline = res.data;
+        if (Array.isArray(res.data.circuits)) {
+          s.r9Tripped = res.data.circuits.some(function (c) { return !!c.paused; });
+        }
+        if (Array.isArray(res.data.llm_usage)) {
+          s.llmCalls = res.data.llm_usage.map(function (c, i) {
+            return {
+              id: i + 1, track: c.track, stage: c.stage, model: c.model,
+              inTok: c.input_tokens || 0, outTok: c.output_tokens || 0,
+              cost: Number(c.cost_estimate || 0), outcome: (c.calls || 0) + " calls", ref: "-"
+            };
+          });
+        }
+      }
+    },
+
+    async loadBlockTurns(blockId) {
+      if (E.state.apiMode !== "live" || !blockId) return;
+      const s = E.state;
+      const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
+      const res = await req("GET", "/history" + qs({ view: "turns", block_id: blockId, owner_id: oid, limit: 40 }));
+      if (res.status === 200 && res.data.ok) {
+        const blk = s.historyBlocks.find(function (b) { return b.id === blockId; });
+        if (blk) {
+          blk.transcript = (res.data.messages || []).map(function (m) {
+            const role = m.role === "assistant" ? "助手" : m.role === "user" ? "用户" : (m.role || "消息");
+            return role + "：" + String(m.content || "");
+          });
+          blk._turnsLoaded = true;
+        }
+      }
     },
 
     async loadHistory() {
       if (E.state.apiMode !== "live") return;
-      const oid = E.state.libraryCtx === E.state.ownerId ? "" : E.state.libraryCtx;
+      const s = E.state;
+      const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const res = await req("GET", "/history" + qs({ view: "projects", owner_id: oid }));
-      if (res.status === 200 && res.data.ok) E.state.liveHistory = res.data;
+      if (res.status !== 200 || !res.data.ok) return;
+      s.liveHistory = res.data;
+      const seen = {};
+      const projs = (res.data.projects || []).map(function (p) {
+        const key = p.project;
+        seen[key] = true;
+        return {
+          key: key, title: p.display_name || key, sessions: p.block_count || 0,
+          blocks: p.block_count || 0, deleted: p.status === "deleted",
+          lastAt: (p.last_at || "").slice(0, 16)
+        };
+      });
+      if (E.canWrite()) {
+        const tRes = await req("GET", "/history" + qs({ view: "trash", owner_id: oid }));
+        if (tRes.status === 200 && tRes.data.ok) {
+          (tRes.data.items || []).forEach(function (it) {
+            if (it.kind === "project") {
+              const k = it.project || it.key;
+              const hit = projs.find(function (p) { return p.key === k; });
+              if (hit) hit.deleted = true;
+              else if (k && !seen[k]) {
+                seen[k] = true;
+                projs.push({ key: k, title: it.title || k, sessions: 0, blocks: 0, deleted: true, lastAt: (it.deleted_at || "").slice(0, 16) });
+              }
+            }
+          });
+        }
+      }
+      s.historyProjects = projs;
+      const q = (s.histQuery || "").trim();
+      if (s.histScope === "unassigned") {
+        const uRes = await req("GET", "/history" + qs({ view: "unassigned", owner_id: oid }));
+        if (uRes.status === 200 && uRes.data.ok) {
+          s.historyBlocks = (uRes.data.blocks || []).map(function (b) {
+            return {
+              id: b.block_id, project: null, title: b.title || b.block_id,
+              sourceRef: "pg:" + b.block_id, turns: b.turn_count || 0,
+              bm25: 0, trgm: 0, vector: 0, rrf: 1, hasAttachment: false, attachmentBytes: 0, transcript: []
+            };
+          });
+        }
+      } else if (q) {
+        const sRes = await req("GET", "/history" + qs({ view: "search", q: q, owner_id: oid }));
+        if (sRes.status === 200 && sRes.data.ok) {
+          s.historyBlocks = (sRes.data.items || []).map(function (it) {
+            return {
+              id: it.block_id, project: (it.projects && it.projects[0]) || null,
+              title: it.title || it.block_id, sourceRef: "pg:" + it.block_id, turns: 0,
+              bm25: 0, trgm: 0, vector: 0, rrf: Math.min(1, Number(it.score || 0.5)),
+              hasAttachment: false, attachmentBytes: 0, transcript: it.snippet ? ["摘要：" + it.snippet] : []
+            };
+          });
+        }
+      } else if (s.histScope !== "trash") {
+        const activeProjs = projs.filter(function (p) { return !p.deleted; });
+        const curKey = activeProjs.some(function (p) { return p.key === s.selectedProjectKey; })
+          ? s.selectedProjectKey : (activeProjs[0] && activeProjs[0].key);
+        s.selectedProjectKey = curKey || null;
+        if (curKey) {
+          const pRes = await req("GET", "/history" + qs({ view: "project", project_id: curKey, owner_id: oid }));
+          if (pRes.status === 200 && pRes.data.ok) {
+            s.historyBlocks = (pRes.data.blocks || []).map(function (b) {
+              return {
+                id: b.block_id, project: curKey, title: b.title || b.block_id,
+                sourceRef: "pg:" + b.block_id, turns: b.turn_count || 0,
+                bm25: 0, trgm: 0, vector: 0, rrf: 1, hasAttachment: false, attachmentBytes: 0, transcript: []
+              };
+            });
+          }
+        } else s.historyBlocks = [];
+      }
+      if (s.historyBlocks.length && (!s.selectedBlockId || !s.historyBlocks.some(function (b) { return b.id === s.selectedBlockId; }))) {
+        s.selectedBlockId = s.historyBlocks[0].id;
+      }
+      if (s.selectedBlockId && s.histScope !== "trash") {
+        await this.loadBlockTurns(s.selectedBlockId);
+      }
+    },
+
+    async manageHistoryProject(action, key, title) {
+      const res = await req("POST", "/history/manage", { action: action, kind: "project", project: key, key: key, title: title });
+      if (res.status !== 200 || !res.data.ok) {
+        E.toast("历史项目操作失败：" + (res.data.error || res.status), "danger");
+        return false;
+      }
+      await this.loadHistory();
+      E.toast(action === "delete" ? "项目已移入回收站" : "项目已恢复正常展示");
+      E.renderAll();
+      return true;
     },
 
     async loadEvolutionAndSkills() {
       if (E.state.apiMode !== "live") return;
-      const oid = E.state.libraryCtx === E.state.ownerId ? "" : E.state.libraryCtx;
+      const s = E.state;
+      const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const res = await req("GET", "/evolution-and-skills" + qs({ owner_id: oid }));
-      if (res.status === 200 && res.data.ok) E.state.liveEvolution = res.data;
+      if (res.status === 200 && res.data.ok) {
+        s.liveEvolution = res.data;
+        const cat = res.data.skills_catalog || {};
+        if (Array.isArray(cat.rows) && cat.rows.length) {
+          s.skills = cat.rows.slice(0, 36).map(function (r) {
+            const pTitle = (r.presentation && r.presentation.title) || r.name;
+            const cName = (r.categories && r.categories[0]) || r.origin || "官方技能";
+            return {
+              id: r.id || r.name, name: r.name, title: pTitle, category: cName,
+              lifecycle: "active", tokenCost: Math.max(120, Number(r.file_count || 1) * 160),
+              summary: r.description || "", attachedPitfalls: [], linuxSynced: true,
+              winMode: "通过 LAN MCP 按需拉取或手动安装（不自动覆写 Windows）",
+              evalReport: null,
+              mdPreview: "# " + r.name + "\n\n" + (r.description || "") + "\n\nSource: " + (r.source || r.origin || "")
+            };
+          });
+        }
+      }
     },
 
     async loadControl() {
       if (E.state.apiMode !== "live") return;
-      const oid = E.state.libraryCtx === E.state.ownerId ? "" : E.state.libraryCtx;
+      const s = E.state;
+      const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const res = await req("GET", "/control" + qs({ owner_id: oid }));
-      if (res.status === 200 && res.data.ok) E.state.liveControl = res.data;
+      if (res.status === 200 && res.data.ok) {
+        s.liveControl = res.data;
+        if (Array.isArray(res.data.users) && res.data.users.length) {
+          s.controlUsers = res.data.users.map(function (u) {
+            return {
+              id: u.id, displayName: u.display_name || u.id, isAdmin: !!u.is_admin,
+              enabled: !!u.enabled, revision: u.revision || 0, activeSessions: u.login_bound ? 1 : 0
+            };
+          });
+        }
+        if (Array.isArray(res.data.grants)) {
+          s.grants = res.data.grants.map(function (g) {
+            return {
+              viewer: g.viewer_id, owner: g.owner_id, historyRead: !!g.history_read,
+              experienceRead: !!g.experience_read, revision: g.revision || 0
+            };
+          });
+        }
+        if (Array.isArray(res.data.model_reputation) && res.data.model_reputation.length) {
+          s.agents = res.data.model_reputation.map(function (r) {
+            return {
+              agent: r.agent_client + ":" + r.model, title: r.agent_client + " (" + r.model + ")",
+              os: "PG Verified", client: r.agent_client, model: r.model, tier: r.tier,
+              quota: r.effective_quota, status: r.effective_quota > 0 ? "online" : "limited",
+              activeProject: "PG 主库", lastSyncAt: "实时",
+              syncNote: "提议 " + r.proposed + " · 采纳 " + r.accepted + (r.alert ? " [" + r.alert + "]" : "")
+            };
+          });
+        }
+      }
+    },
+
+    async postControlAction(body) {
+      const res = await req("POST", "/control/action", body);
+      if (res.status !== 200 || !res.data.ok) {
+        E.toast("权限变更失败：" + (res.data.error || res.status), "danger");
+        return false;
+      }
+      await this.loadControl();
+      E.toast("控制面权限已保存至 PG");
+      E.renderAll();
+      return true;
     },
 
     async writeExperience(body) {
