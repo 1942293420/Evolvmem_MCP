@@ -330,6 +330,15 @@ def _note_preview_map(conn, owner_id: str, note_ids: list[str]) -> dict[str, dic
     }
 
 
+def _append_q(parts: list[str], args: list[Any], ql: str, cols: tuple[str, ...], extra: str = '') -> None:
+    """Append case-insensitive ILIKE search predicates across target SQL columns."""
+    if not ql:
+        return
+    clauses = [f'{col} ILIKE %s' for col in cols] + ([extra] if extra else [])
+    args.extend([f'%{ql}%'] * (len(cols) + extra.count('%s')))
+    parts.append('(' + ' OR '.join(clauses) + ')')
+
+
 def list_intercepted_items(
     conn,
     *,
@@ -346,17 +355,21 @@ def list_intercepted_items(
     items: list[dict[str, Any]] = []
 
     if layer in ('all', 'Extract', 'Quota', 'Moments'):
+        pi_parts, pi_args = ['owner_id = %s', 'is_shadow = false'], [owner_id]
+        if layer in ('Extract', 'Quota', 'Moments'):
+            pi_parts.append('intercept_layer = %s')
+            pi_args.append(layer)
+        if track in ('live', 'backfill'):
+            pi_parts.append('track = %s')
+            pi_args.append(track)
+        _append_q(pi_parts, pi_args, ql, ('interception_id', "COALESCE(moment_summary,'')", "COALESCE(reason_code,'')", "COALESCE(detail,'')", "COALESCE(candidate_json::text,'')", "COALESCE(model,'')"))
         pi_rows = conn.execute(
-            """
-            SELECT interception_id, track, session_id, source_ref, moment_id, moment_kind,
+            f"""SELECT interception_id, track, session_id, source_ref, moment_id, moment_kind,
                    moment_summary, intercept_layer, reason_code, detail, agent_client, model,
                    candidate_json, evidence_json, llm_call_id, tokens_used,
                    rescued_proposal_uid, rescued_note_id, created_at
-            FROM pipeline_interceptions
-            WHERE owner_id = %s AND is_shadow = false
-            ORDER BY created_at DESC LIMIT %s
-            """,
-            (owner_id, cap),
+            FROM pipeline_interceptions WHERE {' AND '.join(pi_parts)} ORDER BY created_at DESC LIMIT %s""",
+            (*pi_args, cap),
         ).fetchall()
         for r in pi_rows:
             cand = _jval(r[12], {})
@@ -398,17 +411,19 @@ def list_intercepted_items(
             sql_args.append(layer)
         elif layer == 'L4':
             sql_parts.append("EXISTS (SELECT 1 FROM review_decisions r WHERE r.proposal_uid = experience_proposals.uid AND r.user_verdict = 'reject')")
-        sql_args.append(cap)
+        if track in ('live', 'backfill'):
+            sql_parts.append('source_track = %s')
+            sql_args.append(track)
+        if category != 'all':
+            sql_parts.append('category = %s')
+            sql_args.append(category)
+        _append_q(sql_parts, sql_args, ql, ('uid', 'problem', 'solution', 'reusable_experience', "COALESCE(scope::text,'')", "COALESCE(model,'')"), "EXISTS (SELECT 1 FROM proposal_decisions dq WHERE dq.proposal_uid = experience_proposals.uid AND (COALESCE(dq.reason_code,'') ILIKE %s OR COALESCE(dq.detail,'') ILIKE %s))")
         p_rows = conn.execute(
-            f"""
-            SELECT uid, category, kind, problem, solution, reusable_experience, misbelief,
+            f"""SELECT uid, category, kind, problem, solution, reusable_experience, misbelief,
                    scope, evidence_json, source_kind, source_track, agent_client, model,
                    session_id, state, importance, merged_into_uid, COALESCE(updated_at, created_at) AS sort_ts
-            FROM experience_proposals
-            WHERE {' AND '.join(sql_parts)}
-            ORDER BY sort_ts DESC, uid ASC LIMIT %s
-            """,
-            tuple(sql_args),
+            FROM experience_proposals WHERE {' AND '.join(sql_parts)} ORDER BY sort_ts DESC, uid ASC LIMIT %s""",
+            (*sql_args, cap),
         ).fetchall()
         target_ids = [r[16] for r in p_rows if r[16]]
         note_map = _note_preview_map(conn, owner_id, target_ids)
@@ -442,18 +457,19 @@ def list_intercepted_items(
             })
 
     if layer in ('all', 'L3'):
+        t_parts, t_args = ['ct.owner_id = %s', "ct.status IN ('trial', 'rolled_back')"], [owner_id]
+        if category != 'all':
+            t_parts.append('n.category = %s')
+            t_args.append(category)
+        _append_q(t_parts, t_args, ql, ("('trial-' || ct.id::text)", 'n.problem', 'n.solution', "COALESCE(n.scope::text,'')"))
         t_rows = conn.execute(
-            """
-            SELECT ct.id, ct.challenger_note_id, ct.incumbent_note_id, ct.relation, ct.proposal_uid,
+            f"""SELECT ct.id, ct.challenger_note_id, ct.incumbent_note_id, ct.relation, ct.proposal_uid,
                    ct.required_successes, ct.success_count, ct.failure_count, ct.status, ct.created_at,
                    n.category, n.kind, n.problem, n.solution, n.reusable_experience, n.misbelief,
                    n.scope, n.evidence, n.source_agent, n.source_model
-            FROM challenger_trials ct
-            JOIN experience_notes n ON n.id = ct.challenger_note_id
-            WHERE ct.owner_id = %s AND ct.status IN ('trial', 'rolled_back')
-            ORDER BY ct.updated_at DESC LIMIT %s
-            """,
-            (owner_id, cap),
+            FROM challenger_trials ct JOIN experience_notes n ON n.id = ct.challenger_note_id
+            WHERE {' AND '.join(t_parts)} ORDER BY ct.updated_at DESC LIMIT %s""",
+            (*t_args, cap),
         ).fetchall()
         inc_map = _note_preview_map(conn, owner_id, [r[2] for r in t_rows])
         for r in t_rows:
@@ -487,16 +503,14 @@ def list_intercepted_items(
             })
 
     if layer in ('all', 'Moments'):
+        s_parts = ['owner_id = %s', 'is_shadow = false', "status IN ('skipped_zero_moments', 'deferred', 'failed')"]
+        s_args: list[Any] = [owner_id]
+        _append_q(s_parts, s_args, ql, ("('seg-' || left(session_id, 24) || '-' || left(segment_hash, 8))", 'session_id', "COALESCE(error_code,'')"))
         s_rows = conn.execute(
-            """
-            SELECT track, session_id, segment_hash, pipeline_version, status,
+            f"""SELECT track, session_id, segment_hash, pipeline_version, status,
                    moments_count, error_code, last_event_index, updated_at
-            FROM pipeline_segment_runs
-            WHERE owner_id = %s AND is_shadow = false
-              AND status IN ('skipped_zero_moments', 'deferred', 'failed')
-            ORDER BY updated_at DESC LIMIT 40
-            """,
-            (owner_id,),
+            FROM pipeline_segment_runs WHERE {' AND '.join(s_parts)} ORDER BY updated_at DESC LIMIT 40""",
+            tuple(s_args),
         ).fetchall()
         for r in s_rows:
             items.append({
@@ -561,8 +575,8 @@ def list_intercepted_items(
             continue
         if ql:
             blob = ' '.join([
-                it['title'], it['reason_code'], it['detail'],
-                it['problem'], it['solution'], it['reusable_experience'], it['model'],
+                it['id'], str(it.get('proposal_uid') or ''), json.dumps(it.get('scope') or {}, ensure_ascii=False),
+                it['title'], it['reason_code'], it['detail'], it['problem'], it['solution'], it['reusable_experience'], it['model'],
             ]).lower()
             if ql not in blob:
                 continue
@@ -577,8 +591,8 @@ def list_intercepted_items(
 
 
 def get_interception_trace(conn, *, owner_id: str, item_id: str) -> dict[str, Any] | None:
-    res = list_intercepted_items(conn, owner_id=owner_id, limit=200)
-    for item in res['items']:
-        if item['id'] == item_id:
-            return item
+    for kw in ({'q': item_id}, {'layer': 'Stage4'}):
+        for item in list_intercepted_items(conn, owner_id=owner_id, limit=50, **kw)['items']:
+            if item['id'] == item_id:
+                return item
     return None
