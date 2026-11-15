@@ -67,7 +67,14 @@ class _LazyEmbedder:
             from evolvmem.embedding import EmbeddingEngine
             cfg = Config.from_file(data_dir=self.data_dir, apply_environment=False, ensure_dirs=False)
             eng = EmbeddingEngine(cfg)
-            eng.initialize()
+            try:
+                eng.initialize()
+            except RuntimeError:
+                if not cfg.embedding_http_url:
+                    raise
+                cfg.embedding_http_url = ''
+                eng = EmbeddingEngine(cfg)
+                eng.initialize()
             self._engine = eng
         return list(self._engine.encode_document(text))
 
