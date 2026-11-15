@@ -492,3 +492,64 @@ def test_web_console_v2_static_api_interceptions_rescue_shadow_and_acl(v2_live_s
         cookie='tok-peer-v2', csrf=PEER_CSRF,
         body={'owner_id': 'admin_owner', 'item_id': seeds['extract_id']},
     )[0] == 403
+    # 8. Pre-005 legacy empty meta_json backfill (L0/L1/L3 deterministic + L2a/L2b metered LLM) -> HTTP API
+    from evolvmem.experience_v2.gate.backfill_decision_meta import backfill_historical_decision_meta
+
+    dsn, exp_schema = v2_live_server['dsn'], v2_live_server['schema']
+    _conn_factory = lambda: psycopg.connect(dsn, options=f'-c search_path={exp_schema},public')
+    with _conn_factory() as conn:
+        proposer = ProposalService()
+        lp = proposer.propose(
+            conn, owner_id='admin_owner', actor_id='admin_owner', channel=TrustedChannel.MCP_CLIENT,
+            attribution=_attr(model='deepseek-chat'),
+            body={
+                'op': 'add', 'request_id': 'req-legacy-pre005-l2b', 'source_track': 'live',
+                'session_id': 'sess-legacy-pre005', 'category': '业务经验', 'kind': 'pitfall',
+                'problem': 'pre-005 历史 L2 拦截未记录盲猜文本',
+                'solution': '回填 L2a/L2b 盲猜输出并写入 meta_json',
+                'reusable_experience': '所有 L2 裁决必须携带 model_prediction 供前后端对照',
+                'evidence': [{'ref': 'archive:8899', 'quote': 'pre005 sample'}],
+            },
+            source_kind='pipeline',
+        )
+        legacy_uid = lp['uid']
+        conn.execute(
+            """
+            INSERT INTO proposal_decisions (decision_id, proposal_uid, layer, verdict, reason_code, confidence, judge_model, detail)
+            VALUES ('dec-legacy-l2a', %s, 'L2a', 'pass', NULL, 0.41, 'deepseek-v4-flash', 'flash missed'),
+                   ('dec-legacy-l2b', %s, 'L2b', 'reject', 'common_knowledge', 0.90, 'deepseek-chat', 'strong solved')
+            """,
+            (legacy_uid, legacy_uid),
+        )
+        conn.execute("UPDATE experience_proposals SET state = 'rejected' WHERE uid = %s", (legacy_uid,))
+        conn.commit()
+
+    def _mock_tr(model: str, messages: list[dict], max_toks: int) -> dict:
+        tag = 'FLASH' if 'flash' in model else 'STRONG'
+        return {'text': f'{tag}_BLIND_PRED: direct diagnosis for prompt len={len(messages[-1]["content"])}', 'input_tokens': 45, 'output_tokens': 18}
+
+    bf_summary = backfill_historical_decision_meta(
+        _conn_factory, flash_transport=_mock_tr, strong_transport=_mock_tr, max_workers=2,
+    )
+    assert bf_summary['l2_errors'] == 0 and bf_summary['l2_decisions_updated'] >= 2
+
+    with _conn_factory() as conn:
+        calls_cnt = conn.execute(
+            "SELECT COUNT(*) FROM llm_calls WHERE proposal_uid = %s AND stage IN ('l2a_predict_backfill', 'l2b_predict_backfill')",
+            (legacy_uid,),
+        ).fetchone()[0]
+        assert calls_cnt == 2
+
+    st, _, raw = _http_req(port, 'GET', '/api/console-v2/interceptions?layer=L2b', cookie='tok-owner-v2')
+    assert st == 200
+    l2b_hit = next(x for x in json.loads(raw)['items'] if x['id'] == legacy_uid)
+    m2a = next(d['meta'] for d in l2b_hit['gate_chain'] if d['layer'] == 'L2a')
+    m2b = next(d['meta'] for d in l2b_hit['gate_chain'] if d['layer'] == 'L2b')
+    assert m2a['blind_prompt'] and m2a['model_prediction'].startswith('FLASH_BLIND_PRED:')
+    assert m2b['blind_prompt'] and m2b['model_prediction'].startswith('STRONG_BLIND_PRED:')
+    assert m2b['flash_prediction'].startswith('FLASH_BLIND_PRED:')
+
+    st, _, raw = _http_req(port, 'GET', '/api/console-v2/review-inbox?source_track=live&include_decided=1', cookie='tok-owner-v2')
+    assert st == 200
+    inbox_l2_item = next(x for x in json.loads(raw)['items'] if x['uid'] == seeds['prop_live_pending'])
+    assert any(d.get('meta', {}).get('model_prediction') for d in (inbox_l2_item.get('gate_chain') or []) if d['layer'] == 'L2b')

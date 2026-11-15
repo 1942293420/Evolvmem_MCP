@@ -7,6 +7,7 @@ from typing import Any
 import uuid
 
 from evolvmem.experience_v2.gate.review_inbox import _build_evidence_preview
+from evolvmem.experience_v2.gate.value import _build_blind_problem_prompt
 from evolvmem.experience_v2.interception_rescue import rescue_intercepted_item  # noqa: F401
 
 
@@ -113,7 +114,13 @@ def update_decision_meta(conn, decision_id: str, meta: dict[str, Any]) -> None:
     )
 
 
-def fetch_proposal_gate_chain(conn, proposal_uid: str) -> dict[str, Any]:
+def fetch_proposal_gate_chain(
+    conn,
+    proposal_uid: str,
+    *,
+    problem: str = '',
+    scope: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Load ordered L0..L4 decisions (with meta_json), review row, and metered llm_calls."""
     if not proposal_uid:
         return {'decisions': [], 'review': None, 'llm_calls': []}
@@ -188,6 +195,18 @@ def fetch_proposal_gate_chain(conn, proposal_uid: str) -> dict[str, Any]:
         }
         for c in call_rows
     ]
+    last_l2a_pred = ''
+    for dec in decisions:
+        lyr = dec.get('layer')
+        if lyr in ('L2a', 'L2b'):
+            meta = dec.get('meta') if isinstance(dec.get('meta'), dict) else {}
+            if problem and not meta.get('blind_prompt'):
+                meta['blind_prompt'] = _build_blind_problem_prompt(problem, scope)
+            if lyr == 'L2a' and meta.get('model_prediction'):
+                last_l2a_pred = str(meta['model_prediction'])
+            elif lyr == 'L2b' and last_l2a_pred and not meta.get('flash_prediction'):
+                meta['flash_prediction'] = last_l2a_pred
+            dec['meta'] = meta
     return {'decisions': decisions, 'review': review, 'llm_calls': llm_calls}
 
 
@@ -372,21 +391,29 @@ def list_intercepted_items(
             })
 
     if layer in ('all', 'L0', 'L1', 'L2a', 'L2b', 'L3', 'L4', 'Quota'):
+        sql_parts = ["owner_id = %s", "state IN ('rejected', 'merged', 'quarantined')"]
+        sql_args: list[Any] = [owner_id]
+        if layer in ('L0', 'L1', 'L2a', 'L2b', 'L3'):
+            sql_parts.append("EXISTS (SELECT 1 FROM proposal_decisions d WHERE d.proposal_uid = experience_proposals.uid AND d.layer = %s AND d.verdict IN ('reject', 'merge'))")
+            sql_args.append(layer)
+        elif layer == 'L4':
+            sql_parts.append("EXISTS (SELECT 1 FROM review_decisions r WHERE r.proposal_uid = experience_proposals.uid AND r.user_verdict = 'reject')")
+        sql_args.append(cap)
         p_rows = conn.execute(
-            """
+            f"""
             SELECT uid, category, kind, problem, solution, reusable_experience, misbelief,
                    scope, evidence_json, source_kind, source_track, agent_client, model,
-                   session_id, state, importance, merged_into_uid, created_at
+                   session_id, state, importance, merged_into_uid, COALESCE(updated_at, created_at) AS sort_ts
             FROM experience_proposals
-            WHERE owner_id = %s AND state IN ('rejected', 'merged', 'quarantined')
-            ORDER BY created_at DESC, uid ASC LIMIT %s
+            WHERE {' AND '.join(sql_parts)}
+            ORDER BY sort_ts DESC, uid ASC LIMIT %s
             """,
-            (owner_id, cap),
+            tuple(sql_args),
         ).fetchall()
         target_ids = [r[16] for r in p_rows if r[16]]
         note_map = _note_preview_map(conn, owner_id, target_ids)
         for r in p_rows:
-            chain = fetch_proposal_gate_chain(conn, r[0])
+            chain = fetch_proposal_gate_chain(conn, r[0], problem=r[3], scope=_jval(r[7], {}))
             lyr, rcode, det, dec_target = _classify_proposal_interception(chain['decisions'], chain['review'], r[14])
             merged_id = r[16] or dec_target
             ev = _jval(r[8], [])
@@ -430,7 +457,7 @@ def list_intercepted_items(
         ).fetchall()
         inc_map = _note_preview_map(conn, owner_id, [r[2] for r in t_rows])
         for r in t_rows:
-            chain = fetch_proposal_gate_chain(conn, r[4] or '')
+            chain = fetch_proposal_gate_chain(conn, r[4] or '', problem=r[12], scope=_jval(r[16], {}))
             ev = _jval(r[17], [])
             items.append({
                 'id': f'trial-{r[0]}', 'source_table': 'challenger_trials',

@@ -279,7 +279,10 @@ def get_experience_trace(console: Any, session: Any, note_id: str, params: dict[
         prop_uid = next((e['proposal_uid'] for e in reversed(events) if e['proposal_uid']), None)
         if not prop_uid and trials:
             prop_uid = trials[0].get('proposal_uid')
-        gate_chain = fetch_proposal_gate_chain(conn, prop_uid) if prop_uid else None
+        gate_chain = (
+            fetch_proposal_gate_chain(conn, prop_uid, problem=note['problem'], scope=note['scope'])
+            if prop_uid else None
+        )
 
     return {
         'ok': True, 'owner_id': owner_id, 'is_owner': True,

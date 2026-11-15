@@ -306,6 +306,19 @@
               </div>
               ${sel.misbelief ? `<div class="prose-section"><h3>常见认知误区</h3><p class="prose-body secondary">${esc(sel.misbelief)}</p></div>` : ""}
               <div class="tag-row"><span class="muted" style="font-size:13px">适用范围：</span>${E.scopeTags(sel.scope)}</div>
+              ${!hideGate && sel.gateChain && sel.gateChain.some(function (d) { return d && (d.layer === "L2a" || d.layer === "L2b"); }) && E.renderL2BlindComparison ? E.renderL2BlindComparison({
+                chain: sel.gateChain,
+                finalLayer: "L2b",
+                isRejected: sel.gateVerdict === "reject",
+                reasonCode: sel.gateLayer,
+                problem: sel.problem,
+                solution: sel.solution,
+                reusable: sel.reusable,
+                misbelief: sel.misbelief,
+                scope: sel.scope,
+                proposerModel: sel.model,
+                fallbackDetail: ""
+              }) : ""}
             `}
 
             ${sel.status === "pending" && !isEdit ? `

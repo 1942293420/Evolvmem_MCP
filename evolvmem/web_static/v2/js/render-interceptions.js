@@ -3,6 +3,98 @@
   const E = (root.EvolvMemV2 = root.EvolvMemV2 || {});
   const esc = E.esc;
 
+  E.renderL2BlindComparison = function (opts) {
+    const o = opts || {};
+    const chain = o.chain || [];
+    const l2aStep = chain.find(function (d) { return d && d.layer === "L2a"; }) || null;
+    const l2bStep = chain.find(function (d) { return d && d.layer === "L2b"; }) || null;
+    const hitStep = (o.finalLayer === "L2a" ? l2aStep : (l2bStep || l2aStep)) || chain[chain.length - 1] || {};
+    const mHit = (hitStep && hitStep.meta) || {};
+    const mA = (l2aStep && l2aStep.meta) || {};
+    const mB = (l2bStep && l2bStep.meta) || {};
+
+    const blindPrompt = mHit.blind_prompt || mA.blind_prompt || mB.blind_prompt ||
+      ("触发范围: " + JSON.stringify(o.scope || {}) + "\n问题现象: " + (o.problem || ""));
+    const l2aPred = String(mA.model_prediction || mB.flash_prediction || "").trim();
+    const l2bPred = String(mB.model_prediction || "").trim();
+    const l2aModel = (l2aStep && l2aStep.judge_model) || "deepseek-v4-flash";
+    const l2bModel = (l2bStep && l2bStep.judge_model) || "deepseek-chat";
+    const activeModel = (hitStep && hitStep.judge_model) || o.proposerModel || "-";
+    const confPct = hitStep && hitStep.confidence != null ? Math.round(Number(hitStep.confidence) * 100) + "%" : "-";
+    const rationale = (hitStep && hitStep.detail) || o.fallbackDetail || "";
+
+    let leftBody = "";
+    if (l2aPred && l2bPred) {
+      const aTag = l2aStep && l2aStep.verdict === "reject" ? "直接命中" : "未完全命中 -> 升级复核";
+      const bTag = l2bStep && l2bStep.verdict === "reject" ? "命中核心机制" : "仍未命中私有事实";
+      leftBody = `
+        <div class="prose-section">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px">
+            <span class="badge">${esc("L2a 快模初筛 (" + l2aModel + ")")}</span>
+            <span class="muted" style="font-size:12px">${esc(aTag)}</span>
+          </div>
+          <div style="white-space:pre-wrap;color:var(--ink)">${esc(l2aPred)}</div>
+        </div>
+        <div style="border-top:1px dashed var(--line);padding-top:8px;margin-top:4px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px">
+            <span class="badge badge-warn">${esc("L2b 强模复核 (" + l2bModel + ")")}</span>
+            <span class="muted" style="font-size:12px">${esc(bTag)}</span>
+          </div>
+          <div style="white-space:pre-wrap;color:var(--ink)">${esc(l2bPred)}</div>
+        </div>`;
+    } else if (l2aPred || l2bPred) {
+      const onlyPred = l2bPred || l2aPred;
+      const onlyModel = l2bPred ? l2bModel : (l2aPred ? l2aModel : activeModel);
+      leftBody = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">
+          <span class="badge badge-warn">${esc(onlyModel)}</span>
+          <span class="muted" style="font-size:12px">${esc(o.finalLayer || "L2")}</span>
+        </div>
+        <div style="white-space:pre-wrap;color:var(--ink)">${esc(onlyPred)}</div>`;
+    } else {
+      leftBody = `<div class="muted" style="font-size:13px">该历史条目未记录模型原始盲猜文本（仅保留下方评审结论）</div>`;
+    }
+
+    const layerTag = o.finalLayer || (l2bStep ? "L2b" : "L2a");
+    const verdictStrip = o.isRejected
+      ? `<div class="callout-box" style="border-left-color:var(--danger);background:var(--danger-soft)">
+          <div style="font-weight:700;color:var(--danger);margin-bottom:4px">④ 模型盲猜 vs 候选经验 · 判定无增量差异（拦截于 ${esc(layerTag)} · ${esc(o.reasonCode || "-")} · 置信度 ${esc(confPct)}）</div>
+          <div>${esc(rationale || "模型在不看该经验的情况下已推导出相同核心解法，判定为通用常识不入库；若含关键私有口径可点击右上角「人工救回入库」。")}</div>
+        </div>`
+      : `<div class="callout-box" style="border-left-color:var(--ok);background:var(--ok-soft)">
+          <div style="font-weight:700;color:var(--ok);margin-bottom:4px">④ 模型盲猜 vs 候选经验 · 判定具备增量记忆价值（通过 L2 盲测 · 置信度 ${esc(confPct)}）</div>
+          <div>${esc(rationale || "模型裸测未能答出上述候选经验中的关键事实或私有边界，建议审阅入库。")}</div>
+        </div>`;
+
+    return `
+      <div class="prose-section"><h3>L2 盲测对照诊断（${esc(layerTag)} · ${esc(o.reasonCode || "-")}）</h3></div>
+      <div class="compare-card" style="background:var(--surface-solid)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <h4>① 盲测输入题面</h4>
+          <span class="muted" style="font-size:12px">已遮蔽候选解法与误区，仅向模型提供范围与问题</span>
+        </div>
+        <div style="white-space:pre-wrap;color:var(--ink-secondary)">${esc(blindPrompt)}</div>
+      </div>
+      <div class="grid-2">
+        <div class="compare-card" style="border-color:var(--warn-border)">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
+            <h4>② 模型无经验盲猜输出 · 裸测基线</h4>
+            <span class="badge badge-warn">无记忆裸测</span>
+          </div>
+          ${leftBody}
+        </div>
+        <div class="compare-card" style="border-color:var(--brand-border)">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
+            <h4>③ 会话提炼候选经验 · 本次提议</h4>
+            <span class="badge badge-brand">实战提炼候选 · ${esc(o.proposerModel || "-")}</span>
+          </div>
+          <div><strong>候选解法：</strong><div style="white-space:pre-wrap;color:var(--ink);margin-top:2px">${esc(o.solution || "-")}</div></div>
+          ${o.misbelief ? `<div style="padding-top:6px;border-top:1px dashed var(--line)"><strong style="color:var(--warn)">纠正误区：</strong><span class="secondary">${esc(o.misbelief)}</span></div>` : ""}
+        </div>
+      </div>
+      ${verdictStrip}`;
+  };
+
   function renderL2LayerDiagnostic(it) {
     const chain = it.gate_chain || [];
     const diag = it.diagnostic || {};
@@ -10,24 +102,19 @@
     const meta = hitStep.meta || {};
 
     if (it.layer === "L2a" || it.layer === "L2b") {
-      const blindPrompt = meta.blind_prompt || "遮蔽该经验后给模型下发的盲测问题题干";
-      const modelOut = meta.model_prediction || meta.flash_prediction || "（模型盲猜输出）";
-      return `
-        <div class="prose-section"><h3>L2 盲测对照诊断（${esc(it.layer)} · ${esc(it.reason_code)}）</h3></div>
-        <div class="compare-3col">
-          <div class="compare-card">
-            <h4>① 遮蔽经验后的盲测题面</h4>
-            <div>${esc(blindPrompt)}</div>
-          </div>
-          <div class="compare-card" style="border-color:var(--warn-border)">
-            <h4>② 模型盲猜输出 (${esc(hitStep.judge_model || it.model)})</h4>
-            <div>${esc(modelOut)}</div>
-          </div>
-          <div class="compare-card" style="border-color:var(--brand-border)">
-            <h4>③ 候选提议解法</h4>
-            <div>${esc(it.solution)}</div>
-          </div>
-        </div>`;
+      return E.renderL2BlindComparison({
+        chain: chain,
+        finalLayer: it.layer,
+        isRejected: true,
+        reasonCode: it.reason_code,
+        problem: it.problem || it.title,
+        solution: it.solution,
+        reusable: it.reusable_experience,
+        misbelief: it.misbelief,
+        scope: it.scope,
+        proposerModel: it.model,
+        fallbackDetail: it.detail
+      });
     }
 
     if (it.layer === "L1") {
@@ -200,7 +287,7 @@
             <div class="prose-section">
               <h3>核心问题与拦截原因说明</h3>
               <h2 class="prose-lead">${esc(sel.problem || sel.title)}</h2>
-              <p class="secondary" style="margin:8px 0 0">${esc(sel.detail)}</p>
+              ${sel.layer === "L2a" || sel.layer === "L2b" ? "" : `<p class="secondary" style="margin:8px 0 0">${esc(sel.detail)}</p>`}
             </div>
 
             ${renderL2LayerDiagnostic(sel)}
