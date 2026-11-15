@@ -9,6 +9,7 @@ import uuid
 
 from evolvmem.experience_v2.control.agent_identity import normalize_model_name
 from evolvmem.experience_v2.gate.rules import L0_LIMITS
+from evolvmem.experience_v2.interception_store import update_decision_meta
 from evolvmem.experience_v2.llm_meter import BudgetConfig, estimate_tokens, metered_llm
 from evolvmem.experience_v2.writer import ExperienceWriter, Op, TicketIssuer
 
@@ -352,17 +353,18 @@ def run_l3_reconcile_gate(
     now = datetime.now(timezone.utc)
     origin = 'pipeline' if row_data['source_kind'] == 'pipeline' else 'agent'
 
+    meta_l3 = {'relation': rel, 'candidates_checked': judgment.get('candidates_checked', 0), 'incumbent_scope': judgment.get('incumbent_scope') or {}, 'challenger_scope': judgment.get('challenger_scope') or {}, 'tokens_used': judgment.get('tokens_used', 0)}
     with conn.transaction():
         conn.execute(
             """
             INSERT INTO proposal_decisions(
                 decision_id, proposal_uid, layer, verdict, reason_code,
-                confidence, judge_model, detail, target_note_id
-            ) VALUES (%s, %s, 'L3', %s, %s, %s, %s, %s, %s)
+                confidence, judge_model, detail, target_note_id, meta_json
+            ) VALUES (%s, %s, 'L3', %s, %s, %s, %s, %s, %s, %s::jsonb)
             """,
             (
                 decision_id, proposal_uid, verdict, reason_code, judgment['confidence'],
-                judge_model if judgment.get('calls_used') else 'rule-no-candidates', judgment['reason'][:200], judgment['target_note_id'],
+                judge_model if judgment.get('calls_used') else 'rule-no-candidates', judgment['reason'][:200], judgment['target_note_id'], json.dumps(meta_l3, ensure_ascii=False),
             ),
         )
 
@@ -496,6 +498,7 @@ def run_l3_reconcile_gate(
                 misbelief_uid = _spawn_refuted_misbelief_proposal(conn, proposal_uid=proposal_uid, row_data=row_data, incumbent=inc, judgment=judgment)
             conn.execute("UPDATE experience_proposals SET state = 'review', updated_at = now() WHERE uid = %s", (proposal_uid,))
 
+        update_decision_meta(conn, decision_id, {**meta_l3, 'needs_probation': needs_probation, 'trial_id': trial_id, 'new_note_id': new_note_id, 'misbelief_proposal_uid': misbelief_uid})
         conn.execute(
             """
             INSERT INTO experience_relations(

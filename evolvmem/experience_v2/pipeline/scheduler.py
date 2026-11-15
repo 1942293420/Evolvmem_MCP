@@ -14,6 +14,7 @@ from evolvmem.experience_v2.gate.propose import ProposalPolicyError, ProposalSer
 from evolvmem.experience_v2.gate.reconcile import assess_l3_shadow, run_l3_reconcile_gate
 from evolvmem.experience_v2.gate.rules import evaluate_l0_fields, run_l0_gate
 from evolvmem.experience_v2.gate.value import assess_value_cascade, run_l2_value_gate
+from evolvmem.experience_v2.interception_store import record_pipeline_interception
 from evolvmem.experience_v2.llm_meter import BudgetConfig, BudgetDeferred
 from evolvmem.experience_v2.pipeline.events import ParsedSessionEvents, parse_session_events
 from evolvmem.experience_v2.pipeline.extract import HistoryReaderEvidenceVerifier, extract_session_moments
@@ -390,9 +391,12 @@ class PipelineScheduler:
             client=session.summary.adapter or 'codex',
             model=self.flash_model,
         )
+        src_ref = getattr(session.summary, 'source_ref', '')
         for idx, ext in enumerate(extracted):
+            mom = moments[idx] if idx < len(moments) else None
             tokens_total += ext.tokens_used
             if ext.skipped:
+                record_pipeline_interception(conn, owner_id=self.owner_id, track=self.track, session_id=session.summary.session_id, source_ref=src_ref, segment_hash=segment_hash, moment=mom, intercept_layer='Extract', reason_code=ext.skip_reason, agent_client=attr.client, model=self.flash_model, candidate_json=ext.payload, llm_call_id=ext.call_id, tokens_used=ext.tokens_used)
                 continue
             p = ext.payload
             req_prefix = 'bf' if self.track == 'backfill' else 'pipe'
@@ -420,7 +424,8 @@ class PipelineScheduler:
                     },
                     source_kind='pipeline',
                 )
-            except ProposalPolicyError:
+            except ProposalPolicyError as exc:
+                record_pipeline_interception(conn, owner_id=self.owner_id, track=self.track, session_id=session.summary.session_id, source_ref=src_ref, segment_hash=segment_hash, moment=mom, intercept_layer='Quota', reason_code=getattr(exc, 'code', 'policy_blocked'), detail=str(exc), agent_client=attr.client, model=self.flash_model, candidate_json=p, evidence_json=p.get('evidence'))
                 continue
             proposals_cnt += 1
             uid = res['uid']

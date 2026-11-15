@@ -233,15 +233,21 @@ def run_l0_gate(
         evidence_verifier=evidence_verifier,
         require_evidence=require_evidence,
     )
+    l0_meta = {
+        'field_lengths': {k: len(str(v or '').strip()) for k, v in (('problem', row[2]), ('solution', row[3]), ('reusable_experience', row[4]), ('misbelief', row[5]))},
+        'limits': dict(L0_LIMITS),
+        'require_evidence': bool(require_evidence),
+        'evidence_count': len(ev) if isinstance(ev, list) else 0,
+    }
     decision_id = 'dec-l0-' + uuid.uuid4().hex[:20]
     with conn.transaction():
         conn.execute(
             """
             INSERT INTO proposal_decisions(
-                decision_id, proposal_uid, layer, verdict, reason_code, confidence, judge_model, detail
-            ) VALUES (%s, %s, 'L0', %s, %s, %s, 'rule-l0', %s)
+                decision_id, proposal_uid, layer, verdict, reason_code, confidence, judge_model, detail, meta_json
+            ) VALUES (%s, %s, 'L0', %s, %s, %s, 'rule-l0', %s, %s::jsonb)
             """,
-            (decision_id, proposal_uid, verdict, reason_code, 1.0, detail[:200]),
+            (decision_id, proposal_uid, verdict, reason_code, 1.0, detail[:200], json.dumps(l0_meta, ensure_ascii=False)),
         )
         if verdict == 'reject':
             conn.execute(

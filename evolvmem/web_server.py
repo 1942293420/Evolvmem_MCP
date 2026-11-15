@@ -1374,6 +1374,13 @@ def make_handler(service: ContextService):
             self.prepared_extraction = None
             parsed = urlparse(self.path)
             policy = load_policy()
+            if parsed.path == '/v2' or parsed.path.startswith(('/v2/', '/api/console-v2')):
+                from evolvmem.web_v2.http_router import handle_web_v2_request
+                if handle_web_v2_request(
+                    self, parsed=parsed, policy=policy, auth=auth,
+                    auth_lock=auth_lock, ensure_control_plane_ready=ensure_control_plane_ready,
+                ):
+                    return
             console_path = parsed.path == '/api/knowledge-console' or parsed.path.startswith('/api/knowledge-console/')
             if console_path:
                 if self.command == 'GET':
