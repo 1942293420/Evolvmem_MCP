@@ -454,8 +454,9 @@ tr:last-child td { border-bottom: 0; }
   padding: 11px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-subtle);
   display: flex; flex-direction: column; gap: 4px;
 }
-.gate-step.hit-reject, .gate-step.hit-merge { border-color: var(--danger-border); background: var(--danger-soft); }
-.gate-step.hit-pass { border-color: var(--ok-border); }
+.gate-step.hit-reject, .gate-step.hit-merge, .gate-step.fail { border-color: var(--danger-border); background: var(--danger-soft); }
+.gate-step.warn { border-color: var(--warn-border); background: var(--warn-soft); }
+.gate-step.hit-pass, .gate-step.pass { border-color: var(--ok-border); }
 .check-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .check-item {
   padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg-subtle);

@@ -57,6 +57,18 @@
             }
             detail = [step.reason_code, step.judge_model, step.latency_ms != null ? step.latency_ms + "ms" : ""]
               .filter(Boolean).join(" · ");
+            const stepMeta = (step.meta && typeof step.meta === "object") ? step.meta : {};
+            const predPreview = (st === "L2a" || st === "L2b") && stepMeta.model_prediction
+              ? String(stepMeta.model_prediction) : "";
+            return `<div class="gate-step ${cls}">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <strong>${esc(st)}</strong>
+                <span class="badge ${cls === "pass" ? "badge-ok" : cls === "fail" ? "badge-danger" : cls === "warn" ? "badge-warn" : ""}">${esc(label)}</span>
+              </div>
+              ${detail ? `<div class="muted mono" style="font-size:11.5px;margin-top:4px">${esc(detail)}</div>` : ""}
+              ${step.detail ? `<div class="secondary" style="font-size:12.5px;margin-top:4px">${esc(step.detail)}</div>` : ""}
+              ${predPreview ? `<div class="muted" style="font-size:12px;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">模型盲猜：${esc(predPreview)}</div>` : ""}
+            </div>`;
           } else if (finalLayer === st) {
             cls = (st === "L1" || st === "L3") ? "warn" : "fail";
             label = "在此拦截";
@@ -101,7 +113,7 @@
         ${kvCell("向量与主库引擎", "PG 17.10 + pgvector 0.8.2 (HNSW 768d)", true)}
         ${kvCell("旧版提炼策略锁", "ai_processing_enabled=false [LOCKED]", true)}
         ${kvCell("SQLite 运行句柄", "0 (7/7 @ 0400 RETIRED)", true)}
-        ${kvCell("集成代码版本", "evolution/integration @ d5a77b5", true)}
+        ${kvCell("集成代码版本", "live-v2 (PG 17.10)", true)}
         ${kvCell("8h 会话有效期", `<span id="diag-sess-remain">${formatRemain(s.sessionRemainingSec)}</span> (非滑动)`, true)}
       </div>
       <div class="callout-box">

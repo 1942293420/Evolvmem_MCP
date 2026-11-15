@@ -46,6 +46,14 @@ _SECRET_RES = (
     re.compile(r'(?i)\b(?:postgres(?:ql)?|mysql|redis|amqp)://[^:\s/]+:[^@\s]+@'),
 )
 _PTR_RE = re.compile(r'^(archive|session|context|event):([A-Za-z0-9._:-]{1,128})\Z')
+_WS_NORM_RE = re.compile(r'\s+')
+_TRUNCATED_TAIL_RE = re.compile(r'(?:…|\.{3,})\s*$')
+_SPECULATIVE_HEAD_RE = re.compile(r'^(?:推测|猜测|初步推测|初步判断)[:：]')
+_INCOMPLETE_BODY_RE = re.compile(
+    r'(?:正式优化尚未实施|优化尚未实施|尚未实施优化|未验证优化效果|本轮只做核查|仅做核查|'
+    r'本轮未改代码|未改代码|现有日志还不能精确区分|正在补修并复测|尚未安装或试跑|'
+    r'仅完成文档和源码评估|待进一步排查|暂未修复|本次未改动线上页面)'
+)
 
 
 class EvidenceVerifier(Protocol):
@@ -186,6 +194,22 @@ def evaluate_l0_fields(
 
     if _is_task_log(problem, solution, reusable):
         return 'reject', 'task_log', '判定为单次会话任务日志而非可复用工程经验'
+
+    norm_p = _WS_NORM_RE.sub(' ', problem).strip()
+    norm_s = _WS_NORM_RE.sub(' ', solution).strip()
+    norm_r = _WS_NORM_RE.sub(' ', reusable).strip()
+    if len(norm_p) >= 4 and (norm_p == norm_r or norm_p == norm_s):
+        return 'reject', 'weak_evidence', '可复用原则或解法仅机械复读问题标题，缺少独立结论与答案'
+
+    if _TRUNCATED_TAIL_RE.search(solution) or _TRUNCATED_TAIL_RE.search(reusable):
+        return 'reject', 'weak_evidence', '解法或可复用原则被机械截断成残句，缺少完整闭环结论'
+
+    if (
+        _SPECULATIVE_HEAD_RE.search(solution)
+        or _SPECULATIVE_HEAD_RE.search(reusable)
+        or any(_INCOMPLETE_BODY_RE.search(t) for t in (problem, solution, reusable))
+    ):
+        return 'reject', 'weak_evidence', '仅含未验证推测或半程核查记录，缺少最终根因与已验证解法'
 
     evidence = proposal.get('evidence') or []
     if require_evidence:

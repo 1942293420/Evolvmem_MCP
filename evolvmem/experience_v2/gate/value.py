@@ -19,17 +19,13 @@ L2_PREDICT_SYSTEM_PROMPT = (
 )
 
 L2_JUDGE_SYSTEM_PROMPT = (
-    '你是客观盲测评审员，只做对比参考答案与候选答案（模型盲测答案）的一致性判定。\n'
-    'consistent 表示「盲测是否已命中核心解法，或该条仅属无需记忆的通用常识/工具手滑」：\n'
-    '- consistent 为 true：1) 盲测已准确说出参考解法的核心机制（忽略算sha256校验、设UTF-8编码等顺带兜底细节）；'
-    '或 2) 问题仅属通用编程/系统常识（命令行超长写文件、JSON解析前判类型）或Agent调工具语法参数手滑（apply_patch冲突、内联引号截断、常规UI异步加载重试）。\n'
-    '- consistent 为 false：参考解法含盲测未猜出、猜错或相反的具体事实：'
-    '1) 私有业务核算口径（如特定平台SKU禁挂人、只能按占比分摊，盲测却猜建映射表）；'
-    '2) 内部系统真实生产状态与切换边界（如正式systemd服务仍连旧库及三阶段独立边界，盲测仅泛谈改配置重启）；'
-    '3) 精确二进制偏移（如前16字节offset 12处uint32长度，盲测未说出或说错字节数）；'
-    '4) 协作数据源与内部CLI规程（如多维表动态增长需用lark-cli取revision+records_count做增量diff，盲测仅泛谈主键清洗或加锁）。\n'
-    '注意：只要盲测未命中上述具体事实，consistent 必须填布尔值 false！\n'
-    '仅输出严格单个 JSON 对象：{"consistent": true或false, "confidence": 0.0~1.0, "detail": "<=120字判定说明"}。'
+    '你是客观盲测评审员，执行「结果完备性审查 + 只做对比参考答案与候选答案（模型盲测答案）的一致性判定」。\n'
+    '- consistent 为 true（拦截不入库）涵盖三类情况：\n'
+    '  0) 无结论/未验证半成品（reason_code="weak_evidence"）：参考解法未给出最终定位的具体根因与已验证落地的具体修复或明确口径（例如只列“逐项分解排查范围/索引/重排开销”等空泛清单、含“推测/尚未实施/只做核查未改代码/待排查”、或仅有耗时现象与施工汇报而无复用答案），即便夹带内部模块名或耗时数字也必须判 true 且 reason_code 填 "weak_evidence"！\n'
+    '  1) 盲测已准确说出参考解法核心机制（忽略算sha256校验等顺带兜底细节，reason_code="common_knowledge"）；\n'
+    '  2) 仅属通用编程/系统常识或Agent调工具语法参数手滑（reason_code="common_knowledge"）。\n'
+    '- consistent 为 false（放行入库）：必须同时满足参考解法已给出完整具体的最终根因/解法，且包含盲测未猜出的具体事实：私有业务核算口径、内部系统真实边界、精确协议偏移或协作CLI规程。\n'
+    '仅输出严格单个 JSON 对象：{"consistent": true或false, "reason_code": "common_knowledge或weak_evidence", "confidence": 0.0~1.0, "detail": "<=120字判定说明"}。'
 )
 
 
@@ -95,6 +91,26 @@ def _parse_judge_json(raw_text: str) -> tuple[bool, float, str]:
     return consistent, conf, detail
 
 
+def _parse_judge_reason(raw_text: str) -> str:
+    cleaned = _FENCE_RE.sub('', raw_text or '').strip()
+    obj: dict[str, Any] = {}
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            obj = parsed
+    except ValueError:
+        s, e = cleaned.find('{'), cleaned.rfind('}')
+        if s != -1 and e > s:
+            try:
+                parsed = json.loads(cleaned[s : e + 1])
+                if isinstance(parsed, dict):
+                    obj = parsed
+            except ValueError:
+                pass
+    rc = str(obj.get('reason_code') or '').strip()
+    return rc if rc in ('weak_evidence', 'task_log', 'common_knowledge', 'one_off_bug') else 'common_knowledge'
+
+
 def _run_single_tier(
     conn,
     *,
@@ -149,6 +165,9 @@ def _run_single_tier(
         transport=transport,
     )
     consistent, conf, detail = _parse_judge_json(judge_res.text)
+    reason = _parse_judge_reason(judge_res.text)
+    if consistent and reason == 'weak_evidence' and not detail.startswith('[incomplete]'):
+        detail = f'[incomplete] {detail}'[:200]
     return pred_res.text.strip(), consistent, conf, detail, (pred_res.total_tokens + judge_res.total_tokens)
 
 
@@ -189,19 +208,21 @@ def assess_value_cascade(
         budget=budget,
     )
     if flash_hit:
+        f_reason = 'weak_evidence' if flash_detail.startswith('[incomplete]') else 'common_knowledge'
+        f_clean_det = flash_detail[len('[incomplete] '):] if flash_detail.startswith('[incomplete] ') else flash_detail
         dec_l2a = {
             'layer': 'L2a',
             'verdict': 'reject',
-            'reason_code': 'common_knowledge',
+            'reason_code': f_reason,
             'confidence': flash_conf,
             'judge_model': flash_model,
-            'detail': (flash_detail or 'flash 盲测直接命中，判为通用常识')[:200],
+            'detail': (f_clean_det or ('缺少完整根因与已验证解法' if f_reason == 'weak_evidence' else 'flash 盲测直接命中，判为通用常识'))[:200],
             'meta': {'blind_prompt': blind_prompt, 'model_prediction': flash_pred, 'tokens_used': flash_toks},
         }
         return L2ValueOutcome(
             layer='L2a',
             verdict='reject',
-            reason_code='common_knowledge',
+            reason_code=f_reason,
             confidence=flash_conf,
             judge_model=flash_model,
             detail=dec_l2a['detail'],
@@ -236,19 +257,21 @@ def assess_value_cascade(
         budget=budget,
     )
     if strong_hit:
+        s_reason = 'weak_evidence' if strong_detail.startswith('[incomplete]') else 'common_knowledge'
+        s_clean_det = strong_detail[len('[incomplete] '):] if strong_detail.startswith('[incomplete] ') else strong_detail
         dec_l2b = {
             'layer': 'L2b',
             'verdict': 'reject',
-            'reason_code': 'common_knowledge',
+            'reason_code': s_reason,
             'confidence': strong_conf,
             'judge_model': strong_model,
-            'detail': (strong_detail or '强模型盲测命中，模型本身可推导出解法')[:200],
+            'detail': (s_clean_det or ('缺少完整根因与已验证解法' if s_reason == 'weak_evidence' else '强模型盲测命中，模型本身可推导出解法'))[:200],
             'meta': {'blind_prompt': blind_prompt, 'model_prediction': strong_pred, 'flash_prediction': flash_pred, 'tokens_used': strong_toks},
         }
         return L2ValueOutcome(
             layer='L2b',
             verdict='reject',
-            reason_code='common_knowledge',
+            reason_code=s_reason,
             confidence=strong_conf,
             judge_model=strong_model,
             detail=dec_l2b['detail'],

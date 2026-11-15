@@ -317,7 +317,12 @@
           misbelief: "误以为单独导出业务库转储文件并预建普通应用账号即可完整还原表策略。",
           scope: { os: "Linux", system: "PG 17.10 灾备" },
           evidence: { ref: "archive:23863", event: 412, snippet: "[隔离演练 :55435] 初始报错缺少 evolvmem_control_owner 角色 -> 补齐 --roles-only --no-role-passwords 生成 roles.sql -> 二次演练 31/31 表全绿通过。" },
-          gateVerdict: "pass", gateLayer: "L3 (全新经验入库)", confidence: 0.94, l0Warnings: [], status: "pending"
+          gateVerdict: "pass", gateLayer: "L3 (全新经验入库)", confidence: 0.94, l0Warnings: [], status: "pending",
+          gateChain: [
+            { decision_id: "demo-l0-101", layer: "L0", verdict: "pass", reason_code: null, confidence: 1.0, judge_model: "rule-l0", detail: "字段边界与原文证据校验通过", meta: {} },
+            { decision_id: "demo-l2a-101", layer: "L2a", verdict: "pass", reason_code: null, confidence: 0.35, judge_model: "deepseek-v4-flash", detail: "快模仅答出 pg_restore 后重建普通用户，未命中无密码角色快照", meta: { blind_prompt: "触发范围: {\"os\": \"Linux\", \"system\": \"PG 17.10 灾备\"}\n问题现象: 开启强制行级权限隔离（FORCE RLS）的逻辑库恢复到新实例时，因缺少自定义角色报错", model_prediction: "在目标实例手动 CREATE ROLE 创建缺失的应用角色后重新执行 pg_restore 即可。" } },
+            { decision_id: "demo-l2b-101", layer: "L2b", verdict: "pass", reason_code: null, confidence: 0.89, judge_model: "deepseek-chat", detail: "强模也未说出 pg_dumpall --roles-only --no-role-passwords 及剔除 superuser", meta: { blind_prompt: "触发范围: {\"os\": \"Linux\", \"system\": \"PG 17.10 灾备\"}\n问题现象: 开启强制行级权限隔离（FORCE RLS）的逻辑库恢复到新实例时，因缺少自定义角色报错", model_prediction: "先使用 pg_dumpall --globals-only 导出全部全局对象并在恢复库执行，确保应用账号与角色权限先创建。", flash_prediction: "在目标实例手动 CREATE ROLE 创建缺失的应用角色后重新执行 pg_restore 即可。" } }
+          ]
         },
         {
           uid: "prop-live-102", track: "live", model: "deepseek-v4-flash", agent: "codex-win-01", category: "业务经验", kind: "procedure",
@@ -327,7 +332,11 @@
           misbelief: "以为所有列表工具返回的顶层字段必然直接就是数组。",
           scope: { os: "Windows", client: "局域网 MCP" },
           evidence: { ref: "archive:23891", event: 88, snippet: "校验客户端兼容 val.get('projects', {}).get('projects') -> 成功读取全部 90 个项目。" },
-          gateVerdict: "pass", gateLayer: "L2b (强模型核验通过)", confidence: 0.89, l0Warnings: [], status: "pending"
+          gateVerdict: "pass", gateLayer: "L2b (强模型核验通过)", confidence: 0.89, l0Warnings: [], status: "pending",
+          gateChain: [
+            { decision_id: "demo-l2a-102", layer: "L2a", verdict: "pass", reason_code: null, confidence: 0.42, judge_model: "deepseek-v4-flash", detail: "未命中实际双层嵌套兼容解法", meta: { blind_prompt: "触发范围: {\"client\": \"局域网 MCP\", \"os\": \"Windows\"}\n问题现象: 局域网服务返回历史项目列表时存在双层嵌套字段，导致旧版客户端解析结果为空", model_prediction: "检查服务端 JSON 序列化器并直接把返回格式改成扁平数组。" } },
+            { decision_id: "demo-l2b-102", layer: "L2b", verdict: "pass", reason_code: null, confidence: 0.89, judge_model: "deepseek-chat", detail: "强模仅建议修改服务端结构，未涵盖客户端双结构兼容策略", meta: { blind_prompt: "触发范围: {\"client\": \"局域网 MCP\", \"os\": \"Windows\"}\n问题现象: 局域网服务返回历史项目列表时存在双层嵌套字段，导致旧版客户端解析结果为空", model_prediction: "升级客户端前先统一接口返回格式，避免继续输出 data.data 双层嵌套。", flash_prediction: "检查服务端 JSON 序列化器并直接把返回格式改成扁平数组。" } }
+          ]
         },
         {
           uid: "prop-live-103", track: "live", model: "unknown-experimental", agent: "kimi-cli-guest", category: "前端经验", kind: "pitfall",

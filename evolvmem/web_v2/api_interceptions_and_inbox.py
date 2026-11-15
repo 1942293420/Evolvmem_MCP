@@ -195,7 +195,12 @@ def get_review_inbox(console: Any, policy: Any, session: Any, params: dict[str, 
                 item['gate_reason'] = None
                 item['gate_chain'] = None
             else:
-                chain = fetch_proposal_gate_chain(conn, item['uid'])
+                chain = fetch_proposal_gate_chain(
+                    conn,
+                    item['uid'],
+                    problem=str(item.get('problem') or ''),
+                    scope=(item.get('scope') if isinstance(item.get('scope'), dict) else {}),
+                )
                 item['gate_chain'] = chain['decisions']
                 item['llm_calls'] = chain['llm_calls']
                 if rev is not None:
