@@ -354,6 +354,43 @@ def _apply_plan(
         conn.commit()
 
 
+def _reconcile_retired_legacy_decisions(conn_factory: Callable[[], Any]) -> int:
+    """Ensure already-retired legacy notes have a reject decision in proposal_decisions."""
+    reconciled = 0
+    with conn_factory() as conn:
+        rows = conn.execute(
+            """
+            SELECT n.id, n.owner_id, n.proposal_uid, n.scope, n.evidence
+            FROM experience_notes n
+            WHERE n.origin = 'legacy'
+              AND n.status = 'retired'
+              AND n.proposal_uid IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM proposal_decisions d
+                  WHERE d.proposal_uid = n.proposal_uid AND d.verdict = 'reject'
+              )
+            """
+        ).fetchall()
+        for nid, owner_id, prop_uid, sc_raw, ev_raw in rows:
+            sc_d = _jval(sc_raw, {})
+            ev_l = _jval(ev_raw, [])
+            legacy_id = _extract_legacy_id(sc_d if isinstance(sc_d, dict) else {}, ev_l if isinstance(ev_l, list) else [], str(nid))
+            rej_dec_id = _det_id('dec', str(owner_id), f's4rem2-rej:{nid}')
+            conn.execute(
+                """
+                INSERT INTO proposal_decisions(decision_id, proposal_uid, layer, verdict, reason_code, confidence, judge_model, detail, target_note_id, meta_json)
+                VALUES (%s, %s, 'L0', 'reject', 'weak_evidence', 0.95, 'rule-l0-remediate', %s, %s, %s::jsonb)
+                ON CONFLICT (decision_id) DO NOTHING
+                """,
+                (rej_dec_id, prop_uid, '存量治理退役：缺少具体根因或已验证可复用结论', nid, json.dumps({'remediated_from': 'stage4_legacy_retired', 'legacy_id': legacy_id}, ensure_ascii=False)),
+            )
+            conn.execute("UPDATE experience_proposals SET state = 'rejected', updated_at = now() WHERE uid = %s", (prop_uid,))
+            reconciled += 1
+        if reconciled:
+            conn.commit()
+    return reconciled
+
+
 def remediate_legacy_notes(
     conn_factory: Callable[[], Any],
     *,
@@ -378,6 +415,7 @@ def remediate_legacy_notes(
     f_tr, _s_tr, _j_tr = _resolve_transports(use_flash, use_strong, use_strong, flash_transport, strong_transport, strong_transport)
     active_budget = budget or BudgetConfig(live_daily_tokens=10_000_000, backfill_daily_tokens=15_000_000, session_max_tokens=1_000_000)
 
+    retired_reconciled = _reconcile_retired_legacy_decisions(conn_factory)
     with conn_factory() as conn:
         raw_rows = conn.execute(
             """
@@ -459,6 +497,6 @@ def remediate_legacy_notes(
             errors += 1
 
     return {
-        'scanned': len(raw_rows), 'already_remediated': already_remediated, 'pre_rejected': len(pre_plans),
-        'llm_audited': len(llm_queue), 'retired': retired, 'updated': updated, 'errors': errors,
+        'scanned': len(raw_rows), 'already_remediated': already_remediated, 'retired_reconciled': retired_reconciled,
+        'pre_rejected': len(pre_plans), 'llm_audited': len(llm_queue), 'retired': retired, 'updated': updated, 'errors': errors,
     }

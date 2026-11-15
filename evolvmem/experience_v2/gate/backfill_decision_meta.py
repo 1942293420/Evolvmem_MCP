@@ -9,7 +9,7 @@ from evolvmem.experience_v2.gate.value import (
     L2_PREDICT_SYSTEM_PROMPT,
     _build_blind_problem_prompt,
 )
-from evolvmem.experience_v2.llm_meter import BudgetConfig, load_llm_endpoints_from_file, metered_llm
+from evolvmem.experience_v2.llm_meter import BudgetConfig, LlmTransportError, load_llm_endpoints_from_file, metered_llm
 from evolvmem.experience_v2.pipeline.live_worker import _resolve_transports
 
 
@@ -108,23 +108,26 @@ def _process_l2_proposal(
             model = flash_model if is_l2a else strong_model
             tr = f_tr if is_l2a else s_tr
             stage = 'l2a_predict_backfill' if is_l2a else 'l2b_predict_backfill'
-            res = metered_llm(
-                track=track,
-                stage=stage,
-                model=model,
-                messages=[
-                    {'role': 'system', 'content': L2_PREDICT_SYSTEM_PROMPT},
-                    {'role': 'user', 'content': blind_prompt},
-                ],
-                session_id=session_id,
-                max_output_tokens=220,
-                conn=conn,
-                owner_id=owner_id,
-                proposal_uid=uid,
-                is_shadow=False,
-                budget=budget,
-                transport=tr,
-            )
+            msgs = [
+                {'role': 'system', 'content': L2_PREDICT_SYSTEM_PROMPT},
+                {'role': 'user', 'content': blind_prompt},
+            ]
+
+            def _call_l2(m: str, t: Any) -> Any:
+                return metered_llm(
+                    track=track, stage=stage, model=m, messages=msgs,
+                    session_id=session_id, max_output_tokens=220, conn=conn,
+                    owner_id=owner_id, proposal_uid=uid, is_shadow=False,
+                    budget=budget, transport=t,
+                )
+
+            try:
+                res = _call_l2(model, tr)
+            except LlmTransportError:
+                if is_l2a or f_tr is tr:
+                    raise
+                model = flash_model
+                res = _call_l2(flash_model, f_tr)
             pred_text = res.text.strip()
             toks = int(res.input_tokens) + int(res.output_tokens)
             new_meta: dict[str, Any] = {
@@ -167,9 +170,11 @@ def backfill_historical_decision_meta(
         if flash_transport is None and 'flash' in endpoints:
             use_flash = endpoints['flash'].model
         if strong_transport is None:
-            s_ep = endpoints.get('strong') or endpoints.get('fallback') or endpoints.get('flash')
-            if s_ep is not None:
-                use_strong = s_ep.model
+            prefix = use_strong.split('-', 1)[0].casefold()
+            if not any(ep.provider.casefold() == prefix for ep in endpoints.values()):
+                s_ep = endpoints.get('strong') or endpoints.get('fallback') or endpoints.get('flash')
+                if s_ep is not None:
+                    use_strong = s_ep.model
     f_tr, s_tr, _j_tr = _resolve_transports(
         use_flash,
         use_strong,
