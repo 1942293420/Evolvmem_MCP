@@ -196,6 +196,7 @@ def assess_value_cascade(
             'confidence': flash_conf,
             'judge_model': flash_model,
             'detail': (flash_detail or 'flash 盲测直接命中，判为通用常识')[:200],
+            'meta': {'blind_prompt': blind_prompt, 'model_prediction': flash_pred, 'tokens_used': flash_toks},
         }
         return L2ValueOutcome(
             layer='L2a',
@@ -218,6 +219,7 @@ def assess_value_cascade(
         'confidence': flash_conf,
         'judge_model': flash_model,
         'detail': (flash_detail or 'flash 盲测未命中，移交强模型复核')[:200],
+        'meta': {'blind_prompt': blind_prompt, 'model_prediction': flash_pred, 'tokens_used': flash_toks},
     }
     strong_pred, strong_hit, strong_conf, strong_detail, strong_toks = _run_single_tier(
         conn,
@@ -241,6 +243,7 @@ def assess_value_cascade(
             'confidence': strong_conf,
             'judge_model': strong_model,
             'detail': (strong_detail or '强模型盲测命中，模型本身可推导出解法')[:200],
+            'meta': {'blind_prompt': blind_prompt, 'model_prediction': strong_pred, 'flash_prediction': flash_pred, 'tokens_used': strong_toks},
         }
         return L2ValueOutcome(
             layer='L2b',
@@ -263,6 +266,7 @@ def assess_value_cascade(
         'confidence': strong_conf,
         'judge_model': strong_model,
         'detail': (strong_detail or '强模型盲测未命中，确认为高价值私有/经验知识')[:200],
+        'meta': {'blind_prompt': blind_prompt, 'model_prediction': strong_pred, 'flash_prediction': flash_pred, 'tokens_used': strong_toks},
     }
     return L2ValueOutcome(
         layer='L2b',
@@ -329,8 +333,8 @@ def run_l2_value_gate(
             conn.execute(
                 """
                 INSERT INTO proposal_decisions(
-                    decision_id, proposal_uid, layer, verdict, reason_code, confidence, judge_model, detail
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    decision_id, proposal_uid, layer, verdict, reason_code, confidence, judge_model, detail, meta_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 (
                     last_decision_id,
@@ -341,6 +345,7 @@ def run_l2_value_gate(
                     dec['confidence'],
                     dec['judge_model'],
                     dec['detail'][:200],
+                    json.dumps(dec.get('meta') or {}, ensure_ascii=False),
                 ),
             )
         new_state = 'rejected' if outcome.verdict == 'reject' else 'review'

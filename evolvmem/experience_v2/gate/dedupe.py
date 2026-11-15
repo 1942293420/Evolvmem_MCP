@@ -93,6 +93,7 @@ def run_l1_dedupe(
 
     best_id = match[0] if match else None
     best_sim = float(match[1]) if (match and match[1] is not None) else 0.0
+    l1_meta = json.dumps({'cosine_similarity': round(best_sim, 6), 'threshold': float(threshold), 'nearest_note_id': best_id}, ensure_ascii=False)
     decision_id = 'dec-l1-' + uuid.uuid4().hex[:20]
 
     with conn.transaction():
@@ -106,10 +107,10 @@ def run_l1_dedupe(
                 """
                 INSERT INTO proposal_decisions(
                     decision_id, proposal_uid, layer, verdict, reason_code,
-                    confidence, judge_model, detail, target_note_id
-                ) VALUES (%s, %s, 'L1', 'merge', 'duplicate', %s, 'local-embedder', %s, %s)
+                    confidence, judge_model, detail, target_note_id, meta_json
+                ) VALUES (%s, %s, 'L1', 'merge', 'duplicate', %s, 'local-embedder', %s, %s, %s::jsonb)
                 """,
-                (decision_id, proposal_uid, best_sim, detail[:200], best_id),
+                (decision_id, proposal_uid, best_sim, detail[:200], best_id, l1_meta),
             )
             ticket = ticket_issuer.issue(
                 proposal_uid=proposal_uid,
@@ -166,10 +167,10 @@ def run_l1_dedupe(
             """
             INSERT INTO proposal_decisions(
                 decision_id, proposal_uid, layer, verdict, reason_code,
-                confidence, judge_model, detail
-            ) VALUES (%s, %s, 'L1', 'pass', NULL, %s, 'local-embedder', %s)
+                confidence, judge_model, detail, meta_json
+            ) VALUES (%s, %s, 'L1', 'pass', NULL, %s, 'local-embedder', %s, %s::jsonb)
             """,
-            (decision_id, proposal_uid, 1.0 - best_sim, detail[:200]),
+            (decision_id, proposal_uid, 1.0 - best_sim, detail[:200], l1_meta),
         )
         mode = _resolve_gate_mode(gate_mode, category)
         if mode in ('review', 'partial', 'auto'):
