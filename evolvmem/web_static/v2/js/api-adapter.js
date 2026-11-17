@@ -56,6 +56,12 @@
   function requestContext(){return {state:E.state,view:viewKey(),session:E.session || null,ticket:E.session?E.session.capture():null};}
   function currentRequest(scope){return !!scope && scope.state===E.state && scope.view===viewKey() && (!scope.ticket || (scope.session===E.session && E.session.isCurrent(scope.ticket)));}
 
+  function historyMetadata(block) {
+    const count = value => Number.isInteger(value) && value >= 0 ? value : null;
+    return { firstAt: block.observed_first_at ?? null, lastAt: block.observed_last_at ?? null,
+      turns: count(block.turn_count), messageCount: count(block.message_count), timeBasis: block.time_basis || null };
+  }
+
   function normalizeExp(n) {
     return {
       id: n.id, category: n.category, kind: n.kind || "pitfall",
@@ -306,10 +312,14 @@
       if (res.status === 200 && res.data.ok) {
         const blk = s.historyBlocks.find(function (b) { return b.id === blockId; });
         if (blk) {
-          blk.transcript = (res.data.messages || []).map(function (m) {
+          const messages = res.data.messages || [];
+          blk.timeBasis = res.data.time_basis || blk.timeBasis || null;
+          blk.transcript = messages.map(function (m) {
             const role = m.role === "assistant" ? "助手" : m.role === "user" ? "用户" : (m.role || "消息");
             return role + "：" + String(m.content || "");
           });
+          blk.transcriptTimes = messages.map(m => m.recorded_at ?? null);
+          blk.transcriptTimeBases = messages.map(m => m.time_basis || res.data.time_basis || blk.timeBasis);
           blk._turnsLoaded = true;
         }
       }
@@ -360,7 +370,7 @@
           s.historyBlocks = (uRes.data.blocks || []).map(function (b) {
             return {
               id: b.block_id, project: null, workspacePath: "", workspaceReason: b.reason || "", title: b.title || b.block_id,
-              sourceRef: "pg:" + b.block_id, turns: b.turn_count || 0,
+              sourceRef: "pg:" + b.block_id, ...historyMetadata(b),
               bm25: 0, trgm: 0, vector: 0, rrf: 1, hasAttachment: false, attachmentBytes: 0, transcript: []
             };
           });
@@ -372,7 +382,7 @@
           s.historyBlocks = (sRes.data.items || []).map(function (it) {
             return {
               id: it.block_id, project: (it.projects && it.projects[0]) || null, workspacePath: it.workspace_path || "", workspaceReason: it.reason || "",
-              title: it.title || it.block_id, sourceRef: "pg:" + it.block_id, turns: 0,
+              title: it.title || it.block_id, sourceRef: "pg:" + it.block_id, ...historyMetadata(it),
               bm25: 0, trgm: 0, vector: 0, rrf: Math.min(1, Number(it.score || 0.5)),
               hasAttachment: false, attachmentBytes: 0, transcript: it.snippet ? ["摘要：" + it.snippet] : []
             };
@@ -390,7 +400,7 @@
             s.historyBlocks = (pRes.data.blocks || []).map(function (b) {
               return {
                 id: b.block_id, project: curKey, workspacePath: b.workspace_path || (activeProjs.find(p => p.key === curKey) || {}).workspacePath || "", title: b.title || b.block_id,
-                sourceRef: "pg:" + b.block_id, turns: b.turn_count || 0,
+                sourceRef: "pg:" + b.block_id, ...historyMetadata(b),
                 bm25: 0, trgm: 0, vector: 0, rrf: 1, hasAttachment: false, attachmentBytes: 0, transcript: []
               };
             });

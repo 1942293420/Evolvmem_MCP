@@ -10,7 +10,7 @@ from evolvmem.history_pg.config import PgHistoryConfig
 from evolvmem.history_pg.history_web_pg import dispatch_pg_history_api
 from evolvmem.history_pg.schema import apply_history_schemas, ensure_databases_exist
 from evolvmem.history_pg.workspace_paths import normalize_workspace_path, workspace_key, workspace_name
-from evolvmem.history_pg.workspace_views import WorkspaceHistoryReader
+from evolvmem.history_pg.workspace_views import WorkspaceHistoryReader, _response_time
 from tests.stage5.conftest import STAGE5_PG_CONTAINER, STAGE5_PG_PORT, STAGE5_PW_FILE
 
 
@@ -23,6 +23,13 @@ def test_workspace_paths_are_client_lexical_and_keep_real_generic_names():
     assert normalize_workspace_path(r'\\server\share\App') == r'\\server\share\App'
     for invalid in ('relative/folder', 'C:relative', 'folder\x00bad', '', None, {}, 3):
         assert normalize_workspace_path(invalid) == ''
+
+
+def test_archive_time_keeps_source_precision_and_only_known_utc_is_qualified():
+    for original in ('', '2026-11-17', '20261117', 'invalid', '2026-02-30 10:00:00', '2026-11-17T04:00:00Z'):
+        assert _response_time(original, 'archive_fallback') == original
+    assert _response_time('2026-11-17 04:00:00', 'archive_fallback') == '2026-11-17T04:00:00+00:00'
+    assert _response_time('2026-11-17 04:00:00', 'recorded') == '2026-11-17 04:00:00'
 
 
 @pytest.fixture
@@ -104,11 +111,16 @@ def test_workspace_search_filters_before_limit_and_projects_relabel(seeded):
     hits = reader.hybrid_search('needle', project=target, limit=1)
     assert len(hits) == 1 and hits[0]['block_id'] == bids['other']
     assert hits[0]['projects'] == [target] and hits[0]['workspace_path'] == r'C:\Two\App'
+    assert hits[0]['turn_count'] == 1 and hits[0]['message_count'] == 2
+    assert hits[0]['observed_first_at'] == '2026-11-16'
+    assert hits[0]['observed_last_at'] == '2026-11-17'
+    assert hits[0]['time_basis'] == 'recorded'
     assert reader.hybrid_search('needle', project='workspace-' + '0' * 32, limit=1) == []
     unknown = reader.hybrid_search('needle', scope='unassigned', limit=100)
     ours = [h for h in unknown if h['block_id'].startswith(prefix)]
     assert {h['block_id'] for h in ours} == {bids['unknown'], bids['mixed'], bids['bad']}
     assert all(h['projects'] == [] for h in ours)
+    assert all(h['turn_count'] == 1 and h['observed_last_at'] == '2026-11-17' for h in ours)
     vector = [1.] + [0.] * 767
     with cfg.connect(cfg.history_migration_db) as conn:
         literal = '[' + ','.join(str(n) for n in vector) + ']'
@@ -185,3 +197,26 @@ def test_workspace_trash_disambiguates_same_names_and_restores_only_one(seeded):
     assert reader.project_overview(first)['ok']
     assert reader.project_overview(second)['ok'] is False
     assert reader.block_page(bids['other'])['ok'] is False
+
+
+def test_message_times_expose_archive_fallback_without_changing_stored_values(seeded):
+    cfg, prefix, proj, bids = seeded
+    reader = WorkspaceHistoryReader(cfg, user_id='workspace-test')
+    with cfg.connect(cfg.history_migration_db) as conn:
+        conn.execute("UPDATE em_history.blocks SET adapter='dsh',kind='live_session' WHERE block_id=%s", (bids['other'],))
+        conn.execute("UPDATE em_history.messages SET recorded_at='2026-11-17 04:00:00' WHERE block_id=%s", (bids['other'],))
+        conn.commit()
+    records = reader.unassigned()['blocks'] + [b for p in reader.projects()['projects'] for b in reader.project_overview(p['project'])['blocks']]
+    hit = next(b for b in records if b['block_id'] == bids['other'])
+    assert hit['time_basis'] == 'archive_fallback'
+    result = reader.block_turn_page(bids['other'])
+    assert result['ok'] and result['time_basis'] == 'archive_fallback'
+    assert result['messages'][0]['recorded_at'] == '2026-11-17T04:00:00+00:00'
+    assert result['messages'][0]['time_basis'] == 'archive_fallback'
+    assert reader.block_turn_page(bids['a'])['time_basis'] == 'recorded'
+    status, payload = dispatch_pg_history_api('GET', '/api/history-candidate/block/' + bids['other'] + '/turns', {}, {},
+        owner_verified=True, pg_config=cfg,
+        environ={'EVOLVMEM_CONSOLE_OWNER_ID': 'workspace-test', 'EVOLVMEM_HISTORY_CANDIDATE_NAMESPACE': 'workspace-test'})
+    assert status == 200 and payload['time_basis'] == 'archive_fallback'
+    with cfg.connect(cfg.history_migration_db) as conn:
+        assert conn.execute('SELECT recorded_at FROM em_history.messages WHERE block_id=%s', (bids['other'],)).fetchone()[0] == '2026-11-17 04:00:00'

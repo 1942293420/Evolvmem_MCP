@@ -20,7 +20,7 @@ function setup(protocol = 'http:') {
     openDrawer:(title,body,sub)=>{drawer={title,body,sub};},matchPostToolUse:()=>({sig:'fake',note:null})
   };
   const context = vm.createContext({EvolvMemV2:E,location:{protocol},console});
-  for (const file of ['render-pipeline-and-history.js','l3-drawers.js','render-interceptions.js']) vm.runInContext(fs.readFileSync(path.join(jsRoot,file),'utf8'),context,{filename:file});
+  for (const file of ['history-time.js','render-pipeline-and-history.js','l3-drawers.js','render-interceptions.js']) vm.runInContext(fs.readFileSync(path.join(jsRoot,file),'utf8'),context,{filename:file});
   return {E,context,drawer:()=>drawer};
 }
 

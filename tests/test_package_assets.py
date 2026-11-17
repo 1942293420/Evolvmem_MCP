@@ -34,3 +34,7 @@ def test_wheel_includes_nested_redesign_page(tmp_path):
         picker = "evolvmem/web_static/v2/js/history-project-picker.js"
         assert picker in built.namelist()
         assert built.read(picker) == (root / picker).read_bytes()
+
+        times = "evolvmem/web_static/v2/js/history-time.js"
+        assert times in built.namelist()
+        assert built.read(times) == (root / times).read_bytes()

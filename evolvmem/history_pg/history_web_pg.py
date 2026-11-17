@@ -99,7 +99,7 @@ def dispatch_pg_history_api(
 
     try:
         grouping = str(params.get('grouping') or '')
-        if (upper == 'POST' and params.get('kind') == 'workspace') or clean == '/api/history-candidate/management/trash':
+        if (upper == 'POST' and params.get('kind') == 'workspace') or clean == '/api/history-candidate/management/trash' or _BLK_TURNS_RE.match(clean):
             grouping = 'workspace'
         if grouping not in ('', 'workspace'):
             return 400, {'ok': False, 'error': 'invalid_history_grouping'}

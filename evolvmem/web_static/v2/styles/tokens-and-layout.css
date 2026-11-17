@@ -420,6 +420,13 @@ tr:last-child td { border-bottom: 0; }
 .chat-bubble { padding: 12px 15px; border-radius: 11px; border: 1px solid var(--line); background: var(--bg-subtle); font-size: 14.5px; line-height: 1.65; }
 .chat-bubble.assistant { background: var(--brand-soft); border-color: var(--brand-border); }
 .chat-role { font: 700 12px var(--font-mono); color: var(--brand); margin-bottom: 4px; }
+.history-time-note, .history-list-time, .history-record-times, .chat-time { color: var(--ink-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.history-time-note { margin: 0; }
+.history-list-time { margin-top: 6px; }
+.history-record-times { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.history-time-basis { display: block; color: var(--ink-muted); font-size: 12px; }
+.chat-meta { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.chat-time { min-width: 0; }
 
 /* ---- L3 Drawers, Modals & Toasts ---- */
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.42); backdrop-filter: blur(3px); z-index: 60; display: none; justify-content: flex-end; }

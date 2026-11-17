@@ -232,6 +232,7 @@
       </div>
 
       <p class="muted history-project-help">${E.isProduction() ? '文件夹按 Codex 实际工作文件夹显示，其他客户端使用已核实的来源目录；名称保留真实末级目录名；无可靠工作文件夹的片段进入“未归属”。可输入目录名或完整路径模糊查找，括号数字为可见历史片段数。' : '项目来自已归档会话的项目归属；括号数字为可见历史片段数。点击项目选择框可输入名称查找。'}</p>
+      <p class="history-time-note">有明确时区的时间统一显示北京时间（UTC+8）；来源时区未注明时保留原值。入库时间不代表原对话发生时间。</p>
 
       ${s.histScope === "trash" ? `
         <section class="panel">
@@ -253,9 +254,10 @@
                 return `<button type="button" class="list-entry ${selBlk && selBlk.id === b.id ? "active" : ""}" data-act="select-block" data-id="${esc(b.id)}">
                   <div class="list-entry-meta">
                     <span class="badge badge-brand">${projObj ? esc(projObj.title) : "未归属会话"}</span>
-                    <span>${b.turns} 轮对话</span>
+                    <span>${b.turns == null ? '轮次未记录' : esc(b.turns) + ' 轮对话'}</span>
                   </div>
                   <div class="list-entry-title">${esc(b.title)}</div>
+                  <div class="history-list-time">${b.timeBasis === 'archive_fallback' ? '入库时间：' : '最近记录：'}${esc(E.formatHistoryTime(b.lastAt))}${b.timeBasis === 'archive_fallback' ? '<span class="history-time-basis">原对话时间未保留</span>' : ''}</div>
                 </button>`;
               }).join("")}
             </div>
@@ -279,14 +281,22 @@
                   </button>` : ""}
               </div>
 
+              <div class="history-record-times">
+                ${selBlk.timeBasis === 'archive_fallback' ? `<span>归档入库时间：${esc(E.formatHistoryTime(selBlk.lastAt ?? selBlk.firstAt))}</span>` : `<span>记录开始：${esc(E.formatHistoryTime(selBlk.firstAt))}</span><span>最近记录：${esc(E.formatHistoryTime(selBlk.lastAt))}</span>`}
+                <span>${selBlk.messageCount == null ? '消息数未记录' : esc(selBlk.messageCount) + ' 条消息'}</span>
+                ${selBlk.timeBasis === 'archive_fallback' ? '<span class="history-time-basis">原对话时间未保留</span>' : ''}
+              </div>
+
               <div class="chat-feed">
                 ${selBlk.transcript.map(function (line, idx) {
                   const isAssist = idx % 2 === 1;
                   const splitPos = line.indexOf("：");
                   const role = splitPos > 0 ? line.slice(0, splitPos) : (isAssist ? "助手" : "用户");
                   const msg = splitPos > 0 ? line.slice(splitPos + 1) : line;
+                  const timeBasis = (selBlk.transcriptTimeBases || [])[idx] || selBlk.timeBasis;
                   return `<div class="chat-bubble ${isAssist ? "assistant" : ""}">
-                    <div class="chat-role">${esc(role)}</div>
+                    <div class="chat-meta"><div class="chat-role">${esc(role)}</div><span class="chat-time">${timeBasis === 'archive_fallback' ? '入库时间：' : '记录时间：'}${esc(E.formatHistoryTime((selBlk.transcriptTimes || [])[idx]))}</span></div>
+                    ${timeBasis === 'archive_fallback' ? '<div class="history-time-basis">原对话时间未保留</div>' : ''}
                     <div>${esc(msg)}</div>
                   </div>`;
                 }).join("")}

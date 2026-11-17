@@ -11,7 +11,7 @@
     const s = E.state, m = s.liveMetrics || {};
     const total = m.pending_live == null || m.pending_backfill == null ? null : m.pending_live + m.pending_backfill;
     const flow = [
-      ['原文采集与上传', '客户端上传会话原文', 'history'], ['原文归档', '按 Codex 实际工作文件夹浏览；无可靠目录进入未归属', 'history'],
+      ['原文采集与上传', '客户端上传会话原文', 'history'], ['原文归档', '按实际工作文件夹浏览原文并核对记录时间；无可靠目录进入未归属', 'history'],
       ['候选提炼与门禁', '实时与历史回填分轨处理', 'pipelines'], ['人工审阅', '核对内容与原始证据', 'review-inbox'],
       ['正式经验', '保留有效经验及来源', 'experiences'], ['按需检索', '供后续任务查询与使用', 'experiences']
     ];

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import unquote
 
@@ -16,6 +17,21 @@ FOLDER_INDEX_PREFIX = 'workspace_projection:v1:folder:'
 _KEY_RE = re.compile(r'workspace-[0-9a-f]{32}')
 
 
+def _response_time(value: str, basis: str) -> str:
+    # DSH live timestamps were filled from session_archives.created_at. That
+    # writer's zone-less format is explicitly UTC; other legacy values are not
+    # assigned a timezone here. Preserve the database's original evidence.
+    if (isinstance(value, str) and basis == 'archive_fallback'
+            and re.fullmatch(r'\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?', value)):
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc).isoformat()
+        except (ValueError, TypeError):
+            pass
+    return value
+
+
 class WorkspaceHistoryReader(PgHistoryCandidateReader):
     """Use only verified native metadata; never infer a folder from a project label."""
 
@@ -25,7 +41,7 @@ class WorkspaceHistoryReader(PgHistoryCandidateReader):
             rows = conn.execute(
                 'SELECT b.block_id,b.title,b.adapter,b.message_count,b.turn_count,'
                 'b.observed_first_at,b.observed_last_at,b.attachment_recovered,m.value,f.value,'
-                'b.source_archive_ids,b.block_sha256 '
+                'b.source_archive_ids,b.block_sha256,b.kind '
                 'FROM em_history.blocks b '
                 'LEFT JOIN em_history.candidate_meta m ON m.key = %s || b.block_id '
                 'LEFT JOIN em_history.candidate_meta f ON f.key = %s || b.block_id '
@@ -50,10 +66,12 @@ class WorkspaceHistoryReader(PgHistoryCandidateReader):
                 path, key = '', ''
                 if reason == 'verified':
                     reason = 'index_stale' if not current else 'invalid_workspace_index'
+            time_basis = 'archive_fallback' if row[2] == 'dsh' and row[12] == 'live_session' else 'recorded'
             result.append({
                 'block_id': str(row[0]), 'title': row[1], 'adapter': row[2],
                 'message_count': int(row[3] or 0), 'turn_count': int(row[4] or 0),
-                'observed_first_at': row[5], 'observed_last_at': row[6],
+                'observed_first_at': _response_time(row[5], time_basis),
+                'observed_last_at': _response_time(row[6], time_basis), 'time_basis': time_basis,
                 'attachment_count': int(row[7] or 0),
                 'workspace_path': path, 'projects': [key] if key else [],
                 'workspace_reason': 'verified' if key else reason,
@@ -108,7 +126,22 @@ class WorkspaceHistoryReader(PgHistoryCandidateReader):
             block = next((b for b in self._blocks() if b['block_id'] == unquote(block_id)), None)
             if block is None:
                 return {'ok': False, 'error': 'block_not_found'}
-            result['block'].update({field: block[field] for field in ('projects', 'workspace_path', 'workspace_reason')})
+            result['block'].update({field: block[field] for field in ('projects', 'workspace_path', 'workspace_reason', 'observed_first_at', 'observed_last_at', 'time_basis')})
+            for message in result['messages']:
+                message['time_basis'] = block['time_basis']
+                message['recorded_at'] = _response_time(message['recorded_at'], block['time_basis'])
+        return result
+
+    def block_turn_page(self, block_id: str, *, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+        result = super().block_turn_page(block_id, offset=offset, limit=limit)
+        if result.get('ok'):
+            block = next((b for b in self._blocks() if b['block_id'] == unquote(block_id)), None)
+            if block is None:
+                return {'ok': False, 'error': 'block_not_found'}
+            result['time_basis'] = block['time_basis']
+            for message in result['messages']:
+                message['time_basis'] = block['time_basis']
+                message['recorded_at'] = _response_time(message['recorded_at'], block['time_basis'])
         return result
 
     def hybrid_search(self, query: str, *, query_vec=None, project=None, limit=20, scope=''):
@@ -123,7 +156,8 @@ class WorkspaceHistoryReader(PgHistoryCandidateReader):
         hits = super().hybrid_search(query, query_vec=query_vec, limit=limit, block_ids=list(by_id))
         for hit in hits:
             block = by_id[hit['block_id']]
-            hit.update({field: block[field] for field in ('projects', 'workspace_path', 'workspace_reason')})
+            hit.update({field: block[field] for field in ('projects', 'workspace_path', 'workspace_reason',
+                'observed_first_at', 'observed_last_at', 'turn_count', 'message_count', 'time_basis')})
         return hits
 
     def manage(self, action: str, *, kind='block', project='', key='', title='', request_id=''):
