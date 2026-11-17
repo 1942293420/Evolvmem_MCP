@@ -411,7 +411,16 @@
       s.rollbackState.previewed = false; s.rollbackState.affected = [];
       E.toast("回滚执行成功：已退役 " + n + " 条受影响经验", "warn"); return true;
     }
-    if (act === "toggle-r9") { s.r9Tripped = !s.r9Tripped; E.toast(s.r9Tripped ? "已模拟触发 R9 自动成本熔断" : "已恢复增量提取调度", s.r9Tripped ? "danger" : "info"); return true; }
+    if (act === "toggle-r9") {
+      if (s.apiMode === "live" && E.api) {
+        if (s.r9Tripped) { E.api.resetCircuit("live"); }
+        else { E.toast("当前实时提炼调度运行正常", "info"); }
+        return false;
+      }
+      s.r9Tripped = !s.r9Tripped;
+      E.toast(s.r9Tripped ? "已模拟触发 R9 自动成本熔断" : "已恢复增量提取调度", s.r9Tripped ? "danger" : "info");
+      return true;
+    }
     if (act === "toggle-proj-del") {
       const p = s.historyProjects.find(function (i) { return i.key === ds.key; });
       if (s.apiMode === "live" && E.api && p) { E.api.manageHistoryProject(p.deleted ? "restore" : "delete", p.key, p.title); return false; }

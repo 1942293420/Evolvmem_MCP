@@ -12,6 +12,7 @@ import uuid
 from psycopg.rows import dict_row
 
 from evolvmem.history_pg.config import PgHistoryConfig, PgHistoryPool, load_pg_history_config
+from evolvmem.history_pg.live_history_sync import sync_pending_live_history
 from evolvmem.transcript_formats import CODEX_FORMAT, parse_transcript, workspace_details
 
 
@@ -181,7 +182,11 @@ def run_continuity_backfill(
                 )
                 processed += 1
 
-    return {"ok": True, "processed": processed, "skipped": skipped, "errors": errors, "llm_usage": {"calls": 0, "tokens": 0}}
+    try:
+        hist_sync = sync_pending_live_history(cfg, user_id, limit=max(100, int(limit)), pool=pg_pool)
+    except Exception as exc:
+        hist_sync = {"synced": 0, "skipped": 0, "errors": [type(exc).__name__]}
+    return {"ok": True, "processed": processed, "skipped": skipped, "errors": errors, "history_synced": hist_sync, "llm_usage": {"calls": 0, "tokens": 0}}
 
 
 def main(argv: list[str] | None = None) -> int:

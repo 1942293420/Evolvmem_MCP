@@ -437,6 +437,19 @@
 
     async rollbackExecute(plan) {
       return await req("POST", "/experiences/rollback", { mode: "execute", plan: plan });
+    },
+
+    async resetCircuit(track) {
+      const res = await req("POST", "/control/action", { action: "reset_circuit", track: track || "live" });
+      if (res.status !== 200 || !res.data.ok) {
+        E.toast("解除熔断失败：" + ((res.data && res.data.error) || res.status), "danger");
+        return false;
+      }
+      await this.loadOverview();
+      await this.loadPipeline();
+      E.toast("已解除熔断并恢复实时提炼调度", "info");
+      E.renderAll();
+      return true;
     }
   };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -55,6 +55,8 @@ def evaluate_circuit_breaker(
     min_review_samples: int = 5,
 ) -> dict[str, Any]:
     """Enforce R9: pause pipeline on 3 bad cost days (>2x target) or <30% review pass rate."""
+    prev_row = conn.execute("SELECT metrics_json->>'reset_at' FROM pipeline_circuit_state WHERE owner_id = %s AND track = %s", (owner_id, track)).fetchone()
+    reset_at = (prev_row[0] or '').strip() if (prev_row and prev_row[0]) else None
     series = list(daily_token_per_note or [])
     if not series and daily_token_per_note is None:
         tok_rows = conn.execute(
@@ -63,20 +65,28 @@ def evaluate_circuit_breaker(
                    COALESCE(SUM(input_tokens + output_tokens), 0) AS toks
             FROM llm_calls
             WHERE track = %s AND is_shadow = false
+              AND (%s::timestamptz IS NULL OR created_at >= %s::timestamptz)
             GROUP BY 1 ORDER BY 1 ASC
             """,
-            (track,),
+            (track, reset_at, reset_at),
         ).fetchall()
         note_rows = conn.execute(
             """
-            SELECT to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, COUNT(*)
-            FROM experience_events e
-            LEFT JOIN experience_proposals p ON p.uid = e.proposal_uid
-            WHERE e.owner_id = %s AND e.action = 'create'
-              AND COALESCE(p.source_track, 'live') = %s
-            GROUP BY 1
+            SELECT day, MAX(cnt)::int FROM (
+                SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, COUNT(*) AS cnt
+                FROM experience_proposals
+                WHERE owner_id = %s AND source_track = %s AND state IN ('accepted', 'challenger', 'review', 'merged')
+                  AND (%s::timestamptz IS NULL OR created_at >= %s::timestamptz)
+                GROUP BY 1
+                UNION ALL
+                SELECT to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, COUNT(*) AS cnt
+                FROM experience_events e LEFT JOIN experience_proposals p ON p.uid = e.proposal_uid
+                WHERE e.owner_id = %s AND e.action = 'create' AND COALESCE(p.source_track, 'live') = %s
+                  AND (%s::timestamptz IS NULL OR e.created_at >= %s::timestamptz)
+                GROUP BY 1
+            ) q GROUP BY day
             """,
-            (owner_id, track),
+            (owner_id, track, reset_at, reset_at, owner_id, track, reset_at, reset_at),
         ).fetchall()
         notes_by_day = {r[0]: int(r[1]) for r in note_rows}
         series = [(r[0], int(r[1]), notes_by_day.get(r[0], 0)) for r in tok_rows]
@@ -84,11 +94,11 @@ def evaluate_circuit_breaker(
     threshold = target_tokens_per_note * 2
     consecutive_bad = 0
     for _day, toks, notes in series:
-        per_note = float(toks) / max(1, int(notes))
-        if int(toks) > 0 and per_note > threshold:
-            consecutive_bad += 1
-        else:
+        if daily_token_per_note is None and int(notes) == 0 and int(toks) < threshold * 3:
             consecutive_bad = 0
+            continue
+        per_note = float(toks) / max(1, int(notes))
+        consecutive_bad = consecutive_bad + 1 if (int(toks) > 0 and per_note > threshold) else 0
 
     rev_row = conn.execute(
         """
@@ -111,7 +121,7 @@ def evaluate_circuit_breaker(
 
     paused = bool(alerts)
     pause_reason = '; '.join(a['reason'] for a in alerts)
-    metrics = {'consecutive_bad_days': consecutive_bad, 'total_reviews': total_rev, 'pass_rate': pass_rate, 'alerts': alerts}
+    metrics = {'consecutive_bad_days': consecutive_bad, 'total_reviews': total_rev, 'pass_rate': pass_rate, 'alerts': alerts, **({'reset_at': reset_at} if reset_at else {})}
     conn.execute(
         """
         INSERT INTO pipeline_circuit_state(
