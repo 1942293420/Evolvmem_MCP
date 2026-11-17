@@ -4,7 +4,36 @@
   E.views = E.views || {};
   const esc = E.esc;
 
+  function liveTable(rows, columns, empty) {
+    if (!Array.isArray(rows)) return `<p class="muted">尚未接入或未核验。</p>`;
+    if (!rows.length) return `<p class="muted">${esc(empty || "当前接口未返回记录。")}</p>`;
+    return `<div class="table-wrap"><table><thead><tr>${columns.map(function (c) { return `<th>${esc(c[0])}</th>`; }).join("")}</tr></thead><tbody>${rows.map(function (row) {
+      return `<tr>${columns.map(function (c) { return `<td>${esc(row[c[1]] == null ? "未核验" : row[c[1]])}</td>`; }).join("")}</tr>`;
+    }).join("")}</tbody></table></div>`;
+  }
+
+  function renderLivePipeline() {
+    const s = E.state;
+    const p = s.livePipeline;
+    if (!p) return E.renderExpSubtabs("pipelines") + E.unavailablePanel("提取流水线状态未核验", "尚未成功读取流水线接口，请重试。这里不展示演示预算或运行状态。");
+    const circuits = Array.isArray(p.circuits) ? p.circuits : [];
+    const tracks = ["live", "backfill"].map(function (track) {
+      const c = circuits.find(function (row) { return row.track === track; });
+      return `<section class="panel"><div class="panel-head"><h2>${track === "live" ? "新会话增量提炼" : "旧聊天夜间回填"}</h2><span class="badge">${c ? (c.paused ? "熔断暂停" : "熔断器未暂停") : "熔断状态未核验"}</span></div>
+        <p>${c ? `原因：${esc(c.pause_reason || "接口未记录暂停原因")} · 更新时间：${esc(c.updated_at || "未返回")}` : "当前接口没有该轨道的熔断记录，不能据此认定调度运行正常。"}</p>
+        ${track === "live" && c && c.paused ? `<button type="button" class="btn btn-ok btn-sm" data-act="toggle-r9" ${E.canWrite() ? "" : "disabled"}>人工复位实时轨道</button>` : ""}
+        ${track === "backfill" ? E.plannedButton("调整回填范围与启动任务") : ""}
+        <p class="muted">每日预算消耗、跳过率及完整运行健康尚未接入；下方仅展示接口实际返回的记录。</p></section>`;
+    }).join("");
+    return `${E.renderExpSubtabs("pipelines")}<div class="grid-2">${tracks}</div>
+      <section class="panel"><h2>最近会话片段运行记录</h2><p class="muted">接口最多返回最近 60 条，不能作为全量处理覆盖率。</p>${liveTable(p.segments, [["轨道", "track"], ["会话", "session_id"], ["状态", "status"], ["关键时刻", "moments_count"], ["错误码", "error_code"], ["更新时间", "updated_at"]])}</section>
+      <section class="panel"><h2>模型调用汇总</h2><p class="muted">按轨道、阶段和模型汇总；接口没有日期筛选，不能当作今日或单次调用账单。</p>${liveTable(p.llm_usage, [["轨道", "track"], ["阶段", "stage"], ["模型", "model"], ["调用数", "calls"], ["输入 Token", "input_tokens"], ["输出 Token", "output_tokens"], ["估算费用", "cost_estimate"]])}<button type="button" class="btn btn-sm" data-act="open-llm-ledger">查看调用汇总明细</button></section>
+      <section class="panel"><h2>回填游标与任务状态</h2>${liveTable(p.backfill_cursors, [["范围类型", "scope_kind"], ["范围", "scope_value"], ["已处理", "processed_count"], ["已完成", "completed"], ["更新时间", "updated_at"]])}${liveTable(p.backfill_job_stats, [["任务状态", "status"], ["影子运行", "is_shadow"], ["数量", "count"]])}</section>
+      <section class="panel"><h2>旧经验清洗登记</h2><p class="muted">下列是历史批次登记，保留数不等于当前生效数；误删率、冷备剩余天数及恢复能力尚未核验。</p>${liveTable(p.legacy_cleanups, [["批次", "cleanup_id"], ["登记删除数", "deleted_total"], ["登记保留数", "migrated_keep_total"], ["批准时间", "approved_at"]])}<button type="button" class="btn btn-sm" data-act="open-stage4-l3">查看清洗登记来源</button></section>`;
+  }
+
   E.views.pipelines = function () {
+    if (E.isProduction()) return renderLivePipeline();
     const s = E.state;
     const w = E.canWrite();
     const funnelSteps = [
@@ -17,6 +46,7 @@
 
     return `
       ${E.renderExpSubtabs("pipelines")}
+      <div class="banner banner-warn">离线演示：以下预算、漏斗及清洗状态为示例，不代表现网数据。</div>
 
       ${s.r9Tripped ? `
         <div class="banner banner-danger">
@@ -132,7 +162,7 @@
         <div>
           <div class="eyebrow">HISTORY VAULT · 多端永久原文</div>
           <h1>PG 历史会话库与多端捕获</h1>
-          <p>所有历史对话均以原生原文永久保存（绝不经过提炼删除），支持跨设备混搜与原文对话阅读。</p>
+          <p>${E.isProduction() ? "读取已归档的原始对话，支持项目浏览、检索与原文阅读；完整覆盖需另行核验。" : "离线演示：以下会话、同步状态与附件为示例，不代表现网数据。"}</p>
         </div>
         <div class="topbar-actions">
           <select id="hist-db-sel" aria-label="选择设备历史库">
@@ -149,6 +179,7 @@
       </div>`;
 
     if (s.histSubtab === "capture") {
+      if (E.isProduction()) return header + E.unavailablePanel("跨端捕获状态尚未接入", "当前接口未提供客户端队列、上传回执、积压、连续性租约及解密耗时，不能判断同步健康。请通过真实客户端与服务端回执核验。") + `<section class="panel"><button type="button" class="btn btn-sm" data-act="open-capture-l3">查看捕获状态说明</button>${E.plannedButton("启动同步或回填")}</section>`;
       return `${header}
         <div class="grid-2">
           <section class="panel">
@@ -234,7 +265,7 @@
               <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
                 <div>
                   <div class="tag-row" style="margin-bottom:6px">
-                    <span class="badge badge-ok">混搜综合分 ${(selBlk.rrf * 100).toFixed(0)}</span>
+                    ${E.isProduction() ? `<span class="badge">检索评分明细尚未核验</span>` : `<span class="badge badge-ok">混搜综合分 ${(selBlk.rrf * 100).toFixed(0)}</span>`}
                     ${blkProj ? `<span class="badge">${esc(blkProj.title)}</span>` : `<span class="badge">未归属片段</span>`}
                     ${selBlk.hasAttachment ? `<span class="badge badge-brand">📎 含过程截图</span>` : ""}
                   </div>
@@ -259,7 +290,7 @@
                 }).join("")}
               </div>
 
-              ${selBlk.hasAttachment ? `
+              ${selBlk.hasAttachment && E.isProduction() ? E.unavailablePanel("附件预览尚未接入", "此页面尚未读取真实附件内容，不展示示例截图。") : selBlk.hasAttachment ? `
                 <div style="padding:14px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--line)">
                   <div style="font-size:13px;font-weight:700;margin-bottom:8px">已解密内嵌附件截图（按需直读）</div>
                   <svg width="100%" height="88" viewBox="0 0 420 88"><rect width="420" height="88" rx="9" fill="#0f172a" stroke="#38bdf8"/><text x="20" y="38" fill="#34d399" font-family="monospace" font-size="14">DR ISOLATION DRILL · PASS</text><text x="20" y="64" fill="#cbd5e1" font-family="monospace" font-size="12">roles_restored=true · 9/9 DBs exact match</text></svg>

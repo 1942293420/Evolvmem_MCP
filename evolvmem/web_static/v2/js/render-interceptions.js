@@ -17,9 +17,9 @@
       ("触发范围: " + JSON.stringify(o.scope || {}) + "\n问题现象: " + (o.problem || ""));
     const l2aPred = String(mA.model_prediction || mB.flash_prediction || "").trim();
     const l2bPred = String(mB.model_prediction || "").trim();
-    const l2aModel = (l2aStep && l2aStep.judge_model) || "deepseek-v4-flash";
-    const l2bModel = (l2bStep && l2bStep.judge_model) || "deepseek-chat";
-    const activeModel = (hitStep && hitStep.judge_model) || o.proposerModel || "-";
+    const l2aModel = (l2aStep && l2aStep.judge_model) || (E.isProduction() ? "未返回裁判模型" : "deepseek-v4-flash");
+    const l2bModel = (l2bStep && l2bStep.judge_model) || (E.isProduction() ? "未返回裁判模型" : "deepseek-chat");
+    const activeModel = (hitStep && hitStep.judge_model) || (E.isProduction() ? "未返回裁判模型" : o.proposerModel || "-");
     const confPct = hitStep && hitStep.confidence != null ? Math.round(Number(hitStep.confidence) * 100) + "%" : "-";
     const rationale = (hitStep && hitStep.detail) || o.fallbackDetail || "";
 
@@ -118,13 +118,14 @@
     }
 
     if (it.layer === "L1") {
-      const cos = typeof meta.cosine_similarity === "number" ? meta.cosine_similarity : 0.90;
-      const pct = Math.min(100, Math.max(0, Math.round(cos * 100)));
+      const cos = typeof meta.cosine_similarity === "number" && Number.isFinite(meta.cosine_similarity) ? meta.cosine_similarity : (E.isProduction() ? null : 0.90);
+      const threshold = typeof meta.threshold === "number" && Number.isFinite(meta.threshold) ? meta.threshold : (E.isProduction() ? null : 0.88);
+      const pct = cos == null ? null : Math.min(100, Math.max(0, Math.round(cos * 100)));
       const tgt = diag.target_note || {};
       return `
         <div class="prose-section">
-          <h3>L1 语义向量去重对比（余弦相似度 ${cos.toFixed(3)} / 阈值 ${meta.threshold || 0.88}）</h3>
-          <div class="sim-meter"><i style="width:${pct}%"></i></div>
+          <h3>L1 语义向量去重对比（余弦相似度 ${cos == null ? "未返回" : cos.toFixed(3)} / 阈值 ${threshold == null ? "未返回" : threshold}）</h3>
+          ${pct == null ? '<p class="muted">接口未返回余弦相似度，不绘制进度条。</p>' : `<div class="sim-meter"><i style="width:${pct}%"></i></div>`}
         </div>
         <div class="grid-2">
           <div class="compare-card">
@@ -133,9 +134,9 @@
             <div class="secondary">${esc(it.solution)}</div>
           </div>
           <div class="compare-card" style="border-color:var(--ok-border)">
-            <h4>命中既有生效经验 (${esc(meta.nearest_note_id || tgt.id || "-")})</h4>
-            <b>${esc(tgt.problem || "主库相似经验")}</b>
-            <div class="secondary">${esc(tgt.solution || "证据次数已自动累加，无需重复建卡。")}</div>
+            <h4>命中既有经验 (${esc(meta.nearest_note_id || tgt.id || "未返回记录标识")})</h4>
+            <b>${esc(tgt.problem || (E.isProduction() ? "未返回既有经验正文" : "主库相似经验"))}</b>
+            <div class="secondary">${esc(tgt.solution || (E.isProduction() ? "未返回既有解法；证据是否累加需查事件记录。" : "证据次数已自动累加，无需重复建卡。"))}</div>
           </div>
         </div>`;
     }
@@ -157,14 +158,16 @@
     if (it.layer === "L3") {
       const tr = diag.trial || {};
       const tgt = diag.target_note || {};
-      const req = tr.required_successes || 2;
-      const cur = tr.success_count || 0;
-      const pct = Math.min(100, Math.round((cur / Math.max(1, req)) * 100));
+      const count = function (value, fallback) { return typeof value === "number" && Number.isFinite(value) ? value : (E.isProduction() ? null : fallback); };
+      const req = count(tr.required_successes, 2);
+      const cur = count(tr.success_count, 0);
+      const failures = count(tr.failure_count, 0);
+      const pct = cur == null || req == null || req <= 0 ? null : Math.min(100, Math.max(0, Math.round((cur / req) * 100)));
       return `
         <div class="prose-section">
           <h3>L3 关系调和与 Challenger 试用观察进度（关系：${esc(tr.relation || it.reason_code)}）</h3>
-          <div class="sim-meter"><i style="width:${pct}%;background:var(--brand)"></i></div>
-          <div class="muted" style="font-size:13px">试用成功 ${cur} / ${req} 次 · 失败 ${tr.failure_count || 0} 次</div>
+          ${pct == null ? '<p class="muted">试用进度无法计算：计数未返回或要求次数非正数。</p>' : `<div class="sim-meter"><i style="width:${pct}%;background:var(--brand)"></i></div>`}
+          <div class="muted" style="font-size:13px">试用成功 ${cur == null ? "未返回" : cur} / ${req == null ? "未返回" : req} 次 · 失败 ${failures == null ? "未返回" : failures} 次</div>
         </div>
         ${tgt.problem ? `<div class="callout-box"><b>被对照旧经验 (${esc(tgt.id)})：</b>${esc(tgt.problem)}</div>` : ""}`;
     }

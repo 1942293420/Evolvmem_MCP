@@ -18,21 +18,43 @@
     return pairs.length ? "?" + pairs.join("&") : "";
   }
 
+  function viewKey() { return E.state.libraryCtx + ":" + (E.state.libraryEpoch || 0); }
+  function clearLiveData() {
+    if (typeof E.clearLiveData === "function") { E.clearLiveData(); return; }
+    Object.keys(E.state).forEach(function (key) { if (Array.isArray(E.state[key]) && key !== "availableLibraries") E.state[key] = []; });
+    ["liveMetrics", "liveEvolution", "livePipeline", "liveHistory", "liveControl"].forEach(function (key) { E.state[key] = null; });
+  }
   async function req(method, path, body) {
-    if (E.session) return E.session.request(method, '/api/console-v2' + path, body);
+    const scope = requestContext();
     const opts = { method: method, credentials: "same-origin", headers: {} };
     if (method === "POST") {
       opts.headers["Content-Type"] = "application/json";
       if (E.state.csrfToken) opts.headers["X-CSRF-Token"] = E.state.csrfToken;
       opts.body = JSON.stringify(body || {});
     }
-    const resp = await root.fetch("/api/console-v2" + path, opts);
-    let data = null;
-    try { data = await resp.json(); } catch (_e) { data = { ok: false, error: "invalid_json" }; }
-    return { status: resp.status, data: data || {} };
+    let result;
+    try {
+      if (E.session) result = await E.session.request(method, "/api/console-v2" + path, body);
+      else {
+        const resp = await root.fetch("/api/console-v2" + path, opts);
+        let data;
+        try { data = await resp.json(); } catch (_e) { data = { ok: false, error: "invalid_json" }; }
+        result = { status: resp.status, data: data };
+      }
+    } catch (_err) { result = { status: 0, data: { ok: false, error: "network_unavailable" } }; }
+    if (!currentRequest(scope)) return { status: 409, data: { ok: false, error: "stale_view" } };
+    if (!result || !result.data || typeof result.data !== "object") result = { status: result ? result.status : 0, data: { ok: false, error: "invalid_json" } };
+    if (result.status === 409 && ["stale_response", "stale_view", "session_not_ready"].includes(result.data.error)) return result;
+    if (method === "GET" && (result.status !== 200 || !result.data.ok)) {
+      clearLiveData();
+      if (result.status === 401) { E.state.simMode = "sso_login"; E.state.csrfToken = ""; }
+      else E.state.apiError = "读取 " + path.split("?")[0] + " 失败（" + (result.data.error || result.status) + "）。请重新加载。";
+      E.renderAll();
+    }
+    return result;
   }
-  function requestContext(){return E.session?E.session.capture():null;}
-  function currentRequest(ticket){return !ticket || (E.session && E.session.isCurrent(ticket));}
+  function requestContext(){return {state:E.state,view:viewKey(),session:E.session || null,ticket:E.session?E.session.capture():null};}
+  function currentRequest(scope){return !!scope && scope.state===E.state && scope.view===viewKey() && (!scope.ticket || (scope.session===E.session && E.session.isCurrent(scope.ticket)));}
 
   function normalizeExp(n) {
     return {
@@ -44,8 +66,8 @@
       misbelief: n.misbelief || "", scope: n.scope || {},
       evidence: n.evidence || [], evidenceCount: n.evidence_count || (n.evidence ? n.evidence.length : 0),
       occurrenceCount: n.occurrence_count || 1, importance: n.importance || 5,
-      pinned: !!n.pinned, betaA: Math.max(1, n.occurrence_count || 1), betaB: n.status === "retired" ? 3 : 0,
-      stability: n.status === "retired" ? 0.35 : 0.90, updatedAt: (n.updated_at || "").slice(0, 16)
+      pinned: !!n.pinned, betaA: n.confidence_a == null ? null : n.confidence_a, betaB: n.confidence_b == null ? null : n.confidence_b,
+      stability: n.stability == null ? null : n.stability, updatedAt: (n.updated_at || "").slice(0, 16)
     };
   }
 
@@ -68,10 +90,17 @@
   E.api = {
     async bootstrap(options) {
       if (!canProbeServer()) return false;
+      let current = () => true;
       try {
         if (E.session && !(options && options.statusKnown) && !await E.session.check({resume:false})) return true;
-        const startup=E.session?E.session.capture(false):null;
-        const current=()=>!startup || (E.session && E.session.isCurrent(startup));
+        const session = E.session, startup=session?session.capture(false):null;
+        const s = E.state, wantedLibrary = s.libraryCtx;
+        s.libraryEpoch = (s.libraryEpoch || 0) + 1;
+        const epoch = s.libraryEpoch;
+        current = () => s===E.state && s.libraryEpoch===epoch && (!startup || (session===E.session && session.isCurrent(startup)));
+        clearLiveData(); s.apiError = null; s.apiMode = "loading"; s.simMode = "normal";
+        if (session) { session.dataReady=false; session.syncHeader(); }
+        E.renderAll();
         const res = await req("GET", "/me");
         if(!current())return true;
         if (res.status === 401) {
@@ -81,34 +110,68 @@
           return true;
         }
         if (res.status !== 200 || !res.data.ok) {
-          if(res.status===409 && res.data.error==='stale_response')return true;
+          if(res.status===409 && ["stale_response", "stale_view"].includes(res.data.error))return true;
           if(E.session && E.session.isReady())E.session.block('unavailable');
+          else { s.apiMode="error"; E.renderAll(); }
           return !!E.session;
         }
-        const s = E.state;
         s.apiMode = "live";
         s.csrfToken = res.data.csrf_token || "";
         s.currentUser = res.data.current_user || null;
-        s.ownerId = (res.data.current_user && res.data.current_user.id) || "owner_main";
+        s.ownerId = (res.data.current_user && res.data.current_user.id) || "";
+        s.livePolicy = res.data.policy || {};
+        s.policyLocks = Object.keys(s.livePolicy).map(function (key) { return { key: key, val: s.livePolicy[key], desc: key, locked: false }; });
         s.availableLibraries = res.data.libraries || [];
-        if (!s.availableLibraries.some(function(lib){return lib.id===s.libraryCtx;})) {
+        if (!s.availableLibraries.some(function(lib){return lib.id===wantedLibrary;})) {
           s.libraryCtx = s.ownerId;
           if(E.session)E.session.discardDraft();
-        }
+        } else s.libraryCtx = wantedLibrary;
         this.syncLibrarySelect();
         await this.loadOverview();
         if(!current())return true;
-        await this.loadTab(s.route);
+        if (!s.apiError && s.simMode !== "sso_login") await this.loadTab(s.route);
         if(!current())return true;
+        if (s.apiError || s.simMode === "sso_login") {
+          if (E.session && E.session.isReady()) E.session.block('unavailable');
+          return !!E.session;
+        }
         if(E.session && !E.session.isReady())return true;
         if(E.session){E.session.dataReady=true;E.session.syncHeader();}
         E.renderAll();
         if(E.session)E.session.restoreDraft();
         return true;
       } catch (_err) {
+        if (!current()) return true;
         if(E.session){E.session.block('unavailable');return true;}
+        E.state.apiMode = "error";
+        E.state.apiError = "页面数据加载失败，请重新加载。";
+        E.renderAll();
         return false;
       }
+    },
+
+    async switchLibrary(library) {
+      if (E.session && !E.session.switchLibrary(library)) return false;
+      const s = E.state;
+      s.libraryCtx = library;
+      s.libraryEpoch = (s.libraryEpoch || 0) + 1;
+      const scope = requestContext();
+      clearLiveData(); s.apiError = null; s.pageLoading = true; E.renderAll();
+      E.closeDrawer();
+      await this.loadOverview();
+      if (!currentRequest(scope)) return false;
+      if (!s.apiError && s.simMode !== "sso_login") await this.loadTab(s.route);
+      if (!currentRequest(scope)) return false;
+      s.pageLoading = false;
+      if (s.apiError || s.simMode === "sso_login") {
+        if (E.session && E.session.isReady()) E.session.block('unavailable');
+        else E.renderAll();
+        return false;
+      }
+      if (E.session) { E.session.dataReady=true; E.session.syncHeader(); }
+      E.renderAll();
+      if (E.session) E.session.restoreDraft();
+      return true;
     },
 
     syncLibrarySelect() {
@@ -131,19 +194,20 @@
       if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
         s.liveMetrics = res.data.metrics;
+        s.changesStream = [];
         if (res.data.interception_funnel) s.interceptionFunnel = res.data.interception_funnel;
         if (res.data.policy && typeof res.data.policy.shadow_mode === "boolean") s.shadowMode = res.data.policy.shadow_mode;
         if (Array.isArray(res.data.circuits)) {
           s.r9Tripped = res.data.circuits.some(function (c) { return !!c.paused; });
         }
-        if (Array.isArray(res.data.recent_events) && res.data.recent_events.length) {
+        if (Array.isArray(res.data.recent_events)) {
           s.changesStream = res.data.recent_events.map(function (e) {
             return {
               seq: e.seq, actor: e.agent_client || s.ownerId, model: e.model || "unknown",
               noteId: e.note_id, action: e.action, ts: (e.created_at || "").slice(0, 16)
             };
           });
-          s.changesCursor = s.changesStream[0].seq || s.changesCursor;
+          s.changesCursor = s.changesStream.length ? s.changesStream[0].seq : 0;
         }
       }
     },
@@ -191,6 +255,7 @@
     async loadTab(route) {
       const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
+      E.state.apiError = null;
       if (route === "overview") await this.loadOverview();
       else if (route === "review-inbox") await this.loadInbox();
       else if (route === "pipelines" || (route === "experiences" && E.state.expSubtab === "pipelines")) {
@@ -214,6 +279,7 @@
       if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
         s.livePipeline = res.data;
+        s.llmCalls = [];
         if (Array.isArray(res.data.circuits)) {
           s.r9Tripped = res.data.circuits.some(function (c) { return !!c.paused; });
         }
@@ -252,10 +318,10 @@
       const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
       const s = E.state;
+      const view = viewKey();
       const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const res = await req("GET", "/history" + qs({ view: "projects", owner_id: oid }));
-      if(!currentRequest(requestScope))return null;
-      if (res.status !== 200 || !res.data.ok) return;
+      if (!currentRequest(requestScope) || view !== viewKey() || res.status !== 200 || !res.data.ok) return;
       s.liveHistory = res.data;
       const seen = {};
       const projs = (res.data.projects || []).map(function (p) {
@@ -269,7 +335,7 @@
       });
       if (E.canWrite()) {
         const tRes = await req("GET", "/history" + qs({ view: "trash", owner_id: oid }));
-        if(!currentRequest(requestScope))return null;
+        if (!currentRequest(requestScope) || view !== viewKey() || tRes.status !== 200 || !tRes.data.ok) return;
         if (tRes.status === 200 && tRes.data.ok) {
           (tRes.data.items || []).forEach(function (it) {
             if (it.kind === "project") {
@@ -288,7 +354,7 @@
       const q = (s.histQuery || "").trim();
       if (s.histScope === "unassigned") {
         const uRes = await req("GET", "/history" + qs({ view: "unassigned", owner_id: oid }));
-        if(!currentRequest(requestScope))return null;
+        if (!currentRequest(requestScope) || view !== viewKey() || uRes.status !== 200 || !uRes.data.ok) return;
         if (uRes.status === 200 && uRes.data.ok) {
           s.historyBlocks = (uRes.data.blocks || []).map(function (b) {
             return {
@@ -300,7 +366,7 @@
         }
       } else if (q) {
         const sRes = await req("GET", "/history" + qs({ view: "search", q: q, owner_id: oid }));
-        if(!currentRequest(requestScope))return null;
+        if (!currentRequest(requestScope) || view !== viewKey() || sRes.status !== 200 || !sRes.data.ok) return;
         if (sRes.status === 200 && sRes.data.ok) {
           s.historyBlocks = (sRes.data.items || []).map(function (it) {
             return {
@@ -318,7 +384,7 @@
         s.selectedProjectKey = curKey || null;
         if (curKey) {
           const pRes = await req("GET", "/history" + qs({ view: "project", project_id: curKey, owner_id: oid }));
-          if(!currentRequest(requestScope))return null;
+          if (!currentRequest(requestScope) || view !== viewKey() || pRes.status !== 200 || !pRes.data.ok) return;
           if (pRes.status === 200 && pRes.data.ok) {
             s.historyBlocks = (pRes.data.blocks || []).map(function (b) {
               return {
@@ -364,17 +430,18 @@
       if (res.status === 200 && res.data.ok) {
         s.liveEvolution = res.data;
         const cat = res.data.skills_catalog || {};
-        if (Array.isArray(cat.rows) && cat.rows.length) {
-          s.skills = cat.rows.slice(0, 36).map(function (r) {
+        s.skills = [];
+        if (Array.isArray(cat.rows)) {
+          s.skills = cat.rows.map(function (r) {
             const pTitle = (r.presentation && r.presentation.title) || r.name;
             const cName = (r.categories && r.categories[0]) || r.origin || "官方技能";
             return {
               id: r.id || r.name, name: r.name, title: pTitle, category: cName,
-              lifecycle: "active", tokenCost: Math.max(120, Number(r.file_count || 1) * 160),
-              summary: r.description || "", attachedPitfalls: [], linuxSynced: true,
-              winMode: "通过 LAN MCP 按需拉取或手动安装（不自动覆写 Windows）",
+              lifecycle: "catalog", tokenCost: null,
+              summary: (r.presentation && r.presentation.description) || r.description || "", attachedPitfalls: [], linuxSynced: null,
+              winMode: "安装与分发状态尚未核验", catalogSource: r.source || r.origin || "", fileCount: r.file_count,
               evalReport: null,
-              mdPreview: "# " + r.name + "\n\n" + (r.description || "") + "\n\nSource: " + (r.source || r.origin || "")
+              mdPreview: null
             };
           });
         }
@@ -390,11 +457,12 @@
       if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
         s.liveControl = res.data;
-        if (Array.isArray(res.data.users) && res.data.users.length) {
+        s.controlUsers = []; s.grants = []; s.agents = [];
+        if (Array.isArray(res.data.users)) {
           s.controlUsers = res.data.users.map(function (u) {
             return {
               id: u.id, displayName: u.display_name || u.id, isAdmin: !!u.is_admin,
-              enabled: !!u.enabled, revision: u.revision || 0, activeSessions: u.login_bound ? 1 : 0
+              enabled: !!u.enabled, revision: u.revision || 0, activeSessions: null
             };
           });
         }
@@ -406,7 +474,7 @@
             };
           });
         }
-        if (Array.isArray(res.data.model_reputation) && res.data.model_reputation.length) {
+        if (Array.isArray(res.data.model_reputation)) {
           s.agents = res.data.model_reputation.map(function (r) {
             return {
               agent: r.agent_client + ":" + r.model, title: r.agent_client + " (" + r.model + ")",

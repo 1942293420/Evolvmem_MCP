@@ -6,7 +6,7 @@
 
   E.renderExpSubtabs = function (activeSub) {
     const w = E.canWrite();
-    const fTotal = (E.state.interceptionFunnel && E.state.interceptionFunnel.total_intercepted) || E.state.interceptions.length;
+    const fTotal = E.state.interceptionFunnel && E.state.interceptionFunnel.total_intercepted != null ? E.state.interceptionFunnel.total_intercepted : E.state.interceptions.length;
     return `
       <div class="page-head">
         <div>
@@ -206,7 +206,7 @@
     const curStats = ta[s.inboxTrack] || s.reviewStats;
     const agreedNum = curStats.agreed_total != null ? curStats.agreed_total : curStats.agreed;
     const evalNum = curStats.evaluable_total != null ? curStats.evaluable_total : curStats.total;
-    const rate = evalNum ? ((agreedNum / evalNum) * 100).toFixed(1) : "0.0";
+    const rate = evalNum ? ((agreedNum / evalNum) * 100).toFixed(1) + "%" : "尚无可评估样本";
     const hideGate = sel && s.shadowMode && sel.status === "pending";
     const isEdit = sel && s.editingUid === sel.uid;
 
@@ -222,7 +222,7 @@
             <input type="checkbox" id="chk-shadow-mode" ${s.shadowMode ? "checked" : ""} />
             &nbsp;影子盲审模式（提交后揭晓系统建议）
           </label>
-          <span class="badge badge-brand">${s.inboxTrack === "live" ? "新会话" : "旧聊天"}一致率 ${rate}%</span>
+          <span class="badge badge-brand">${s.inboxTrack === "live" ? "新会话" : "旧聊天"}一致率 ${rate}</span>
         </div>
       </div>
 

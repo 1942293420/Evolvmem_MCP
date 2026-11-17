@@ -465,8 +465,36 @@
     };
   }
 
-  E.createInitialState = initialData;
-  E.state = initialData();
+  E.isProduction = function () { return !!root.location && /^https?:$/.test(root.location.protocol); };
+  E.createInitialState = function () {
+    const s = initialData();
+    if (E.isProduction()) {
+      Object.keys(s).forEach(function (key) { if (Array.isArray(s[key])) s[key] = []; });
+      s.apiMode = "loading";
+      s.libraryEpoch = 0;
+      s.apiError = null;
+      s.sessionRemainingSec = null;
+      s.selectedProposalUid = s.selectedExpId = s.selectedIntId = s.selectedSkillId = s.selectedBlockId = null;
+      s.trackAgreement = { live: {}, backfill: {} };
+      s.reviewStats = { agreed: 0, total: 0 };
+      s.interceptionFunnel = { layers: {}, total_intercepted: 0, rescued_total: 0 };
+      s.changesCursor = 0;
+      s.handbookPublishedCount = 0;
+      s.liveMetrics = null;
+    }
+    return s;
+  };
+  E.state = E.createInitialState();
+  E.clearLiveData = function () {
+    const s = E.state;
+    Object.keys(s).forEach(function (key) { if (Array.isArray(s[key]) && key !== "availableLibraries") s[key] = []; });
+    ["liveMetrics", "liveEvolution", "livePipeline", "liveHistory", "liveControl"].forEach(function (key) { s[key] = null; });
+    s.trackAgreement = { live: {}, backfill: {} };
+    s.reviewStats = { agreed: 0, total: 0 };
+    s.changesCursor = 0;
+    s.interceptionFunnel = { layers: {}, total_intercepted: 0, rescued_total: 0 };
+    s.selectedExpId = s.selectedSkillId = s.selectedBlockId = s.selectedProjectKey = s.selectedProposalUid = null;
+  };
   E.esc = function (s) {
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   };
@@ -481,8 +509,15 @@
       return '<span class="badge">' + E.esc(scope[k]) + "</span>";
     }).join("");
   };
+  E.plannedButton = function (label) {
+    return '<button type="button" class="btn btn-sm" disabled title="待开发，尚未接通后台">' + E.esc(label) + ' · 待开发</button>';
+  };
+  E.unavailablePanel = function (title, detail) {
+    return '<section class="panel"><div class="panel-head"><h2>' + E.esc(title) + '</h2><span class="badge">尚未接入</span></div><p class="secondary">' + E.esc(detail) + '</p></section>';
+  };
   E.canWrite = function () {
     const s = E.state;
+    if (E.isProduction() && (s.apiMode !== "live" || s.apiError || s.simMode === "sso_login")) return false;
     if (s.apiMode === "live") {
       return !s.libraryCtx || s.libraryCtx === s.ownerId || s.libraryCtx === "shared_public";
     }

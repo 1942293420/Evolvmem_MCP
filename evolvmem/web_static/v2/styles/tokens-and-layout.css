@@ -442,6 +442,9 @@ tr:last-child td { border-bottom: 0; }
 @media (max-width: 720px) {
   .workspace { padding: 16px; }
   .grid-2, .compare-3col { grid-template-columns: 1fr; }
+  .topbar-actions { flex-wrap: wrap; max-width: 100%; flex-shrink: 1; }
+  .compact-select { max-width: 100%; }
+  .kpi-grid, .skill-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---- Interception Funnel & L2/L3 Diagnostic Panels ---- */

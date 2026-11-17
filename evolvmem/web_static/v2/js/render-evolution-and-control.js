@@ -366,7 +366,7 @@
               <thead><tr><th>成员</th><th>角色</th><th>活跃会话</th><th>账号控制</th></tr></thead>
               <tbody>
                 ${s.controlUsers.map(function (u) {
-                  return `<tr><td><b>${esc(u.displayName)}</b></td><td>${u.isAdmin ? "系统管理员" : "普通成员"}</td><td>${u.activeSessions} 个</td>
+                  return `<tr><td><b>${esc(u.displayName)}</b></td><td>${u.isAdmin ? "系统管理员" : "普通成员"}</td><td>${u.activeSessions == null ? "尚未接入" : u.activeSessions + " 个"}</td>
                     <td><button type="button" class="btn btn-sm ${u.enabled ? "btn-ok" : "btn-danger"}" data-act="toggle-user" data-id="${esc(u.id)}" ${w && !u.isAdmin ? "" : "disabled"}>${u.enabled ? "启用中（点击停用）" : "已停用（点击恢复）"}</button></td></tr>`;
                 }).join("")}
               </tbody>

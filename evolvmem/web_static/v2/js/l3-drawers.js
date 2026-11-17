@@ -8,6 +8,7 @@
   };
 
   const GATE_STAGES = ["Moments", "Extract", "Quota", "L0", "L1", "L2a", "L2b", "L3", "L4", "Writer"];
+  let requestEpoch = 0;
 
   function byId(id) {
     return typeof root.document !== "undefined" ? root.document.getElementById(id) : null;
@@ -22,7 +23,31 @@
   }
 
   function openD(title, bodyHtml, sub) {
+    requestEpoch += 1;
+    if (!E.isProduction()) bodyHtml = '<div class="banner banner-warn">离线演示：内容为示例，不代表现网数据。</div>' + bodyHtml;
     if (E.openDrawer) return E.openDrawer(title, bodyHtml, sub);
+  }
+
+  function drawerToken() {
+    return {request: requestEpoch, drawer: E.drawerEpoch || 0, state: E.state,
+      library: E.state.libraryCtx, libraryEpoch: E.state.libraryEpoch || 0,
+      sessionCurrent: currentResponse()};
+  }
+
+  function writeDrawer(token, html) {
+    if (!token.sessionCurrent() || token.request !== requestEpoch || token.drawer !== (E.drawerEpoch || 0) ||
+        token.state !== E.state || token.library !== E.state.libraryCtx ||
+        token.libraryEpoch !== (E.state.libraryEpoch || 0)) return;
+    const body = byId("drawer-body");
+    if (body) body.innerHTML = html;
+  }
+
+  function unavailable(title, detail) {
+    return openD(title, E.unavailablePanel("尚未接入 / 未核验", detail), "三级诊断 · 实际数据边界");
+  }
+
+  function actualJson(value, missing) {
+    return value == null ? `<p class="muted">${esc(missing || "尚未成功读取接口，未核验。")}</p>` : `<div class="codebox">${esc(JSON.stringify(value, null, 2))}</div>`;
   }
 
   function formatRemain(sec) {
@@ -45,7 +70,7 @@
         ${GATE_STAGES.map(function (st, idx) {
           const step = byLayer[st];
           let cls = "skip";
-          let label = "未触达";
+          let label = E.isProduction() ? "未记录" : "未触达";
           let detail = "";
           if (step) {
             const v = String(step.verdict || "").toLowerCase();
@@ -79,7 +104,7 @@
           } else if (isRescued && st === "Writer") {
             cls = "pass";
             label = "救回入库";
-          } else if (hitIdx > idx) {
+          } else if (hitIdx > idx && !E.isProduction()) {
             cls = "pass";
             label = "已通过";
           }
@@ -96,6 +121,7 @@
 
   function renderLlmCallsTable(calls) {
     if (!calls || !calls.length) {
+      if (E.isProduction()) return '<div class="muted">接口未返回关联调用明细；不能据此认定没有调用或消耗为零。</div>';
       return `<div class="muted" style="font-size:13px">该记录未触发 LLM 调用或为 0-LLM 规则拦截（0 Token）。</div>`;
     }
     return `<div class="table-wrap"><table>
@@ -109,6 +135,13 @@
 
   E.openDiagDrawer = function () {
     const s = E.state;
+    if (E.isProduction()) {
+      const policy = (s.liveControl && s.liveControl.policy) || (s.livePipeline && s.livePipeline.policy);
+      return openD("系统诊断与数据来源", `<div class="kv-grid">${kvCell("API 运行模式", esc(s.apiMode || "尚未连接"), true)}${kvCell("当前库视角", esc(s.libraryCtx || "尚未核验"), true)}</div>
+        ${E.unavailablePanel("运行遥测未核验", "客户端未接入 LAN MCP 健康、SQLite 句柄、进程版本、数据库版本和会话到期时间的实时核验；这里不显示固定健康结论。")}
+        <h3>已读取的策略配置</h3>${actualJson(policy)}
+        ${E.plannedButton("生产场景演练与重置")}`, "三级诊断 · 不以演示替代运行状态");
+    }
     openD("系统诊断、底层遥测与场景演练", `
       <div class="kv-grid">
         ${kvCell("API 运行模式", s.apiMode === "live" ? "Live HTTP (/api/console-v2/*)" : "离线可交互预览沙盒", true)}
@@ -160,7 +193,7 @@
       <div class="kv-grid">
         ${kvCell("经验 ID", esc(x.id), true)}${kvCell("版本号 / 状态", "rev." + x.revision + " · " + esc(x.status), true)}
         ${kvCell("经验分类/类型", esc(x.category + " / " + x.kind), false)}${kvCell("来源渠道 / 模型", esc(x.origin + " · " + x.model), true)}
-        ${kvCell("证据支撑次数", x.evidenceCount + " 次", true)}${kvCell("Beta(α, β) 分布", "(" + x.betaA + ", " + x.betaB + ")", true)}
+        ${kvCell("证据支撑次数", x.evidenceCount == null ? "未返回" : x.evidenceCount + " 次", true)}${kvCell("Beta(α, β) 分布", E.isProduction() ? "效果归因尚未接入" : "(" + x.betaA + ", " + x.betaB + ")", true)}
       </div>
       ${chain.length ? renderGateStepper(chain, "Writer", rescued) : `<div class="muted" style="font-size:13px">${t._loading ? "正在读取 PG 完整 L0–L4 门控链与历史事件…" : "手动写入或他人只读视角不展示私有提议门控细节。"}</div>`}
       <div class="prose-section" style="margin-top:10px"><h3>生命周期事件轨迹 (${evs.length})</h3></div>
@@ -169,9 +202,9 @@
         const actorLabel = ev.actor_id || ev.actor || "";
         const detLabel = ev.detail || [ev.agent_client, ev.model, ev.proposal_uid].filter(Boolean).join(" · ");
         return `<div class="callout-box" style="margin-bottom:6px"><b>${esc(actLabel)}</b> <span class="muted mono">${esc((ev.created_at || "").slice(0, 19))} · ${esc(actorLabel)}</span>${detLabel ? `<div class="secondary">${esc(detLabel)}</div>` : ""}</div>`;
-      }).join("") : `<div class="muted" style="font-size:13px">暂无公开事件记录（检索次数：${imps.length}）。</div>`}
+      }).join("") : `<div class="muted" style="font-size:13px">${E.isProduction() ? "接口未返回公开事件；检索总次数尚未核验。" : "暂无公开事件记录（检索次数：" + imps.length + "）。"}</div>`}
       ${trials.length ? `<div class="prose-section"><h3>Challenger 试用观察 (${trials.length})</h3>${trials.map(function (trItem) {
-        return `<div class="kv-row"><span>${esc(trItem.relation)} (${esc(trItem.status)})</span><span class="mono">${trItem.success_count || 0}/${trItem.required_successes || 2}</span></div>`;
+        return `<div class="kv-row"><span>${esc(trItem.relation)} (${esc(trItem.status)})</span><span class="mono">${esc(trItem.success_count == null ? "未返回" : trItem.success_count)}/${esc(trItem.required_successes == null ? "未返回" : trItem.required_successes)}</span></div>`;
       }).join("")}</div>` : ""}
       ${calls.length ? `<div class="prose-section"><h3>关联 LLM 消耗 (${calls.length})</h3>${renderLlmCallsTable(calls)}</div>` : ""}
       ${rels.length ? `<div class="prose-section"><h3>图谱关系 (${rels.length})</h3>${rels.map(function (r) {
@@ -197,10 +230,9 @@
   }
 
   function openEvidenceBox(ref, quote) {
-    const isCurrent=currentResponse();
     const renderBody = function (msgs, loading) {
       return `
-        <div class="kv-grid">${kvCell("归档引用指针", esc(ref || "archive"), true)}${kvCell("LLM 调用", "0 次（直读 PG）", false)}</div>
+        <div class="kv-grid">${kvCell("归档引用指针", esc(ref || "未提供"), true)}${kvCell("读取方式", E.isProduction() ? "历史原文接口；调用消耗未单独核验" : "0 次（直读 PG）", false)}</div>
         ${quote ? `<div class="callout-box"><b>锚点摘录：</b>${esc(quote)}</div>` : ""}
         ${msgs && msgs.length ? msgs.map(function (m) {
           const idx = m.turn_index != null ? m.turn_index : m.event_index;
@@ -210,15 +242,14 @@
             <div class="muted mono" style="font-size:11.5px">#${esc(idx)} · ${esc(role)} ${m.is_anchor ? "★ 锚点" : ""}</div>
             <div style="white-space:pre-wrap">${esc(txt)}</div>
           </div>`;
-        }).join("") : `<div class="muted" style="font-size:13px">${loading ? "正在从 PG em_history 读取会话窗口…" : (quote ? "演示快照已展示锚点原文。" : "暂无更多上下文消息。")}</div>`}`;
+        }).join("") : `<div class="muted" style="font-size:13px">${loading ? "正在读取历史会话窗口…" : (E.isProduction() ? "接口未返回更多上下文；摘录不能代替完整来源核验。" : (quote ? "演示快照已展示锚点原文。" : "暂无更多上下文消息。"))}</div>`}`;
     };
     openD("历史会话原文证据 · " + (ref || "archive"), renderBody([], E.state.apiMode === "live"), "三级溯源 · 0-LLM 原文检索");
+    const token = drawerToken();
     if (E.state.apiMode === "live" && ref && E.api && E.api.fetchEvidenceContext) {
       E.api.fetchEvidenceContext(ref).then(function (data) {
-        if(!isCurrent())return;
-        const b = byId("drawer-body");
-        if (b && data) b.innerHTML = renderBody(data.turns || data.messages || [], false);
-      });
+        writeDrawer(token, data ? renderBody(data.turns || data.messages || [], false) : E.unavailablePanel("原文读取失败", "来源尚未核验，请重试。"));
+      }).catch(function () { writeDrawer(token, E.unavailablePanel("原文读取失败", "来源尚未核验，请重试。")); });
     }
   }
 
@@ -248,19 +279,47 @@
   };
 
   E.openL3Drawer = function (act, ds) {
-    const isCurrent=currentResponse();
     const s = E.state;
     const d = ds || {};
     if (act === "open-diag") return E.openDiagDrawer();
+    if (E.isProduction()) {
+      if (["open-capture-l3", "open-dr-l3", "open-handbook-l3", "open-errsig-l3"].includes(act)) {
+        return unavailable("功能来源说明", "捕获健康、灾备恢复、手册编译和报错触发尚未接入对应核验接口；没有实际执行或发布。");
+      }
+      if (act === "open-topo-l3") {
+        const n = (s.topoNodes || []).find(function (x) { return x.id === d.id; });
+        if (!n) return unavailable("架构节点", "没有找到当前节点。");
+        return openD("架构节点 · " + n.title, `<p>${esc(n.stage)} · 模块导航，运行状态尚未核验。</p><button type="button" class="btn btn-primary" data-act="goto-module" data-route="${esc(n.target)}" data-sub="${esc(n.sub || "")}">前往管理模块</button>`);
+      }
+      if (act === "open-stage4-l3") return openD("旧经验清洗登记来源", '<p>历史批次登记不等于当前生效数，冷备可恢复性及误删率未核验。</p>' + actualJson(s.livePipeline && s.livePipeline.legacy_cleanups));
+      if (act === "open-policy-l3") return openD("已读取的策略配置", actualJson((s.liveControl && s.liveControl.policy) || (s.livePipeline && s.livePipeline.policy)) + '<p>退役文件权限与路径尚未接入核验。</p>');
+      if (act === "open-impressions-l3") {
+        const rows = s.liveEvolution && s.liveEvolution.impressions;
+        return openD("实际检索曝光记录", '<p>下列为接口返回的检索命中汇总，不代表实际使用、成功或效果归因；Beta变化尚未接入。</p>' + (Array.isArray(rows) ? `<div class="table-wrap"><table><thead><tr><th>经验</th><th>入口</th><th>客户端</th><th>模型</th><th>次数</th></tr></thead><tbody>${rows.map(function (r) { return `<tr><td>${esc(r.item_uid)}</td><td>${esc(r.channel)}</td><td>${esc(r.agent_client)}</td><td>${esc(r.model)}</td><td>${esc(r.hits)}</td></tr>`; }).join("")}</tbody></table></div>${rows.length ? "" : '<p>当前接口没有返回曝光记录。</p>'}` : actualJson(null)));
+      }
+      if (act === "open-skill") {
+        const k = (s.skills || []).find(function (x) { return x.id === d.id; });
+        return k ? openD("Skill 目录信息 · " + k.name, `<p>${esc(k.summary || "目录未提供描述")}</p><p>SKILL.md 原文件尚未接入读取；目录摘要不作为源码。</p>`) : unavailable("Skill 目录信息", "没有找到当前目录项。");
+      }
+      if (act === "open-hist-meta") {
+        const b = (s.historyBlocks || []).find(function (x) { return x.id === d.id; });
+        return b ? openD("历史会话来源", `<div class="kv-grid">${kvCell("归档指针", esc(b.sourceRef || b.id), true)}</div><p>BM25、trgm、HNSW及归一化评分未由当前接口分别提供，尚未核验。</p>`) : unavailable("历史会话来源", "未找到当前会话。");
+      }
+      if (act === "open-llm-ledger") {
+        const rows = s.livePipeline && s.livePipeline.llm_usage;
+        return openD("模型调用汇总", '<p>按轨道、阶段、模型汇总；不代表逐笔明细或今日费用。</p>' + (Array.isArray(rows) ? renderLlmCallsTable(rows) : actualJson(null)));
+      }
+    }
     if (act === "open-int-l3" || act === "open-int-trace") {
       const it = (s.interceptions || []).find(function (x) { return x.id === (d.id || s.selectedIntId); });
       if (!it) return;
       openD("拦截门控步进链与元数据 · " + it.id, renderIntTraceHtml(it, null), it.layer + " · " + it.reason_code);
-      if (s.apiMode === "live" && typeof root.fetch === "function") {
+      const token = drawerToken();
+      if (s.apiMode === "live" && (E.session || typeof root.fetch === "function")) {
         (E.session ? E.session.request('GET',"/api/console-v2/interceptions/" + encodeURIComponent(it.id) + "/trace").then(function(r){return {ok:r.status===200,json:function(){return Promise.resolve(r.data);}};}) : root.fetch("/api/console-v2/interceptions/" + encodeURIComponent(it.id) + "/trace", { credentials: "same-origin" }))
           .then(function (r) { return r.ok ? r.json() : null; })
-          .then(function (td) { if(!isCurrent())return;const b = byId("drawer-body"); if (b && td && td.ok) b.innerHTML = renderIntTraceHtml(it, td.item || td); })
-          .catch(function () {});
+          .then(function (td) { writeDrawer(token, td && td.ok ? renderIntTraceHtml(it, td.item || td) : E.unavailablePanel("拦截溯源读取失败", "完整链路尚未核验，请重试。")); })
+          .catch(function () { writeDrawer(token, E.unavailablePanel("拦截溯源读取失败", "完整链路尚未核验，请重试。")); });
       }
       return;
     }
@@ -273,8 +332,9 @@
       const x = s.experiences.find(function (i) { return i.id === (d.id || s.selectedExpId); });
       if (!x) return;
       openD("经验全链路追溯与关联图谱 · " + x.id, renderExpTraceHtml(x, { _loading: s.apiMode === "live" }), "三级溯源 · 正式库条目");
+      const token = drawerToken();
       if (s.apiMode === "live" && E.api && E.api.fetchExpTrace) {
-        E.api.fetchExpTrace(x.id).then(function (tr) { if(!isCurrent())return;const b = byId("drawer-body"); if (b && tr) b.innerHTML = renderExpTraceHtml(x, tr); });
+        E.api.fetchExpTrace(x.id).then(function (tr) { writeDrawer(token, tr ? renderExpTraceHtml(x, tr) : E.unavailablePanel("经验溯源读取失败", "完整链路尚未核验，请重试。")); }).catch(function () { writeDrawer(token, E.unavailablePanel("经验溯源读取失败", "完整链路尚未核验，请重试。")); });
       }
       return;
     }
@@ -298,6 +358,7 @@
     }
     if (act === "open-agent-l3") {
       const a = s.agents.find(function (x) { return x.agent === d.name; }) || s.agents[0];
+      if (!a) return unavailable("客户端来源", "尚未读取真实客户端归属或信誉记录。");
       return openD("客户端节点溯源 · " + a.title, `<div class="kv-grid">${kvCell("Agent ID", esc(a.agent), true)}${kvCell("模型", esc(a.model), true)}${kvCell("信誉/配额", esc(a.tier) + " / " + a.quota, true)}${kvCell("项目", esc(a.activeProject), true)}</div><div class="callout-box">网关启用 _meta 伪造剥离；低通过率模型自动降级限额。</div>`);
     }
     if (act === "open-topo-l3") {

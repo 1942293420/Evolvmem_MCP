@@ -15,6 +15,7 @@
   }
 
   E.openDrawer = function (title, html, subLabel) {
+    E.drawerEpoch = (E.drawerEpoch || 0) + 1;
     if (typeof root.document === "undefined") return;
     const subEl = root.document.getElementById("drawer-sub");
     if (subEl) subEl.textContent = subLabel || "三级溯源 · 技术明细";
@@ -24,6 +25,7 @@
   };
 
   E.closeDrawer = function () {
+    E.drawerEpoch = (E.drawerEpoch || 0) + 1;
     if (typeof root.document === "undefined") return;
     root.document.getElementById("drawer-backdrop").classList.remove("open");
   };
@@ -53,6 +55,12 @@
       if (t.id === "review-inbox") badge = `<span class="nav-count ${pendingTotal ? "warn" : ""}">${pendingTotal}</span>`;
       else if (t.id === "experiences") badge = `<span class="nav-count">${activeExps}</span>`;
       else if (t.id === "skills") badge = `<span class="nav-count">${draftSkills} 草</span>`;
+      if (E.isProduction()) {
+        const m = s.liveMetrics;
+        if (t.id === "review-inbox") badge = '<span class="nav-count">' + (m && m.pending_live != null && m.pending_backfill != null ? m.pending_live + m.pending_backfill : "—") + '</span>';
+        else if (t.id === "experiences") badge = '<span class="nav-count">' + (m && m.active_notes != null ? m.active_notes : "—") + '</span>';
+        else if (t.id === "skills") badge = '<span class="nav-count">' + (s.liveEvolution ? s.skills.length : "—") + '</span>';
+      }
       return `<button type="button" class="nav-tab ${activeTab === t.id ? "active" : ""} ${dimmed ? "dimmed" : ""}" data-act="goto-tab" data-route="${t.id}">
         ${t.icon}<span>${esc(t.label)}</span>${badge}
       </button>`;
@@ -62,6 +70,11 @@
   E.renderMain = function () {
     const s = E.state;
     if(E.session && (!E.session.isReady() || !E.session.dataReady))return E.session.panel();
+    if (E.isProduction() && s.simMode !== "sso_login") {
+      if (s.apiMode === "loading") return '<section class="panel" role="status"><h1>正在连接 EvolvMem</h1><p>正在读取当前账号和页面数据。</p></section>';
+      if (s.apiError || s.apiMode === "error") return '<section class="panel" role="alert"><h1>页面数据加载失败</h1><p class="secondary">' + esc(s.apiError || "暂时无法连接服务，请重试。") + '</p><button type="button" class="btn btn-primary" data-act="retry-api">重新加载</button></section>';
+      if (s.pageLoading) return '<section class="panel" role="status"><h1>正在读取当前库</h1><p>读取完成后显示所选库的数据。</p></section>';
+    }
     if (s.simMode === "pg_503") {
       return `<div class="panel" style="max-width:680px;margin:48px auto;border-color:var(--danger)">
         <span class="badge badge-danger mono" style="align-self:flex-start">HTTP 503 · pg_control_unavailable</span>
@@ -79,7 +92,7 @@
           ${s.apiMode === "live"
             ? `<a class="btn btn-primary" href="/auth/login">飞书登录</a>`
             : `<button type="button" class="btn btn-primary" data-act="set-sim" data-mode="normal">授权登录 (个人主库管理员)</button>`}
-          <button type="button" class="btn" data-act="set-sim" data-mode="normal">返回控制台</button>
+          ${E.isProduction() ? "" : '<button type="button" class="btn" data-act="set-sim" data-mode="normal">返回控制台</button>'}
         </div>
       </div>`;
     }
@@ -87,7 +100,7 @@
     if (s.route === "delivery" && s.evoSubtab !== "handbook") s.evoSubtab = "handbook";
     if (s.route === "pipelines") s.expSubtab = "pipelines";
     const fn = E.views[viewKey] || E.views.overview;
-    return fn();
+    return (E.isProduction() ? "" : '<div class="banner banner-warn" role="status">离线演示：以下为示例数据，操作不会写入正式系统。</div>') + fn();
   };
 
   function openDiagDrawer() { if (E.openDiagDrawer) E.openDiagDrawer(); }
@@ -142,11 +155,18 @@
     const thSel = doc.getElementById("theme-preset");
     if (thSel && thSel.value !== s.theme) thSel.value = s.theme;
     const ctxSel = doc.getElementById("ctx-lib-sel");
+    if (ctxSel) ctxSel.disabled = E.isProduction() && s.apiMode !== "live";
     if (ctxSel && ctxSel.value !== s.libraryCtx) ctxSel.value = s.libraryCtx;
     const navEl = doc.getElementById("top-nav");
     const mainEl = doc.getElementById("workspace-main");
     if (navEl) navEl.innerHTML = E.renderTopNav();
     if (mainEl) mainEl.innerHTML = E.renderMain();
+    if (E.isProduction() && mainEl) mainEl.querySelectorAll("[data-act]").forEach(function (el) {
+      if (E.isPlannedAction(el.getAttribute("data-act"))) {
+        el.disabled = true; el.title = "待开发，尚未接通后台";
+        el.textContent = el.textContent.replace(/ · 待开发$/, "") + " · 待开发";
+      }
+    });
     if(E.session)E.session.syncHeader();
     if (focusInfo) {
       const next = doc.getElementById(focusInfo.id);
@@ -157,13 +177,18 @@
     }
   };
 
+  E.isPlannedAction = function (act) {
+    return /^(promote-cat|demote-cat|toggle-dormant|publish-handbook|habit-confirm|habit-dismiss|eval-skill|skill-stage|simulate-sync|reset-demo|set-sim|restore-exp)$/.test(act);
+  };
   E.applyAction = function (act, ds) {
     const s = E.state;
     const current=currentResponse();
     if(act==='auth-logout'){if(E.session)E.session.logout();return false;}
     if(act==='auth-retry'){if(E.session)E.session.check();return false;}
+    if (act === "retry-api") { if (E.api) E.api.bootstrap(); return false; }
+    if (E.isProduction() && E.isPlannedAction(act)) { E.toast("该功能待开发，尚未接通后台。", "warn"); return false; }
     if(E.session && (!E.session.isReady() || !E.session.dataReady))return false;
-    if (!E.canWrite() && /^(approve-prop|reject-prop|batch-approve|batch-reject-apply|trash-exp|restore-exp|submit-new-exp|rb-apply)$/.test(act)) {
+    if (!E.canWrite() && /^(approve-prop|reject-prop|batch-approve|batch-reject-apply|trash-exp|restore-exp|submit-new-exp|rb-dry-run|rb-apply|toggle-user|toggle-grant|toggle-r9|toggle-proj-del)$/.test(act)) {
       E.toast("只读权限不可执行写操作", "danger");
       return false;
     }
@@ -404,6 +429,7 @@
       s.rollbackState.previewed = true; return true;
     }
     if (act === "rb-apply") {
+      if (E.isProduction() && !s.rollbackState.plan) { E.toast("请先完成回滚预演，当前未执行回滚。", "warn"); return false; }
       if (s.apiMode === "live" && E.api && s.rollbackState.plan) {
         E.api.rollbackExecute(s.rollbackState.plan).then(function (res) {
           if(!current())return;
@@ -488,18 +514,11 @@
       const s = E.state;
       const t = ev.target;
       if (t.id === "ctx-lib-sel") {
-        if(E.session){
-          if(!E.session.isReady())return;
-          E.session.switchLibrary(t.value);
-          const libraryScope=E.session.capture();
-          E.api.syncLibrarySelect();E.api.loadOverview().then(function(){if(E.session && E.session.isCurrent(libraryScope))return E.api.loadTab(E.state.route);}).then(function(){if(E.session && E.session.isCurrent(libraryScope)){E.session.dataReady=true;E.renderAll();E.session.restoreDraft();}});
-          return;
-        }
+        if (E.session && !E.session.isReady()) return;
+        if (s.apiMode === "live" && E.api) { E.api.switchLibrary(t.value); return; }
         s.libraryCtx = t.value;
         E.toast("切换视角：" + t.options[t.selectedIndex].text);
-        if (s.apiMode === "live" && E.api) {
-          E.api.loadOverview().then(function () { return E.api.loadTab(s.route); });
-        } else E.renderAll();
+        E.renderAll();
       }
       else if (t.id === "theme-preset") { s.theme = t.value; E.renderAll(); }
       else if (t.id === "stage-filter-sel") { s.stageFilter = t.value; E.renderAll(); }

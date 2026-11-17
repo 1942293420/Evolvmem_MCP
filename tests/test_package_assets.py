@@ -26,3 +26,7 @@ def test_wheel_includes_nested_redesign_page(tmp_path):
     with zipfile.ZipFile(wheel) as built:
         assert asset in built.namelist(), '/redesign must work in installed distributions'
         assert built.read(asset) == (root / asset).read_bytes()
+
+        asset_v2 = "evolvmem/web_static/v2/js/live-views.js"
+        assert asset_v2 in built.namelist(), "production fact views must be packaged"
+        assert built.read(asset_v2) == (root / asset_v2).read_bytes()
