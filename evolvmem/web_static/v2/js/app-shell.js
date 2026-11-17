@@ -171,7 +171,7 @@
     if (focusInfo) {
       const next = doc.getElementById(focusInfo.id);
       if (next && mainEl && mainEl.contains(next)) {
-        next.focus();
+        next.focus({preventScroll:true});
         if (typeof focusInfo.start === "number" && next.setSelectionRange) next.setSelectionRange(focusInfo.start, focusInfo.end);
       }
     }

@@ -156,12 +156,13 @@
         }
         if(typeof me.user_scope!=='string' || !/^[a-zA-Z0-9_-]{8,128}$/.test(me.user_scope)){S.block('unavailable');return false;}
         const nextStatus=me.native_status==='ready'?'ready':me.native_status==='disabled'?'disabled':'pending';
-        if(previousScope!==me.user_scope || !wasReady || nextStatus!=='ready'){
+        const replaceView=previousScope!==me.user_scope || !wasReady || nextStatus!=='ready';
+        if(replaceView){
           S.save();clearPrivate();S.scope=me.user_scope;restore();applyURLRoute();
         }
         S.name=String(me.name || '飞书用户');S.csrf=me.csrf_token || '';S.status=nextStatus;E.state.csrfToken=S.csrf;
         try{const url=new URL(me.central_console_url);if(/^https?:$/.test(url.protocol))S.consoleURL=url.href;}catch(_){}
-        S.syncHeader();if(E.renderAll)E.renderAll();
+        S.syncHeader();if(replaceView && E.renderAll)E.renderAll();
         if(nextStatus==='ready' && (!wasReady || previousScope!==S.scope) && options?.resume!==false && E.api) await E.api.bootstrap({statusKnown:true});
         return S.isReady();
       } catch (_) {S.block('unavailable');return false;}

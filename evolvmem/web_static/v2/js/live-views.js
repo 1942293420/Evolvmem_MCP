@@ -19,7 +19,7 @@
       '<div class="kpi-grid">' + kpi('有效经验', value(m.active_notes, ' 条'), '当前有效经验总量') +
       kpi('待审阅候选', value(total, ' 条'), '新会话 ' + value(m.pending_live, ' 条') + ' · 历史回填 ' + value(m.pending_backfill, ' 条')) +
       kpi('自动进化与 Skill 评测', '待开发', '不以预置数值表示已经达标') + '</div>' +
-      (E.session ? '<section class="panel" aria-labelledby="sso-principles-title"><h2 id="sso-principles-title">登录与知识库访问</h2><ol class="sso-flow"><li><strong>1. 飞书登录总控台</strong>总控台确认当前用户是否获准进入 EvolvMem。</li><li><strong>2. 核对内部权限</strong>沿用内部账号绑定、启停状态和角色权限。</li><li><strong>3. 打开已授权知识库</strong>继续按原归属和跨库授权查看资料。</li></ol><p>退出、账号变更或权限失效后隐藏资料；同一用户重新登录后回到当前页面。</p></section>' : '') +
+      (E.session ? '<section class="panel" aria-labelledby="sso-principles-title"><h2 id="sso-principles-title">登录与知识库访问</h2><ol class="sso-flow"><li><strong>1. 飞书登录总控台</strong>总控台确认当前用户是否获准进入 EvolvMem。</li><li><strong>2. 核对内部权限</strong>沿用内部账号绑定、启停状态和角色权限。</li><li><strong>3. 打开已授权知识库</strong>继续按原归属和跨库授权查看资料。</li></ol><p>退出、账号变更或权限失效后隐藏资料；同一用户重新登录后回到当前页面。后台核对身份未发生变化时，保留正文和阅读位置；恢复输入焦点不自动滚动页面。</p></section>' : '') +
       '<section class="panel"><div class="panel-head"><div><h2>系统工作流程</h2><p>功能关系说明，非实时健康监测。点击环节查看对应页面。</p></div></div>' +
       '<div style="display:flex;gap:10px;flex-wrap:wrap" aria-label="原文到经验的工作流程">' + flow.map(function (step, i) {
         return '<button type="button" class="stage-flow-row" style="flex:1 1 180px" data-act="goto-tab" data-route="' + step[2] + '"><span><b>' + (i + 1) + '. ' + step[0] + '</b><br><span class="muted">' + step[1] + '</span></span></button>';

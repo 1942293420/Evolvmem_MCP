@@ -19,6 +19,30 @@ function harness(actualState=false) {
 }
 const ready = scope => ({status:200,body:{central_sso:true,authenticated:true,name:'测试用户',csrf_token:'csrf-test',user_scope:scope,native_status:'ready',central_console_url:'http://console.test'}});
 
+test('unchanged identity polling updates credentials without replacing the reading view', async()=>{
+  const h=harness();let renders=0;h.E.renderAll=()=>{renders++;};
+  h.queue.push(ready('scope-aaaa'));await h.E.session.check({resume:false});
+  h.E.session.dataReady=true;h.E.state.historyBlocks=[{id:'reading',transcript:['keep this text']}];
+  const state=h.E.state,before=renders;
+  h.queue.push({status:200,body:{...ready('scope-aaaa').body,name:'更新后的姓名',csrf_token:'fresh-csrf'}});
+  await h.E.session.check({resume:false});
+  assert.equal(renders,before,'background status checks must not rebuild the reading DOM');
+  assert.equal(h.E.state,state);assert.equal(h.E.state.historyBlocks[0].id,'reading');
+  assert.equal(h.E.session.dataReady,true);assert.equal(h.E.session.name,'更新后的姓名');
+  assert.equal(h.E.state.csrfToken,'fresh-csrf');
+});
+
+test('polling still replaces private content when identity or permission changes', async()=>{
+  const h=harness();let renders=0;h.E.renderAll=()=>{renders++;};
+  h.queue.push(ready('scope-aaaa'));await h.E.session.check({resume:false});
+  h.E.session.dataReady=true;h.E.state.historyBlocks=[{id:'private-A'}];const before=renders;
+  h.queue.push(ready('scope-bbbb'));await h.E.session.check({resume:false});
+  assert.ok(renders>before);assert.equal(h.E.state.historyBlocks?.length||0,0);assert.equal(h.E.session.dataReady,false);
+  const changed=renders;h.E.state.historyBlocks=[{id:'private-B'}];
+  h.queue.push({status:403,body:{authenticated:false}});await h.E.session.check({resume:false});
+  assert.ok(renders>changed);assert.equal(h.E.state.historyBlocks?.length||0,0);assert.equal(h.E.session.isReady(),false);
+});
+
 test('online startup removes demo payload before any data request',()=>{
   const {E}=harness();assert.equal(E.state.apiMode,'live');assert.equal(E.state.experiences.length,0);assert.equal(E.session.isReady(),false);
 });
