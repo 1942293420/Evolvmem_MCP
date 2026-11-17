@@ -12,6 +12,12 @@
 </div>
 <div class="principle-grid">
   <section class="panel"><h2>历史</h2><ol><li><b>项目摘要：</b>项目用途、环境与必要信息。</li><li><b>简短历史：</b>按时间查看做过的事项。</li><li><b>事项详情：</b>用户的问题、AI 的回答、解决方法和结果。</li></ol><p class="muted">未归属会话先按块保存。缺失原文会明确显示；图片只有能读取时才展示。删除进入回收站，原始资料保留。</p>
+    <h3>原文阅读与文件夹管理</h3><p>先选择用户库和文件夹，再选择当前文件夹或所有文件夹搜索。消息按真实角色显示，保留段落与代码；系统注入默认折叠，可展开核对原文。长对话分批加载并显示已读数量，读取失败保留已显示内容。桌面左右两栏各自滚动。</p>
+    <div class="diagram-flow" role="img" aria-label="选择有权访问的用户库和搜索范围，分页读取原文，按真实角色显示并折叠系统注入；文件夹回收前确认名称和影响数量">
+      <div class="diagram-node"><strong>选择范围</strong><small>当前文件夹 / 所有文件夹</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>分页阅读原文</strong><small>真实角色、段落、代码与注入折叠</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>确认文件夹管理</strong><small>明确整个分组与影响数量，可恢复</small></div>
+    </div><p class="muted">标题清理和正文排版只改变展示，不改写归档内容。来源信息展示真实归档指针与时间，不把未提供的评分包装成已核验结果。</p>
     <h3>桌面会话如何保存</h3><p>Codex 和 DSH 在聊天时先保存本机原文，后台定时检查并上传，不必关闭会话。断网时保留待传内容，恢复后继续。只有收到服务器的完整归档回执，才算已同步。</p>
     <div class="diagram-flow" role="img" aria-label="桌面聊天先落盘，本机加密保存待传内容，后台上传并核对完整归档回执，再按需整理项目历史；自动整理暂停不影响原文上传">
       <div class="diagram-node"><strong>聊天落盘</strong><small>Codex / DSH 原生会话</small></div><span class="diagram-arrow" aria-hidden="true">→</span>

@@ -220,3 +220,20 @@ def test_message_times_expose_archive_fallback_without_changing_stored_values(se
     assert status == 200 and payload['time_basis'] == 'archive_fallback'
     with cfg.connect(cfg.history_migration_db) as conn:
         assert conn.execute('SELECT recorded_at FROM em_history.messages WHERE block_id=%s', (bids['other'],)).fetchone()[0] == '2026-11-17 04:00:00'
+
+
+def test_message_pages_cover_long_conversation_and_report_end(seeded):
+    cfg, prefix, proj, bids = seeded
+    bid = bids['a']
+    with cfg.connect(cfg.history_migration_db) as conn:
+        conn.execute('DELETE FROM em_history.messages WHERE block_id=%s', (bid,))
+        for ordinal in range(116):
+            conn.execute("INSERT INTO em_history.messages(block_id,ordinal,role,content) VALUES (%s,%s,'user',%s)", (bid, ordinal, 'message ' + str(ordinal)))
+        conn.commit()
+    reader = WorkspaceHistoryReader(cfg, user_id='workspace-test')
+    pages = [reader.block_turn_page(bid, offset=o, limit=40) for o in (0, 40, 80)]
+    assert [p['has_more'] for p in pages] == [True, True, False]
+    assert [p['next_offset'] for p in pages] == [40, 80, 116]
+    assert [m['ordinal'] for p in pages for m in p['messages']] == list(range(116))
+    empty = reader.block_turn_page(bid, offset=116, limit=40)
+    assert empty['messages'] == [] and empty['has_more'] is False

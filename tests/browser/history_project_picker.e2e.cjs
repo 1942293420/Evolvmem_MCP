@@ -45,7 +45,7 @@ const server = http.createServer((req, res) => {
     await page.goto(`http://127.0.0.1:${server.address().port}/v2/#history`);
     await page.waitForFunction(() => EvolvMemV2.session.dataReady && EvolvMemV2.state.historyBlocks.length > 0);
     assert.equal(await page.locator('#hist-db-sel').count(), 0);
-    assert.match(await page.locator('#workspace-main').innerText(), /设备库切换未接入/);
+    await page.locator('.history-help summary').click();assert.match(await page.locator('#workspace-main').innerText(), /设备库切换未接入/);await page.locator('.history-help summary').click();
     const before = historyRequests.length;
     await page.locator('#hist-proj-toggle').click();
     await page.locator('#hist-proj-search').fill('同名目录');
@@ -63,7 +63,7 @@ const server = http.createServer((req, res) => {
     await page.locator('[data-project-picker-key="finance-daily"]').click();
     await page.waitForFunction(() => EvolvMemV2.state.historyBlocks[0]?.project === 'finance-daily');
     assert.match(await page.locator('#hist-proj-toggle').innerText(), /资金日报自动化 \(2\)/);
-    assert.match(await page.locator('.detail-panel').innerText(), /工作文件夹：C:\\验收\\资金日报自动化/);
+    await page.locator('[data-act=history-source-info]').click(); assert.match(await page.locator('#modal-body').innerText(), /C:\\验收\\资金日报自动化/);await page.locator('#modal-backdrop [data-act=close-modal]').first().click();
     assert.equal(historyRequests.some(q => new URLSearchParams(q).get('project_id') === 'finance-daily'), true);
     checks.push('Chinese fragment filter is local; selection uses original key and count');
     await page.locator('#hist-proj-toggle').click(); await page.locator('#hist-proj-search').fill('完全不存在的项目');
@@ -108,7 +108,7 @@ const server = http.createServer((req, res) => {
     checks.push('slow project reads preserve typing focus and cannot overwrite a newer selection');
     await page.locator('[data-act="hist-scope"][data-val="unassigned"]').click();
     await page.waitForFunction(() => EvolvMemV2.state.historyBlocks[0]?.id === 'unknown-folder' && EvolvMemV2.state.historyBlocks[0]?._turnsLoaded);
-    assert.match(await page.locator('.detail-panel').innerText(), /工作文件夹：未归属/);
+    await page.locator('[data-act=history-source-info]').click();assert.match(await page.locator('#modal-body').innerText(), /没有可靠目录信息/);await page.locator('#modal-backdrop [data-act=close-modal]').first().click();
     await page.locator('#hist-q').fill('目录信息');
     await page.waitForFunction(() => EvolvMemV2.state.historyBlocks[0]?.id === 'unknown-folder' && EvolvMemV2.state.historyBlocks[0]?._turnsLoaded);
     await page.waitForTimeout(350);

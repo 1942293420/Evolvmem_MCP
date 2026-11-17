@@ -97,7 +97,7 @@ test('library switch removes old records and restores only that library UI',asyn
   h.E.session.switchLibrary('unavailable-library');assert.equal(h.E.state.libraryCtx,'native-test');
 });
 test('real v2 views tolerate cleared private payload and show the real SSO boundary',async()=>{
-  const h=harness(true);for(const name of ['render-overview-and-core','render-interceptions','render-pipeline-and-history','render-evolution-and-control','app-shell'])vm.runInContext(fs.readFileSync(path.join(root,'js/'+name+'.js'),'utf8'),h.context);
+  const h=harness(true);for(const name of ['history-time','history-content','history-project-picker','render-overview-and-core','render-interceptions','render-pipeline-and-history','render-evolution-and-control','app-shell'])vm.runInContext(fs.readFileSync(path.join(root,'js/'+name+'.js'),'utf8'),h.context);
   h.queue.push(ready('scope-aaaa'));await h.E.session.check({resume:false});h.E.session.dataReady=true;h.E.state.ownerId='native-test';h.E.state.libraryCtx='native-test';h.E.state.availableLibraries=[{id:'native-test',can_manage_experience:true,can_manage_history:true}];
   for(const route of ['overview','review-inbox','experiences','history','evolution','skills','control']){h.E.state.route=route;assert.equal(typeof h.E.renderMain(),'string',route);}
   h.E.state.route='overview';assert.match(h.E.renderMain(),/总控台确认当前用户是否获准进入 EvolvMem/);

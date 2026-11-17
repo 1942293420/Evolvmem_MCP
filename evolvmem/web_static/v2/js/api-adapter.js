@@ -19,7 +19,8 @@
   }
 
   function viewKey() { return E.state.libraryCtx + ":" + (E.state.libraryEpoch || 0); }
-  let experienceEpoch = 0, experienceTimer = null;
+  let experienceEpoch = 0, experienceTimer = null, historyEpoch = 0;
+  function historySignature(){const s=E.state;return JSON.stringify([viewKey(),s.histScope,s.histQuery,s.selectedProjectKey,s.histSearchRange]);}
   function experienceSignature() { return JSON.stringify([viewKey(), E.state.expFilters, E.state.expOffset || 0]); }
   function clearLiveData() {
     E.state.expTotal = null; E.state.expCategoryCounts = null; E.state.expDiagnostics = null; E.state.expLoading = false; E.state.expOffset = 0;
@@ -328,37 +329,43 @@
       }
     },
 
-    async loadBlockTurns(blockId) {
-      const requestScope=requestContext();
-      if (E.state.apiMode !== "live" || !blockId) return;
-      const s = E.state;
-      const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
-      const res = await req("GET", "/history" + qs({ view: "turns", block_id: blockId, owner_id: oid, limit: 40 }));
-      if(!currentRequest(requestScope))return null;
-      if (res.status === 200 && res.data.ok) {
-        const blk = s.historyBlocks.find(function (b) { return b.id === blockId; });
-        if (blk) {
-          const messages = res.data.messages || [];
-          blk.timeBasis = res.data.time_basis || blk.timeBasis || null;
-          blk.transcript = messages.map(function (m) {
-            const role = m.role === "assistant" ? "助手" : m.role === "user" ? "用户" : (m.role || "消息");
-            return role + "：" + String(m.content || "");
-          });
-          blk.transcriptTimes = messages.map(m => m.recorded_at ?? null);
-          blk.transcriptTimeBases = messages.map(m => m.time_basis || res.data.time_basis || blk.timeBasis);
-          blk._turnsLoaded = true;
+    async loadBlockTurns(blockId, more) {
+      const requestScope=requestContext(), s=E.state;
+      if(s.apiMode!=="live" || !blockId)return;
+      const blk=s.historyBlocks.find(b=>b.id===blockId);
+      if(!blk || blk._turnsLoading || (more && blk._hasMore===false))return;
+      if(!more && blk._turnsLoaded)return;
+      const offset=more && blk._turnsLoaded?(blk._nextOffset || 0):0, limit=40;
+      const valid=()=>currentRequest(requestScope) && s.historyBlocks.includes(blk);
+      blk._turnsLoading=true;blk._turnsError=null;
+      try {
+        const res=await req("GET", "/history"+qs({view:"turns",block_id:blockId,owner_id:s.libraryCtx===s.ownerId?"":s.libraryCtx,limit,offset}),undefined,valid,{preserveOnError:true});
+        if(!valid())return;
+        if(res.status!==200 || !res.data.ok || res.data.pg_connected===false || !Array.isArray(res.data.messages)) {
+          blk._turnsError="消息读取失败，已显示内容保留，请重试。";return;
         }
-      }
+        const page=res.data.messages;
+        blk.messages=offset?(blk.messages || []).concat(page):page;
+        blk.timeBasis=res.data.time_basis || blk.timeBasis || null;
+        blk.transcript=blk.messages.map(m=>(m.role==="assistant"?"助手":m.role==="user"?"用户":m.role || "消息")+"："+String(m.content || ""));
+        blk.transcriptTimes=blk.messages.map(m=>m.recorded_at ?? null);
+        blk.transcriptTimeBases=blk.messages.map(m=>m.time_basis || blk.timeBasis);
+        blk._nextOffset=Number.isInteger(res.data.next_offset)?res.data.next_offset:offset+page.length;
+        blk._hasMore=typeof res.data.has_more==="boolean"?res.data.has_more:page.length===limit;
+        blk._turnsLoaded=true;
+      } finally {blk._turnsLoading=false;}
     },
 
     async loadHistory() {
       const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
       const s = E.state;
+      const epoch=++historyEpoch;let signature=historySignature();
+      const valid=()=>currentRequest(requestScope) && epoch===historyEpoch && signature===historySignature();
       const view = viewKey();
       const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
-      const res = await req("GET", "/history" + qs({ view: "projects", grouping: "workspace", owner_id: oid }));
-      if (!currentRequest(requestScope) || view !== viewKey() || res.status !== 200 || !res.data.ok) return;
+      const res = await req("GET", "/history" + qs({ view: "projects", grouping: "workspace", owner_id: oid }), undefined, valid);
+      if (!valid() || view !== viewKey() || res.status !== 200 || !res.data.ok) return;
       s.liveHistory = res.data;
       const seen = {};
       const projs = (res.data.projects || []).map(function (p) {
@@ -371,8 +378,8 @@
         };
       });
       if (E.canWrite()) {
-        const tRes = await req("GET", "/history" + qs({ view: "trash", owner_id: oid }));
-        if (!currentRequest(requestScope) || view !== viewKey() || tRes.status !== 200 || !tRes.data.ok) return;
+        const tRes = await req("GET", "/history" + qs({ view: "trash", owner_id: oid }), undefined, valid);
+        if (!valid() || view !== viewKey() || tRes.status !== 200 || !tRes.data.ok) return;
         if (tRes.status === 200 && tRes.data.ok) {
           (tRes.data.items || []).forEach(function (it) {
             if (it.kind === "project" || it.kind === "workspace") {
@@ -388,10 +395,13 @@
         }
       }
       s.historyProjects = projs;
+      const active=projs.filter(p=>!p.deleted);
+      if(!active.some(p=>p.key===s.selectedProjectKey))s.selectedProjectKey=active[0]?.key || null;
+      signature=historySignature();
       const q = (s.histQuery || "").trim();
       if (s.histScope === "unassigned" && !q) {
-        const uRes = await req("GET", "/history" + qs({ view: "unassigned", grouping: "workspace", owner_id: oid }));
-        if (!currentRequest(requestScope) || view !== viewKey() || uRes.status !== 200 || !uRes.data.ok) return;
+        const uRes = await req("GET", "/history" + qs({ view: "unassigned", grouping: "workspace", owner_id: oid }), undefined, valid);
+        if (!valid() || view !== viewKey() || uRes.status !== 200 || !uRes.data.ok) return;
         if (uRes.status === 200 && uRes.data.ok) {
           s.historyBlocks = (uRes.data.blocks || []).map(function (b) {
             return {
@@ -401,9 +411,10 @@
             };
           });
         }
-      } else if (q) {
-        const sRes = await req("GET", "/history" + qs({ view: "search", grouping: "workspace", scope: s.histScope === "unassigned" ? "unassigned" : "", q: q, owner_id: oid }));
-        if (!currentRequest(requestScope) || view !== viewKey() || sRes.status !== 200 || !sRes.data.ok) return;
+      } else if (q && s.histScope !== "trash") {
+        if(s.histScope === "projects" && s.histSearchRange !== "all" && !s.selectedProjectKey){s.historyBlocks=[];s.selectedBlockId=null;return;}
+        const sRes = await req("GET", "/history" + qs({ view: "search", grouping: "workspace", scope: s.histScope === "unassigned" ? "unassigned" : "", project: s.histScope === "projects" && s.histSearchRange !== "all" ? s.selectedProjectKey : "", q: q, owner_id: oid }), undefined, valid);
+        if (!valid() || view !== viewKey() || sRes.status !== 200 || !sRes.data.ok) return;
         if (sRes.status === 200 && sRes.data.ok) {
           s.historyBlocks = (sRes.data.items || []).map(function (it) {
             return {
@@ -420,8 +431,8 @@
           ? s.selectedProjectKey : (activeProjs[0] && activeProjs[0].key);
         s.selectedProjectKey = curKey || null;
         if (curKey) {
-          const pRes = await req("GET", "/history" + qs({ view: "project", grouping: "workspace", project_id: curKey, owner_id: oid }));
-          if (!currentRequest(requestScope) || view !== viewKey() || pRes.status !== 200 || !pRes.data.ok) return;
+          const pRes = await req("GET", "/history" + qs({ view: "project", grouping: "workspace", project_id: curKey, owner_id: oid }), undefined, valid);
+          if (!valid() || view !== viewKey() || pRes.status !== 200 || !pRes.data.ok) return;
           if (pRes.status === 200 && pRes.data.ok) {
             s.historyBlocks = (pRes.data.blocks || []).map(function (b) {
               return {
@@ -438,7 +449,7 @@
       }
       if (s.selectedBlockId && s.histScope !== "trash") {
         await this.loadBlockTurns(s.selectedBlockId);
-        if(!currentRequest(requestScope))return null;
+        if(!valid())return null;
       }
     },
 

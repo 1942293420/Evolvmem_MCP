@@ -154,167 +154,37 @@
   };
 
   E.views.history = function () {
-    const s = E.state;
-    const w = E.canWrite();
-    const entity = E.isProduction() ? '文件夹' : '项目';
-
-    let header = `
-      <div class="page-head">
-        <div>
-          <div class="eyebrow">HISTORY VAULT · 多端永久原文</div>
-          <h1>PG 历史会话库与多端捕获</h1>
-          <p>${E.isProduction() ? "按 Codex 实际工作文件夹浏览已归档原文，支持会话检索与阅读；完整覆盖需另行核验。" : "离线演示：以下会话、同步状态与附件为示例，不代表现网数据。"}</p>
-        </div>
-        <div class="topbar-actions">
-          ${E.isProduction() ? '<div class="history-source-note"><span class="badge">当前读取所选用户历史库</span><span class="muted">设备库切换未接入</span></div>' : `
-          <select id="hist-db-sel" aria-label="选择设备历史库">
-            ${Object.keys(E.HIST_DB_ZH).map(function (k) {
-              return `<option value="${esc(k)}" ${s.histDb === k ? "selected" : ""}>${esc(E.HIST_DB_ZH[k])}</option>`;
-            }).join("")}
-          </select>`}
-        </div>
-      </div>
-      ${!w ? `<div class="banner banner-warn">当前处于他人授权只读视角：支持检索与阅读对话原文，移入回收站或恢复操作已禁用。</div>` : ""}
-      <div class="subtabs" role="tablist">
-        <button type="button" class="subtab ${s.histSubtab === "browse" ? "active" : ""}" data-act="hist-subtab" data-sub="browse">${entity}与会话检索</button>
-        <button type="button" class="subtab ${s.histSubtab === "capture" ? "active" : ""}" data-act="hist-subtab" data-sub="capture">跨端续接与捕获状态</button>
-      </div>`;
-
-    if (s.histSubtab === "capture") {
-      if (E.isProduction()) return header + E.unavailablePanel("跨端捕获状态尚未接入", "当前接口未提供客户端队列、上传回执、积压、连续性租约及解密耗时，不能判断同步健康。请通过真实客户端与服务端回执核验。") + `<section class="panel"><button type="button" class="btn btn-sm" data-act="open-capture-l3">查看捕获状态说明</button>${E.plannedButton("启动同步或回填")}</section>`;
-      return `${header}
-        <div class="grid-2">
-          <section class="panel">
-            <div class="panel-head"><div><h2>Windows 双端实时捕获通道</h2><p>本地桌面守护进程自动增量同步对话块至中心库</p></div><span class="badge badge-ok">零积压健康</span></div>
-            <div class="callout-box"><b>Codex 桌面同步：</b>上次调度成功，最新 2 个增量片段已全部回执入库，待处理队列为空。</div>
-            <div class="callout-box"><b>DSH 桌面伴侣捕获：</b>运行健康，全部 74 份跨设备会话历史确认完毕，异常计数为 0。</div>
-          </section>
-          <section class="panel">
-            <div class="panel-head"><div><h2>跨端连续性交接与解密回查</h2><p>换台电脑继续工作时秒级接力最近活跃项目焦点</p></div><span class="badge badge-brand">零 LLM 消耗</span></div>
-            <div class="callout-box"><b>加密归档按需直读：</b>调阅长篇历史会话无需大模型总结转写，4 毫秒内直接解密渲染完整对话轮次与截图附件。</div>
-            <div class="callout-box"><b>分布式连续性回填锁：</b>严格单库并发锁调度，保护跨设备工作流焦点修订顺序不错乱。</div>
-          </section>
-        </div>
-        <section class="panel" style="padding:14px 20px">
-          <div class="l3-bar" style="border-top:0;padding-top:0">
-            <span class="muted" style="font-size:13.5px">需要核查 cutover_write_journal 写入笔数与 SKIP LOCKED 锁参数？</span>
-            <button type="button" class="btn btn-sm" data-act="open-capture-l3">📋 查看底层同步日志与租约明细 (L3)</button>
-          </div>
-        </section>`;
+    const s=E.state, w=E.canWrite(), prod=E.isProduction(), q=s.histQuery.trim();
+    const entity=prod?'文件夹':'项目', projects=s.historyProjects || [];
+    const selected=projects.find(p=>p.key===s.selectedProjectKey && !p.deleted);
+    const blocks=(s.historyBlocks || []).filter(b=>s.histScope!=='trash' && (q || (s.histScope==='unassigned'?b.project===null:b.project!==null)));
+    const block=blocks.find(b=>b.id===s.selectedBlockId) || blocks[0];
+    if(block)s.selectedBlockId=block.id;
+    const group=block && projects.find(p=>p.key===block.project);
+    const folderPath=block && (block.workspacePath || group?.workspacePath) || '';
+    const title=value=>esc(E.historyDisplayTitle(value));
+    const unassigned=Number.isInteger(s.liveHistory?.unassigned_count)?s.liveHistory.unassigned_count:null;
+    const help=`<details class="history-help"><summary>阅读说明</summary><div class="history-help-body"><p>文件夹按 Codex 实际工作文件夹和其他客户端已核实目录分组；无可靠工作文件夹的记录进入未归属；括号为会话片段数。搜索可选当前文件夹或所有文件夹。</p><p>有明确时区的时间统一显示北京时间（UTC+8）；来源时区未注明时保留原值。入库时间不代表原对话发生时间。</p>${prod?'<p>当前读取所选用户历史库；设备库切换未接入。完整归档覆盖和检索分项评分需另行核验。</p>':''}</div></details>`;
+    const header=`<div class="history-heading"><h1>历史会话${prod?'':' · 离线演示'}</h1><div class="subtabs" role="tablist"><button type="button" class="subtab ${s.histSubtab==='browse'?'active':''}" data-act="hist-subtab" data-sub="browse">文件夹与会话检索</button><button type="button" class="subtab ${s.histSubtab==='capture'?'active':''}" data-act="hist-subtab" data-sub="capture">跨端续接与捕获状态</button></div>${help}</div>${!w?'<div class="history-readonly">当前为授权只读视角，可检索与阅读原文。</div>':''}`;
+    if(s.histSubtab==='capture')return header+E.unavailablePanel('跨端捕获状态尚未接入','此页尚未读取客户端队列、上传回执、积压与连续性租约，不能据此判断同步健康。')+`<section class="panel"><div class="history-actions"><button type="button" class="btn btn-sm" data-act="open-capture-l3">查看捕获状态说明</button>${E.plannedButton('启动同步或回填')}</div></section>`;
+    const filters=`<div class="history-filters"><div class="filter-bar">
+      ${s.histScope==='projects'?E.renderHistoryProjectPicker():`<span class="history-scope-label">${s.histScope==='trash'?'回收站':'未归属片段'}</span>`}
+      <input type="search" id="hist-q" value="${esc(s.histQuery)}" aria-label="搜索历史会话" placeholder="搜索标题或对话正文…" ${s.histScope==='trash'?'disabled':''}/>
+      ${s.histScope==='projects'?`<select id="hist-search-range" aria-label="搜索范围"><option value="folder" ${s.histSearchRange!=='all'?'selected':''}>当前文件夹</option><option value="all" ${s.histSearchRange==='all'?'selected':''}>所有文件夹</option></select>`:''}
+      <div class="cat-pills"><button type="button" class="cat-pill ${s.histScope==='projects'?'active':''}" data-act="hist-scope" data-val="projects"><span>文件夹</span><strong>${projects.filter(p=>!p.deleted).length}</strong></button><button type="button" class="cat-pill ${s.histScope==='unassigned'?'active':''}" data-act="hist-scope" data-val="unassigned"><span>未归属片段</span><strong>${unassigned===null?'—':unassigned}</strong></button>${w?`<button type="button" class="cat-pill ${s.histScope==='trash'?'active':''}" data-act="hist-scope" data-val="trash"><span>回收站</span><strong>${projects.filter(p=>p.deleted).length}</strong></button>`:''}</div>
+    </div></div>`;
+    if(s.histScope==='trash')return header+filters+`<section class="panel history-trash"><h2>回收站中的文件夹与项目</h2><p class="muted">恢复后重新显示分组内的会话；此操作不删除本地文件夹或会话原文。</p>${projects.filter(p=>p.deleted).map(p=>`<div class="history-trash-row"><div><b>${esc(p.title)}</b><p class="muted">${esc(p.workspacePath || '')} · ${p.blocks} 个会话片段</p></div><button type="button" class="btn btn-ok btn-sm" data-act="toggle-proj-del" data-key="${esc(p.key)}">恢复${p.kind==='workspace'?'文件夹':'项目'}</button></div>`).join('') || '<p>回收站为空。</p>'}</section>`;
+    const list=`<div class="list-panel"><div class="list-head"><strong>会话 (${blocks.length})</strong>${selected && w && s.histScope==='projects' && (!q || s.histSearchRange!=='all')?`<button type="button" class="btn btn-ghost btn-sm" data-act="toggle-proj-del" data-key="${esc(selected.key)}" aria-label="管理文件夹 ${esc(selected.title)}">管理文件夹</button>`:''}</div><div id="history-list-scroll" class="list-scroll">
+      ${blocks.map(b=>`<button type="button" class="list-entry ${block?.id===b.id?'active':''}" data-act="select-block" data-id="${esc(b.id)}"><div class="list-entry-title">${title(b.title)}</div><div class="list-entry-meta"><span>${b.turns==null?'轮次未记录':esc(b.turns)+' 轮对话'}</span><span>${b.timeBasis==='archive_fallback'?'入库：':''}${esc(E.formatHistoryTime(b.lastAt))}</span></div>${q && s.histSearchRange==='all'?`<span class="muted">${esc(projects.find(p=>p.key===b.project)?.title || '未归属')}</span>`:''}</button>`).join('') || '<p class="history-empty">没有找到匹配的会话。</p>'}
+    </div></div>`;
+    let reader='<p class="history-empty">从左侧选择会话，阅读原文。</p>';
+    if(block) {
+      const messages=E.historyMessages(block), count=messages.length;
+      reader=`<div class="history-reader-head"><h2 class="prose-lead" title="${title(block.title)}">${title(block.title)}</h2><div class="history-reader-meta"><span>${block.messageCount==null?'消息数未记录':esc(block.messageCount)+' 条消息'}</span><span>${block.timeBasis==='archive_fallback'?'入库时间：':'最近记录：'}${esc(E.formatHistoryTime(block.lastAt))}</span><button type="button" class="btn btn-ghost btn-sm" data-act="history-source-info" data-id="${esc(block.id)}">来源与记录信息</button></div></div>
+      <div id="history-reader-scroll" class="history-reader-scroll" data-block-id="${esc(block.id)}"><div class="chat-feed">
+      ${messages.map((m,i)=>{const role=m.role==='assistant'?'助手':m.role==='user'?'用户':m.role || '消息',basis=m.time_basis || block.timeBasis;return `<div class="chat-bubble ${m.role==='assistant'?'assistant':''}" data-message-index="${i}"><div class="chat-meta"><div class="chat-role">${esc(role)}</div><span class="chat-time">${basis==='archive_fallback'?'入库时间：':'记录时间：'}${esc(E.formatHistoryTime(m.recorded_at))}</span></div><div class="history-message">${E.renderHistoryContent(m.content)}</div></div>`;}).join('')}
+      </div><div class="history-pagination" role="status"><span>已显示 ${count}${block.messageCount==null?'':' / '+esc(block.messageCount)} 条消息${block._hasMore===false?' · 已到末尾':''}</span>${block._turnsError?`<span class="history-load-error">${esc(block._turnsError)}</span>`:''}${block._hasMore || !block._turnsLoaded?`<button type="button" class="btn btn-sm" data-act="history-load-more" data-id="${esc(block.id)}" ${block._turnsLoading?'disabled':''}>${block._turnsLoading?'正在加载…':block._turnsError?'重试加载':count?'加载更多消息':'加载消息'}</button>`:''}</div></div>`;
     }
-
-    const q = s.histQuery.trim().toLowerCase();
-    const visibleProjs = s.historyProjects.filter(function (p) { return s.histScope === "trash" ? p.deleted : !p.deleted; });
-    const blocks = s.historyBlocks.filter(function (b) {
-      if (s.histScope === "unassigned" && !q && b.project !== null) return false;
-      if (s.histScope === "projects" && !q && b.project === null) return false;
-      if (s.histScope === "trash") return false;
-      if (!q || s.apiMode === "live") return true;
-      return (b.title + b.transcript.join(" ")).toLowerCase().indexOf(q) >= 0;
-    });
-    const selBlk = blocks.find(function (b) { return b.id === s.selectedBlockId; }) || blocks[0] || null;
-    if (selBlk) s.selectedBlockId = selBlk.id;
-    const blkProj = selBlk && selBlk.project ? s.historyProjects.find(function (p) { return p.key === selBlk.project; }) : null;
-    const workspacePath = selBlk && (selBlk.workspacePath || (blkProj && blkProj.workspacePath)) || '';
-
-    return `${header}
-      <div class="panel" style="padding:14px 18px">
-        <div class="filter-bar">
-          ${s.histScope === "projects" && !q && s.historyProjects.some(function (p) { return !p.deleted; }) ? `
-            ${E.renderHistoryProjectPicker()}` : ""}
-          <input type="search" id="hist-q" value="${esc(s.histQuery)}" placeholder="三路混合搜索历史会话标题、命令或对话正文…" style="flex:1;min-width:220px" />
-          <div class="cat-pills">
-            <button type="button" class="cat-pill ${s.histScope === "projects" ? "active" : ""}" data-act="hist-scope" data-val="projects"><span>${entity}会话</span><strong>${s.historyProjects.filter(function (p) { return !p.deleted; }).length}</strong></button>
-            <button type="button" class="cat-pill ${s.histScope === "unassigned" ? "active" : ""}" data-act="hist-scope" data-val="unassigned"><span>未归属片段</span></button>
-            ${w ? `<button type="button" class="cat-pill ${s.histScope === "trash" ? "active" : ""}" data-act="hist-scope" data-val="trash"><span>回收站</span><strong>${s.historyProjects.filter(function (p) { return p.deleted; }).length}</strong></button>` : ""}
-          </div>
-        </div>
-      </div>
-
-      <p class="muted history-project-help">${E.isProduction() ? '文件夹按 Codex 实际工作文件夹显示，其他客户端使用已核实的来源目录；名称保留真实末级目录名；无可靠工作文件夹的片段进入“未归属”。可输入目录名或完整路径模糊查找，括号数字为可见历史片段数。' : '项目来自已归档会话的项目归属；括号数字为可见历史片段数。点击项目选择框可输入名称查找。'}</p>
-      <p class="history-time-note">有明确时区的时间统一显示北京时间（UTC+8）；来源时区未注明时保留原值。入库时间不代表原对话发生时间。</p>
-
-      ${s.histScope === "trash" ? `
-        <section class="panel">
-          <div class="panel-head"><div><h2>已移至回收站的分组 (${visibleProjs.length})</h2><p>保留历史文件夹与旧项目标记，可恢复对应分组；不会删除本地文件夹或会话原文。</p></div></div>
-          ${visibleProjs.length === 0 ? `<p class="muted">回收站为空。</p>` : visibleProjs.map(function (p) {
-            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--line)">
-              <div><b>${esc(p.title)}</b>${p.workspacePath ? `<div class="muted" style="font-size:13px;overflow-wrap:anywhere">${esc(p.workspacePath)}</div>` : ''}<div class="muted" style="font-size:13px">${p.blocks} 个历史片段 · ${esc(p.lastAt)}</div></div>
-              <button type="button" class="btn btn-ok btn-sm" data-act="toggle-proj-del" data-key="${esc(p.key)}" ${w ? "" : "disabled"}>恢复${p.kind === 'workspace' ? '文件夹' : '项目'}</button>
-            </div>`;
-          }).join("")}
-        </section>
-      ` : `
-        <div class="split-workspace">
-          <div class="list-panel">
-            <div class="list-head"><strong>匹配会话记录 (${blocks.length})</strong><span class="muted" style="font-size:12.5px">三路混合相关性排序</span></div>
-            <div class="list-scroll">
-              ${blocks.length === 0 ? `<div style="padding:28px" class="muted">没有找到匹配的历史会话。</div>` : blocks.map(function (b) {
-                const projObj = b.project ? s.historyProjects.find(function (p) { return p.key === b.project; }) : null;
-                return `<button type="button" class="list-entry ${selBlk && selBlk.id === b.id ? "active" : ""}" data-act="select-block" data-id="${esc(b.id)}">
-                  <div class="list-entry-meta">
-                    <span class="badge badge-brand">${projObj ? esc(projObj.title) : "未归属会话"}</span>
-                    <span>${b.turns == null ? '轮次未记录' : esc(b.turns) + ' 轮对话'}</span>
-                  </div>
-                  <div class="list-entry-title">${esc(b.title)}</div>
-                  <div class="history-list-time">${b.timeBasis === 'archive_fallback' ? '入库时间：' : '最近记录：'}${esc(E.formatHistoryTime(b.lastAt))}${b.timeBasis === 'archive_fallback' ? '<span class="history-time-basis">原对话时间未保留</span>' : ''}</div>
-                </button>`;
-              }).join("")}
-            </div>
-          </div>
-
-          <section class="detail-panel" aria-label="历史会话原文阅读器">
-            ${!selBlk ? `<p class="muted">请从左侧列表选择一段历史会话阅读完整上下文。</p>` : `
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
-                <div>
-                  <div class="tag-row" style="margin-bottom:6px">
-                    ${E.isProduction() ? `<span class="badge">检索评分明细尚未核验</span>` : `<span class="badge badge-ok">混搜综合分 ${(selBlk.rrf * 100).toFixed(0)}</span>`}
-                    ${blkProj ? `<span class="badge">${esc(blkProj.title)}</span>` : `<span class="badge">未归属片段</span>`}
-                    ${selBlk.hasAttachment ? `<span class="badge badge-brand">📎 含过程截图</span>` : ""}
-                  </div>
-                  <h2 class="prose-lead">${esc(selBlk.title)}</h2>
-                  ${E.isProduction() ? `<p class="muted" style="font-size:13px;overflow-wrap:anywhere">工作文件夹：${workspacePath ? esc(workspacePath) : '未归属（没有可靠的工作目录信息）'}</p>` : ''}
-                </div>
-                ${blkProj ? `
-                  <button type="button" class="btn ${blkProj.deleted ? "btn-ok" : "btn-danger"} btn-sm" data-act="toggle-proj-del" data-key="${esc(blkProj.key)}" ${w ? "" : "disabled"}>
-                    ${blkProj.deleted ? '恢复所属' + (blkProj.kind === 'workspace' ? '文件夹' : '项目') : '移入回收站'}
-                  </button>` : ""}
-              </div>
-
-              <div class="history-record-times">
-                ${selBlk.timeBasis === 'archive_fallback' ? `<span>归档入库时间：${esc(E.formatHistoryTime(selBlk.lastAt ?? selBlk.firstAt))}</span>` : `<span>记录开始：${esc(E.formatHistoryTime(selBlk.firstAt))}</span><span>最近记录：${esc(E.formatHistoryTime(selBlk.lastAt))}</span>`}
-                <span>${selBlk.messageCount == null ? '消息数未记录' : esc(selBlk.messageCount) + ' 条消息'}</span>
-                ${selBlk.timeBasis === 'archive_fallback' ? '<span class="history-time-basis">原对话时间未保留</span>' : ''}
-              </div>
-
-              <div class="chat-feed">
-                ${selBlk.transcript.map(function (line, idx) {
-                  const isAssist = idx % 2 === 1;
-                  const splitPos = line.indexOf("：");
-                  const role = splitPos > 0 ? line.slice(0, splitPos) : (isAssist ? "助手" : "用户");
-                  const msg = splitPos > 0 ? line.slice(splitPos + 1) : line;
-                  const timeBasis = (selBlk.transcriptTimeBases || [])[idx] || selBlk.timeBasis;
-                  return `<div class="chat-bubble ${isAssist ? "assistant" : ""}">
-                    <div class="chat-meta"><div class="chat-role">${esc(role)}</div><span class="chat-time">${timeBasis === 'archive_fallback' ? '入库时间：' : '记录时间：'}${esc(E.formatHistoryTime((selBlk.transcriptTimes || [])[idx]))}</span></div>
-                    ${timeBasis === 'archive_fallback' ? '<div class="history-time-basis">原对话时间未保留</div>' : ''}
-                    <div>${esc(msg)}</div>
-                  </div>`;
-                }).join("")}
-              </div>
-
-              ${selBlk.hasAttachment && E.isProduction() ? E.unavailablePanel("附件预览尚未接入", "此页面尚未读取真实附件内容，不展示示例截图。") : selBlk.hasAttachment ? `
-                <div style="padding:14px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--line)">
-                  <div style="font-size:13px;font-weight:700;margin-bottom:8px">已解密内嵌附件截图（按需直读）</div>
-                  <svg width="100%" height="88" viewBox="0 0 420 88"><rect width="420" height="88" rx="9" fill="#0f172a" stroke="#38bdf8"/><text x="20" y="38" fill="#34d399" font-family="monospace" font-size="14">DR ISOLATION DRILL · PASS</text><text x="20" y="64" fill="#cbd5e1" font-family="monospace" font-size="12">roles_restored=true · 9/9 DBs exact match</text></svg>
-                </div>` : ""}
-
-              <div class="l3-bar">
-                <span class="muted" style="font-size:13px">BM25 / 三元组 / 向量分数拆解及物理库标识已放入三级抽屉</span>
-                <button type="button" class="btn btn-sm" data-act="open-hist-meta" data-id="${esc(selBlk.id)}">🔬 查看混搜评分拆解与物理来源 (L3)</button>
-              </div>
-            `}
-          </section>
-        </div>
-      `}`;
+    return header+filters+`<div class="split-workspace history-split">${list}<section class="detail-panel history-reader" aria-label="历史会话原文阅读器">${reader}</section></div>`;
   };
 })(typeof window !== "undefined" ? window : globalThis);

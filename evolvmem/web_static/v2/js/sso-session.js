@@ -5,7 +5,7 @@
   if (!E || !root.location || !/^https?:$/.test(root.location.protocol)) return;
   const nativeFetch = root.fetch.bind(root);
   const byId = id => root.document && root.document.getElementById(id);
-  const uiKeys = ['route','theme','libraryCtx','stageFilter','inboxTrack','expSubtab','expFilters','expOffset','selectedExpId','intFilters','histQuery','histScope','histDb','histSubtab','selectedProjectKey','selectedBlockId','evoSubtab','ctrlSubtab'];
+  const uiKeys = ['route','theme','libraryCtx','stageFilter','inboxTrack','expSubtab','expFilters','expOffset','selectedExpId','intFilters','histQuery','histSearchRange','histScope','histDb','histSubtab','selectedProjectKey','selectedBlockId','evoSubtab','ctrlSubtab'];
   const defaults = E.createInitialState();
   const standaloneState=E.state, standaloneCanWrite=E.canWrite;
   const S = E.session = {status:'checking',scope:'',name:'',csrf:'',epoch:0,consoleURL:'http://192.168.1.135:9600',dataReady:false};
@@ -185,14 +185,14 @@
       if(epoch!==S.epoch || library!==E.state.libraryCtx)return {status:409,data:{ok:false,error:'stale_response'}};
       if(valid && !valid() && ![401,403].includes(resp.status))return {status:409,data:{ok:false,error:'stale_response'}};
       const encoderFailure=resp.status===503 && method==='POST' && path==='/api/console-v2/experiences/write' && /^(experience_embedding_|embedding_)/.test(String(data.error || ''));
-      const refreshFailure=resp.status===503 && method==='GET' && options?.preserveOnError===true && /^\/api\/console-v2\/(experiences|overview)(\?|$)/.test(path);
+      const refreshFailure=resp.status===503 && method==='GET' && options?.preserveOnError===true && /^\/api\/console-v2\/(experiences|overview|history)(\?|$)/.test(path);
       if(encoderFailure || refreshFailure){await S.check({resume:false});}
       if([401,403,503].includes(resp.status) && !encoderFailure && !refreshFailure){
         S.block(resp.status===401?'login':resp.status===503?'unavailable':data.error==='account_pending'?'pending':data.error==='account_disabled'?'disabled':'forbidden');
         if(resp.status===401){S.scope='';S.name='';S.csrf='';S.syncHeader();}
       }
       return S.guardResult(resp.status,data,ticket);
-    } catch(_){if(valid && !valid())return {status:409,data:{ok:false,error:'stale_response'}};if(epoch===S.epoch){if(method==='POST' && path==='/api/console-v2/experiences/write')await S.check({resume:false});else S.block('unavailable');}return {status:503,data:{ok:false,error:'network_unavailable'}};}
+    } catch(_){if(valid && !valid())return {status:409,data:{ok:false,error:'stale_response'}};if(epoch===S.epoch){if((method==='POST' && path==='/api/console-v2/experiences/write') || (method==='GET' && options?.preserveOnError))await S.check({resume:false});else S.block('unavailable');}return {status:503,data:{ok:false,error:'network_unavailable'}};}
   };
   S.logout = async () => {
     S.save();

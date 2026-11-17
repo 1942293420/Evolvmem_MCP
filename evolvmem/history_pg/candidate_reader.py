@@ -221,18 +221,21 @@ class PgHistoryCandidateReader:
         bid = unquote(block_id)
         if not self.block_visible(bid):
             return {"ok": False, "error": "block_not_found"}
+        page_size, page_offset = min(200, max(1, int(limit))), max(0, int(offset))
         with self._cfg.connect(self._dbname, role_kind="reader") as conn:
             msgs = conn.execute(
                 "SELECT ordinal, role, content, recorded_at, attachments "
                 "FROM em_history.messages WHERE block_id = %s ORDER BY ordinal LIMIT %s OFFSET %s",
-                (bid, max(1, int(limit)), max(0, int(offset))),
+                (bid, page_size + 1, page_offset),
             ).fetchall()
         return {
             "ok": True,
             "block_id": bid,
+            "has_more": len(msgs) > page_size,
+            "next_offset": page_offset + min(len(msgs), page_size),
             "messages": [
                 {"ordinal": m[0], "role": m[1], "content": m[2], "recorded_at": m[3], "attachments": json.loads(m[4] or "[]")}
-                for m in msgs
+                for m in msgs[:page_size]
             ],
         }
 

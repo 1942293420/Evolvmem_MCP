@@ -502,3 +502,73 @@ tr:last-child td { border-bottom: 0; }
 }
 .sim-meter { height: 10px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 6px 0; }
 .sim-meter > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--warn), var(--danger)); }
+
+/* History reading: bounded columns, visible scope, uniform controls. */
+.topbar-actions .btn-sm, .auth-controls .btn-sm, .topbar-actions .compact-select { height:34px; min-height:34px; font-size:12px; padding:5px 8px; }
+.topbar-main { flex-wrap:wrap; }
+.nav-tabs { overflow:visible; flex-wrap:wrap; }
+@media(max-width:1500px) { .nav-tabs { order:3; flex-basis:100%; padding-top:2px; } .topbar-actions { margin-left:auto; } }
+.workspace.history-workspace { height:calc(100dvh - var(--history-topbar-height,110px)); min-height:0; padding:12px 20px 16px; gap:12px; overflow:hidden; }
+.history-heading { display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; flex:none; }
+.history-heading h1 { font-size:21px; line-height:1.35; margin:0; }
+.history-heading .subtabs { margin:0; padding:3px; }
+.history-help { position:relative; margin-left:auto; font-size:13px; }
+.history-help > summary { cursor:pointer; color:var(--ink-muted); }
+.history-help-body { position:absolute; top:calc(100% + 8px); right:0; z-index:36; width:min(420px,calc(100vw - 40px)); padding:14px 16px; border:1px solid var(--line); background:var(--surface-solid); box-shadow:var(--shadow-lg); border-radius:12px; }
+.history-help-body p { margin:0 0 8px; }
+.history-readonly { font-size:13px; color:var(--ink-muted); }
+.history-filters { flex:none; padding:0; }
+.history-filters #hist-q { flex:1 1 180px; min-width:150px; }
+.history-filters .history-project-picker { flex:0 1 240px; }
+.history-filters .project-picker-toggle, .history-filters input, .history-filters select, .history-filters .cat-pill, .project-picker-search .btn-sm { height:42px; min-height:42px; padding-top:7px; padding-bottom:7px; font-size:13px; }
+.history-filters .cat-pills { gap:6px; }
+.history-filters .cat-pill { padding-left:10px; padding-right:10px; gap:5px; }
+.history-scope-label { min-width:180px; font-size:14px; }
+.history-split { flex:1; min-height:0; grid-template-columns:minmax(260px,320px) minmax(0,1fr); align-items:stretch; gap:14px; }
+.history-split .list-panel { display:flex; flex-direction:column; min-height:0; }
+.history-split .list-head { padding:9px 12px; flex:none; min-height:52px; }
+.history-split .list-scroll { flex:1; min-height:0; max-height:none; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.history-split .list-entry { padding:12px 14px; }
+.history-split .list-entry-meta { font-size:11.5px; }
+.detail-panel.history-reader { position:static; min-height:0; padding:0; gap:0; overflow:hidden; }
+.history-reader-head { flex:none; padding:14px 18px 10px; border-bottom:1px solid var(--line); }
+.history-reader-head .prose-lead { font-size:17px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
+.history-reader-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; color:var(--ink-muted); font-size:12px; margin-top:6px; }
+.history-reader-meta .btn { margin-left:auto; }
+.history-reader-scroll { flex:1; min-height:0; padding:16px 18px; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.history-message { overflow-wrap:anywhere; min-width:0; }
+.history-message h3 { font-size:16px; margin:10px 0 6px; }
+.history-prose { white-space:pre-wrap; margin:8px 0; }
+.history-prose:first-child { margin-top:0; }
+.history-prose:last-child { margin-bottom:0; }
+.history-message code { font-family:var(--font-mono); font-size:0.9em; }
+.history-code, .history-injection pre { margin:10px 0; white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; padding:12px; background:var(--bg-subtle); border:1px solid var(--line); border-radius:8px; font:12.5px/1.6 var(--font-mono); }
+.history-injection { margin:8px 0; border:1px solid var(--line); border-radius:8px; padding:8px 10px; background:var(--bg-subtle); }
+.history-injection summary { cursor:pointer; font-size:12.5px; color:var(--ink-secondary); }
+.history-injection pre { max-height:360px; }
+.history-pagination { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:10px; padding:18px 0 4px; color:var(--ink-muted); font-size:13px; }
+.history-load-error { color:var(--danger); }
+.history-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.history-source-fields { display:grid; grid-template-columns:100px minmax(0,1fr); gap:8px 14px; margin:0; font-size:14px; }
+.history-source-fields dt { color:var(--ink-muted); }
+.history-source-fields dd { margin:0; overflow-wrap:anywhere; }
+.history-trash { overflow:auto; min-height:0; }
+.history-trash-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px; border:1px solid var(--line); border-radius:9px; }
+.history-trash-row p { margin:4px 0 0; overflow-wrap:anywhere; }
+.history-empty { padding:20px; color:var(--ink-muted); }
+@media(min-width:901px) { .history-split { grid-template-columns:minmax(260px,320px) minmax(0,1fr); } }
+@media(max-width:900px) {
+  .workspace.history-workspace { height:auto; min-height:calc(100dvh - var(--history-topbar-height,110px)); overflow:visible; padding:12px; }
+  .history-split { display:flex; flex-direction:column; min-height:0; }
+  .history-split .list-scroll { max-height:220px; flex:auto; }
+  .history-reader-scroll { max-height:65dvh; flex:auto; }
+  .history-heading { gap:8px; }
+  .history-heading .subtabs { order:3; width:100%; }
+  .history-filters .history-project-picker { flex:1 1 200px; }
+  .history-filters #hist-q { flex-basis:200px; }
+  .history-filters .cat-pills { width:100%; }
+  .history-filters .cat-pill { flex:1; justify-content:center; }
+  .nav-tabs { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:thin; }
+  .nav-tabs::-webkit-scrollbar { display:block; height:4px; }
+  .history-reader-head, .history-reader-scroll { padding:12px; }
+}

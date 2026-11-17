@@ -38,6 +38,7 @@
   };
 
   E.closeModal = function () {
+    E.pendingHistoryDelete=null;
     if(E.session && E.captureExperienceEditorDraft && E.captureExperienceEditorDraft()?.unknown)E.session.save();
     if (typeof root.document === "undefined") return;
     root.document.getElementById("modal-backdrop").classList.remove("open");
@@ -162,7 +163,18 @@
     const navEl = doc.getElementById("top-nav");
     const mainEl = doc.getElementById("workspace-main");
     if (navEl) navEl.innerHTML = E.renderTopNav();
-    if (mainEl) mainEl.innerHTML = E.renderMain();
+    if (mainEl) {
+      const oldReader=doc.getElementById('history-reader-scroll'), oldList=doc.getElementById('history-list-scroll');
+      const same=mainEl.dataset.historyLibrary===s.libraryCtx;
+      const previous=oldReader && same?{id:oldReader.dataset.blockId,y:oldReader.scrollTop,open:Array.from(oldReader.querySelectorAll('details')).map(x=>x.open)}:null;
+      const listY=oldList && same?oldList.scrollTop:0;
+      mainEl.classList.toggle('history-workspace',s.route==='history' && s.histSubtab==='browse' && s.apiMode==='live' && (!E.session || E.session.dataReady));
+      mainEl.innerHTML=E.renderMain();mainEl.dataset.historyLibrary=s.libraryCtx;
+      const next=doc.getElementById('history-reader-scroll');
+      if(next && previous && next.dataset.blockId===previous.id){next.querySelectorAll('details').forEach((el,i)=>{el.open=!!previous.open[i];});next.scrollTop=previous.y;}
+      const list=doc.getElementById('history-list-scroll');if(list)list.scrollTop=listY;
+      const bar=doc.querySelector('.topbar');if(bar)doc.documentElement.style.setProperty('--history-topbar-height',bar.getBoundingClientRect().height+'px');
+    }
     if (E.isProduction() && mainEl) mainEl.querySelectorAll("[data-act]").forEach(function (el) {
       if (E.isPlannedAction(el.getAttribute("data-act"))) {
         el.disabled = true; el.title = "待开发，尚未接通后台";
@@ -190,7 +202,7 @@
     if (act === "retry-api") { if (E.api) E.api.bootstrap(); return false; }
     if (E.isProduction() && E.isPlannedAction(act)) { E.toast("该功能待开发，尚未接通后台。", "warn"); return false; }
     if(E.session && (!E.session.isReady() || !E.session.dataReady))return false;
-    if (!E.canWrite() && /^(approve-prop|reject-prop|batch-approve|batch-reject-apply|trash-exp|restore-exp|submit-new-exp|rb-dry-run|rb-apply|toggle-user|toggle-grant|toggle-r9|toggle-proj-del)$/.test(act)) {
+    if (!E.canWrite() && /^(approve-prop|reject-prop|batch-approve|batch-reject-apply|trash-exp|restore-exp|submit-new-exp|rb-dry-run|rb-apply|toggle-user|toggle-grant|toggle-r9|toggle-proj-del|confirm-history-delete)$/.test(act)) {
       E.toast("只读权限不可执行写操作", "danger");
       return false;
     }
@@ -280,6 +292,14 @@
       if (E.closeModal) E.closeModal();
       E.toast("已签发 Ticket 人工救回并写入经验库：" + newId);
       return true;
+    }
+    if(act === 'history-source-info') {
+      const b=s.historyBlocks.find(x=>x.id===ds.id);if(!b)return false;
+      const p=s.historyProjects.find(x=>x.key===b.project);
+      E.openModal('来源与记录信息',`<dl class="history-source-fields"><dt>文件夹</dt><dd>${esc(p?.title || '未归属')}</dd><dt>工作文件夹</dt><dd>${esc(b.workspacePath || p?.workspacePath || '没有可靠目录信息')}</dd><dt>归档指针</dt><dd class="mono">${esc(b.sourceRef || b.id)}</dd><dt>${b.timeBasis==='archive_fallback'?'归档入库时间':'记录开始'}</dt><dd>${esc(E.formatHistoryTime(b.firstAt))}</dd><dt>最近记录</dt><dd>${esc(E.formatHistoryTime(b.lastAt))}</dd></dl><p class="muted">${b.timeBasis==='archive_fallback'?'原对话时间未保留；入库时间不能代替发生时间。':'有明确时区的时间统一显示北京时间；未注明时区的来源保留原值。'}</p><p class="muted">当前接口未提供可核验的分项检索评分，此处只展示已读取的来源信息。</p>`);return false;
+    }
+    if(act === 'history-load-more') {
+      if(s.apiMode==='live' && E.api){const work=E.api.loadBlockTurns(ds.id,true);E.renderAll();work.then(()=>{if(current())E.renderAll();});}return false;
     }
     if (act === "hist-subtab") { s.histSubtab = ds.sub; return true; }
     if (act === "hist-scope") {
@@ -464,9 +484,23 @@
     }
     if (act === "toggle-proj-del") {
       const p = s.historyProjects.find(function (i) { return i.key === ds.key; });
-      if (s.apiMode === "live" && E.api && p) { E.api.manageHistoryProject(p.deleted ? "restore" : "delete", p.key, p.title); return false; }
+      if(!p)return false;
+      if(!p.deleted) {
+        E.pendingHistoryDelete={key:p.key,title:p.title,blocks:p.blocks,kind:p.kind,library:s.libraryCtx,state:s,ticket:E.session?E.session.capture():null};
+        E.openModal('管理'+(p.kind==='workspace'?'文件夹':'项目')+' · '+p.title,`<p>将整个${p.kind==='workspace'?'文件夹':'项目'} <strong>${esc(p.title)}</strong> 移入回收站？</p><p>影响该分组下的 <strong>${esc(p.blocks ?? '数量未知')} 个会话片段</strong>，不是仅处理当前会话。可从回收站恢复，不会删除本地文件夹或会话原文。</p><div class="history-actions"><button type="button" class="btn" data-act="close-modal">取消</button><button type="button" class="btn btn-danger" data-act="confirm-history-delete">确认将整个分组移入回收站</button></div>`);return false;
+      }
+      if (s.apiMode === "live" && E.api) { E.api.manageHistoryProject("restore", p.key, p.title); return false; }
       if (p) { p.deleted = !p.deleted; E.toast(p.deleted ? "项目已移入回收站" : "项目已恢复正常展示"); }
       return true;
+    }
+    if(act === 'confirm-history-delete') {
+      const pending=E.pendingHistoryDelete;
+      if(!pending || pending.state!==s || pending.library!==s.libraryCtx || !E.canWrite() || (pending.ticket && !E.session?.isCurrent(pending.ticket)))return false;
+      const p=s.historyProjects.find(x=>x.key===pending.key && !x.deleted);
+      if(!p || p.blocks!==pending.blocks || p.title!==pending.title || p.kind!==pending.kind){E.pendingHistoryDelete=null;E.closeModal();E.toast('分组信息已变化，请重新打开管理窗口。','warn');return false;}
+      E.pendingHistoryDelete=null;E.closeModal();
+      if(s.apiMode==='live' && E.api)E.api.manageHistoryProject('delete',p.key,p.title);
+      else {p.deleted=true;return true;}return false;
     }
     if (act === "promote-cat") { const c = s.categoriesEvo.find(function (i) { return i.category === ds.cat; }); if (c) { c.mode = c.mode === "review" ? "partial" : "auto"; E.toast(c.category + " 已推进至 " + c.mode); } return true; }
     if (act === "demote-cat") { const c = s.categoriesEvo.find(function (i) { return i.category === ds.cat; }); if (c) { c.mode = "review"; c.liveConcordance = 0.72; E.toast(c.category + " 一致率回落，已退回人工审阅", "danger"); } return true; }
@@ -543,6 +577,7 @@
       else if (t.id === "bf-scope-mode") { s.backfillScopeMode = t.value; s.backfillScopeVal = t.value === "month" ? "2026-10" : "evolvmem-pg-prod"; E.renderAll(); }
       else if (t.id === "bf-scope-val") { s.backfillScopeVal = t.value; E.renderAll(); }
       else if (t.id === "hist-proj-sel") { s.selectedProjectKey = t.value; if (s.apiMode === "live" && E.api) E.api.loadHistory().then(function () { E.renderAll(); }); else E.renderAll(); }
+      else if (t.id === "hist-search-range") {s.histSearchRange=t.value;s.historyBlocks=[];s.selectedBlockId=null;E.renderAll();if(s.apiMode==='live' && E.api)E.api.loadHistory().then(()=>E.renderAll());}
       else if (t.id === "hist-db-sel") { s.histDb = t.value; E.renderAll(); }
       else if (t.id === "hb-target") { s.handbookTarget = t.value; E.renderAll(); }
       else if (t.classList.contains("hb-chk")) {
@@ -580,6 +615,7 @@
       if (h === "principles") E.applyAction("goto-tab", { route: "overview" });
       else if (h && E.MODULES.some(function (m) { return m.id === h; })) E.applyAction("goto-tab", { route: h });
       E.bindEvents();
+      if(root.ResizeObserver){const doc=root.document;const bar=doc.querySelector('.topbar');if(bar)new root.ResizeObserver(()=>doc.documentElement.style.setProperty('--history-topbar-height',bar.getBoundingClientRect().height+'px')).observe(bar);}
       E.renderAll();
       if (E.api && E.api.bootstrap) E.api.bootstrap();
       root.setInterval(function () {

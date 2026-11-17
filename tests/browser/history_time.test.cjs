@@ -65,13 +65,13 @@ test('history lists, details and individual bubbles show neutral record times an
   E.state.historyBlocks = [{ id: 'block', project: null, title: 'Synthetic record', firstAt: '2026-11-17T00:00:00Z', lastAt: '2026-11-17T01:00:00Z', turns: 0, messageCount: 3, transcript: ['用户：a', '助手：b', '用户：c'], transcriptTimes: ['2026-11-17T00:00:00Z', null, '<img src=x onerror=alert(1)>'] }];
   E.state.selectedBlockId = 'block';
   let html = E.views.history();
-  assert.match(html, /最近记录：2026-11-17 09:00/); assert.match(html, /记录开始：2026-11-17 08:00/);
+  assert.match(html, /最近记录：2026-11-17 09:00/); let source; E.openModal=(_title, body)=>{source=body;}; E.applyAction('history-source-info',{id:'block'}); assert.match(source,/记录开始<.*2026-11-17 08:00/s);
   assert.match(html, /北京时间.*UTC\+8/); assert.match(html, /0 轮对话/); assert.match(html, /3 条消息/);
   assert.match(html, /chat-time[^>]*>记录时间：2026-11-17 08:00/); assert.equal((html.match(/chat-time[^>]*>记录时间：时间未知/g) || []).length, 2);
   assert.doesNotMatch(html, /<img|onerror=/);
   E.state.historyBlocks[0].turns = null; E.state.historyBlocks[0].lastAt = null;
   html = E.views.history(); assert.match(html, /轮次未记录/); assert.match(html, /最近记录：时间未知/);
   E.state.historyBlocks[0].timeBasis = 'archive_fallback';
-  html = E.views.history(); assert.match(html, /入库时间：时间未知/); assert.match(html, /归档入库时间：2026-11-17 08:00/); assert.doesNotMatch(html, /首次入库时间/);
-  assert.match(html, /原对话时间未保留/); assert.match(html, /chat-time[^>]*>入库时间：2026-11-17 08:00/);
+  html = E.views.history(); assert.match(html, /入库时间：时间未知/); E.applyAction('history-source-info',{id:'block'}); assert.match(source,/归档入库时间<.*2026-11-17 08:00/s); assert.doesNotMatch(html, /首次入库时间/);
+  assert.match(source, /原对话时间未保留/); assert.match(html, /chat-time[^>]*>入库时间：2026-11-17 08:00/);
 });

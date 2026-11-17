@@ -11,7 +11,7 @@
     const s = E.state, m = s.liveMetrics || {};
     const total = m.pending_live == null || m.pending_backfill == null ? null : m.pending_live + m.pending_backfill;
     const flow = [
-      ['原文采集与上传', '客户端上传会话原文', 'history'], ['原文归档', '按实际工作文件夹浏览原文并核对记录时间；无可靠目录进入未归属', 'history'],
+      ['原文采集与上传', '客户端上传会话原文', 'history'], ['原文归档与阅读', '选择文件夹与搜索范围 → 分页阅读原文 → 核对来源；无可靠目录进入未归属', 'history'],
       ['候选提炼与门禁', '实时与历史回填分轨处理', 'pipelines'], ['人工审阅', '核对内容与原始证据', 'review-inbox'],
       ['正式经验', '保留有效经验及来源', 'experiences'], ['按需检索', '供后续任务查询与使用', 'experiences']
     ];
@@ -24,6 +24,7 @@
       '<div style="display:flex;gap:10px;flex-wrap:wrap" aria-label="原文到经验的工作流程">' + flow.map(function (step, i) {
         return '<button type="button" class="stage-flow-row" style="flex:1 1 180px" data-act="goto-tab" data-route="' + step[2] + '"><span><b>' + (i + 1) + '. ' + step[0] + '</b><br><span class="muted">' + step[1] + '</span></span></button>';
       }).join('') + '</div><p class="secondary">后续规划：经验交付记录 → 使用结果归因 → 可逆休眠与渐进自动化 → 习惯、手册和 Skill；这些能力尚未形成完整闭环。</p></section>' +
+      '<section class="panel" aria-label="会话阅读与文件夹管理说明"><h2>会话阅读与文件夹管理</h2><p>消息按真实角色展示，分页显示已加载数量；系统注入内容默认折叠，可展开查看原文。标题清理和排版仅作用于展示，归档内容保持完整。</p><p>搜索时保留文件夹选择与范围。管理文件夹 → 核对文件夹名称和会话数量 → 确认移入回收站；此操作影响整个文件夹。来源信息仅展示已提供的记录，不推算检索评分。</p></section>' +
       '<section class="panel"><div class="panel-head"><h2>最近经验变更</h2><button type="button" class="btn btn-sm" data-act="goto-tab" data-route="review-inbox">前往审阅箱</button></div>' +
       (s.changesStream.length ? '<div class="table-wrap"><table><thead><tr><th>时间</th><th>操作</th><th>来源</th></tr></thead><tbody>' + s.changesStream.map(function (x) {
         return '<tr><td>' + esc(x.ts) + '</td><td>' + esc(x.action) + '</td><td>' + esc(x.actor) + '</td></tr>';

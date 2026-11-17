@@ -136,5 +136,5 @@ test('live history explains Codex folders and renders the selected transcript wo
   assert.match(html, /Codex 实际工作文件夹/);
   assert.match(html, /无可靠工作文件夹.*未归属/);
   assert.ok(html.includes('C:\\业务\\TK\\日发货'));
-  assert.match(html, /工作文件夹：/);
+  let detail; E.openModal=(_title,body)=>{detail=body;}; E.applyAction('history-source-info',{id:'block'}); assert.match(detail,/工作文件夹/); assert.ok(detail.includes('C:\\业务\\TK\\日发货'));
 });

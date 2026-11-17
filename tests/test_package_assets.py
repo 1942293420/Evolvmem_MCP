@@ -38,3 +38,7 @@ def test_wheel_includes_nested_redesign_page(tmp_path):
         times = "evolvmem/web_static/v2/js/history-time.js"
         assert times in built.namelist()
         assert built.read(times) == (root / times).read_bytes()
+
+        content = "evolvmem/web_static/v2/js/history-content.js"
+        assert content in built.namelist()
+        assert built.read(content) == (root / content).read_bytes()

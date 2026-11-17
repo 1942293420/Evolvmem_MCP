@@ -40,14 +40,14 @@ const server = http.createServer((req, res) => {
     await page.waitForFunction(() => EvolvMemV2.session.dataReady && EvolvMemV2.state.historyBlocks[0]?._turnsLoaded);
     await page.evaluate(() => {
       window.__scrollEvents = [];
-      window.__scrollPosition = () => ({ y: scrollY, maxY: document.documentElement.scrollHeight - innerHeight, active: document.activeElement?.id, listY: document.querySelector('.list-scroll')?.scrollTop, t: performance.now() });
+      window.__scrollPosition = () => ({ y: scrollY, maxY: document.documentElement.scrollHeight - innerHeight, active: document.activeElement?.id, listY: document.querySelector('.list-scroll')?.scrollTop, readerY:document.querySelector('#history-reader-scroll')?.scrollTop, t: performance.now() });
       const render = EvolvMemV2.renderAll;
       EvolvMemV2.renderAll = function () { __scrollEvents.push({ event: 'render-before', position: __scrollPosition(), stack: new Error().stack }); const r = render.apply(this, arguments); __scrollEvents.push({ event: 'render-after', position: __scrollPosition() }); return r; };
       const focus = HTMLElement.prototype.focus;
       HTMLElement.prototype.focus = function (opts) { __scrollEvents.push({ event: 'focus', id: this.id, opts, position: __scrollPosition(), stack: new Error().stack }); return focus.call(this, opts); };
     });
     // Clicking ordinary transcript text naturally focuses its tabindex=-1 main ancestor.
-    await page.locator('.chat-bubble').last().click();
+    await page.locator('.chat-bubble').first().click();
     assert.equal(await page.evaluate(() => document.activeElement.id), 'workspace-main');
     await page.mouse.move(1100, 450); await page.mouse.wheel(0, -10000000);
     await page.waitForFunction(() => scrollY < 2);
@@ -65,10 +65,10 @@ const server = http.createServer((req, res) => {
     await page.screenshot({ path: path.join(out, '02-after-stable-poll.png') });
     // A data-driven redraw must preserve reading position even when an off-screen input retains focus.
     await page.locator('#hist-q').click();
-    await page.evaluate(() => window.scrollTo({ top: 6000, behavior: 'instant' }));
-    await page.waitForFunction(() => Math.abs(scrollY - 6000) < 2);
+    await page.evaluate(() => {document.querySelector('#history-reader-scroll').scrollTop=600;});
+    await page.waitForFunction(() => Math.abs(document.querySelector('#history-reader-scroll').scrollTop - 600) < 2);
     const manual = await page.evaluate(() => { const before = __scrollPosition(); EvolvMemV2.renderAll(); return { before, after: __scrollPosition() }; });
-    checks.push({ name: 'manual redraw restores input focus without moving the reading viewport', passed: Math.abs(manual.after.y - manual.before.y) < 2 && manual.after.active === 'hist-q', ...manual });
+    checks.push({ name: 'manual redraw restores input focus without moving the reading viewport', passed: Math.abs(manual.after.readerY - manual.before.readerY) < 2 && manual.after.active === 'hist-q', ...manual });
     await page.screenshot({ path: path.join(out, '03-after-manual-redraw.png') });
     authenticated = false;
     await page.evaluate(() => EvolvMemV2.session.check());

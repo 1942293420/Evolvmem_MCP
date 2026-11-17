@@ -43,17 +43,17 @@ const server = http.createServer((req, res) => {
   try {
     await page.goto(`http://127.0.0.1:${server.address().port}/v2/#history`);
     await page.waitForFunction(() => EvolvMemV2.session.dataReady && EvolvMemV2.state.historyBlocks[0]?._turnsLoaded);
-    assert.match(await page.locator('.list-entry[data-id="recorded"]').innerText(), /21 轮对话.*最近记录：2026-11-17 10:00/s);
-    assert.match(await page.locator('.detail-panel').innerText(), /记录开始：2026-11-17 09:00.*147 条消息/s);
+    assert.match(await page.locator('.list-entry[data-id="recorded"]').innerText(), /21 轮对话.*2026-11-17 10:00/s);
+    assert.match(await page.locator('.detail-panel').innerText(), /147 条消息/);await page.locator('[data-act=history-source-info]').click();assert.match(await page.locator('#modal-body').innerText(), /记录开始.*2026-11-17 09:00/s);await page.locator('#modal-backdrop [data-act=close-modal]').first().click();
     assert.deepEqual(await page.locator('.chat-time').allTextContents(), ['记录时间：2026-11-17 09:00', '记录时间：2026-11-17 09:05', '记录时间：时间未知']);
     await page.screenshot({ path: path.join(out, '01-recorded-desktop.png'), fullPage: true }); checks.push('neutral list/detail/message times convert to Beijing despite browser timezone; real counts and missing times are retained');
-    await select('archive'); assert.match(await page.locator('.detail-panel').innerText(), /归档入库时间：2026-11-17 00:01.*原对话时间未保留/s); assert.doesNotMatch(await page.locator('.detail-panel').innerText(), /首次入库时间/);
+    await select('archive'); assert.match(await page.locator('.detail-panel').innerText(), /入库时间：2026-11-17 00:01/);await page.locator('[data-act=history-source-info]').click();assert.match(await page.locator('#modal-body').innerText(), /原对话时间未保留/);await page.locator('#modal-backdrop [data-act=close-modal]').first().click(); assert.doesNotMatch(await page.locator('.detail-panel').innerText(), /首次入库时间/);
     assert.deepEqual(await page.locator('.chat-time').allTextContents(), ['入库时间：2026-11-17 00:00', '入库时间：时间未知']);
     await page.setViewportSize({ width: 390, height: 900 }); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), true);
     await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
     await page.screenshot({ path: path.join(out, '02-archive-mobile.png'), fullPage: true }); checks.push('archive fallback is explicitly labeled and fits mobile');
-    await select('legacy'); assert.match(await page.locator('.list-entry[data-id="legacy"]').innerText(), /轮次未记录.*最近记录：时间未知/s);
-    assert.match(await page.locator('.detail-panel').innerText(), /2026-11-17 12:34:56\.123456（来源时区未注明）.*0 条消息/s);
+    await select('legacy'); assert.match(await page.locator('.list-entry[data-id="legacy"]').innerText(), /轮次未记录.*时间未知/s);
+    assert.match(await page.locator('.detail-panel').innerText(), /0 条消息.*2026-11-17 12:34:56\.123456（来源时区未注明）/s);
     assert.equal(await page.locator('.chat-bubble img').count(), 0); assert.match((await page.locator('.chat-time').allTextContents())[1], /时间未知/);
     await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
     await page.screenshot({ path: path.join(out, '03-legacy-mobile.png'), fullPage: true });
