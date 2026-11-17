@@ -1263,7 +1263,12 @@ def make_handler(service: ContextService):
     """Build the handler owning a ContextService compatibility facade."""
     facade = service.legacy_facade()
     store = service.store
-    auth = WebAuth(AuthSettings.load(service.config.data_dir))
+    company_sso = os.environ.get('EVOLVMEM_COMPANY_SSO', '') == '1'
+    if company_sso:
+        from evolvmem.company_sso import CompanyAuth
+        auth = CompanyAuth(AuthSettings.load(service.config.data_dir))
+    else:
+        auth = WebAuth(AuthSettings.load(service.config.data_dir))
     views = TrustViews(service)
     from evolvmem.product_policy import load_policy
     from evolvmem.console_access import configured_console, configured_session_store, is_pg_control_configured
@@ -1273,13 +1278,15 @@ def make_handler(service: ContextService):
     import getpass
     pg_mode = is_pg_control_configured()
     console_sessions = load_policy().console_enabled
+    if company_sso and (not pg_mode or not console_sessions):
+        raise ValueError('company_sso_requires_pg_console_control')
     # Browser preconnects may open a socket without sending an HTTP request.
     # Parse those sockets independently, but retain serialized use of this
     # service's shared SQLite connections and transaction state.
     business_lock = threading.RLock()
     auth_lock = threading.RLock()
     console = None
-    persistence_ready = not auth.enabled
+    persistence_ready = company_sso or not auth.enabled
     enabling_persistence = False
 
     def ensure_control_plane_ready():
@@ -1359,6 +1366,19 @@ def make_handler(service: ContextService):
         return ensure_control_plane_ready().login_allowed_in_transaction(conn, open_id) if console_sessions else True
     auth.session_validator = session_identity_allowed
     auth.session_write_validator = session_write_allowed
+    if company_sso:
+        def native_account_status(open_id):
+            try:
+                current = ensure_control_plane_ready()
+                actor = current._pg_store.actor_by_open_id(current._expected_owner_id, open_id)
+                if actor is None:
+                    return 'pending'
+                return 'ready' if actor['enabled'] else 'disabled'
+            except SessionStoreError:
+                raise
+            except Exception:
+                raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+        auth.native_status = native_account_status
     try:
         ensure_control_plane_ready()
     except SessionStoreError as exc:
@@ -1373,6 +1393,8 @@ def make_handler(service: ContextService):
             self._parsed_body = None
             self.prepared_extraction = None
             parsed = urlparse(self.path)
+            if company_sso and auth.admit(self, parsed):
+                return
             policy = load_policy()
             if parsed.path == '/v2' or parsed.path.startswith(('/v2/', '/api/console-v2')):
                 from evolvmem.web_v2.http_router import handle_web_v2_request
@@ -1543,23 +1565,30 @@ def make_handler(service: ContextService):
         @wraps(method)
         def guarded_call(self, *args, **kwargs):
             try:
-                if pg_mode:
+                if pg_mode and not company_sso:
                     ensure_control_plane_ready()
                 return call(self, *args, **kwargs)
             except SessionStoreError as exc:
                 self.close_connection = True
                 if exc.code == 'pg_control_unavailable':
-                    self._send_json({'ok': False, 'error': 'pg_control_unavailable', 'message': 'PG 不可用'}, 503)
+                    self._send_json({'ok': False, 'error': 'pg_control_unavailable', 'message': 'PG 不可用', **({'central_sso': True} if company_sso else {})}, 503)
                 else:
-                    self._send_json({'ok': False, 'error': 'session_store_unavailable'}, 503)
+                    self._send_json({'ok': False, 'error': 'session_store_unavailable', **({'central_sso': True} if company_sso else {})}, 503)
         return guarded_call
 
     class MemoryWebHandler(BaseHTTPRequestHandler):
         server_version = "EvolvMemWeb/1.0"
         timeout = 10
 
+        def send_header(self, keyword, value):
+            if company_sso and keyword.lower() == 'cache-control':
+                value = 'private, no-store'
+            super().send_header(keyword, value)
+
         def end_headers(self):
             self.send_header("Referrer-Policy", "no-referrer")
+            if company_sso:
+                self.send_header('Vary', 'Cookie')
             super().end_headers()
 
         def _send_json(self, payload, status=200, headers=()):
@@ -1988,6 +2017,9 @@ def make_handler(service: ContextService):
             self._send_json({"ok": False, "error": "method_not_allowed"}, 405)
 
         do_PUT = do_PATCH = do_DELETE = _unsupported_write
+
+        if company_sso:
+            do_HEAD = do_OPTIONS = _unsupported_write
 
         def _handle_memory_action(self, mem_id: int, action: str):
             body = {}

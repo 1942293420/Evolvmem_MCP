@@ -19,6 +19,7 @@
   }
 
   async function req(method, path, body) {
+    if (E.session) return E.session.request(method, '/api/console-v2' + path, body);
     const opts = { method: method, credentials: "same-origin", headers: {} };
     if (method === "POST") {
       opts.headers["Content-Type"] = "application/json";
@@ -30,6 +31,8 @@
     try { data = await resp.json(); } catch (_e) { data = { ok: false, error: "invalid_json" }; }
     return { status: resp.status, data: data || {} };
   }
+  function requestContext(){return E.session?E.session.capture():null;}
+  function currentRequest(ticket){return !ticket || (E.session && E.session.isCurrent(ticket));}
 
   function normalizeExp(n) {
     return {
@@ -63,29 +66,47 @@
   }
 
   E.api = {
-    async bootstrap() {
+    async bootstrap(options) {
       if (!canProbeServer()) return false;
       try {
+        if (E.session && !(options && options.statusKnown) && !await E.session.check({resume:false})) return true;
+        const startup=E.session?E.session.capture(false):null;
+        const current=()=>!startup || (E.session && E.session.isCurrent(startup));
         const res = await req("GET", "/me");
+        if(!current())return true;
         if (res.status === 401) {
           E.state.apiMode = "live";
           E.state.simMode = "sso_login";
           E.renderAll();
           return true;
         }
-        if (res.status !== 200 || !res.data.ok) return false;
+        if (res.status !== 200 || !res.data.ok) {
+          if(res.status===409 && res.data.error==='stale_response')return true;
+          if(E.session && E.session.isReady())E.session.block('unavailable');
+          return !!E.session;
+        }
         const s = E.state;
         s.apiMode = "live";
         s.csrfToken = res.data.csrf_token || "";
+        s.currentUser = res.data.current_user || null;
         s.ownerId = (res.data.current_user && res.data.current_user.id) || "owner_main";
         s.availableLibraries = res.data.libraries || [];
-        s.libraryCtx = s.ownerId;
+        if (!s.availableLibraries.some(function(lib){return lib.id===s.libraryCtx;})) {
+          s.libraryCtx = s.ownerId;
+          if(E.session)E.session.discardDraft();
+        }
         this.syncLibrarySelect();
         await this.loadOverview();
+        if(!current())return true;
         await this.loadTab(s.route);
+        if(!current())return true;
+        if(E.session && !E.session.isReady())return true;
+        if(E.session){E.session.dataReady=true;E.session.syncHeader();}
         E.renderAll();
+        if(E.session)E.session.restoreDraft();
         return true;
       } catch (_err) {
+        if(E.session){E.session.block('unavailable');return true;}
         return false;
       }
     },
@@ -102,10 +123,12 @@
     },
 
     async loadOverview() {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
       const s = E.state;
       const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const res = await req("GET", "/overview" + qs({ owner_id: oid }));
+      if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
         s.liveMetrics = res.data.metrics;
         if (res.data.interception_funnel) s.interceptionFunnel = res.data.interception_funnel;
@@ -126,57 +149,69 @@
     },
 
     async loadExperiences() {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
-      const f = E.state.expFilters;
-      const oid = E.state.libraryCtx === E.state.ownerId ? "" : E.state.libraryCtx;
+      const s=E.state, f = s.expFilters;
+      const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const st = E.canWrite() ? f.status : "active";
       const res = await req("GET", "/experiences" + qs({ owner_id: oid, category: f.category, origin: f.origin, status: st, q: f.q }));
+      if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
-        E.state.experiences = (res.data.items || []).map(normalizeExp);
-        if (res.data.interception_funnel) E.state.interceptionFunnel = res.data.interception_funnel;
+        s.experiences = (res.data.items || []).map(normalizeExp);
+        if (res.data.interception_funnel) s.interceptionFunnel = res.data.interception_funnel;
       }
     },
 
     async loadInterceptions() {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live" || !E.canWrite()) return;
-      const f = E.state.intFilters;
+      const s=E.state, f = s.intFilters;
       const res = await req("GET", "/interceptions" + qs({ layer: f.layer, track: f.track, category: f.category, q: f.q }));
+      if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
-        E.state.interceptions = res.data.items || [];
-        if (res.data.funnel) E.state.interceptionFunnel = res.data.funnel;
+        s.interceptions = res.data.items || [];
+        if (res.data.funnel) s.interceptionFunnel = res.data.funnel;
       }
     },
 
     async loadInbox() {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live" || !E.canWrite()) return;
-      const res = await req("GET", "/review-inbox" + qs({ source_track: E.state.inboxTrack, include_decided: "1" }));
+      const s=E.state;
+      const res = await req("GET", "/review-inbox" + qs({ source_track: s.inboxTrack, include_decided: "1" }));
+      if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
-        const others = E.state.proposals.filter(function (p) { return p.track !== E.state.inboxTrack; });
-        E.state.proposals = (res.data.items || []).map(normalizeProp).concat(others);
-        if (res.data.track_agreement) E.state.trackAgreement = res.data.track_agreement;
-        E.state.shadowMode = !!res.data.shadow_mode;
+        const others = s.proposals.filter(function (p) { return p.track !== s.inboxTrack; });
+        s.proposals = (res.data.items || []).map(normalizeProp).concat(others);
+        if (res.data.track_agreement) s.trackAgreement = res.data.track_agreement;
+        s.shadowMode = !!res.data.shadow_mode;
       }
     },
 
     async loadTab(route) {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
       if (route === "overview") await this.loadOverview();
       else if (route === "review-inbox") await this.loadInbox();
       else if (route === "pipelines" || (route === "experiences" && E.state.expSubtab === "pipelines")) {
         await this.loadPipeline();
+        if(!currentRequest(requestScope))return null;
       } else if (route === "experiences") {
         if (E.state.expSubtab === "interceptions") await this.loadInterceptions();
         else await this.loadExperiences();
       } else if (route === "history") await this.loadHistory();
       else if (route === "evolution" || route === "skills" || route === "delivery") await this.loadEvolutionAndSkills();
       else if (route === "control") await this.loadControl();
+      if(!currentRequest(requestScope))return null;
       E.renderAll();
     },
 
     async loadPipeline() {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live" || !E.canWrite()) return;
       const s = E.state;
       const res = await req("GET", "/pipeline");
+      if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
         s.livePipeline = res.data;
         if (Array.isArray(res.data.circuits)) {
@@ -195,10 +230,12 @@
     },
 
     async loadBlockTurns(blockId) {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live" || !blockId) return;
       const s = E.state;
       const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const res = await req("GET", "/history" + qs({ view: "turns", block_id: blockId, owner_id: oid, limit: 40 }));
+      if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
         const blk = s.historyBlocks.find(function (b) { return b.id === blockId; });
         if (blk) {
@@ -212,10 +249,12 @@
     },
 
     async loadHistory() {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
       const s = E.state;
       const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const res = await req("GET", "/history" + qs({ view: "projects", owner_id: oid }));
+      if(!currentRequest(requestScope))return null;
       if (res.status !== 200 || !res.data.ok) return;
       s.liveHistory = res.data;
       const seen = {};
@@ -230,6 +269,7 @@
       });
       if (E.canWrite()) {
         const tRes = await req("GET", "/history" + qs({ view: "trash", owner_id: oid }));
+        if(!currentRequest(requestScope))return null;
         if (tRes.status === 200 && tRes.data.ok) {
           (tRes.data.items || []).forEach(function (it) {
             if (it.kind === "project") {
@@ -248,6 +288,7 @@
       const q = (s.histQuery || "").trim();
       if (s.histScope === "unassigned") {
         const uRes = await req("GET", "/history" + qs({ view: "unassigned", owner_id: oid }));
+        if(!currentRequest(requestScope))return null;
         if (uRes.status === 200 && uRes.data.ok) {
           s.historyBlocks = (uRes.data.blocks || []).map(function (b) {
             return {
@@ -259,6 +300,7 @@
         }
       } else if (q) {
         const sRes = await req("GET", "/history" + qs({ view: "search", q: q, owner_id: oid }));
+        if(!currentRequest(requestScope))return null;
         if (sRes.status === 200 && sRes.data.ok) {
           s.historyBlocks = (sRes.data.items || []).map(function (it) {
             return {
@@ -276,6 +318,7 @@
         s.selectedProjectKey = curKey || null;
         if (curKey) {
           const pRes = await req("GET", "/history" + qs({ view: "project", project_id: curKey, owner_id: oid }));
+          if(!currentRequest(requestScope))return null;
           if (pRes.status === 200 && pRes.data.ok) {
             s.historyBlocks = (pRes.data.blocks || []).map(function (b) {
               return {
@@ -292,26 +335,32 @@
       }
       if (s.selectedBlockId && s.histScope !== "trash") {
         await this.loadBlockTurns(s.selectedBlockId);
+        if(!currentRequest(requestScope))return null;
       }
     },
 
     async manageHistoryProject(action, key, title) {
+      const requestScope=requestContext();
       const res = await req("POST", "/history/manage", { action: action, kind: "project", project: key, key: key, title: title });
+      if(!currentRequest(requestScope))return null;
       if (res.status !== 200 || !res.data.ok) {
         E.toast("历史项目操作失败：" + (res.data.error || res.status), "danger");
         return false;
       }
       await this.loadHistory();
+      if(!currentRequest(requestScope))return null;
       E.toast(action === "delete" ? "项目已移入回收站" : "项目已恢复正常展示");
       E.renderAll();
       return true;
     },
 
     async loadEvolutionAndSkills() {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
       const s = E.state;
       const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const res = await req("GET", "/evolution-and-skills" + qs({ owner_id: oid }));
+      if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
         s.liveEvolution = res.data;
         const cat = res.data.skills_catalog || {};
@@ -333,10 +382,12 @@
     },
 
     async loadControl() {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
       const s = E.state;
       const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
       const res = await req("GET", "/control" + qs({ owner_id: oid }));
+      if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
         s.liveControl = res.data;
         if (Array.isArray(res.data.users) && res.data.users.length) {
@@ -370,83 +421,107 @@
     },
 
     async postControlAction(body) {
+      const requestScope=requestContext();
       const res = await req("POST", "/control/action", body);
+      if(!currentRequest(requestScope))return null;
       if (res.status !== 200 || !res.data.ok) {
         E.toast("权限变更失败：" + (res.data.error || res.status), "danger");
         return false;
       }
       await this.loadControl();
+      if(!currentRequest(requestScope))return null;
       E.toast("控制面权限已保存至 PG");
       E.renderAll();
       return true;
     },
 
     async writeExperience(body) {
+      const requestScope=requestContext();
       const res = await req("POST", "/experiences/write", body);
+      if(!currentRequest(requestScope))return null;
       if ((res.status !== 200 && res.status !== 201) || !res.data.ok) {
         E.toast("经验写入失败：" + (res.data.error || res.status), "danger");
         return null;
       }
       await this.loadExperiences();
+      if(!currentRequest(requestScope))return null;
       await this.loadOverview();
+      if(!currentRequest(requestScope))return null;
       E.renderAll();
       return res.data;
     },
 
     async rescueInterception(itemId, editedPayload, note) {
+      const requestScope=requestContext();
       const res = await req("POST", "/interceptions/rescue", { item_id: itemId, edited_payload: editedPayload, note: note });
+      if(!currentRequest(requestScope))return null;
       if (res.status !== 200 || !res.data.ok) {
         E.toast("救回失败：" + (res.data.error || res.status), "danger");
         return false;
       }
       await this.loadInterceptions();
+      if(!currentRequest(requestScope))return null;
       await this.loadExperiences();
+      if(!currentRequest(requestScope))return null;
       E.toast("已签发 Ticket 人工救回并写入经验库！");
       E.renderAll();
       return true;
     },
 
     async fetchExpTrace(noteId) {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live") return null;
       const oid = E.state.libraryCtx === E.state.ownerId ? "" : E.state.libraryCtx;
       const res = await req("GET", "/experiences/" + encodeURIComponent(noteId) + "/trace" + qs({ owner_id: oid }));
+      if(!currentRequest(requestScope))return null;
       return res.status === 200 && res.data.ok ? res.data : null;
     },
 
     async fetchEvidenceContext(ref) {
+      const requestScope=requestContext();
       if (E.state.apiMode !== "live") return null;
       const oid = E.state.libraryCtx === E.state.ownerId ? "" : E.state.libraryCtx;
       const res = await req("GET", "/evidence-context" + qs({ ref: ref, owner_id: oid }));
+      if(!currentRequest(requestScope))return null;
       return res.status === 200 && res.data.ok ? res.data : null;
     },
 
     async decideProposal(uid, verdict, reason, edits) {
+      const requestScope=requestContext();
       const res = await req("POST", "/review-inbox/decide", { proposal_uid: uid, user_verdict: verdict, user_reason: reason, edited_payload: edits });
+      if(!currentRequest(requestScope))return null;
       if (res.status !== 200 || !res.data.ok) {
         E.toast("提交失败：" + (res.data.error || res.status), "danger");
         return false;
       }
       await this.loadInbox();
+      if(!currentRequest(requestScope))return null;
       E.renderAll();
       return true;
     },
 
     async rollbackDryRun(model) {
+      const requestScope=requestContext();
       return await req("POST", "/experiences/rollback", { mode: "dry_run", agent_client: "codex", model: model });
     },
 
     async rollbackExecute(plan) {
+      const requestScope=requestContext();
       return await req("POST", "/experiences/rollback", { mode: "execute", plan: plan });
     },
 
     async resetCircuit(track) {
+      const requestScope=requestContext();
       const res = await req("POST", "/control/action", { action: "reset_circuit", track: track || "live" });
+      if(!currentRequest(requestScope))return null;
       if (res.status !== 200 || !res.data.ok) {
         E.toast("解除熔断失败：" + ((res.data && res.data.error) || res.status), "danger");
         return false;
       }
       await this.loadOverview();
+      if(!currentRequest(requestScope))return null;
       await this.loadPipeline();
+      if(!currentRequest(requestScope))return null;
       E.toast("已解除熔断并恢复实时提炼调度", "info");
       E.renderAll();
       return true;

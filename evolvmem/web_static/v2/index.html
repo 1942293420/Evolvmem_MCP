@@ -21,6 +21,12 @@
       <nav id="top-nav" class="nav-tabs" aria-label="主导航"></nav>
 
       <div class="topbar-actions">
+        <div id="auth-controls" class="auth-controls" aria-label="当前登录" hidden>
+          <span id="auth-name" class="auth-name">正在核对登录…</span>
+          <a id="auth-login" class="btn btn-sm" href="/auth/login" hidden>飞书登录</a>
+          <button id="auth-logout" type="button" class="btn btn-ghost btn-sm" data-act="auth-logout" hidden>退出</button>
+          <a id="auth-console" class="btn btn-sm" href="http://192.168.1.135:9600">总控台</a>
+        </div>
         <select id="ctx-lib-sel" class="compact-select" aria-label="当前库权限视角" title="切换知识库访问视角">
           <option value="owner_main">个人主库 (可读写)</option>
           <option value="shared_public">共享项目库 (可读写)</option>
@@ -69,6 +75,7 @@
   <div id="toast-box" class="toast-box" aria-live="polite"></div>
 
   <script src="./js/state-and-data.js"></script>
+  <script src="./js/sso-session.js"></script>
   <script src="./js/api-adapter.js"></script>
   <script src="./js/l3-drawers.js"></script>
   <script src="./js/render-overview-and-core.js"></script>

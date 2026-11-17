@@ -32,7 +32,7 @@
   E.views.overview = function () {
     const s = E.state;
     const w = E.canWrite();
-    const selAgent = s.agents.find(function (a) { return a.agent === s.selectedAgentName; }) || s.agents[0];
+    const selAgent = s.agents.find(function (a) { return a.agent === s.selectedAgentName; }) || s.agents[0] || {agent:'',title:'尚无可显示的节点',activeProject:'',syncNote:'等待已授权的数据来源返回节点状态。'};
     const m = s.liveMetrics;
     const pendingLive = m ? m.pending_live : s.proposals.filter(function (p) { return p.status === "pending" && p.track === "live"; }).length;
     const pendingBack = m ? m.pending_backfill : s.proposals.filter(function (p) { return p.status === "pending" && p.track === "backfill"; }).length;
@@ -69,6 +69,15 @@
         </div>
       </div>
 
+      ${E.session ? `<section class="panel" aria-labelledby="sso-principles-title">
+        <h2 id="sso-principles-title">登录与知识库访问</h2>
+        <ol class="sso-flow">
+          <li><strong>1. 飞书登录总控台</strong>总控台确认当前用户是否获准进入 EvolvMem。</li>
+          <li><strong>2. 核对内部权限</strong>EvolvMem 按原账号绑定、启停状态和管理员权限确认身份。</li>
+          <li><strong>3. 打开已授权知识库</strong>继续按原有归属和跨库授权查看资料；AI 与整理开关保持原设置。</li>
+        </ol>
+        <p>退出、账号变更或权限失效后隐藏资料。重新登录会回到当前页面，同一用户可继续原筛选和草稿。</p>
+      </section>` : ''}
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label"><span>协同接入智能体</span><span class="badge badge-ok">在线健康</span></div>
@@ -134,7 +143,7 @@
               <div class="secondary" style="font-size:13.5px">${esc(selAgent.syncNote)}</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button type="button" class="btn btn-sm" data-act="open-agent-l3" data-name="${esc(selAgent.agent)}">查看节点技术明细 (L3)</button>
+              <button type="button" class="btn btn-sm" data-act="open-agent-l3" data-name="${esc(selAgent.agent)}" ${selAgent.agent?'':'disabled'}>查看节点技术明细 (L3)</button>
               <button type="button" class="btn btn-primary btn-sm" data-act="goto-tab" data-route="history">前往历史会话</button>
             </div>
           </div>

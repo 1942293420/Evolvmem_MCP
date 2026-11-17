@@ -2,6 +2,7 @@
 (function (root) {
   const E = (root.EvolvMemV2 = root.EvolvMemV2 || {});
   const esc = E.esc;
+  function currentResponse(){const ticket=E.session?E.session.capture():null;return ()=>!ticket || (E.session && E.session.isCurrent(ticket));}
 
   function formatRemain(sec) {
     const h = Math.floor(sec / 3600);
@@ -60,6 +61,7 @@
 
   E.renderMain = function () {
     const s = E.state;
+    if(E.session && (!E.session.isReady() || !E.session.dataReady))return E.session.panel();
     if (s.simMode === "pg_503") {
       return `<div class="panel" style="max-width:680px;margin:48px auto;border-color:var(--danger)">
         <span class="badge badge-danger mono" style="align-self:flex-start">HTTP 503 · pg_control_unavailable</span>
@@ -75,7 +77,7 @@
         <p class="secondary">仅允许控制库已登记的启用账户通过飞书身份鉴权；新建网页会话固定有效期 8 小时，停用账户同事务吊销全量凭证。</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           ${s.apiMode === "live"
-            ? `<a class="btn btn-primary" href="/auth/feishu/login">使用飞书 OAuth 授权登录</a>`
+            ? `<a class="btn btn-primary" href="/auth/login">飞书登录</a>`
             : `<button type="button" class="btn btn-primary" data-act="set-sim" data-mode="normal">授权登录 (个人主库管理员)</button>`}
           <button type="button" class="btn" data-act="set-sim" data-mode="normal">返回控制台</button>
         </div>
@@ -145,6 +147,7 @@
     const mainEl = doc.getElementById("workspace-main");
     if (navEl) navEl.innerHTML = E.renderTopNav();
     if (mainEl) mainEl.innerHTML = E.renderMain();
+    if(E.session)E.session.syncHeader();
     if (focusInfo) {
       const next = doc.getElementById(focusInfo.id);
       if (next && mainEl && mainEl.contains(next)) {
@@ -156,6 +159,10 @@
 
   E.applyAction = function (act, ds) {
     const s = E.state;
+    const current=currentResponse();
+    if(act==='auth-logout'){if(E.session)E.session.logout();return false;}
+    if(act==='auth-retry'){if(E.session)E.session.check();return false;}
+    if(E.session && (!E.session.isReady() || !E.session.dataReady))return false;
     if (!E.canWrite() && /^(approve-prop|reject-prop|batch-approve|batch-reject-apply|trash-exp|restore-exp|submit-new-exp|rb-apply)$/.test(act)) {
       E.toast("只读权限不可执行写操作", "danger");
       return false;
@@ -178,7 +185,7 @@
       if (s.apiMode === "live" && E.api) E.api.loadTab(s.route);
       return true;
     }
-    if (act === "set-sim") { s.simMode = ds.mode || "normal"; E.closeDrawer(); return true; }
+    if (act === "set-sim") { if(E.session)return false;s.simMode = ds.mode || "normal"; E.closeDrawer(); return true; }
     if (act === "select-agent") { s.selectedAgentName = ds.name; return true; }
     if (act === "select-proposal") { s.selectedProposalUid = ds.uid; s.editingUid = null; s.rejectBoxOpen = false; return true; }
     if (act === "toggle-reject-box") { s.rejectBoxOpen = !s.rejectBoxOpen; return true; }
@@ -222,7 +229,7 @@
       const note = noteEl ? noteEl.value.trim() : "";
       if (!payload.problem || !payload.solution) { E.toast("Problem 与 Solution 不能为空", "warn"); return false; }
       if (s.apiMode === "live" && E.api) {
-        E.api.rescueInterception(ds.id, payload, note).then(function (ok) { if (ok && E.closeModal) E.closeModal(); });
+        E.api.rescueInterception(ds.id, payload, note).then(function (ok) { if (current() && ok && E.closeModal) E.closeModal(); });
         return false;
       }
       const it = (s.interceptions || []).find(function (x) { return x.id === ds.id; });
@@ -343,7 +350,7 @@
     if (act === "batch-reject-apply") { s.selectedProposalUids.slice().forEach(function (uid) { E.applyAction("reject-prop", { uid: uid, reason: ds.reason }); }); s.selectedProposalUids = []; E.closeModal(); return true; }
     if (act === "trash-exp") {
       if (s.apiMode === "live" && E.api) {
-        E.api.writeExperience({ action: "retire", note_id: ds.id }).then(function (ok) { if (ok) E.toast("已退居 retired 归档态", "warn"); });
+        E.api.writeExperience({ action: "retire", note_id: ds.id }).then(function (ok) { if (current() && ok) E.toast("已退居 retired 归档态", "warn"); });
         return false;
       }
       const x = s.experiences.find(function (i) { return i.id === ds.id; });
@@ -362,7 +369,7 @@
       const reus = doc.getElementById("new-exp-reus").value.trim() || "保持规范积累与定期复用。";
       if (s.apiMode === "live" && E.api) {
         E.api.writeExperience({ action: "create", request_id: reqId, category: cat, kind: "procedure", problem: prob, solution: sol, reusable_experience: reus })
-          .then(function (ok) { if (ok) { E.closeModal(); E.toast("已签发 Ticket 写入正式经验库"); } });
+          .then(function (ok) { if (current() && ok) { E.closeModal(); E.toast("已签发 Ticket 写入正式经验库"); } });
         return false;
       }
       if (s.experiences.some(function (x) { return x.reqId === reqId; })) { E.toast("命中幂等键去重：仅写入一次"); E.closeModal(); return false; }
@@ -379,6 +386,7 @@
       if (sel) s.rollbackState.model = sel.value;
       if (s.apiMode === "live" && E.api) {
         E.api.rollbackDryRun(s.rollbackState.model).then(function (res) {
+          if(!current())return;
           if (res.status === 200 && res.data.ok) {
             s.rollbackState.plan = res.data.plan;
             const ops = (res.data.plan && res.data.plan.operations) || [];
@@ -398,6 +406,7 @@
     if (act === "rb-apply") {
       if (s.apiMode === "live" && E.api && s.rollbackState.plan) {
         E.api.rollbackExecute(s.rollbackState.plan).then(function (res) {
+          if(!current())return;
           if (res.status === 200 && res.data.ok) {
             s.rollbackState.previewed = false; s.rollbackState.affected = []; s.rollbackState.plan = null;
             E.api.loadExperiences().then(function () { E.renderAll(); });
@@ -479,6 +488,13 @@
       const s = E.state;
       const t = ev.target;
       if (t.id === "ctx-lib-sel") {
+        if(E.session){
+          if(!E.session.isReady())return;
+          E.session.switchLibrary(t.value);
+          const libraryScope=E.session.capture();
+          E.api.syncLibrarySelect();E.api.loadOverview().then(function(){if(E.session && E.session.isCurrent(libraryScope))return E.api.loadTab(E.state.route);}).then(function(){if(E.session && E.session.isCurrent(libraryScope)){E.session.dataReady=true;E.renderAll();E.session.restoreDraft();}});
+          return;
+        }
         s.libraryCtx = t.value;
         E.toast("切换视角：" + t.options[t.selectedIndex].text);
         if (s.apiMode === "live" && E.api) {
@@ -546,6 +562,12 @@
         const el = root.document.getElementById("diag-sess-remain");
         if (el) el.textContent = formatRemain(E.state.sessionRemainingSec);
       }, 1000);
+    });
+    root.addEventListener('hashchange',function(){
+      if(!E.session || !E.session.isReady() || !E.session.dataReady)return;
+      const h=root.location.hash.replace(/^#/, '');
+      if(h && h!==E.state.route && E.MODULES.some(function(m){return m.id===h;}))E.applyAction('goto-tab',{route:h});
+      E.session.save();
     });
   }
 })(typeof window !== "undefined" ? window : globalThis);

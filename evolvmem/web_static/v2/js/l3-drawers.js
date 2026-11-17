@@ -12,6 +12,10 @@
   function byId(id) {
     return typeof root.document !== "undefined" ? root.document.getElementById(id) : null;
   }
+  function currentResponse(){
+    const ticket=E.session?E.session.capture():null;
+    return ()=>!ticket || (E.session && E.session.isCurrent(ticket));
+  }
 
   function kvCell(k, v, mono) {
     return `<div class="kv-cell"><div class="kv-k">${k}</div><div class="kv-v ${mono ? "mono" : ""}">${v}</div></div>`;
@@ -193,6 +197,7 @@
   }
 
   function openEvidenceBox(ref, quote) {
+    const isCurrent=currentResponse();
     const renderBody = function (msgs, loading) {
       return `
         <div class="kv-grid">${kvCell("归档引用指针", esc(ref || "archive"), true)}${kvCell("LLM 调用", "0 次（直读 PG）", false)}</div>
@@ -210,6 +215,7 @@
     openD("历史会话原文证据 · " + (ref || "archive"), renderBody([], E.state.apiMode === "live"), "三级溯源 · 0-LLM 原文检索");
     if (E.state.apiMode === "live" && ref && E.api && E.api.fetchEvidenceContext) {
       E.api.fetchEvidenceContext(ref).then(function (data) {
+        if(!isCurrent())return;
         const b = byId("drawer-body");
         if (b && data) b.innerHTML = renderBody(data.turns || data.messages || [], false);
       });
@@ -242,6 +248,7 @@
   };
 
   E.openL3Drawer = function (act, ds) {
+    const isCurrent=currentResponse();
     const s = E.state;
     const d = ds || {};
     if (act === "open-diag") return E.openDiagDrawer();
@@ -250,9 +257,9 @@
       if (!it) return;
       openD("拦截门控步进链与元数据 · " + it.id, renderIntTraceHtml(it, null), it.layer + " · " + it.reason_code);
       if (s.apiMode === "live" && typeof root.fetch === "function") {
-        root.fetch("/api/console-v2/interceptions/" + encodeURIComponent(it.id) + "/trace", { credentials: "same-origin" })
+        (E.session ? E.session.request('GET',"/api/console-v2/interceptions/" + encodeURIComponent(it.id) + "/trace").then(function(r){return {ok:r.status===200,json:function(){return Promise.resolve(r.data);}};}) : root.fetch("/api/console-v2/interceptions/" + encodeURIComponent(it.id) + "/trace", { credentials: "same-origin" }))
           .then(function (r) { return r.ok ? r.json() : null; })
-          .then(function (td) { const b = byId("drawer-body"); if (b && td && td.ok) b.innerHTML = renderIntTraceHtml(it, td.item || td); })
+          .then(function (td) { if(!isCurrent())return;const b = byId("drawer-body"); if (b && td && td.ok) b.innerHTML = renderIntTraceHtml(it, td.item || td); })
           .catch(function () {});
       }
       return;
@@ -267,7 +274,7 @@
       if (!x) return;
       openD("经验全链路追溯与关联图谱 · " + x.id, renderExpTraceHtml(x, { _loading: s.apiMode === "live" }), "三级溯源 · 正式库条目");
       if (s.apiMode === "live" && E.api && E.api.fetchExpTrace) {
-        E.api.fetchExpTrace(x.id).then(function (tr) { const b = byId("drawer-body"); if (b && tr) b.innerHTML = renderExpTraceHtml(x, tr); });
+        E.api.fetchExpTrace(x.id).then(function (tr) { if(!isCurrent())return;const b = byId("drawer-body"); if (b && tr) b.innerHTML = renderExpTraceHtml(x, tr); });
       }
       return;
     }

@@ -178,6 +178,18 @@ body {
 
 .topbar-actions { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
 .topbar-actions .btn-sm { min-height: 30px; padding: 4px 8px; font-size: 12px; }
+.auth-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.auth-controls .btn-sm { min-height:40px; font-size:14px; padding:7px 11px; }
+.auth-name { max-width:12em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
+.session-panel { max-width:680px; margin:48px auto; gap:18px; }
+.session-panel h1 { font-size:24px; }
+.session-panel p { font-size:16px; line-height:1.7; }
+.session-actions { display:flex; gap:12px; flex-wrap:wrap; }
+.sso-flow { display:flex; align-items:stretch; gap:12px; padding:0; list-style:none; flex-wrap:wrap; }
+.sso-flow li { flex:1 1 180px; padding:14px; border:1px solid var(--line); border-radius:10px; font-size:15px; }
+.sso-flow strong { display:block; margin-bottom:6px; }
+.topbar-actions { flex-wrap:wrap; }
+@media(max-width:720px){.topbar-actions{width:100%;}.auth-controls{width:100%;}.auth-name{flex:1;}.session-panel{margin:24px 0;}}
 .compact-select {
   min-height: 30px; padding: 3px 6px; border-radius: 8px; border: 1px solid var(--line-strong);
   background: var(--bg-subtle); color: var(--ink); font-size: 12px; cursor: pointer;

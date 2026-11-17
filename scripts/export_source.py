@@ -18,6 +18,7 @@ PUBLIC_DIRECTORIES = (
 )
 PUBLIC_DOCS = (
     "context-core.md", "codex-context-core-runbook.md", "github-sharing.md",
+    "company-sso-web-access.md",
     "windows-codex.md", "lan-revision-read.md", "lan-background-health.md", "recall-read-scope.md",
     "lan-continuity-reads.md", "experience-background-admission.md", "recall-memory-pressure.md",
     "lan-capability-reads.md",
