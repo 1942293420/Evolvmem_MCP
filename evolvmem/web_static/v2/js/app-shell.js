@@ -38,6 +38,7 @@
   };
 
   E.closeModal = function () {
+    if(E.session && E.captureExperienceEditorDraft && E.captureExperienceEditorDraft()?.unknown)E.session.save();
     if (typeof root.document === "undefined") return;
     root.document.getElementById("modal-backdrop").classList.remove("open");
   };
@@ -131,6 +132,7 @@
   };
 
   E.openNewExpModal = function () {
+    if (E.state.apiMode === "live" && E.openExperienceEditor) return E.openExperienceEditor();
     const reqId = "req-" + Date.now().toString(36);
     E.openModal("新增结构化经验（快速直通入库）", `
       <div class="banner banner-info">受主库唯一写入口与 request_id 幂等保护，确保同内容重放不会重复写库。</div>
@@ -385,8 +387,11 @@
       return true;
     }
     if (act === "restore-exp") { const x = s.experiences.find(function (i) { return i.id === ds.id; }); if (x) x.status = "active"; E.toast("已恢复为 active 生效态"); return true; }
+    if (act === "refresh-manual-record") { if (E.refreshExperienceEditor) E.refreshExperienceEditor(); return false; }
+    if (act === "edit-manual-exp") { const note=s.experiences.find(x=>x.id===ds.id); if (E.openExperienceEditor) E.openExperienceEditor(note); return false; }
     if (act === "open-new-exp") { E.openNewExpModal(); return false; }
     if (act === "submit-new-exp") {
+      if (s.apiMode === "live" && E.submitExperienceEditor) { E.submitExperienceEditor(); return false; }
       const doc = root.document;
       const reqId = doc.getElementById("new-exp-reqid").value.trim();
       const cat = doc.getElementById("new-exp-cat").value;

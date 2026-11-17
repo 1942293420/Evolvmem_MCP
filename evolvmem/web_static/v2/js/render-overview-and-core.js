@@ -486,9 +486,12 @@
                 <span class="badge">${esc(E.ORIGIN_ZH[sel.origin] || sel.origin)}</span>
                 <span class="badge ${sel.status === "active" ? "badge-ok" : sel.status === "probation" ? "badge-warn" : ""}">${esc(E.STATUS_ZH[sel.status] || sel.status)}</span>
               </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+              ${E.canEditManualExperience && E.canEditManualExperience(sel) ? `<button type="button" class="btn btn-primary btn-sm" data-act="edit-manual-exp" data-id="${esc(sel.id)}">编辑手工经验</button>` : ""}
               ${sel.status !== "retired"
                 ? `<button type="button" class="btn btn-danger btn-sm" data-act="trash-exp" data-id="${esc(sel.id)}" ${w ? "" : "disabled"}>退役 / 撤销经验</button>`
                 : `<button type="button" class="btn btn-ok btn-sm" data-act="restore-exp" data-id="${esc(sel.id)}" ${w ? "" : "disabled"}>恢复为生效状态</button>`}
+              </div>
             </div>
             <div class="prose-section">
               <h3>遇到的核心问题</h3>

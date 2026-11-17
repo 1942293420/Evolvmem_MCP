@@ -317,6 +317,11 @@ def write_experience(console: Any, session: Any, body: dict[str, Any]) -> dict[s
     note_id = str(body.get('note_id') or body.get('id') or '').strip() or None
     if action != 'create' and not note_id:
         raise V2ApiError('note_id_required', 400)
+    expected_revision = body.get('expected_revision')
+    if action == 'update' and expected_revision is None:
+        raise V2ApiError('expected_revision_required', 400)
+    if expected_revision is not None and (type(expected_revision) is not int or expected_revision < 1):
+        raise V2ApiError('invalid_expected_revision', 400)
 
     cat = str(body.get('category') or '系统环境经验')
     kind = str(body.get('kind') or 'pitfall')
@@ -347,7 +352,7 @@ def write_experience(console: Any, session: Any, body: dict[str, Any]) -> dict[s
             problem=str(body.get('problem') or '').strip() if action in ('create', 'update') else None,
             solution=str(body.get('solution') or '').strip() if action in ('create', 'update') else None,
             reusable_experience=str(body.get('reusable_experience') or '').strip() if action in ('create', 'update') else None,
-            expected_revision=(int(body['expected_revision']) if body.get('expected_revision') is not None else None),
+            expected_revision=expected_revision,
             origin='manual',
             kind=kind if action in ('create', 'update') else None,
             misbelief=str(body.get('misbelief') or '').strip(),

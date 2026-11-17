@@ -25,6 +25,7 @@ from evolvmem.history_pg.web_pg_runner import NullLegacyWebService
 from evolvmem.knowledge_console import ConsoleService
 from evolvmem.web_auth import AuthSettings, WebAuth
 from evolvmem.web_server import make_http_server
+from tests.stage2.conftest import _MaskedDsn
 from tests.stage1 import pg_stage1_harness
 from tests.stage5.conftest import STAGE5_PG_CONTAINER, STAGE5_PG_PORT, STAGE5_PW_FILE
 
@@ -36,7 +37,7 @@ PEER_CSRF = 'csrf-peer-v2-token'
 
 def _pg_dsn() -> str:
     pw = STAGE5_PW_FILE.read_text(encoding='utf-8').strip()
-    return f'host=127.0.0.1 port={STAGE5_PG_PORT} dbname=postgres user=postgres password={pw}'
+    return _MaskedDsn(f'host=127.0.0.1 port={STAGE5_PG_PORT} dbname=postgres user=postgres password={pw}')
 
 
 def _attr(client: str = 'codex', model: str = 'gpt-5.4') -> AgentAttribution:

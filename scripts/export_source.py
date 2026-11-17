@@ -37,6 +37,7 @@ PUBLIC_DOCS = (
     "2026-11-17-history-scroll-stability.md",
     "2026-11-17-history-record-times.md",
     "2026-11-17-hybrid-experience-retrieval.md",
+    "2026-11-18-web-manual-experience-edit.md",
 )
 EXCLUDED_DIRECTORIES = {
     ".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache",

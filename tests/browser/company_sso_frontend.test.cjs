@@ -125,3 +125,23 @@ test('API consumers reject identity changes at each microtask boundary',async()=
     assert.equal(h.E.session.scope,'scope-bbbb');assert.notEqual(h.E.state.currentUser?.id,'native-A',phase+' depth '+depth);assert.equal(h.E.session.dataReady,false,phase+' dataReady depth '+depth);assert.equal(h.E.state.experiences.length,0,phase+' experiences depth '+depth);assert.equal(h.E.state.interceptions?.length||0,0,phase+' interceptions depth '+depth);assert.equal(h.E.state.proposals.length,0,phase+' inbox depth '+depth);
   }
 });
+
+
+test('experience encoder 503 retains a ready session only after verifying live identity',async()=>{
+ const h=harness();h.queue.push(ready('scope-aaaa'));await h.E.session.check({resume:false});
+ h.E.session.dataReady=true;const current=h.E.state;h.E.state.experiences=[{problem:'private'}];
+ h.queue.push({status:503,body:{ok:false,error:'experience_embedding_unavailable'}},ready('scope-aaaa'));
+ const res=await h.E.session.request('POST','/api/console-v2/experiences/write',{action:'update'});
+ assert.equal(res.status,503);assert.equal(h.E.session.isReady(),true);assert.equal(h.E.state,current);
+ assert.equal(h.E.state.experiences[0].problem,'private');
+ assert.equal(h.calls.at(-1).url,'/auth/ops/status');
+});
+
+test('an expired live identity still clears private data after an encoder failure',async()=>{
+ const h=harness();h.queue.push(ready('scope-aaaa'));await h.E.session.check({resume:false});
+ h.E.state.experiences=[{problem:'private'}];
+ h.queue.push({status:503,body:{ok:false,error:'experience_embedding_unavailable'}},
+              {status:401,body:{authenticated:false}});
+ await h.E.session.request('POST','/api/console-v2/experiences/write',{action:'update'});
+ assert.equal(h.E.session.isReady(),false);assert.equal(h.E.state.experiences.length,0);
+});

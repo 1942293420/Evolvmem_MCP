@@ -27,7 +27,7 @@
     Object.keys(E.state).forEach(function (key) { if (Array.isArray(E.state[key]) && key !== "availableLibraries") E.state[key] = []; });
     ["liveMetrics", "liveEvolution", "livePipeline", "liveHistory", "liveControl"].forEach(function (key) { E.state[key] = null; });
   }
-  async function req(method, path, body, valid) {
+  async function req(method, path, body, valid, options) {
     const scope = requestContext();
     const opts = { method: method, credentials: "same-origin", headers: {} };
     if (method === "POST") {
@@ -37,7 +37,7 @@
     }
     let result;
     try {
-      if (E.session) result = await E.session.request(method, "/api/console-v2" + path, body, valid);
+      if (E.session) result = await E.session.request(method, "/api/console-v2" + path, body, valid, options);
       else {
         const resp = await root.fetch("/api/console-v2" + path, opts);
         let data;
@@ -48,7 +48,8 @@
     if (!currentRequest(scope) || (valid && !valid())) return { status: 409, data: { ok: false, error: "stale_view" } };
     if (!result || !result.data || typeof result.data !== "object") result = { status: result ? result.status : 0, data: { ok: false, error: "invalid_json" } };
     if (result.status === 409 && ["stale_response", "stale_view", "session_not_ready"].includes(result.data.error)) return result;
-    if (method === "GET" && (result.status !== 200 || !result.data.ok)) {
+    if (method === "GET" && (result.status !== 200 || !result.data.ok) &&
+        (!(options && options.preserveOnError) || [401,403].includes(result.status))) {
       clearLiveData();
       if (result.status === 401) { E.state.simMode = "sso_login"; E.state.csrfToken = ""; }
       else E.state.apiError = "读取 " + path.split("?")[0] + " 失败（" + (result.data.error || result.status) + "）。请重新加载。";
@@ -195,12 +196,12 @@
       }).join("");
     },
 
-    async loadOverview() {
+    async loadOverview(options) {
       const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
       const s = E.state;
       const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
-      const res = await req("GET", "/overview" + qs({ owner_id: oid }));
+      const res = await req("GET", "/overview" + qs({ owner_id: oid }), undefined, undefined, options);
       if(!currentRequest(requestScope))return null;
       if (res.status === 200 && res.data.ok) {
         s.liveMetrics = res.data.metrics;
@@ -219,7 +220,9 @@
           });
           s.changesCursor = s.changesStream.length ? s.changesStream[0].seq : 0;
         }
+        return true;
       }
+      return false;
     },
 
     scheduleExperienceSearch() {
@@ -232,7 +235,7 @@
       }, 280);
     },
 
-    async loadExperiences() {
+    async loadExperiences(options) {
       const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
       clearTimeout(experienceTimer);
@@ -243,7 +246,7 @@
       const oid=s.libraryCtx===s.ownerId ? "" : s.libraryCtx;
       const st=E.canWrite() ? f.status : "active";
       const res=await req("GET", "/experiences"+qs({owner_id:oid,category:f.category,
-        origin:f.origin,status:st,q:f.q,limit:60,offset:s.expOffset || 0}), undefined, valid);
+        origin:f.origin,status:st,q:f.q,limit:60,offset:s.expOffset || 0}), undefined, valid, options);
       if (!valid()) return null;
       s.expLoading=false;
       if (res.status===200 && res.data.ok) {
@@ -251,7 +254,9 @@
         s.expTotal=res.data.total; s.expCategoryCounts=res.data.category_counts;
         s.expDiagnostics=res.data.diagnostics || null; s.apiError=null;
         if (res.data.interception_funnel) s.interceptionFunnel=res.data.interception_funnel;
+        return true;
       }
+      return false;
     },
 
     async loadInterceptions() {
@@ -537,14 +542,25 @@
       return true;
     },
 
-    async writeExperience(body) {
+    async refreshExperienceViews() {
+      const scope=requestContext();
+      const list=await this.loadExperiences({preserveOnError:true});
+      if (!currentRequest(scope)) return null;
+      const overview=await this.loadOverview({preserveOnError:true});
+      if (!currentRequest(scope)) return null;
+      return list===true && overview===true;
+    },
+
+    async writeExperience(body, options) {
       const requestScope=requestContext();
       const res = await req("POST", "/experiences/write", body);
       if(!currentRequest(requestScope))return null;
       if ((res.status !== 200 && res.status !== 201) || !res.data.ok) {
+        if (options && options.returnError) return {ok:false,status:res.status,error:res.data.error || String(res.status)};
         E.toast("经验写入失败：" + (res.data.error || res.status), "danger");
         return null;
       }
+      if (options && options.deferRefresh) return res.data;
       await this.loadExperiences();
       if(!currentRequest(requestScope))return null;
       await this.loadOverview();

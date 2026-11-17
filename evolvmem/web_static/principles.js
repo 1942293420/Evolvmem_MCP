@@ -28,8 +28,8 @@
   <section class="panel"><h2>经验</h2><ol><li><b>前端经验：</b>界面、交互与页面开发中的做法。</li><li><b>业务经验：</b>业务规则、流程与计算中的做法。</li><li><b>系统环境经验：</b>部署、运行环境与服务配置中的做法。</li></ol><p>每条填写<b>问题、解决办法、可复用经验</b>。你可以在网页新增，也可以在会话中明确要求助手记住一条，再到网页查看和编辑。</p><p class="muted">会话中的明确指令由助手判断后逐条写入。旧提取稿保留，自动提取保持停止。</p>
     <div class="diagram-flow" role="img" aria-label="通过网页或当前会话的明确记忆指令，选择前端经验、业务经验或系统环境经验，保存问题、解决办法和可复用经验。本人可管理，其他用户按授权阅读">
       <div class="diagram-node"><strong>选择分类</strong><small>前端 / 业务 / 系统环境</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
-      <div class="diagram-node"><strong>整理一条经验</strong><small>网页填写或在会话中明确要求记住</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
-      <div class="diagram-node"><strong>保存和维护</strong><small>正文和检索向量一同保存；他人按授权只读</small></div>
+      <div class="diagram-node"><strong>整理一条经验</strong><small>网页新增或编辑，或在会话中明确要求记住</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+      <div class="diagram-node"><strong>保存和维护</strong><small>正文和向量一同保存；失败保留输入，他人按授权只读</small></div>
     </div>
     <h3>查找经验</h3><p>搜索会在获授权的完整经验库中匹配关键词，并由常驻中文模型查找相似问题。先核对适用范围和相似程度，再合并结果；没有合适经验时可以为空。向量服务暂不可用时仍可查关键词。</p>
     <div class="diagram-flow" role="img" aria-label="选择获授权的经验库，输入关键词或问题，合并原文和语义结果，再按分类展示">
