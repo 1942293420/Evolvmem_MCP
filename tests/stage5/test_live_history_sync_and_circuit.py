@@ -4,12 +4,15 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import secrets
 import uuid
 
 import psycopg
 import pytest
 
 from evolvmem.experience_v2.pipeline.scheduler import evaluate_circuit_breaker
+from evolvmem.archive_storage import ArchiveStorage
+from evolvmem.config import Config
 from evolvmem.experience_v2.schema import apply_experience_migrations
 from evolvmem.history_pg.candidate_reader import PgHistoryCandidateReader
 from evolvmem.history_pg.config import PgHistoryConfig
@@ -174,3 +177,27 @@ def test_live_history_sync_materializes_and_updates_idempotently(tmp_path: Path)
         assert blk['title'].startswith('为什么今天订单利润报表漏了一列')
         page = reader.block_page(f'live-{sid}')
         assert len(page['messages']) == 4 and page['messages'][-1]['content'] == '已重跑校验通过'
+
+    data_dir = tmp_path / 'data'
+    (data_dir / 'session_archives').mkdir(parents=True, exist_ok=True)
+    key = secrets.token_bytes(32)
+    (data_dir / 'archive.key').write_bytes(key)
+    enc_sid = f'0199enc-{uuid.uuid4().hex[:12]}'
+    raw_enc = _codex_jsonl(enc_sid, r'C:\Users\ASUS\Documents\ChatGPT\总控台', [
+        ('2026-11-10T08:00:00Z', 'user', '核查总控台历史同步问题'),
+        ('2026-11-10T08:00:05Z', 'assistant', '已确认 .bin 归档解包正常'),
+    ])
+    packed, _manifest = ArchiveStorage(Config(data_dir=data_dir, apply_environment=False), key).pack(
+        json.dumps({'transcript': raw_enc.decode('utf-8'), 'conversation': []}, ensure_ascii=False),
+    )
+    (data_dir / 'session_archives' / 'enc1.bin').write_bytes(packed)
+    with cfg.connect(cfg.history_migration_db) as conn:
+        enc_res = sync_session_archive_conn(
+            conn, device_id='win-dev', session_id=enc_sid, sha256=hashlib.sha256(raw_enc).hexdigest(),
+            archive_id=910004, payload_path='session_archives/enc1.bin', source_format_str=CODEX_FORMAT,
+            data_dir=data_dir,
+        )
+        assert enc_res['synced'] is True and enc_res['project'] == '总控台' and enc_res['messages'] == 2
+    with PgHistoryCandidateReader(cfg, dbname=cfg.history_migration_db) as reader2:
+        projs2 = reader2.projects()['projects']
+        assert any(pr['project'] == '总控台' and pr['block_count'] >= 1 for pr in projs2)
