@@ -84,8 +84,8 @@ const server = http.createServer((req, res) => {
     await page.locator('#hist-proj-toggle').click(); await page.locator('#hist-proj-search').fill('资金');
     await page.locator('[data-project-picker-key="finance-daily"]').click();
     await page.locator('#hist-proj-toggle').click(); await page.locator('#hist-proj-search').fill('继续输入');
-    await page.waitForFunction(() => EvolvMemV2.state.historyBlocks[0]?.project === 'finance-daily');
-    assert.equal(await page.locator('#hist-proj-search').evaluate(input => document.activeElement === input), true);
+    await page.waitForFunction(() => EvolvMemV2.state.historyBlocks[0]?.project === 'finance-daily' && EvolvMemV2.state.historyBlocks[0]?._turnsLoaded && document.activeElement?.id === 'hist-proj-search');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'hist-proj-search');
     assert.equal(await page.locator('#hist-proj-search').inputValue(), '继续输入');
     await page.locator('#hist-proj-search').fill('tk'); await page.locator('#hist-proj-search').press('Enter');
     await page.waitForFunction(() => EvolvMemV2.state.historyBlocks[0]?.project === 'tk-daily');
