@@ -31,7 +31,6 @@ from evolvmem.experience_v2.writer import (
     TicketIssuer,
 )
 from evolvmem.library_startup import FileSecretResolver
-from evolvmem.manual_experience_search import MAX_DOCUMENTS
 
 FIELDS = ('category', 'problem', 'solution', 'reusable_experience')
 PG_NOTE_ID = re.compile(r'(?:manual-[a-f0-9]{32}|exp-[0-9a-z]{26})\Z')
@@ -217,8 +216,9 @@ def _source_user_id(source) -> str | None:
 class PgExperienceStore:
     """Drop-in PG backend for manual_experiences read/write contracts."""
 
-    def __init__(self, settings: PgExperienceSettings | None = None):
+    def __init__(self, settings: PgExperienceSettings | None = None, *, embedding_client=None):
         self.settings = settings
+        self.embedding_client = embedding_client
 
     def _settings(self) -> PgExperienceSettings:
         return self.settings or load_pg_experience_settings()
@@ -273,30 +273,14 @@ class PgExperienceStore:
             where = base_where
             values: list = [owner]
             if query:
-                result['search_mode'] = 'keyword'
+                if not deleted:
+                    from evolvmem.experience_v2.manual_hybrid import read_manual_hybrid
+                    return read_manual_hybrid(conn, result=result, owner=owner, query=query,
+                        category=category, page=page, page_size=page_size,
+                        embedding_client=self.embedding_client)
+                result['search_mode'] = 'keywords_only'
                 literal = '%' + query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
                 match = "(problem ILIKE %s ESCAPE '\\' OR solution ILIKE %s ESCAPE '\\' OR reusable_experience ILIKE %s ESCAPE '\\')"
-                if search is not None and not deleted and any(char.isalnum() for char in query):
-                    candidates = conn.execute(
-                        f'SELECT {_SELECT_MANUAL}, {match} AS keyword_match FROM experience_notes '
-                        f'WHERE {where} ORDER BY updated_at DESC, id DESC LIMIT %s',
-                        [literal, literal, literal, *values, MAX_DOCUMENTS + 1],
-                    ).fetchall()
-                    if candidates:
-                        wrapped = [_row_to_manual_dict(r, include_keyword=True) for r in candidates]
-                        ranked = search.rank(('pg', owner), query, wrapped)
-                        if ranked is not None:
-                            result['search_mode'] = 'hybrid'
-                            visible = []
-                            for row in ranked:
-                                if row['category'] in CATEGORIES:
-                                    result['summary']['categories'][row['category']] += 1
-                                if not category or row['category'] == category:
-                                    visible.append({k: v for k, v in row.items() if k != 'keyword_match'})
-                            offset = (page - 1) * page_size
-                            result['total'] = len(visible)
-                            result['rows'] = visible[offset:offset + page_size]
-                            return result
                 where += f' AND {match}'
                 values.extend([literal, literal, literal])
 
@@ -329,7 +313,7 @@ class PgExperienceStore:
             raise ExperienceWriteError('invalid_experience_id', 400)
         settings = self._settings()
         issuer = TicketIssuer(settings.ticket_secret, gate_id='manual_experiences')
-        writer = ExperienceWriter(settings.ticket_secret)
+        writer = ExperienceWriter(settings.ticket_secret, embedding_client=self.embedding_client)
         with open_experience_conn(settings, role='coordinator') as conn:
             prior = conn.execute(
                 'SELECT 1 FROM experience_requests WHERE owner_id = %s AND request_id = %s',

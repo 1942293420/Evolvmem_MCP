@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import math
+import time
 from typing import Any, Sequence
 
 from evolvmem.experience_v2.changes_sync import changes_since, recall_pg_experiences
@@ -26,6 +28,7 @@ from evolvmem.experience_v2.pg_experience_store import (
     load_pg_experience_settings,
     open_experience_conn,
 )
+from evolvmem.experience_v2.deadline_pg import open_experience_deadline
 from evolvmem.manual_experience_mcp import ManualMcpError
 from evolvmem.product_policy import load_policy
 
@@ -79,6 +82,53 @@ EXPERIENCE_V2_MCP_SPECS: dict[str, dict[str, Any]] = {
         },
     },
 }
+
+
+EXPERIENCE_RECALL_SPEC = {
+    "name": "experience_recall",
+    "description": "Recall relevant experiences from the authenticated user's authorized owners.",
+    "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    "inputSchema": {
+        "type": "object", "additionalProperties": False, "required": ["query"],
+        "properties": {
+            "query": {"type": "string", "minLength": 1, "maxLength": 4000},
+            "project": {"type": "string", "maxLength": 300},
+            "constraints": {"type": "object", "maxProperties": 20,
+                "propertyNames": {"minLength": 1, "maxLength": 100},
+                "additionalProperties": {"type": "string", "maxLength": 1000}},
+            "mode": {"type": "string", "enum": ["hook", "full"]},
+            "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 1800},
+            "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "workstream_id": {"type": "string", "maxLength": 128,
+                "description": "Deprecated continuity identifier; never used as a session identifier."},
+        },
+    },
+}
+
+
+def valid_experience_recall_args(args):
+    schema = EXPERIENCE_RECALL_SPEC["inputSchema"]
+    if (not isinstance(args, dict) or set(args)-set(schema["properties"])
+            or "query" not in args):
+        return False
+    query = args["query"]
+    if (not isinstance(query, str) or not query.strip() or len(query) > 4000
+            or any(ord(c) < 32 and c not in "\n\r\t" for c in query)):
+        return False
+    if "project" in args and (not isinstance(args["project"], str) or len(args["project"]) > 300):
+        return False
+    constraints = args.get("constraints", {})
+    if (not isinstance(constraints, dict) or len(constraints) > 20
+            or any(not isinstance(k, str) or not 1 <= len(k) <= 100
+                or not isinstance(v, str) or len(v) > 1000 for k, v in constraints.items())):
+        return False
+    if args.get("mode", "full") not in ("hook", "full"):
+        return False
+    if type(args.get("timeout_ms", 1800)) is not int or not 1 <= args.get("timeout_ms", 1800) <= 1800:
+        return False
+    return all(key not in args or isinstance(args[key], str)
+        and (1 if key == "session_id" else 0) <= len(args[key]) <= 128
+        for key in ("session_id", "workstream_id"))
 
 
 class _PrecomputedEmbedder:
@@ -215,22 +265,34 @@ def call_pg_experience_recall(
     attribution: AgentAttribution | None = None,
     channel: str = 'mcp',
     settings: Any = None,
+    deadline: float | None = None,
+    authorized_owner_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    if not isinstance(args, dict):
+    if not valid_experience_recall_args(args):
+        return {'error': 'invalid_arguments'}
+    requested = args.get('timeout_ms', 1800)
+    if type(requested) is not int or requested <= 0:
+        return {'error': 'invalid_arguments'}
+    started = time.monotonic()
+    if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
+        return {'error': 'invalid_arguments'}
+    until = min(started + min(1800, requested)/1000, deadline) if deadline is not None else started + min(1800, requested)/1000
+    session_id = args.get('session_id')
+    if session_id is not None and (not isinstance(session_id, str) or not 1 <= len(session_id) <= 128):
         return {'error': 'invalid_arguments'}
     try:
-        with open_experience_conn(settings, role='coordinator') as conn:
+        with open_experience_deadline(settings, role='coordinator', deadline=until) as conn:
             return recall_pg_experiences(
-                conn,
-                owner_id=owner_id,
-                query=args.get('query'),
-                project=str(args.get('project') or ''),
-                constraints=args.get('constraints'),
-                mode=str(args.get('mode') or 'full'),
-                channel=channel,
-                session_id=args.get('workstream_id'),
+                conn, owner_id=owner_id, query=args.get('query'),
+                project=str(args.get('project') or ''), constraints=args.get('constraints'),
+                mode=str(args.get('mode') or 'full'), channel='hook' if args.get('mode') == 'hook' else channel, session_id=session_id,
                 agent_client=attribution.client if attribution is not None else '',
                 model=attribution.model if attribution is not None else '',
+                deadline=until, authorized_owner_ids=authorized_owner_ids,
             )
+    except TimeoutError:
+        return {'error': 'request_timeout'}
+    except ValueError:
+        return {'error': 'invalid_arguments'}
     except PgExperienceUnavailableError:
         return {'error': 'pg_experience_unavailable'}

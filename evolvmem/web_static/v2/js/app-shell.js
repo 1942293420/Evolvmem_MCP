@@ -219,8 +219,9 @@
       if (s.apiMode === "live" && E.api) E.api.loadTab(s.route);
       return true;
     }
+    if (act === "exp-page") { s.expOffset = Number(ds.offset) || 0; if (E.api) E.api.loadExperiences().then(() => E.renderAll()); return false; }
     if (act === "exp-cat") {
-      s.expFilters.category = ds.val;
+      s.expFilters.category = ds.val; s.expOffset = 0;
       if (s.apiMode === "live" && E.api) E.api.loadExperiences().then(function () { E.renderAll(); });
       return true;
     }
@@ -529,8 +530,8 @@
         else s.selectedProposalUids = s.selectedProposalUids.filter(function (i) { return i !== uid; });
         E.renderAll();
       }
-      else if (t.id === "exp-f-origin") { s.expFilters.origin = t.value; if (s.apiMode === "live" && E.api) E.api.loadExperiences().then(function () { E.renderAll(); }); else E.renderAll(); }
-      else if (t.id === "exp-f-status") { s.expFilters.status = t.value; if (s.apiMode === "live" && E.api) E.api.loadExperiences().then(function () { E.renderAll(); }); else E.renderAll(); }
+      else if (t.id === "exp-f-origin") { s.expFilters.origin = t.value; s.expOffset = 0; if (s.apiMode === "live" && E.api) E.api.loadExperiences().then(function () { E.renderAll(); }); else E.renderAll(); }
+      else if (t.id === "exp-f-status") { s.expFilters.status = t.value; s.expOffset = 0; if (s.apiMode === "live" && E.api) E.api.loadExperiences().then(function () { E.renderAll(); }); else E.renderAll(); }
       else if (t.id === "int-f-track") { s.intFilters.track = t.value; if (s.apiMode === "live" && E.api) E.api.loadInterceptions().then(function () { E.renderAll(); }); else E.renderAll(); }
       else if (t.id === "int-f-cat") { s.intFilters.category = t.value; if (s.apiMode === "live" && E.api) E.api.loadInterceptions().then(function () { E.renderAll(); }); else E.renderAll(); }
       else if (t.id === "int-f-q") { s.intFilters.q = t.value; if (s.apiMode === "live" && E.api) E.api.loadInterceptions().then(function () { E.renderAll(); }); else E.renderAll(); }
@@ -548,7 +549,7 @@
     doc.addEventListener("input", function (ev) {
       const s = E.state;
       const t = ev.target;
-      if (t.id === "exp-f-q") { s.expFilters.q = t.value; E.renderAll(); }
+      if (t.id === "exp-f-q") { s.expFilters.q = t.value; if (s.apiMode === "live" && E.api) E.api.scheduleExperienceSearch(); else E.renderAll(); }
       else if (t.id === "int-f-q") { s.intFilters.q = t.value; E.renderAll(); }
       else if (t.id === "hist-q") {
         s.histQuery = t.value;

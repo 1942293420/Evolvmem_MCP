@@ -220,6 +220,73 @@ function Get-HookRemainingMilliseconds {
         $script:HookOutputReserveMilliseconds - $script:HookBudgetWatch.ElapsedMilliseconds)
 }
 
+function Limit-ExperienceQuery([string]$Prompt) {
+    if ($Prompt.Length -le 4000) { return $Prompt }
+    # Keep the triggering context and latest instruction within the server's limit.
+    $head = $Prompt.Substring(0, 2000)
+    $tail = $Prompt.Substring($Prompt.Length - 1999)
+    if ([char]::IsHighSurrogate($head[$head.Length - 1])) { $head = $head.Substring(0, $head.Length - 1) }
+    if ([char]::IsLowSurrogate($tail[0])) { $tail = $tail.Substring(1) }
+    return $head + "`n" + $tail
+}
+
+function Wait-ExperienceRequest($Request, $Pending, $Watch, [int]$BudgetMilliseconds) {
+    $remaining = [int][Math]::Floor($BudgetMilliseconds - $Watch.ElapsedMilliseconds)
+    $handle = $Pending.AsyncWaitHandle
+    try {
+        if ($remaining -le 0 -or -not $handle.WaitOne($remaining)) {
+            $Request.Abort()
+            throw (New-ClientError 'experience_deadline_exceeded' 'Related experience request deadline is exhausted')
+        }
+    }
+    finally { $handle.Close() }
+}
+
+function Invoke-ExperienceHttpRequest($Config, $Headers, [byte[]]$BodyBytes, [int]$TimeoutMilliseconds) {
+    # One monotonic deadline covers connect, request upload, headers and every body read.
+    # Per-read timeouts alone allow a slow-drip response to outlive the hook budget.
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $request = [Net.HttpWebRequest]::Create([string]$Config.url)
+    $request.Method = 'POST'
+    $request.ContentType = 'application/json; charset=utf-8'
+    $request.ContentLength = $BodyBytes.Length
+    $request.Timeout = $TimeoutMilliseconds
+    $request.ReadWriteTimeout = $TimeoutMilliseconds
+    foreach ($key in $Headers.Keys) { $request.Headers[$key] = [string]$Headers[$key] }
+    $requestStream = $null; $response = $null; $stream = $null
+    $bytes = New-Object IO.MemoryStream
+    try {
+        $pending = $request.BeginGetRequestStream($null, $null)
+        Wait-ExperienceRequest $request $pending $watch $TimeoutMilliseconds
+        $requestStream = $request.EndGetRequestStream($pending)
+        $pending = $requestStream.BeginWrite($BodyBytes, 0, $BodyBytes.Length, $null, $null)
+        Wait-ExperienceRequest $request $pending $watch $TimeoutMilliseconds
+        $requestStream.EndWrite($pending)
+        $requestStream.Close(); $requestStream = $null
+        $pending = $request.BeginGetResponse($null, $null)
+        Wait-ExperienceRequest $request $pending $watch $TimeoutMilliseconds
+        $response = $request.EndGetResponse($pending)
+        $stream = $response.GetResponseStream()
+        $buffer = New-Object byte[] 8192
+        while ($true) {
+            $pending = $stream.BeginRead($buffer, 0, $buffer.Length, $null, $null)
+            Wait-ExperienceRequest $request $pending $watch $TimeoutMilliseconds
+            $count = $stream.EndRead($pending)
+            if ($count -eq 0) { break }
+            $bytes.Write($buffer, 0, $count)
+            if ($bytes.Length -gt 1048576) { throw (New-ClientError 'invalid_response' 'Related experience response is too large') }
+        }
+        return [Text.Encoding]::UTF8.GetString($bytes.ToArray())
+    }
+    finally {
+        $request.Abort()
+        if ($null -ne $stream) { $stream.Dispose() }
+        if ($null -ne $response) { $response.Close() }
+        if ($null -ne $requestStream) { $requestStream.Dispose() }
+        $bytes.Dispose()
+    }
+}
+
 function Invoke-Rpc($Config, [string]$Method, $Parameters, [string]$RpcId) {
     $token = Get-ActionToken $Config
     $headers = @{
@@ -231,22 +298,36 @@ function Invoke-Rpc($Config, [string]$Method, $Parameters, [string]$RpcId) {
     if ($script:AgentModel) {
         $headers['X-EvolvMem-Model'] = [string]$script:AgentModel
     }
+    if ($null -ne $script:HookBudgetWatch -and $Method -ceq 'tools/call' -and
+        [string](Get-RecordValue $Parameters 'name' '') -ceq 'experience_recall') {
+        $remaining = Get-HookRemainingMilliseconds
+        if ($remaining -lt 2000) { throw (New-ClientError 'hook_budget_exhausted' 'Hook request budget is exhausted') }
+        $timeoutMilliseconds = [int][Math]::Min(1800, [Math]::Floor($remaining - 200))
+        $headers['X-EvolvMem-Recall-Budget-Ms'] = [string]$timeoutMilliseconds
+        $Parameters.arguments['timeout_ms'] = $timeoutMilliseconds
+        $Parameters.arguments['query'] = Limit-ExperienceQuery ([string](Get-RecordValue $Parameters.arguments 'query' ''))
+        $body = @{ jsonrpc = '2.0'; id = $RpcId; method = $Method; params = $Parameters } |
+            ConvertTo-Json -Depth 20 -Compress
+        $responseText = Invoke-ExperienceHttpRequest $Config $headers ([Text.Encoding]::UTF8.GetBytes($body)) $timeoutMilliseconds
+        $rpc = $responseText | ConvertFrom-Json
+        if ($null -ne (Get-Value $rpc 'error')) { throw (New-ClientError 'remote_request_failed' 'remote MCP request failed') }
+        return Get-Value $rpc 'result'
+    }
     $body = @{ jsonrpc = '2.0'; id = $RpcId; method = $Method; params = $Parameters } |
         ConvertTo-Json -Depth 20 -Compress
     $bodyBytes = [Text.Encoding]::UTF8.GetBytes($body)
     $timeoutSeconds = $script:RpcTimeoutSeconds
     if ($null -ne $script:HookBudgetWatch) {
-        # Bootstrap may use the remaining action budget. Healthy project and
-        # experience recall can cross three seconds, so share a five-second
-        # per-call cap within the same deadline. Authentication stays short;
+        # Bootstrap may use the remaining action budget. Project recall keeps
+        # its five-second cap; hook experience uses the absolute millisecond
+        # deadline above. Authentication stays short;
         # non-hook calls and the background worker retain their own timeout.
         if ($Method -ceq 'tools/call' -and
             [string](Get-RecordValue $Parameters 'name' '') -ceq 'context_session_start') {
             $timeoutSeconds = 10
         }
         elseif ($Method -ceq 'tools/call' -and
-            @('context_project_recall', 'experience_recall') -ccontains
-                [string](Get-RecordValue $Parameters 'name' '')) {
+            [string](Get-RecordValue $Parameters 'name' '') -ceq 'context_project_recall') {
             $timeoutSeconds = 5
         }
         $timeoutSeconds = [Math]::Min($timeoutSeconds,
@@ -663,17 +744,10 @@ function Invoke-PromptSubmit($Config, $Event) {
         else {
             try {
                 $projName = Resolve-Project $Config ([string](Get-Value $Event 'cwd' ''))
-                $expV2Enabled = ([bool](Get-Value $Config 'experience_v2_enabled' $false)) -or ($env:EVOLVMEM_EXPERIENCE_V2_ENABLED -eq '1')
-                $syncHelper = Join-Path $PSScriptRoot 'evolvmem-experience-sync.ps1'
-                if ($expV2Enabled -and (Test-Path -LiteralPath $syncHelper)) {
-                    . $syncHelper
-                    $experienceContext = Invoke-ExperienceIncrementalSync $Config $sessionId $prompt $projName
-                }
-                else {
-                    $experienceArgs = [ordered]@{ query = $prompt; project = $projName; mode = 'hook' }
-                    $experience = Invoke-McpTool $Config 'experience_recall' $experienceArgs
-                    $experienceContext = Format-ExperienceContext $experience
-                }
+                # Every current query uses shared recall; deltas never replace relevance search.
+                $experienceArgs = [ordered]@{ query = $prompt; project = $projName; mode = 'hook'; session_id = $sessionId }
+                $experience = Invoke-McpTool $Config 'experience_recall' $experienceArgs
+                $experienceContext = Format-ExperienceContext $experience
                 if ($experienceContext) { $parts.Add($experienceContext) }
             }
             catch {

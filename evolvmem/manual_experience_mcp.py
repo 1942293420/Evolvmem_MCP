@@ -57,6 +57,20 @@ MANUAL_EXPERIENCE_SPECS = {
 }
 
 
+# An edit is explicit, replaces all authored fields, and requires the last read
+# revision. It uses the same writer, atomic projections and replay contract.
+from copy import deepcopy
+MANUAL_EXPERIENCE_SPECS['manual_experience_update'] = deepcopy(MANUAL_EXPERIENCE_SPECS['manual_experience_save'])
+_edit_spec = MANUAL_EXPERIENCE_SPECS['manual_experience_update']
+_edit_spec['name'] = 'manual_experience_update'
+_edit_spec['description'] = ('Edit one manual experience only on the current user explicit request. '
+    'Read its current id and revision first; submit all authored fields and a stable request_id. '
+    'A stale revision is rejected. Both embedding spaces update atomically with the text.')
+_edit_spec['inputSchema']['properties'].update(id={'type':'string','minLength':1,'maxLength':100},
+                                             revision={'type':'integer','minimum':1})
+_edit_spec['inputSchema']['required'].extend(['id','revision'])
+
+
 class ManualMcpError(ValueError):
     """Stable, content-free error shared by LAN and standalone transports."""
 
@@ -101,16 +115,16 @@ def call(name, args, source):
     if not isinstance(args, dict):
         raise ManualMcpError('invalid_arguments')
     spec = MANUAL_EXPERIENCE_SPECS[name]['inputSchema']
-    if name == 'manual_experience_save' and 'request_id' not in args:
+    if name in ('manual_experience_save', 'manual_experience_update') and 'request_id' not in args:
         raise ManualMcpError('invalid_request_id')
     if set(args) - set(spec['properties']) or set(spec.get('required', [])) - set(args):
         raise ManualMcpError('invalid_arguments')
     if 'category' in args and args['category'] not in manual_experiences.CATEGORIES:
         raise ManualMcpError('invalid_arguments')
     try:
-        if name == 'manual_experience_save':
-            # Note and replay receipt share one SQLite transaction in the Web writer.
-            _, result = manual_experiences.write(source, source['user_id'], {**args, 'action': 'create'},
+        if name in ('manual_experience_save', 'manual_experience_update'):
+            # The shared writer commits the note, projections and replay receipt atomically.
+            _, result = manual_experiences.write(source, source['user_id'], {**args, 'action': 'create' if name == 'manual_experience_save' else 'update'},
                                                   validate_new=_validate_save_text)
             return result
         result = manual_experiences.read(source, {**args, 'page_size': 10})

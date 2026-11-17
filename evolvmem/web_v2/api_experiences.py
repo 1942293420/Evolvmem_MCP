@@ -125,7 +125,9 @@ def list_experiences(console: Any, session: Any, params: dict[str, Any]) -> dict
     category = str(params.get('category') or '').strip()
     kind = str(params.get('kind') or '').strip()
     origin = str(params.get('origin') or '').strip()
-    query = str(params.get('q') or '').strip()
+    if not isinstance(params.get('q', ''), str):
+        raise V2ApiError('invalid_recall_query', 400)
+    query = params.get('q', '').strip()
     limit = clamp_int(params.get('limit'), 60, 1, 200)
     offset = clamp_int(params.get('offset'), 0, 0, 5000)
 
@@ -149,31 +151,43 @@ def list_experiences(console: Any, session: Any, params: dict[str, Any]) -> dict
     if origin and origin != 'all':
         clauses.append('origin = %s')
         args.append(origin)
-    if query:
-        lit = '%' + query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
-        clauses.append(
-            "(problem ILIKE %s ESCAPE '\\' OR solution ILIKE %s ESCAPE '\\' "
-            "OR reusable_experience ILIKE %s ESCAPE '\\' OR COALESCE(misbelief,'') ILIKE %s ESCAPE '\\')"
-        )
-        args.extend([lit, lit, lit, lit])
 
     where_sql = ' AND '.join(clauses)
     role = 'coordinator' if is_owner else 'reader'
     with open_exp_pg(role=role) as (_settings, conn):
-        total_row = conn.execute(f'SELECT COUNT(*) FROM experience_notes WHERE {where_sql}', args).fetchone()
-        rows = conn.execute(
-            f"""
-            SELECT id, category, kind, problem, solution, reusable_experience, misbelief,
-                   scope, evidence, status, origin, source_agent, source_model,
-                   occurrence_count, importance, pinned, revision, valid_from, valid_until,
-                   last_used_at, created_at, updated_at
-            FROM experience_notes
-            WHERE {where_sql}
-            ORDER BY pinned DESC, updated_at DESC, id ASC
-            LIMIT %s OFFSET %s
-            """,
-            [*args, limit, offset],
-        ).fetchall()
+        searched = None
+        if query:
+            from evolvmem.web_v2.experience_search import search_notes
+            searched = search_notes(conn, owner_id=owner_id, params=params,
+                status=raw_status or 'all', category=category if category != 'all' else '',
+                origin=origin if origin != 'all' else '', kind=kind if kind != 'all' else '',
+                limit=limit, offset=offset)
+            columns = ('id category kind problem solution reusable_experience misbelief scope evidence '
+                       'status origin source_agent source_model occurrence_count importance pinned revision '
+                       'valid_from valid_until last_used_at created_at updated_at').split()
+            items = []
+            for note in searched['items']:
+                item = _format_note_row(tuple(note.get(k) for k in columns))
+                item.update({k: note[k] for k in ('match_types', 'cosine', 'keyword_score', 'score')})
+                items.append(item)
+            total = searched['total']
+        else:
+            total_row = conn.execute(f'SELECT COUNT(*) FROM experience_notes WHERE {where_sql}', args).fetchone()
+            rows = conn.execute(
+                f"""
+                SELECT id, category, kind, problem, solution, reusable_experience, misbelief,
+                       scope, evidence, status, origin, source_agent, source_model,
+                       occurrence_count, importance, pinned, revision, valid_from, valid_until,
+                       last_used_at, created_at, updated_at
+                FROM experience_notes
+                WHERE {where_sql}
+                ORDER BY pinned DESC, updated_at DESC, id ASC
+                LIMIT %s OFFSET %s
+                """,
+                [*args, limit, offset],
+            ).fetchall()
+            total = int(total_row[0]) if total_row else 0
+            items = [_format_note_row(r) for r in rows]
         status_counts, cat_counts = _note_counts(conn, owner_id, is_owner=is_owner)
         funnel = query_interception_funnel(conn, owner_id=owner_id) if is_owner else None
 
@@ -181,11 +195,12 @@ def list_experiences(console: Any, session: Any, params: dict[str, Any]) -> dict
         'ok': True,
         'owner_id': owner_id,
         'is_owner': is_owner,
-        'total': int(total_row[0]) if total_row else 0,
+        'total': total,
         'status_counts': status_counts,
         'category_counts': cat_counts,
         'interception_funnel': funnel,
-        'items': [_format_note_row(r) for r in rows],
+        'items': items,
+        **({'diagnostics': searched['diagnostics']} if searched else {}),
     }
 
 

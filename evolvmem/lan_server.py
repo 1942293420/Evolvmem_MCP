@@ -9,6 +9,10 @@ import json
 import inspect
 import ipaddress
 import os
+import re
+import socket
+import threading
+import time
 from pathlib import Path
 import uuid
 
@@ -94,6 +98,8 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
             guard = getattr(self, '_deadline_guard', None)
             if guard is not None:
                 guard.check()  # serialization itself may have spent the budget
+            if self._recall_deadline is not None:
+                self.connection.settimeout(max(.001, self._recall_deadline-time.monotonic()))
             self._response_started = True
             self.send_response(status)
             self.send_header('Content-Length', str(len(body)))
@@ -118,6 +124,22 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
 
         def _authenticate(self):
             self._library_request = False
+            budget_headers = self.headers.get_all('X-EvolvMem-Recall-Budget-Ms', [])
+            if budget_headers:
+                if (len(budget_headers) != 1 or not re.fullmatch(r"[0-9]{1,4}", budget_headers[0])
+                        or not 1 <= int(budget_headers[0]) <= 1800 or library_host is None
+                        or not _accepts_kwarg(library_host.authenticate, "deadline")):
+                    self._reply(400, {'error': 'invalid_recall_budget'})
+                    return None
+                maximum = min(1.8, float(getattr(library_host, "request_timeout_seconds", 1.8)))
+                self._recall_deadline = self._request_started + min(maximum, int(budget_headers[0])/1000)
+                def stop_reading():
+                    try: self.connection.shutdown(socket.SHUT_RD)
+                    except OSError: pass
+                timer = threading.Timer(max(0, self._recall_deadline-time.monotonic()), stop_reading)
+                timer.daemon = True
+                timer.start()
+                self._request_stack.callback(timer.cancel)
             values = self.headers.get_all('Authorization', [])
             value = values[0] if len(values) == 1 else ''
             token = value[7:] if value.startswith('Bearer ') else None
@@ -140,7 +162,10 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
                         self._deadline_guard = deadline_guard
                         self._request_stack.enter_context(deadline_guard.enforce())
                         deadline_guard.bind_socket(self.connection)
-                    user = library_host.authenticate(token)
+                    if self._recall_deadline is not None:
+                        user = library_host.authenticate(token, deadline=self._recall_deadline)
+                    else:
+                        user = library_host.authenticate(token)
                     if self._deadline_guard is not None:
                         self._deadline_guard.check()
                     if user is not None and not isinstance(user, RequestIdentity):
@@ -187,6 +212,8 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
 
         def _run_request(self, operation):
             self._deadline_guard = None
+            self._request_started = time.monotonic()
+            self._recall_deadline = None
             try:
                 with ExitStack() as stack:
                     self._request_stack = stack
@@ -223,7 +250,14 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
                 self._reply(413, {'error': 'body_too_large'})
                 return
             guard = self._deadline_guard
-            self.connection.settimeout(10 if guard is None else min(10, guard.remaining_seconds()))
+            if self._recall_deadline is not None:
+                remaining = self._recall_deadline-time.monotonic()
+                if remaining <= 0:
+                    self._reply(408, {'error': 'request_timeout'})
+                    return
+                self.connection.settimeout(remaining)
+            else:
+                self.connection.settimeout(10 if guard is None else min(10, guard.remaining_seconds()))
             try:
                 raw = self.rfile.read(length)
                 if guard is not None:
@@ -263,12 +297,15 @@ def make_http_server(runtime, host=None, port=None, *, library_host=None, deadli
                     # Do not return a body and publish it after the host's lease
                     # exits. The callback is the actual HTTP response boundary.
                     if _accepts_kwarg(library_host.serve_rpc, 'session_id'):
+                        budget_kwargs = ({"deadline": self._recall_deadline}
+                            if self._recall_deadline is not None and _accepts_kwarg(library_host.serve_rpc, "deadline") else {})
                         library_host.serve_rpc(
                             user,
                             request,
                             publish=lambda payload: self._reply(202 if payload is None else 200, payload, reply_headers),
                             session_id=mcp_session_id,
                             client_hint=client_hint or None,
+                            **budget_kwargs,
                         )
                     else:
                         library_host.serve_rpc(

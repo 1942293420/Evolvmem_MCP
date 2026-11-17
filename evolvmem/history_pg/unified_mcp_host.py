@@ -119,7 +119,7 @@ class UnifiedMcpHost:
         self._lock = threading.Lock()
         self._principal_to_user: dict[str, str] = {}
 
-    def authenticate(self, token: str) -> RequestIdentity | None:
+    def authenticate(self, token: str, *, deadline=None) -> RequestIdentity | None:
         if not token:
             return None
         tok_sha = hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -129,9 +129,17 @@ class UnifiedMcpHost:
         user_id = str(entry.get("user_id") or "")
         dev_label = str(entry.get("device_id") or "default")
         try:
-            user_row = self.control_store.get_user_source(self.owner_id, user_id)
-        except Exception as exc:
-            raise FoundationError("catalog_unavailable") from exc
+            if deadline is not None:
+                rows = self._control_rows(
+                    """SELECT user_id,principal_id,enabled FROM em_control.console_get_users(%s)
+                       WHERE user_id=%s AND enabled""", (self.owner_id, user_id), deadline)
+                user_row = rows[0] if len(rows) == 1 else None
+            else:
+                user_row = self.control_store.get_user_source(self.owner_id, user_id)
+        except TimeoutError:
+            raise
+        except Exception:
+            raise FoundationError("catalog_unavailable") from None
         if user_row is None or not user_row.get("enabled"):
             return None
         principal_id = str(user_row["principal_id"])
@@ -144,7 +152,44 @@ class UnifiedMcpHost:
             credential_epoch=1,
         )
 
-    def _resolve_user_id(self, identity: RequestIdentity) -> str:
+    def _control_rows(self, sql, params, deadline):
+        from evolvmem.experience_v2.deadline_pg import open_experience_deadline
+        from evolvmem.experience_v2.pg_experience_store import PgExperienceSettings
+        settings = PgExperienceSettings(control_config=self.control_store.config)
+        with open_experience_deadline(settings, role="reader", deadline=deadline) as conn:
+            cur = conn.execute(sql, params)
+            columns = [d.name for d in cur.description]
+            return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+    def _experience_owners(self, user_id, deadline):
+        try:
+            rows = self._control_rows(
+                """SELECT u.user_id
+                   FROM em_control.console_get_users(%s) u
+                   WHERE u.enabled AND (u.user_id=%s OR EXISTS (
+                     SELECT 1 FROM em_control.console_get_grants(%s) g
+                     WHERE g.viewer_id=%s AND g.owner_id=u.user_id AND g.experience_read))""",
+                (self.owner_id, user_id, self.owner_id, user_id), deadline)
+            owners = sorted({row["user_id"] for row in rows if row.get("user_id")})
+            return (owners if user_id in owners else [user_id], "")
+        except TimeoutError:
+            return [user_id], "acl_deadline_exceeded_self_only"
+        except Exception:
+            return [user_id], "acl_unavailable_self_only"
+
+    def _resolve_user_id(self, identity: RequestIdentity, *, deadline=None) -> str:
+        if deadline is not None:
+            try:
+                rows = self._control_rows(
+                    """SELECT user_id FROM em_control.console_get_users(%s)
+                       WHERE principal_id=%s AND enabled""", (self.owner_id, identity.principal_id), deadline)
+            except TimeoutError:
+                raise
+            except Exception:
+                raise FoundationError("catalog_unavailable") from None
+            if len(rows) != 1:
+                raise FoundationError("unauthorized")
+            return str(rows[0]["user_id"])
         with self._lock:
             uid = self._principal_to_user.get(identity.principal_id)
         if uid is None:
@@ -161,7 +206,9 @@ class UnifiedMcpHost:
     def _tool_specs(self) -> list[dict[str, Any]]:
         specs: list[dict[str, Any]] = []
         for name in _TOOL_NAMES:
-            if name in exp_v2_mcp.EXPERIENCE_V2_MCP_SPECS:
+            if name == "experience_recall":
+                specs.append(deepcopy(exp_v2_mcp.EXPERIENCE_RECALL_SPEC))
+            elif name in exp_v2_mcp.EXPERIENCE_V2_MCP_SPECS:
                 specs.append(deepcopy(exp_v2_mcp.EXPERIENCE_V2_MCP_SPECS[name]))
             elif name in manual_experience_mcp.MANUAL_EXPERIENCE_SPECS:
                 specs.append(deepcopy(manual_experience_mcp.MANUAL_EXPERIENCE_SPECS[name]))
@@ -184,7 +231,7 @@ class UnifiedMcpHost:
             env_override["EVOLVMEM_EXPERIENCE_PG_CONFIG"] = self.experience_config_path
         return load_pg_experience_settings(env_override)
 
-    def _handle_tool(self, user_id: str, identity: RequestIdentity, name: str, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+    def _handle_tool(self, user_id: str, identity: RequestIdentity, name: str, args: dict[str, Any], timeout_ms: int, *, deadline=None) -> dict[str, Any]:
         if name == "memory_status" and self.allow_sleep_probe and isinstance(args.get("_sleep_seconds"), (int, float)):
             sec = float(args["_sleep_seconds"])
             with self.pool.connection(self.pg_config.resolve_user_history_db(user_id), role_kind="reader", statement_timeout_ms=timeout_ms) as conn:
@@ -205,7 +252,12 @@ class UnifiedMcpHost:
                     return {"results": [], "cases": [], "methods": [], "count": 0, "llm_calls": 0}
                 raise LanError("pg_experience_unavailable") from exc
             attr = resolve_mcp_client_info(None, actor=user_id, default_client="unified-mcp")
-            res = exp_v2_mcp.call_pg_experience_recall(args, owner_id=user_id, attribution=attr, settings=exp_settings)
+            until = deadline if deadline is not None else time.monotonic() + min(timeout_ms, 1800)/1000
+            owners, acl_reason = self._experience_owners(user_id, until)
+            res = exp_v2_mcp.call_pg_experience_recall(args, owner_id=user_id, attribution=attr,
+                settings=exp_settings, deadline=until, authorized_owner_ids=owners)
+            if acl_reason and isinstance(res, dict):
+                res.setdefault("diagnostics", {})["authorization"] = acl_reason
             if isinstance(res, dict) and res.get("error"):
                 raise LanError(str(res["error"]))
             items = list(res.get("results") or [])
@@ -249,7 +301,7 @@ class UnifiedMcpHost:
                 raise LanError("public_write_forbidden")
             if space != "personal":
                 raise LanError("invalid_space")
-            if name != "manual_experience_save":
+            if name not in ("manual_experience_save", "manual_experience_update"):
                 req_args.pop("request_id", None)
             spec = manual_experience_mcp.MANUAL_EXPERIENCE_SPECS[name]["inputSchema"]
             if set(req_args) - set(spec["properties"]) or set(spec.get("required", [])) - set(req_args):
@@ -260,9 +312,14 @@ class UnifiedMcpHost:
                 settings = self._exp_settings()
                 store = PgExperienceStore(settings)
                 src = {"user_id": user_id}
-                if name == "manual_experience_save":
+                if name in ("manual_experience_save", "manual_experience_update"):
+                    request_id = req_args.get("request_id")
+                    if (not isinstance(request_id, str) or not 8 <= len(request_id) <= 128
+                            or hashlib.sha256(request_id.encode()).hexdigest() in self.tokens):
+                        raise LanError("invalid_request_id")
                     from evolvmem.experience_v2.pg_experience_store import PG_NOTE_ID
-                    body = manual_experiences._write_params_with({**req_args, "action": "create"}, PG_NOTE_ID)
+                    action = "update" if name == "manual_experience_update" else "create"
+                    body = manual_experiences._write_params_with({**req_args, "action": action}, PG_NOTE_ID)
                     _, out = store.write(src, user_id, body, req_args, validate_new=manual_experience_mcp._validate_save_text)
                     return out
                 cat, qry, pg_num, pg_sz, del_flag = manual_experiences._read_params({**req_args, "page_size": 10})
@@ -297,7 +354,7 @@ class UnifiedMcpHost:
                 return {"turns": reader.block_turn_page(str(args.get("block_id") or ""))}
         return self.continuity.dispatch(user_id, name, args, statement_timeout_ms=timeout_ms)
 
-    def serve_rpc(self, identity: RequestIdentity, request: dict[str, Any], *, publish, session_id=None, client_hint=None) -> None:
+    def serve_rpc(self, identity: RequestIdentity, request: dict[str, Any], *, publish, session_id=None, client_hint=None, deadline=None) -> None:
         method = request.get("method")
         req_id = request.get("id")
         if method and str(method).startswith("notifications/"):
@@ -335,12 +392,25 @@ class UnifiedMcpHost:
             return
 
         timeout_s = float(args.get("_timeout_seconds") or self.request_timeout_seconds) if self.allow_sleep_probe else self.request_timeout_seconds
-        timeout_ms = max(50, int(timeout_s * 1000))
+        if tool_name == "experience_recall":
+            requested_ms = args.get("timeout_ms", 1800)
+            if not exp_v2_mcp.valid_experience_recall_args(args):
+                publish({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": json.dumps({"error": "invalid_arguments"})}], "isError": True}})
+                return
+            timeout_s = min(timeout_s, 1.8, requested_ms/1000)
+        timeout_ms = max(1, int(timeout_s * 1000))
         t0 = time.monotonic()
+        until = min(t0 + timeout_s, deadline) if deadline is not None else t0 + timeout_s
+        timeout_ms = max(1, int((until-t0)*1000))
         try:
-            user_id = self._resolve_user_id(identity)
-            res = self._handle_tool(user_id, identity, tool_name, args, timeout_ms)
-            if time.monotonic() - t0 > timeout_s + 0.25:
+            if tool_name == "experience_recall":
+                user_id = self._resolve_user_id(identity, deadline=until)
+                res = self._handle_tool(user_id, identity, tool_name, args, timeout_ms, deadline=until)
+            else:
+                user_id = self._resolve_user_id(identity)
+                res = self._handle_tool(user_id, identity, tool_name, args, timeout_ms)
+            if (tool_name == "experience_recall" and time.monotonic() >= until
+                    or time.monotonic() - t0 > timeout_s + 0.25):
                 raise TimeoutError("request_deadline_exceeded")
             out = dict(res)
             out["authenticated_user"] = identity.principal_id

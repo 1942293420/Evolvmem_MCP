@@ -169,7 +169,7 @@
     })().finally(() => {checking=null;});
     return checking;
   };
-  S.request = async (method,path,body) => {
+  S.request = async (method,path,body,valid) => {
     const epoch=S.epoch,library=E.state.libraryCtx;
     const ticket=S.capture();
     if(!S.isReady())return {status:409,data:{ok:false,error:'session_not_ready'}};
@@ -179,12 +179,13 @@
       const resp=await nativeFetch(path,opts);let data;
       try{data=await resp.json();}catch(_){data={ok:false,error:'invalid_json'};}
       if(epoch!==S.epoch || library!==E.state.libraryCtx)return {status:409,data:{ok:false,error:'stale_response'}};
+      if(valid && !valid() && ![401,403].includes(resp.status))return {status:409,data:{ok:false,error:'stale_response'}};
       if([401,403,503].includes(resp.status)){
         S.block(resp.status===401?'login':resp.status===503?'unavailable':data.error==='account_pending'?'pending':data.error==='account_disabled'?'disabled':'forbidden');
         if(resp.status===401){S.scope='';S.name='';S.csrf='';S.syncHeader();}
       }
       return S.guardResult(resp.status,data,ticket);
-    } catch(_){if(epoch===S.epoch)S.block('unavailable');return {status:503,data:{ok:false,error:'network_unavailable'}};}
+    } catch(_){if(valid && !valid())return {status:409,data:{ok:false,error:'stale_response'}};if(epoch===S.epoch)S.block('unavailable');return {status:503,data:{ok:false,error:'network_unavailable'}};}
   };
   S.logout = async () => {
     S.save();

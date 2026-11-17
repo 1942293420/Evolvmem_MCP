@@ -159,77 +159,95 @@ def recall_pg_experiences(
     session_id: str | None = None,
     agent_client: str = '',
     model: str = '',
+    deadline: float | None = None,
+    embedding_client=None,
+    authorized_owner_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Read active experience_notes from PG, rank, format compatible with legacy recall, and log impressions."""
-    if not owner_id:
-        raise ValueError('owner_required')
-    rows = conn.execute(
-        """
-        SELECT id, category, problem, solution, reusable_experience, scope,
-               evidence, occurrence_count, importance, revision, pinned
-        FROM experience_notes
-        WHERE owner_id = %s AND deleted_at IS NULL AND status = 'active'
-        ORDER BY pinned DESC, importance DESC, updated_at DESC, id ASC
-        LIMIT 200
-        """,
-        (owner_id,),
-    ).fetchall()
+    """Adapt shared retrieval to MCP previews; only this adapter logs exposures.
 
-    q_terms = _extract_terms(query or '')
-    c_dict = constraints if isinstance(constraints, dict) else {}
-    scored: list[tuple[float, dict[str, Any]]] = []
-    for row in rows:
-        note_id, category, problem, solution, reusable, scope, evidence, occ, imp, _rev, pinned = row
-        scope_dict = scope if isinstance(scope, dict) else {}
-        if c_dict and any(k in c_dict and k in scope_dict and scope_dict[k] != c_dict[k] for k in c_dict):
-            continue
-        blob = f'{category} {problem} {solution} {reusable}'
-        overlap = (len(q_terms & _extract_terms(blob)) / max(1, len(q_terms))) if q_terms else 0.3
-        if q_terms and overlap == 0.0:
-            continue
-        score = round(min(1.0, overlap * 0.7 + (int(imp) / 10.0) * 0.2 + (0.1 if pinned else 0.0)), 4)
-        ev_list = evidence if isinstance(evidence, list) else []
+    authorized_owner_ids must come from the authenticated host, never tool args.
+    Without it, a request can only search its own owner_id.
+    """
+    import time
+    from evolvmem.experience_v2.hybrid_search import hybrid_search, _validate, _budget
+
+    if not owner_id or mode not in ('full', 'hook'):
+        raise ValueError('invalid_recall_arguments')
+    if type(max_chars) is not int or not 1 <= max_chars <= 16000:
+        raise ValueError('invalid_recall_budget')
+    owners = [owner_id] if authorized_owner_ids is None else authorized_owner_ids
+    observed = {} if constraints is None else constraints
+    _validate(owners, query, None, None, observed, 'active', 3, 0, deadline, .72, project)
+    started = time.monotonic()
+    until = min(started + 1.8, deadline) if deadline is not None else started + 1.8
+    if until <= started:
+        raise TimeoutError('experience_recall_deadline_exceeded')
+
+    vector, contract, embedding_error = None, None, ''
+    try:
+        if embedding_client is None:
+            from evolvmem.experience_v2.embedding_client import EmbeddingClient
+            embedding_client = EmbeddingClient.from_environment()
+        if embedding_client is None:
+            embedding_error = 'embedding_unconfigured'
+        else:
+            contract = embedding_client.retrieval_contract_id
+            vector = embedding_client.encode_query(query.strip(), deadline=min(until - 0.2, time.monotonic() + .65))
+    except Exception as exc:
+        # Keep a stable reason without relaying service responses or secrets.
+        code = getattr(exc, 'code', '') or str(exc)
+        embedding_error = code if re.fullmatch(r'[a-z][a-z0-9_]{2,63}', code) else 'embedding_unavailable'
+        vector, contract = None, None
+    encoded = time.monotonic()
+    result = hybrid_search(conn, owner_ids=owners, query=query,
+        query_vector=vector, contract_id=contract, project=project, constraints=observed,
+        limit=3, deadline=until)
+    selected, used_chars = [], 0
+    for note in result['items']:
+        scope = note['scope'] if isinstance(note['scope'], dict) else {}
+        evidence = note['evidence'] if isinstance(note['evidence'], list) else []
+        scope_project = str(scope.get('project') or scope.get('repo') or '')
+        verification = [e for e in evidence if isinstance(e, dict)]
         preview = {
-            'id': note_id,
-            'project': project or str(scope_dict.get('project') or scope_dict.get('repo') or ''),
-            'category': category,
-            'problem': problem[:240],
-            'solution': solution[:360],
-            'reusable_experience': reusable[:240],
-            'conditions': scope_dict,
-            'steps': [solution[:240]],
-            'applicability': [reusable[:120]],
-            'exclusions': [],
-            'transferable': True,
-            'parent_experience_id': None,
-            'validation_level': 'verified',
-            'success_count': int(occ),
-            'failure_count': 0,
-            'verification': ev_list[:2],
-            'score': score,
-            'match_reason': 'PG经验库匹配' if mode == 'hook' else 'PG经验检索',
-            'adaptation_required': False,
+            'id': note['id'], 'owner_id': note['owner_id'], 'project': scope_project,
+            'category': note['category'], 'problem': note['problem'][:240],
+            'solution': note['solution'][:360],
+            'reusable_experience': note['reusable_experience'][:240],
+            'conditions': scope, 'steps': [note['solution'][:240]],
+            'applicability': [note['reusable_experience'][:120]], 'exclusions': [],
+            'transferable': not bool(scope_project), 'parent_experience_id': None,
+            'validation_level': ('user_authored' if note['origin'] == 'manual'
+                else 'evidence_available' if verification else 'active'),
+            'success_count': sum(e.get('outcome') in ('success', 'confirmed') for e in verification),
+            'failure_count': sum(e.get('outcome') in ('failure', 'contradicted') for e in verification),
+            'occurrence_count': int(note['occurrence_count']), 'verification': verification[:2],
+            'score': round(note['score'], 4), 'keyword_score': note['keyword_score'],
+            'cosine': note['cosine'], 'match_types': note['match_types'],
+            'match_reason': 'PG关键词与语义匹配' if len(note['match_types']) == 2
+                else 'PG语义匹配' if 'vector' in note['match_types'] else 'PG关键词匹配',
+            'adaptation_required': bool(scope_project.strip().lower() != project.strip().lower() or any(
+                k not in observed for k in scope if k not in ('project', 'repo'))),
             'instruction': '结合当前项目与约束核对前置条件后再执行。',
         }
-        scored.append((score, preview))
-
-    scored.sort(key=lambda pair: (-pair[0], pair[1]['id']))
-    selected: list[dict[str, Any]] = []
-    used_chars = 0
-    for rank_idx, (_score, preview) in enumerate(scored[:3], start=1):
         cost = len(json.dumps(preview, ensure_ascii=False, separators=(',', ':')))
-        if selected and used_chars + cost > max_chars:
+        if used_chars + cost > max_chars:
             continue
         selected.append(preview)
         used_chars += cost
+        _budget(conn, until)
         conn.execute(
-            """
-            INSERT INTO retrieval_impressions (
-                owner_id, item_uid, session_id, task_id, channel, rank, agent_client, model
-            ) VALUES (%s, %s, %s, NULL, %s, %s, %s, %s)
-            """,
-            (owner_id, preview['id'], session_id, channel, rank_idx, agent_client or '', model or ''),
+            """INSERT INTO retrieval_impressions
+                (owner_id,item_uid,session_id,task_id,channel,rank,agent_client,model)
+               VALUES (%s,%s,%s,NULL,%s,%s,%s,%s)""",
+            (note['owner_id'], note['id'], session_id, channel, len(selected),
+             agent_client or '', model or ''),
         )
-
+    _budget(conn, until)
     conn.commit()
-    return {'results': selected, 'used_chars': used_chars, 'source': 'pg_experience_v2'}
+    diagnostics = dict(result['diagnostics'])
+    if embedding_error:
+        diagnostics['embedding_error'] = embedding_error
+    diagnostics.update(embedding_ms=round((encoded-started)*1000, 2),
+                       total_ms=round((time.monotonic()-started)*1000, 2))
+    return {'results': selected, 'used_chars': used_chars,
+            'source': 'pg_experience_v2', 'diagnostics': diagnostics}

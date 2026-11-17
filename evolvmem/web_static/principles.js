@@ -29,9 +29,9 @@
     <div class="diagram-flow" role="img" aria-label="通过网页或当前会话的明确记忆指令，选择前端经验、业务经验或系统环境经验，保存问题、解决办法和可复用经验。本人可管理，其他用户按授权阅读">
       <div class="diagram-node"><strong>选择分类</strong><small>前端 / 业务 / 系统环境</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
       <div class="diagram-node"><strong>整理一条经验</strong><small>网页填写或在会话中明确要求记住</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
-      <div class="diagram-node"><strong>保存和维护</strong><small>本人管理；他人按授权只读</small></div>
+      <div class="diagram-node"><strong>保存和维护</strong><small>正文和检索向量一同保存；他人按授权只读</small></div>
     </div>
-    <h3>查找经验</h3><p>原文命中优先，本机中文向量服务补充相似问题。向量暂不可用时仍可查关键词。</p>
+    <h3>查找经验</h3><p>搜索会在获授权的完整经验库中匹配关键词，并由常驻中文模型查找相似问题。先核对适用范围和相似程度，再合并结果；没有合适经验时可以为空。向量服务暂不可用时仍可查关键词。</p>
     <div class="diagram-flow" role="img" aria-label="选择获授权的经验库，输入关键词或问题，合并原文和语义结果，再按分类展示">
       <div class="diagram-node"><strong>确定经验库</strong><small>按用户授权读取当前经验</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
       <div class="diagram-node"><strong>关键词＋语义</strong><small>匹配原文并查找相似问题</small></div><span class="diagram-arrow" aria-hidden="true">→</span>

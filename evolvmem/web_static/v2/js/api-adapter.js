@@ -19,12 +19,15 @@
   }
 
   function viewKey() { return E.state.libraryCtx + ":" + (E.state.libraryEpoch || 0); }
+  let experienceEpoch = 0, experienceTimer = null;
+  function experienceSignature() { return JSON.stringify([viewKey(), E.state.expFilters, E.state.expOffset || 0]); }
   function clearLiveData() {
+    E.state.expTotal = null; E.state.expCategoryCounts = null; E.state.expDiagnostics = null; E.state.expLoading = false; E.state.expOffset = 0;
     if (typeof E.clearLiveData === "function") { E.clearLiveData(); return; }
     Object.keys(E.state).forEach(function (key) { if (Array.isArray(E.state[key]) && key !== "availableLibraries") E.state[key] = []; });
     ["liveMetrics", "liveEvolution", "livePipeline", "liveHistory", "liveControl"].forEach(function (key) { E.state[key] = null; });
   }
-  async function req(method, path, body) {
+  async function req(method, path, body, valid) {
     const scope = requestContext();
     const opts = { method: method, credentials: "same-origin", headers: {} };
     if (method === "POST") {
@@ -34,7 +37,7 @@
     }
     let result;
     try {
-      if (E.session) result = await E.session.request(method, "/api/console-v2" + path, body);
+      if (E.session) result = await E.session.request(method, "/api/console-v2" + path, body, valid);
       else {
         const resp = await root.fetch("/api/console-v2" + path, opts);
         let data;
@@ -42,7 +45,7 @@
         result = { status: resp.status, data: data };
       }
     } catch (_err) { result = { status: 0, data: { ok: false, error: "network_unavailable" } }; }
-    if (!currentRequest(scope)) return { status: 409, data: { ok: false, error: "stale_view" } };
+    if (!currentRequest(scope) || (valid && !valid())) return { status: 409, data: { ok: false, error: "stale_view" } };
     if (!result || !result.data || typeof result.data !== "object") result = { status: result ? result.status : 0, data: { ok: false, error: "invalid_json" } };
     if (result.status === 409 && ["stale_response", "stale_view", "session_not_ready"].includes(result.data.error)) return result;
     if (method === "GET" && (result.status !== 200 || !result.data.ok)) {
@@ -219,17 +222,35 @@
       }
     },
 
+    scheduleExperienceSearch() {
+      ++experienceEpoch;
+      clearTimeout(experienceTimer);
+      const scope = requestContext();
+      E.state.expOffset = 0; E.state.expLoading = true; E.renderAll();
+      experienceTimer = setTimeout(() => {
+        if (currentRequest(scope) && E.state.apiMode === "live") this.loadExperiences().then(() => E.renderAll());
+      }, 280);
+    },
+
     async loadExperiences() {
       const requestScope=requestContext();
       if (E.state.apiMode !== "live") return;
-      const s=E.state, f = s.expFilters;
-      const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
-      const st = E.canWrite() ? f.status : "active";
-      const res = await req("GET", "/experiences" + qs({ owner_id: oid, category: f.category, origin: f.origin, status: st, q: f.q }));
-      if(!currentRequest(requestScope))return null;
-      if (res.status === 200 && res.data.ok) {
-        s.experiences = (res.data.items || []).map(normalizeExp);
-        if (res.data.interception_funnel) s.interceptionFunnel = res.data.interception_funnel;
+      clearTimeout(experienceTimer);
+      const epoch=++experienceEpoch, signature=experienceSignature();
+      const valid=()=>currentRequest(requestScope) && epoch===experienceEpoch && signature===experienceSignature();
+      const s=E.state, f=s.expFilters;
+      s.expLoading=true;
+      const oid=s.libraryCtx===s.ownerId ? "" : s.libraryCtx;
+      const st=E.canWrite() ? f.status : "active";
+      const res=await req("GET", "/experiences"+qs({owner_id:oid,category:f.category,
+        origin:f.origin,status:st,q:f.q,limit:60,offset:s.expOffset || 0}), undefined, valid);
+      if (!valid()) return null;
+      s.expLoading=false;
+      if (res.status===200 && res.data.ok) {
+        s.experiences=(res.data.items || []).map(normalizeExp);
+        s.expTotal=res.data.total; s.expCategoryCounts=res.data.category_counts;
+        s.expDiagnostics=res.data.diagnostics || null; s.apiError=null;
+        if (res.data.interception_funnel) s.interceptionFunnel=res.data.interception_funnel;
       }
     },
 

@@ -406,8 +406,8 @@
     }
 
     const f = s.expFilters;
-    const basePool = s.experiences.filter(function (x) { return w || x.status === "active"; });
-    const catCounts = {
+    const basePool = (s.expLoading ? [] : s.experiences).filter(function (x) { return w || x.status === "active"; });
+    const catCounts = s.apiMode === "live" && s.expCategoryCounts ? Object.assign({all:Object.values(s.expCategoryCounts).reduce((a,b)=>a+b,0)},s.expCategoryCounts) : {
       all: basePool.length,
       前端经验: basePool.filter(function (x) { return x.category === "前端经验"; }).length,
       业务经验: basePool.filter(function (x) { return x.category === "业务经验"; }).length,
@@ -418,12 +418,13 @@
       if (f.category !== "all" && x.category !== f.category) return false;
       if (f.origin !== "all" && x.origin !== f.origin) return false;
       if (effectiveStatus !== "all" && x.status !== effectiveStatus) return false;
-      if (f.q) {
+      if (f.q && s.apiMode !== "live") {
         const q = f.q.toLowerCase();
         if ((x.problem + x.solution + x.reusable).toLowerCase().indexOf(q) < 0) return false;
       }
       return true;
     });
+    const total = s.apiMode === "live" && Number.isInteger(s.expTotal) ? s.expTotal : visible.length;
     const sel = visible.find(function (x) { return x.id === s.selectedExpId; }) || visible[0] || null;
     if (sel) s.selectedExpId = sel.id;
 
@@ -453,16 +454,18 @@
             <option value="retired" ${effectiveStatus === "retired" ? "selected" : ""}>已退役 (Retired)</option>
             <option value="all" ${effectiveStatus === "all" ? "selected" : ""}>全部状态</option>` : ""}
           </select>
-          <input type="search" id="exp-f-q" placeholder="搜索经验问题、方案或准则…" value="${esc(f.q)}" style="flex:1;min-width:220px" />
-          <span class="badge">当前命中 ${visible.length} 条</span>
+          <input type="search" id="exp-f-q" aria-label="搜索经验" placeholder="搜索经验问题、方案或准则…" value="${esc(f.q)}" style="flex:1;min-width:220px" />
+          <span class="badge" role="status" aria-live="polite">${s.expLoading ? "正在搜索…" : "当前命中 " + total + " 条"}</span>
         </div>
       </div>
 
-      <div class="split-workspace">
+      ${s.expDiagnostics && s.expDiagnostics.mode === "keywords_only" && f.q ? `<p class="secondary" role="status">语义搜索暂不可用，当前显示关键词匹配结果。</p>` : ""}
+      <div class="split-workspace" aria-busy="${!!s.expLoading}">
         <div class="list-panel">
           <div class="list-head"><strong>经验列表 (${visible.length})</strong><span class="muted" style="font-size:12.5px">三分类清爽视图</span></div>
+          ${s.apiMode === "live" && total > 60 ? `<div class="filter-bar"><button type="button" class="btn btn-sm" data-act="exp-page" data-offset="${Math.max(0,(s.expOffset || 0)-60)}" ${!s.expOffset || s.expLoading ? "disabled" : ""}>上一页</button><span>第 ${Math.floor((s.expOffset || 0)/60)+1} 页 · 共 ${total} 条</span><button type="button" class="btn btn-sm" data-act="exp-page" data-offset="${(s.expOffset || 0)+60}" ${(s.expOffset || 0)+60 >= total || s.expLoading ? "disabled" : ""}>下一页</button></div>` : ""}
           <div class="list-scroll">
-            ${visible.length === 0 ? `<div style="padding:28px" class="muted">没有符合当前筛选条件的经验。</div>` : visible.map(function (x) {
+            ${visible.length === 0 ? `<div style="padding:28px" class="muted">${s.expLoading ? "正在搜索，请稍候。" : "没有符合当前筛选条件的经验。"}</div>` : visible.map(function (x) {
               const stCls = x.status === "active" ? "badge-ok" : x.status === "probation" ? "badge-warn" : "badge-danger";
               return `<button type="button" class="list-entry ${sel && sel.id === x.id ? "active" : ""}" data-act="select-exp" data-id="${esc(x.id)}">
                 <div class="list-entry-meta">

@@ -20,7 +20,7 @@ try {
         if($Uri -cne 'http://127.0.0.1:1/mcp'){throw 'Unexpected fixture URI'}
         $rpc=[Text.Encoding]::UTF8.GetString($Body)|ConvertFrom-Json
         $name=[string]$rpc.params.name
-        $script:Calls.Add(@{name=$name;timeout=[int]$TimeoutSec;elapsed_before=$script:HookBudgetWatch.ElapsedMilliseconds;expected_user=$Headers['X-EvolvMem-Expected-User']})
+        $script:Calls.Add(@{name=$name;timeout=[int]$TimeoutSec;timeout_ms=[int](1000*$TimeoutSec);session_id=[string]$rpc.params.arguments.session_id;elapsed_before=$script:HookBudgetWatch.ElapsedMilliseconds;expected_user=$Headers['X-EvolvMem-Expected-User']})
         $delay=0;if($script:Latency.ContainsKey($name)){$delay=[int]$script:Latency[$name]}
         if($null -ne $script:HookBudgetWatch){$script:HookBudgetWatch.ElapsedMilliseconds += [Math]::Min($delay,1000*$TimeoutSec)}
         if($delay -gt 1000*$TimeoutSec -or $script:FailTool -ceq $name){throw 'fixture transport failure'}
@@ -33,6 +33,10 @@ try {
         $result=@{content=@(@{type='text';text=($value|ConvertTo-Json -Depth 8 -Compress)});isError=$false}
         $response=@{jsonrpc='2.0';id=$rpc.id;result=$result}|ConvertTo-Json -Depth 12 -Compress
         return [pscustomobject]@{RawContentStream=(New-Object IO.MemoryStream(,([Text.Encoding]::UTF8.GetBytes($response))))}
+    }
+    function Invoke-ExperienceHttpRequest($Config,$Headers,[byte[]]$BodyBytes,[int]$TimeoutMilliseconds) {
+        $response=Invoke-WebRequest -UseBasicParsing -Uri ([string]$Config.url) -Method Post -ContentType 'application/json; charset=utf-8' -Headers $Headers -Body $BodyBytes -TimeoutSec ($TimeoutMilliseconds/1000.0)
+        return [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray())
     }
     function Reset-Fixture {
         $script:Calls.Clear();$script:IdentityValidated=$false;$script:PreflightStatus=$null
@@ -53,7 +57,7 @@ try {
     $script:Latency=@{memory_status=50;context_project_recall=100;context_session_start=8500}
     $out=Run-Prompt
     Assert ($script:Calls.Count -ge 3 -and $script:Calls[0].name -eq 'memory_status' -and $script:Calls[1].name -eq 'context_project_recall' -and $script:Calls[2].name -eq 'context_session_start') 'Project context must be fetched before expensive bootstrap'
-    Assert ($script:Calls[0].timeout -eq 3 -and $script:Calls[1].timeout -eq 5 -and $script:Calls[1].expected_user -ceq 'fixture-user') 'Only hook project/experience caps may increase to five seconds; authentication stays at three'
+    Assert ($script:Calls[0].timeout -eq 3 -and $script:Calls[1].timeout -eq 5 -and $script:Calls[1].expected_user -ceq 'fixture-user') 'Project cap stays five seconds; authentication stays at three'
     Assert ($out.Contains('PROJECT-CONTEXT-WITH-EMPTY-MEMORY-IDS') -and $out.Contains('BOOTSTRAP-CONTEXT')) 'Slow bootstrap must preserve project and bootstrap blocks'
     Assert (@($script:Calls|Where-Object {$_.name -eq 'experience_recall'}).Count -eq 0 -and $out.Contains('skipped')) 'Experience with less than two seconds left must be explicitly skipped'
     Assert ($script:Calls[2].timeout -eq 10 -and $script:HookBudgetWatch.ElapsedMilliseconds -le 10200) 'Bootstrap must fit the action deadline including output reserve'
@@ -95,13 +99,13 @@ try {
     Write-JsonAtomic (Get-ReceiptPath $script:CaseId) @{status='success';memory_revision='41.2'}
     $script:Latency=@{memory_status=50;context_project_recall=3329;experience_recall=2886}
     $out=Run-Prompt
-    Assert ($out.Contains('PROJECT-CONTEXT') -and $out.Contains('EXPERIENCE-CONTEXT') -and -not $out.Contains('systemMessage')) 'Observed healthy project and experience latency must both fit the bounded action'
-    Assert ($script:Calls[1].timeout -eq 5 -and $script:Calls[2].timeout -eq 5 -and $script:HookBudgetWatch.ElapsedMilliseconds -eq 6265) 'Five-second caps must remain per request and share the same action clock'
+    Assert ($out.Contains('PROJECT-CONTEXT') -and $out.Contains('experience lookup is unavailable')) 'Experience beyond 1800ms must preserve the successful project block'
+    Assert ($script:Calls[1].timeout -eq 5 -and $script:Calls[2].timeout_ms -eq 1800 -and $script:Calls[2].session_id -ceq $script:CaseId -and $script:HookBudgetWatch.ElapsedMilliseconds -eq 5179) 'Experience millisecond cap must preserve the actual session and shared action clock'
     Reset-Fixture
     Write-JsonAtomic (Get-ReceiptPath $script:CaseId) @{status='success';memory_revision='41.2'}
     $script:Latency=@{memory_status=1000;context_project_recall=4800;experience_recall=7000}
     $out=Run-Prompt
-    Assert ($script:Calls[2].timeout -eq 4 -and $script:HookBudgetWatch.ElapsedMilliseconds -eq 9800 -and $out.Contains('PROJECT-CONTEXT') -and $out.Contains('experience lookup is unavailable')) 'Slow earlier stages must clip experience to the remaining deadline and preserve the successful project block'
+    Assert ($script:Calls[2].timeout_ms -eq 1800 -and $script:HookBudgetWatch.ElapsedMilliseconds -eq 7600 -and $out.Contains('PROJECT-CONTEXT') -and $out.Contains('experience lookup is unavailable')) 'Slow earlier stages must retain the 1800ms experience deadline and preserve the successful project block'
     Reset-Fixture
     $path=Get-ReceiptPath $script:CaseId
     Write-JsonAtomic $path @{status='success';memory_revision='40.2';first_prompt_pending=$true}
@@ -133,7 +137,7 @@ try {
     $script:HookBudgetWatch=$null;$script:RpcTimeoutSeconds=30
     [void](Invoke-McpTool $cfg 'session_archive_upload' @{})
     Assert ($script:Calls.Count -eq 2 -and $script:Calls[0].timeout -eq 30 -and $script:Calls[1].timeout -eq 30) 'Background worker authentication and upload retain their existing 30 seconds'
-    '{"passed":true,"internal_budget_ms":10500,"output_reserve_ms":300,"hook_recall_cap_seconds":5,"auth_cap_seconds":3,"non_hook_cap_seconds":3,"project_first":true,"slow_bootstrap":true,"explicit_experience_skip":true,"auth_no_retry":true,"strict":true,"same_revision_no_bootstrap":true,"failed_refresh_preserves_receipt":true,"worker_budget_unchanged":true}'
+    '{"passed":true,"internal_budget_ms":10500,"output_reserve_ms":300,"hook_project_cap_seconds":5,"hook_experience_cap_ms":1800,"auth_cap_seconds":3,"non_hook_cap_seconds":3,"project_first":true,"slow_bootstrap":true,"explicit_experience_skip":true,"auth_no_retry":true,"strict":true,"same_revision_no_bootstrap":true,"failed_refresh_preserves_receipt":true,"worker_budget_unchanged":true}'
 } finally {
     $env:EVOLVMEM_CLIENT_HOME=$previousHome
     $resolved=[IO.Path]::GetFullPath($testRoot)

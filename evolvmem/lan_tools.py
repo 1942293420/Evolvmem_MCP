@@ -148,7 +148,6 @@ class LanTools:
                 runtime._lan_captures = self.captures
                 for capture in self.captures.values():
                     with capture.store.transaction():
-                        from evolvmem.product_policy import load_policy
                         if load_policy().ai_processing_enabled:
                             capture.conn.execute("UPDATE lan_session_uploads SET extraction_status='failed',error='extraction_interrupted' WHERE extraction_status='processing'")
                         else:
@@ -376,7 +375,7 @@ class LanTools:
             raise LanError('public_write_forbidden')
         if space != 'personal':
             raise LanError('invalid_space')
-        if name == 'manual_experience_save':
+        if name in ('manual_experience_save', 'manual_experience_update'):
             request_id = args.get('request_id')
             validate_request_id(request_id)
             if self.runtime.settings.authenticate(request_id) is not None:

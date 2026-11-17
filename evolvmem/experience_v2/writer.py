@@ -22,7 +22,8 @@ _SELECT_COLS = (
     'misbelief, scope, evidence, occurrence_count, importance, pinned, status, '
     'confidence_a, confidence_b, stability, last_used_at, use_count, valid_from, valid_until, '
     'proposal_uid, source_actor, source_device_id, source_agent, source_model, '
-    'revision, deleted_at, created_at, updated_at'
+    'revision, deleted_at, created_at, updated_at, retrieval_embedding_contract, '
+    'retrieval_embedding_content_sha256, retrieval_embedding_updated_at'
 )
 
 
@@ -50,7 +51,7 @@ class AdmissionTicket:
 
 @dataclass(frozen=True)
 class Op:
-    action: Literal['create', 'update', 'delete', 'retire', 'restore', 'merge_evidence', 'import_manual', 'rollback', 'reconcile_state']
+    action: Literal['create', 'update', 'delete', 'retire', 'restore', 'merge_evidence', 'import_manual', 'rollback', 'reconcile_state', 'reembed']
     owner_id: str
     actor_id: str
     request_id: str
@@ -60,6 +61,7 @@ class Op:
     solution: str | None = None
     reusable_experience: str | None = None
     expected_revision: int | None = None
+    expected_content_sha256: str | None = None
     origin: str = 'manual'
     kind: str | None = None
     misbelief: str = ''
@@ -145,10 +147,22 @@ def _vec_literal(embedding: list[float] | None) -> str | None:
     return '[' + ','.join(f'{float(x):.8g}' for x in embedding) + ']'
 
 
+def _projection_update(projection, clear, legacy, now):
+    if projection is None and not clear:
+        return '', ()
+    sql = (', embedding = %s::vector, retrieval_embedding = %s::vector, '
+           'retrieval_embedding_contract = %s, retrieval_embedding_content_sha256 = %s, '
+           'retrieval_embedding_updated_at = %s')
+    values = (legacy, _vec_literal(projection.retrieval_embedding) if projection else None,
+              projection.contract_id if projection else None, projection.content_sha256 if projection else None,
+              now if projection else None)
+    return sql, values
+
+
 def _row_to_note(row: tuple[Any, ...]) -> dict[str, Any]:
     cols = [c.strip() for c in _SELECT_COLS.split(',')]
     data = dict(zip(cols, row))
-    for k in ('last_used_at', 'valid_from', 'valid_until', 'deleted_at', 'created_at', 'updated_at'):
+    for k in ('last_used_at', 'valid_from', 'valid_until', 'deleted_at', 'created_at', 'updated_at', 'retrieval_embedding_updated_at'):
         data[k] = _iso(data[k])
     return data
 
@@ -156,8 +170,9 @@ def _row_to_note(row: tuple[Any, ...]) -> dict[str, Any]:
 class ExperienceWriter:
     """Single authorized write entrypoint for PG experience_notes."""
 
-    def __init__(self, secret: bytes | str):
+    def __init__(self, secret: bytes | str, *, embedding_client=None):
         self._secret = _secret_bytes(secret)
+        self.embedding_client = embedding_client
 
     def verify_ticket(self, conn, ticket: AdmissionTicket | None, op: Op) -> str | None:
         if not isinstance(ticket, AdmissionTicket):
@@ -212,6 +227,8 @@ class ExperienceWriter:
         if op.action == 'reconcile_state' or op.valid_from is not None or op.valid_until is not None:
             canonical['valid_from'] = op.valid_from
             canonical['valid_until'] = op.valid_until
+        if op.expected_content_sha256 is not None:
+            canonical['expected_content_sha256'] = op.expected_content_sha256
         return hashlib.sha256(_json_canon(canonical).encode('utf-8')).hexdigest()
 
     def apply(self, conn, ticket: AdmissionTicket | None, op: Op) -> dict[str, Any]:
@@ -220,6 +237,9 @@ class ExperienceWriter:
             raise ExperienceWriteError('invalid_experience_actor_or_request', 400)
         payload_sha = self._payload_sha(op)
         with conn.transaction():
+            # Lock even a first request, whose absent receipt cannot be row-locked.
+            conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))',
+                         (_json_canon([op.owner_id, op.request_id]),))
             if op.action == 'import_manual':
                 if not op.note_id:
                     raise ExperienceWriteError('invalid_experience_id', 400)
@@ -251,6 +271,9 @@ class ExperienceWriter:
             before_note: dict[str, Any] | None = None
             target_id = op.note_id
             vec = _vec_literal(op.embedding)
+            projection = None
+            clear_projection = False
+            from evolvmem.experience_v2.writer_embeddings import prepare_projection, projection_changed, content_sha256
 
             if op.action in ('create', 'import_manual'):
                 if op.category not in CATEGORIES:
@@ -261,6 +284,9 @@ class ExperienceWriter:
                     target_id = target_id or ('manual-' + uuid.uuid4().hex if op.origin == 'manual' else _new_exp_id())
                 elif not target_id:
                     raise ExperienceWriteError('invalid_experience_id', 400)
+                projection = prepare_projection(conn, op, None, self.embedding_client)
+                if projection is not None:
+                    vec = _vec_literal(projection.legacy_embedding)
                 rev = int(op.revision or 1)
                 c_at = op.created_at or now
                 u_at = op.updated_at or now
@@ -271,13 +297,14 @@ class ExperienceWriter:
                         origin, kind, misbelief, scope, evidence, occurrence_count,
                         importance, pinned, status, valid_from, valid_until, embedding, proposal_uid,
                         source_actor, source_device_id, source_agent, source_model,
-                        revision, deleted_at, created_at, updated_at
+                        revision, deleted_at, created_at, updated_at, retrieval_embedding,
+                        retrieval_embedding_contract, retrieval_embedding_content_sha256, retrieval_embedding_updated_at
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s::jsonb, %s::jsonb, 1,
                         %s, %s, %s, %s, %s, %s::vector, %s,
                         %s, %s, %s, %s,
-                        %s, %s, %s, %s
+                        %s, %s, %s, %s, %s::vector, %s, %s, %s
                     )
                     """,
                     (
@@ -288,6 +315,9 @@ class ExperienceWriter:
                         op.importance, op.pinned, op.status, op.valid_from, op.valid_until, vec, proposal_uid,
                         op.actor_id, op.source_device_id, op.agent_client, op.model,
                         rev, op.deleted_at, c_at, u_at,
+                        _vec_literal(projection.retrieval_embedding) if projection else None,
+                        projection.contract_id if projection else None, projection.content_sha256 if projection else None,
+                        now if projection else None,
                     ),
                 )
             else:
@@ -307,30 +337,39 @@ class ExperienceWriter:
                 if op.action == 'restore' and before_note['deleted_at'] is None:
                     raise ExperienceWriteError('experience_state_conflict', 409)
 
+                if op.action == 'reembed' and (op.expected_revision is None or not op.expected_content_sha256):
+                    raise ExperienceWriteError('experience_reembed_precondition_required', 400)
+                if op.expected_content_sha256 is not None and content_sha256(before_note) != op.expected_content_sha256:
+                    raise ExperienceWriteError('experience_content_conflict', 409)
+                projection = prepare_projection(conn, op, before_note, self.embedding_client)
+                clear_projection = projection is None and (projection_changed(op, before_note) or op.embedding is not None)
+                if projection is not None:
+                    vec = _vec_literal(projection.legacy_embedding)
+
+                projection_sql, projection_values = _projection_update(projection, clear_projection, vec, now)
                 if op.action == 'update':
                     if op.category not in CATEGORIES:
                         raise ExperienceWriteError('invalid_experience_category', 400)
                     conn.execute(
-                        """
+                        f"""
                         UPDATE experience_notes
                         SET category = %s, problem = %s, solution = %s, reusable_experience = %s,
-                            embedding = COALESCE(%s::vector, embedding),
-                            revision = revision + 1, updated_at = %s
+                            revision = revision + 1, updated_at = %s{projection_sql}
                         WHERE owner_id = %s AND id = %s
                         """,
                         (
                             op.category, (op.problem or '').strip(), (op.solution or '').strip(),
-                            (op.reusable_experience or '').strip(), vec, now, op.owner_id, target_id,
+                            (op.reusable_experience or '').strip(), now, *projection_values, op.owner_id, target_id,
                         ),
                     )
                 elif op.action in ('delete', 'restore'):
                     conn.execute(
-                        """
+                        f"""
                         UPDATE experience_notes
-                        SET deleted_at = %s, revision = revision + 1, updated_at = %s
+                        SET deleted_at = %s, revision = revision + 1, updated_at = %s{projection_sql}
                         WHERE owner_id = %s AND id = %s
                         """,
-                        (now if op.action == 'delete' else None, now, op.owner_id, target_id),
+                        (now if op.action == 'delete' else None, now, *projection_values, op.owner_id, target_id),
                     )
                 elif op.action == 'retire':
                     conn.execute(
@@ -354,14 +393,14 @@ class ExperienceWriter:
                     )
                 elif op.action == 'reconcile_state':
                     conn.execute(
-                        """
+                        f"""
                         UPDATE experience_notes
                         SET status = COALESCE(%s, status),
                             scope = CASE WHEN %s THEN %s::jsonb ELSE scope END,
                             valid_from = COALESCE(%s, valid_from),
                             valid_until = COALESCE(%s, valid_until),
                             revision = revision + 1,
-                            updated_at = %s
+                            updated_at = %s{projection_sql}
                         WHERE owner_id = %s AND id = %s
                         """,
                         (
@@ -371,10 +410,15 @@ class ExperienceWriter:
                             op.valid_from,
                             op.valid_until,
                             now,
+                            *projection_values,
                             op.owner_id,
                             target_id,
                         ),
                     )
+                elif op.action == 'reembed':
+                    # Vector-only repair preserves the authored revision and timestamps.
+                    conn.execute(f'UPDATE experience_notes SET id = id{projection_sql} WHERE owner_id = %s AND id = %s',
+                                 (*projection_values, op.owner_id, target_id))
                 elif op.action == 'rollback':
                     snap = op.restore_snapshot
                     if snap is None:
@@ -389,17 +433,17 @@ class ExperienceWriter:
                         )
                     else:
                         conn.execute(
-                            """
+                            f"""
                             UPDATE experience_notes
                             SET category = %s, problem = %s, solution = %s, reusable_experience = %s,
                                 evidence = %s::jsonb, occurrence_count = %s, status = %s,
-                                deleted_at = %s, revision = revision + 1, updated_at = %s
+                                deleted_at = %s, revision = revision + 1, updated_at = %s{projection_sql}
                             WHERE owner_id = %s AND id = %s
                             """,
                             (
                                 snap['category'], snap['problem'], snap['solution'], snap['reusable_experience'],
                                 _json_canon(snap.get('evidence', [])), int(snap.get('occurrence_count', 1)),
-                                snap.get('status', 'active'), snap.get('deleted_at'), now, op.owner_id, target_id,
+                                snap.get('status', 'active'), snap.get('deleted_at'), now, *projection_values, op.owner_id, target_id,
                             ),
                         )
                 else:

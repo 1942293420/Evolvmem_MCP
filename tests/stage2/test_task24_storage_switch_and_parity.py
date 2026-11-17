@@ -115,6 +115,21 @@ def test_pg_storage_switch_crud_idempotency_and_search_filtering(pg_exp_schema, 
     _seed_sqlite_note(decoy_db, 'u1')
     source = {'user_id': 'u1', 'data_dir': str(data_dir)}
 
+    # PG search consumes stored attested projections. The old supplied searcher
+    # must never cold-encode the candidate documents on a read.
+    from types import SimpleNamespace
+    from evolvmem.experience_v2.embedding_client import EmbeddingClient, note_content_sha256
+    class WarmProjection:
+        retrieval_contract_id = 'test-task24-warm-1024'
+        legacy_contract_id = 'test-task24-warm-768'
+        def encode_query(self, text, *, deadline): return [1.0]+[0.0]*1023
+        def encode_note(self, note, *, deadline=None):
+            return SimpleNamespace(legacy_embedding=[1.0]+[0.0]*767,
+                retrieval_embedding=[1.0]+[0.0]*1023, contract_id=self.retrieval_contract_id,
+                content_sha256=note_content_sha256(note))
+    monkeypatch.setenv('EVOLVMEM_EXPERIENCE_EMBEDDING_CONFIG','isolated-warm-service')
+    monkeypatch.setattr(EmbeddingClient,'from_environment',classmethod(lambda cls: WarmProjection()))
+
     req1 = 'req-t24-' + uuid.uuid4().hex[:12]
     status, created = manual_experiences.write(
         source,
