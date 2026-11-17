@@ -321,7 +321,7 @@
       const s = E.state;
       const view = viewKey();
       const oid = s.libraryCtx === s.ownerId ? "" : s.libraryCtx;
-      const res = await req("GET", "/history" + qs({ view: "projects", owner_id: oid }));
+      const res = await req("GET", "/history" + qs({ view: "projects", grouping: "workspace", owner_id: oid }));
       if (!currentRequest(requestScope) || view !== viewKey() || res.status !== 200 || !res.data.ok) return;
       s.liveHistory = res.data;
       const seen = {};
@@ -330,7 +330,7 @@
         seen[key] = true;
         return {
           key: key, title: p.display_name || key, sessions: p.block_count || 0,
-          blocks: p.block_count || 0, deleted: p.status === "deleted",
+          blocks: p.block_count || 0, deleted: p.status === "deleted", kind: "workspace", workspacePath: p.workspace_path || "",
           lastAt: (p.last_at || "").slice(0, 16)
         };
       });
@@ -339,13 +339,13 @@
         if (!currentRequest(requestScope) || view !== viewKey() || tRes.status !== 200 || !tRes.data.ok) return;
         if (tRes.status === 200 && tRes.data.ok) {
           (tRes.data.items || []).forEach(function (it) {
-            if (it.kind === "project") {
+            if (it.kind === "project" || it.kind === "workspace") {
               const k = it.project || it.key;
-              const hit = projs.find(function (p) { return p.key === k; });
+              const hit = projs.find(function (p) { return p.key === k && p.kind === it.kind; });
               if (hit) hit.deleted = true;
               else if (k && !seen[k]) {
                 seen[k] = true;
-                projs.push({ key: k, title: it.title || k, sessions: 0, blocks: 0, deleted: true, lastAt: (it.deleted_at || "").slice(0, 16) });
+                projs.push({ key: k, title: it.title || k, sessions: it.block_count || 0, blocks: it.block_count || 0, deleted: true, kind: it.kind, workspacePath: it.workspace_path || "", lastAt: (it.deleted_at || "").slice(0, 16) });
               }
             }
           });
@@ -353,25 +353,25 @@
       }
       s.historyProjects = projs;
       const q = (s.histQuery || "").trim();
-      if (s.histScope === "unassigned") {
-        const uRes = await req("GET", "/history" + qs({ view: "unassigned", owner_id: oid }));
+      if (s.histScope === "unassigned" && !q) {
+        const uRes = await req("GET", "/history" + qs({ view: "unassigned", grouping: "workspace", owner_id: oid }));
         if (!currentRequest(requestScope) || view !== viewKey() || uRes.status !== 200 || !uRes.data.ok) return;
         if (uRes.status === 200 && uRes.data.ok) {
           s.historyBlocks = (uRes.data.blocks || []).map(function (b) {
             return {
-              id: b.block_id, project: null, title: b.title || b.block_id,
+              id: b.block_id, project: null, workspacePath: "", workspaceReason: b.reason || "", title: b.title || b.block_id,
               sourceRef: "pg:" + b.block_id, turns: b.turn_count || 0,
               bm25: 0, trgm: 0, vector: 0, rrf: 1, hasAttachment: false, attachmentBytes: 0, transcript: []
             };
           });
         }
       } else if (q) {
-        const sRes = await req("GET", "/history" + qs({ view: "search", q: q, owner_id: oid }));
+        const sRes = await req("GET", "/history" + qs({ view: "search", grouping: "workspace", scope: s.histScope === "unassigned" ? "unassigned" : "", q: q, owner_id: oid }));
         if (!currentRequest(requestScope) || view !== viewKey() || sRes.status !== 200 || !sRes.data.ok) return;
         if (sRes.status === 200 && sRes.data.ok) {
           s.historyBlocks = (sRes.data.items || []).map(function (it) {
             return {
-              id: it.block_id, project: (it.projects && it.projects[0]) || null,
+              id: it.block_id, project: (it.projects && it.projects[0]) || null, workspacePath: it.workspace_path || "", workspaceReason: it.reason || "",
               title: it.title || it.block_id, sourceRef: "pg:" + it.block_id, turns: 0,
               bm25: 0, trgm: 0, vector: 0, rrf: Math.min(1, Number(it.score || 0.5)),
               hasAttachment: false, attachmentBytes: 0, transcript: it.snippet ? ["摘要：" + it.snippet] : []
@@ -384,12 +384,12 @@
           ? s.selectedProjectKey : (activeProjs[0] && activeProjs[0].key);
         s.selectedProjectKey = curKey || null;
         if (curKey) {
-          const pRes = await req("GET", "/history" + qs({ view: "project", project_id: curKey, owner_id: oid }));
+          const pRes = await req("GET", "/history" + qs({ view: "project", grouping: "workspace", project_id: curKey, owner_id: oid }));
           if (!currentRequest(requestScope) || view !== viewKey() || pRes.status !== 200 || !pRes.data.ok) return;
           if (pRes.status === 200 && pRes.data.ok) {
             s.historyBlocks = (pRes.data.blocks || []).map(function (b) {
               return {
-                id: b.block_id, project: curKey, title: b.title || b.block_id,
+                id: b.block_id, project: curKey, workspacePath: b.workspace_path || (activeProjs.find(p => p.key === curKey) || {}).workspacePath || "", title: b.title || b.block_id,
                 sourceRef: "pg:" + b.block_id, turns: b.turn_count || 0,
                 bm25: 0, trgm: 0, vector: 0, rrf: 1, hasAttachment: false, attachmentBytes: 0, transcript: []
               };
@@ -408,15 +408,17 @@
 
     async manageHistoryProject(action, key, title) {
       const requestScope=requestContext();
-      const res = await req("POST", "/history/manage", { action: action, kind: "project", project: key, key: key, title: title });
+      const project = E.state.historyProjects.find(function (p) { return p.key === key; });
+      const kind = project && project.kind === "workspace" ? "workspace" : "project";
+      const res = await req("POST", "/history/manage", { action: action, kind: kind, project: key, key: key, title: title });
       if(!currentRequest(requestScope))return null;
       if (res.status !== 200 || !res.data.ok) {
-        E.toast("历史项目操作失败：" + (res.data.error || res.status), "danger");
+        E.toast("历史" + (kind === "workspace" ? "文件夹" : "项目") + "操作失败：" + (res.data.error || res.status), "danger");
         return false;
       }
       await this.loadHistory();
       if(!currentRequest(requestScope))return null;
-      E.toast(action === "delete" ? "项目已移入回收站" : "项目已恢复正常展示");
+      E.toast((kind === "workspace" ? "文件夹" : "项目") + (action === "delete" ? "已移入回收站" : "已恢复正常展示"));
       E.renderAll();
       return true;
     },

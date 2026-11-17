@@ -10,7 +10,7 @@
   E.filterHistoryProjects = function (projects, query) {
     const terms = String(query || '').normalize('NFKC').trim().split(/\s+/).map(normalise).filter(Boolean);
     return (projects || []).filter(p => !p.deleted).map(function (p, order) {
-      const title = normalise(p.title), key = normalise(p.key), text = title + key;
+      const title = normalise(p.title), key = normalise(p.key), text = title + key + normalise(p.workspacePath);
       if (!terms.every(term => text.includes(term) || subsequence(text, term))) return null;
       const joined = terms.join('');
       const rank = !joined ? 0 : title === joined || key === joined ? 0 : title.startsWith(joined) ? 1 : terms.every(term => text.includes(term)) ? 2 : 3;
@@ -20,18 +20,18 @@
   function matches() { return E.filterHistoryProjects(E.state.historyProjects, E.state.histProjectQuery); }
   function optionsHTML() {
     const rows = matches(), s = E.state;
-    if (!rows.length) return '<div class="project-picker-empty" role="status">没有找到项目，换个关键词试试。</div>';
+    if (!rows.length) return '<div class="project-picker-empty" role="status">没有找到' + (E.isProduction() ? '文件夹' : '项目') + '，换个关键词试试。</div>';
     return rows.map(function (p, i) {
-      return '<button type="button" role="option" tabindex="-1" id="hist-proj-option-' + i + '" aria-selected="' + (p.key === s.selectedProjectKey) + '" class="project-picker-option ' + (i === s.histProjectActiveIndex ? 'keyboard-active' : '') + '" data-project-picker-key="' + esc(p.key) + '"><span>' + esc(p.title) + '</span><span class="muted">' + esc(p.blocks == null ? '未知' : p.blocks) + ' 片段</span></button>';
+      return '<button type="button" role="option" tabindex="-1" id="hist-proj-option-' + i + '" aria-selected="' + (p.key === s.selectedProjectKey) + '" class="project-picker-option ' + (i === s.histProjectActiveIndex ? 'keyboard-active' : '') + '" data-project-picker-key="' + esc(p.key) + '"><span>' + esc(p.title) + (p.workspacePath ? '<small class="muted" style="display:block;overflow-wrap:anywhere">' + esc(p.workspacePath) + '</small>' : '') + '</span><span class="muted">' + esc(p.blocks == null ? '未知' : p.blocks) + ' 片段</span></button>';
     }).join('');
   }
   E.renderHistoryProjectPicker = function () {
-    const s = E.state, current = (s.historyProjects || []).find(p => !p.deleted && p.key === s.selectedProjectKey);
+    const s = E.state, current = (s.historyProjects || []).find(p => !p.deleted && p.key === s.selectedProjectKey), label = E.isProduction() ? '文件夹' : '项目';
     return '<div id="hist-project-picker" class="history-project-picker">' +
-      '<button type="button" id="hist-proj-toggle" class="project-picker-toggle" aria-label="选择项目，可输入查找" aria-haspopup="listbox" aria-controls="hist-proj-options" aria-expanded="' + !!s.histProjectOpen + '"><span>' + esc(current ? current.title + ' (' + current.blocks + ')' : '选择项目') + '</span><span aria-hidden="true">▾</span></button>' +
-      '<div id="hist-proj-popover" class="project-picker-popover" ' + (s.histProjectOpen ? '' : 'hidden') + '><div class="project-picker-search"><input type="search" id="hist-proj-search" role="combobox" aria-label="查找项目" aria-autocomplete="list" aria-controls="hist-proj-options" aria-expanded="' + !!s.histProjectOpen + '" autocomplete="off" value="' + esc(s.histProjectQuery || '') + '" placeholder="输入项目名，可模糊查找…" /><button type="button" id="hist-proj-clear" class="btn btn-sm">清空</button></div>' +
-      '<div id="hist-proj-match-count" class="project-picker-count" role="status" aria-live="polite">找到 ' + matches().length + ' 个项目</div>' +
-      '<div id="hist-proj-options" class="project-picker-options" role="listbox" aria-label="项目匹配结果">' + optionsHTML() + '</div></div></div>';
+      '<button type="button" id="hist-proj-toggle" class="project-picker-toggle" title="' + esc(current?.workspacePath || '') + '" aria-label="选择' + label + '，可输入查找" aria-haspopup="listbox" aria-controls="hist-proj-options" aria-expanded="' + !!s.histProjectOpen + '"><span>' + esc(current ? current.title + ' (' + current.blocks + ')' : '选择' + label) + '</span><span aria-hidden="true">▾</span></button>' +
+      '<div id="hist-proj-popover" class="project-picker-popover" ' + (s.histProjectOpen ? '' : 'hidden') + '><div class="project-picker-search"><input type="search" id="hist-proj-search" role="combobox" aria-label="查找' + label + '" aria-autocomplete="list" aria-controls="hist-proj-options" aria-expanded="' + !!s.histProjectOpen + '" autocomplete="off" value="' + esc(s.histProjectQuery || '') + '" placeholder="输入' + label + '名或路径，可模糊查找…" /><button type="button" id="hist-proj-clear" class="btn btn-sm">清空</button></div>' +
+      '<div id="hist-proj-match-count" class="project-picker-count" role="status" aria-live="polite">找到 ' + matches().length + ' 个' + label + '</div>' +
+      '<div id="hist-proj-options" class="project-picker-options" role="listbox" aria-label="' + label + '匹配结果">' + optionsHTML() + '</div></div></div>';
   };
   const doc = root.document;
   if (!doc) return;
@@ -43,7 +43,7 @@
     popover.hidden = !open; toggle.setAttribute('aria-expanded', String(open)); input.setAttribute('aria-expanded', String(open));
     if (input.value !== (s.histProjectQuery || '')) input.value = s.histProjectQuery || '';
     options.innerHTML = optionsHTML();
-    doc.getElementById('hist-proj-match-count').textContent = '找到 ' + matches().length + ' 个项目';
+    doc.getElementById('hist-proj-match-count').textContent = '找到 ' + matches().length + ' 个' + (E.isProduction() ? '文件夹' : '项目');
     if (open && s.histProjectActiveIndex >= 0 && s.histProjectActiveIndex < matches().length) {
       input.setAttribute('aria-activedescendant', 'hist-proj-option-' + s.histProjectActiveIndex);
       doc.getElementById('hist-proj-option-' + s.histProjectActiveIndex)?.scrollIntoView({ block: 'nearest' });

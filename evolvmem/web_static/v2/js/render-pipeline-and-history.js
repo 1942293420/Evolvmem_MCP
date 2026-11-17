@@ -156,13 +156,14 @@
   E.views.history = function () {
     const s = E.state;
     const w = E.canWrite();
+    const entity = E.isProduction() ? '文件夹' : '项目';
 
     let header = `
       <div class="page-head">
         <div>
           <div class="eyebrow">HISTORY VAULT · 多端永久原文</div>
           <h1>PG 历史会话库与多端捕获</h1>
-          <p>${E.isProduction() ? "读取已归档的原始对话，支持项目浏览、检索与原文阅读；完整覆盖需另行核验。" : "离线演示：以下会话、同步状态与附件为示例，不代表现网数据。"}</p>
+          <p>${E.isProduction() ? "按 Codex 实际工作文件夹浏览已归档原文，支持会话检索与阅读；完整覆盖需另行核验。" : "离线演示：以下会话、同步状态与附件为示例，不代表现网数据。"}</p>
         </div>
         <div class="topbar-actions">
           ${E.isProduction() ? '<div class="history-source-note"><span class="badge">当前读取所选用户历史库</span><span class="muted">设备库切换未接入</span></div>' : `
@@ -173,9 +174,9 @@
           </select>`}
         </div>
       </div>
-      ${!w ? `<div class="banner banner-warn">当前处于他人授权只读视角：支持检索与阅读对话原文，移入回收站或恢复项目操作已禁用。</div>` : ""}
+      ${!w ? `<div class="banner banner-warn">当前处于他人授权只读视角：支持检索与阅读对话原文，移入回收站或恢复操作已禁用。</div>` : ""}
       <div class="subtabs" role="tablist">
-        <button type="button" class="subtab ${s.histSubtab === "browse" ? "active" : ""}" data-act="hist-subtab" data-sub="browse">项目与会话检索</button>
+        <button type="button" class="subtab ${s.histSubtab === "browse" ? "active" : ""}" data-act="hist-subtab" data-sub="browse">${entity}与会话检索</button>
         <button type="button" class="subtab ${s.histSubtab === "capture" ? "active" : ""}" data-act="hist-subtab" data-sub="capture">跨端续接与捕获状态</button>
       </div>`;
 
@@ -214,6 +215,7 @@
     const selBlk = blocks.find(function (b) { return b.id === s.selectedBlockId; }) || blocks[0] || null;
     if (selBlk) s.selectedBlockId = selBlk.id;
     const blkProj = selBlk && selBlk.project ? s.historyProjects.find(function (p) { return p.key === selBlk.project; }) : null;
+    const workspacePath = selBlk && (selBlk.workspacePath || (blkProj && blkProj.workspacePath)) || '';
 
     return `${header}
       <div class="panel" style="padding:14px 18px">
@@ -222,22 +224,22 @@
             ${E.renderHistoryProjectPicker()}` : ""}
           <input type="search" id="hist-q" value="${esc(s.histQuery)}" placeholder="三路混合搜索历史会话标题、命令或对话正文…" style="flex:1;min-width:220px" />
           <div class="cat-pills">
-            <button type="button" class="cat-pill ${s.histScope === "projects" ? "active" : ""}" data-act="hist-scope" data-val="projects"><span>项目会话</span><strong>${s.historyProjects.filter(function (p) { return !p.deleted; }).length}</strong></button>
+            <button type="button" class="cat-pill ${s.histScope === "projects" ? "active" : ""}" data-act="hist-scope" data-val="projects"><span>${entity}会话</span><strong>${s.historyProjects.filter(function (p) { return !p.deleted; }).length}</strong></button>
             <button type="button" class="cat-pill ${s.histScope === "unassigned" ? "active" : ""}" data-act="hist-scope" data-val="unassigned"><span>未归属片段</span></button>
             ${w ? `<button type="button" class="cat-pill ${s.histScope === "trash" ? "active" : ""}" data-act="hist-scope" data-val="trash"><span>回收站</span><strong>${s.historyProjects.filter(function (p) { return p.deleted; }).length}</strong></button>` : ""}
           </div>
         </div>
       </div>
 
-      <p class="muted history-project-help">项目来自已归档会话的项目归属；括号数字为可见历史片段数。点击项目选择框可输入名称查找。</p>
+      <p class="muted history-project-help">${E.isProduction() ? '文件夹按 Codex 实际工作文件夹显示，其他客户端使用已核实的来源目录；名称保留真实末级目录名；无可靠工作文件夹的片段进入“未归属”。可输入目录名或完整路径模糊查找，括号数字为可见历史片段数。' : '项目来自已归档会话的项目归属；括号数字为可见历史片段数。点击项目选择框可输入名称查找。'}</p>
 
       ${s.histScope === "trash" ? `
         <section class="panel">
-          <div class="panel-head"><div><h2>已移至回收站的项目 (${visibleProjs.length})</h2><p>回收站仅保留目录标记，随时可一键恢复原有会话关联</p></div></div>
+          <div class="panel-head"><div><h2>已移至回收站的分组 (${visibleProjs.length})</h2><p>保留历史文件夹与旧项目标记，可恢复对应分组；不会删除本地文件夹或会话原文。</p></div></div>
           ${visibleProjs.length === 0 ? `<p class="muted">回收站为空。</p>` : visibleProjs.map(function (p) {
             return `<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--line)">
-              <div><b>${esc(p.title)}</b><div class="muted" style="font-size:13px">${p.sessions} 个会话 · ${p.blocks} 片段 · ${esc(p.lastAt)}</div></div>
-              <button type="button" class="btn btn-ok btn-sm" data-act="toggle-proj-del" data-key="${esc(p.key)}" ${w ? "" : "disabled"}>恢复项目</button>
+              <div><b>${esc(p.title)}</b>${p.workspacePath ? `<div class="muted" style="font-size:13px;overflow-wrap:anywhere">${esc(p.workspacePath)}</div>` : ''}<div class="muted" style="font-size:13px">${p.blocks} 个历史片段 · ${esc(p.lastAt)}</div></div>
+              <button type="button" class="btn btn-ok btn-sm" data-act="toggle-proj-del" data-key="${esc(p.key)}" ${w ? "" : "disabled"}>恢复${p.kind === 'workspace' ? '文件夹' : '项目'}</button>
             </div>`;
           }).join("")}
         </section>
@@ -269,10 +271,11 @@
                     ${selBlk.hasAttachment ? `<span class="badge badge-brand">📎 含过程截图</span>` : ""}
                   </div>
                   <h2 class="prose-lead">${esc(selBlk.title)}</h2>
+                  ${E.isProduction() ? `<p class="muted" style="font-size:13px;overflow-wrap:anywhere">工作文件夹：${workspacePath ? esc(workspacePath) : '未归属（没有可靠的工作目录信息）'}</p>` : ''}
                 </div>
                 ${blkProj ? `
                   <button type="button" class="btn ${blkProj.deleted ? "btn-ok" : "btn-danger"} btn-sm" data-act="toggle-proj-del" data-key="${esc(blkProj.key)}" ${w ? "" : "disabled"}>
-                    ${blkProj.deleted ? "恢复所属项目" : "软删所属项目"}
+                    ${blkProj.deleted ? '恢复所属' + (blkProj.kind === 'workspace' ? '文件夹' : '项目') : '移入回收站'}
                   </button>` : ""}
               </div>
 

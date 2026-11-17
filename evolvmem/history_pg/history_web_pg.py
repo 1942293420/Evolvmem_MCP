@@ -46,7 +46,7 @@ def _authorize_personal_get(hdr_lc: dict[str, Any], environ: dict[str, Any] | No
     return None
 
 
-def _reader_from_env(environ: dict[str, Any] | None, pg_config: PgHistoryConfig | None) -> PgHistoryCandidateReader:
+def _reader_from_env(environ: dict[str, Any] | None, pg_config: PgHistoryConfig | None, *, grouping: str = '') -> PgHistoryCandidateReader:
     env = os.environ if environ is None else environ
     cfg = pg_config if pg_config is not None else load_pg_history_config()
     dbname = str(env.get("EVOLVMEM_HISTORY_PG_DB") or "").strip() or None
@@ -63,7 +63,11 @@ def _reader_from_env(environ: dict[str, Any] | None, pg_config: PgHistoryConfig 
     else:
         raise ValueError("missing_history_pg_target")
     att_dir = str(env.get("EVOLVMEM_HISTORY_ATTACHMENTS_DIR") or os.environ.get("EVOLVMEM_HISTORY_ATTACHMENTS_DIR") or "").strip() or None
-    return PgHistoryCandidateReader(cfg, dbname=dbname, user_id=user_id, attachments_dir=att_dir)
+    reader_class = PgHistoryCandidateReader
+    if grouping == 'workspace':
+        from evolvmem.history_pg.workspace_views import WorkspaceHistoryReader
+        reader_class = WorkspaceHistoryReader
+    return reader_class(cfg, dbname=dbname, user_id=user_id, attachments_dir=att_dir)
 
 
 def dispatch_pg_history_api(
@@ -94,7 +98,12 @@ def dispatch_pg_history_api(
         return 405, {"ok": False, "error": "method_not_allowed"}
 
     try:
-        with _reader_from_env(environ, pg_config) as reader:
+        grouping = str(params.get('grouping') or '')
+        if (upper == 'POST' and params.get('kind') == 'workspace') or clean == '/api/history-candidate/management/trash':
+            grouping = 'workspace'
+        if grouping not in ('', 'workspace'):
+            return 400, {'ok': False, 'error': 'invalid_history_grouping'}
+        with _reader_from_env(environ, pg_config, grouping=grouping) as reader:
             if upper == "POST":
                 act = "delete" if clean.endswith("/delete") else "restore"
                 res = reader.manage(
@@ -117,7 +126,8 @@ def dispatch_pg_history_api(
                 q = str(params.get("q") or params.get("query") or "")
                 proj = str(params.get("project") or "") or None
                 limit = int(params.get("limit") or 20)
-                items = reader.hybrid_search(q, project=proj, limit=limit)
+                extra = {'scope': str(params.get('scope') or '')} if grouping == 'workspace' else {}
+                items = reader.hybrid_search(q, project=proj, limit=limit, **extra)
                 return 200, {"ok": True, "items": items, "total": len(items), "query": q}
             if m := _PROJ_RE.match(clean):
                 res = reader.project_overview(m.group(1))

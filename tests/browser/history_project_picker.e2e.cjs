@@ -3,7 +3,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict'), http = require('node:http'), fs = require('node:fs'), path = require('node:path');
 const assets = process.env.CONSOLE_V2_ROOT || path.resolve(__dirname, '../../evolvmem/web_static/v2');
 const out = process.env.EVOLVMEM_SCREENSHOTS || '/tmp/history-project-picker-browser';
-const projects = [{ project: 'linux-repair', display_name: 'linux 修复', block_count: 4 }, { project: 'finance-daily', display_name: '资金日报自动化', block_count: 2 }, { project: 'tk-daily', display_name: 'TK每日发货同步', block_count: 4 }, ...Array.from({ length: 250 }, (_, i) => ({ project: 'other-' + i, display_name: '普通项目 ' + i, block_count: 1 })), { project: 'last-target', display_name: '最后的目标项目', block_count: 3 }];
+const projects = [{ project: 'linux-repair', display_name: 'linux 修复', block_count: 4 }, { project: 'finance-daily', display_name: '资金日报自动化', block_count: 2 }, { project: 'tk-daily', display_name: 'TK每日发货同步', block_count: 4 }, ...Array.from({ length: 250 }, (_, i) => ({ project: 'other-' + i, display_name: '普通项目 ' + i, block_count: 1 })), { project: 'same-name-a', display_name: '同名目录', workspace_path: 'C:\\验收\\one\\同名目录', block_count: 1 }, { project: 'same-name-b', display_name: '同名目录', workspace_path: 'D:\\验收\\two\\同名目录', block_count: 2 }, { project: 'last-target', display_name: '最后的目标项目', block_count: 3 }].map(p => ({ ...p, workspace_path: p.workspace_path || 'C:\\验收\\' + p.display_name }));
 const historyRequests = [], posts = [];
 let delayedProject = '';
 const server = http.createServer((req, res) => {
@@ -17,9 +17,12 @@ const server = http.createServer((req, res) => {
     else if (url.pathname.endsWith('/history')) {
       historyRequests.push(url.search);
       const view = url.searchParams.get('view');
-      if (view === 'projects') data.projects = url.searchParams.get('owner_id') === 'peer' ? [{ project: 'peer-project', display_name: '他人的项目', block_count: 1 }] : projects;
+      if (['projects', 'project', 'unassigned', 'search'].includes(view)) assert.equal(url.searchParams.get('grouping'), 'workspace');
+      if (view === 'projects') data.projects = url.searchParams.get('owner_id') === 'peer' ? [{ project: 'peer-project', display_name: '他人的目录', workspace_path: 'D:\\只读验收\\他人的目录', block_count: 1 }] : projects;
       if (view === 'trash') data.items = [];
       if (view === 'project') data.blocks = [{ block_id: 'block-' + url.searchParams.get('project_id'), title: '项目会话 ' + url.searchParams.get('project_id'), turn_count: 2 }];
+      if (view === 'unassigned') data.blocks = [{ block_id: 'unknown-folder', title: '目录信息不明的会话', projects: [] }];
+      if (view === 'search') data.items = url.searchParams.get('scope') === 'unassigned' ? [{ block_id: 'unknown-folder', title: '目录信息不明的会话', projects: [], workspace_path: null }] : [];
       if (view === 'turns') data.messages = [{ role: 'user', content: '会话属于 ' + url.searchParams.get('block_id') }];
     }
     res.setHeader('Content-Type', 'application/json');
@@ -45,6 +48,13 @@ const server = http.createServer((req, res) => {
     assert.match(await page.locator('#workspace-main').innerText(), /设备库切换未接入/);
     const before = historyRequests.length;
     await page.locator('#hist-proj-toggle').click();
+    await page.locator('#hist-proj-search').fill('同名目录');
+    assert.equal(await page.locator('#hist-proj-options [role="option"]').count(), 2);
+    assert.match(await page.locator('#hist-proj-options').innerText(), /C:\\验收\\one\\同名目录/);
+    assert.match(await page.locator('#hist-proj-options').innerText(), /D:\\验收\\two\\同名目录/);
+    await page.locator('#hist-proj-search').fill('two 同名目录');
+    assert.equal(await page.locator('#hist-proj-options [role="option"]').count(), 1);
+    assert.equal(await page.locator('#hist-proj-options [role="option"]').getAttribute('data-project-picker-key'), 'same-name-b');
     await page.locator('#hist-proj-search').fill('资金自动');
     assert.equal(await page.locator('#hist-proj-options [role="option"]').count(), 1);
     assert.equal(await page.evaluate(() => EvolvMemV2.state.histQuery), '');
@@ -53,11 +63,12 @@ const server = http.createServer((req, res) => {
     await page.locator('[data-project-picker-key="finance-daily"]').click();
     await page.waitForFunction(() => EvolvMemV2.state.historyBlocks[0]?.project === 'finance-daily');
     assert.match(await page.locator('#hist-proj-toggle').innerText(), /资金日报自动化 \(2\)/);
+    assert.match(await page.locator('.detail-panel').innerText(), /工作文件夹：C:\\验收\\资金日报自动化/);
     assert.equal(historyRequests.some(q => new URLSearchParams(q).get('project_id') === 'finance-daily'), true);
     checks.push('Chinese fragment filter is local; selection uses original key and count');
     await page.locator('#hist-proj-toggle').click(); await page.locator('#hist-proj-search').fill('完全不存在的项目');
     assert.equal(await page.locator('#hist-proj-options [role="option"]').count(), 0);
-    assert.match(await page.locator('#hist-proj-options').innerText(), /没有找到项目/);
+    assert.match(await page.locator('#hist-proj-options').innerText(), /没有找到文件夹/);
     await page.locator('#hist-proj-search').press('Escape');
     assert.equal(await page.locator('#hist-proj-popover').isHidden(), true);
     assert.equal(await page.evaluate(() => EvolvMemV2.state.selectedProjectKey), 'finance-daily');
@@ -95,6 +106,17 @@ const server = http.createServer((req, res) => {
     await page.waitForTimeout(450);
     assert.equal(await page.evaluate(() => EvolvMemV2.state.historyBlocks[0].project), 'tk-daily');
     checks.push('slow project reads preserve typing focus and cannot overwrite a newer selection');
+    await page.locator('[data-act="hist-scope"][data-val="unassigned"]').click();
+    await page.waitForFunction(() => EvolvMemV2.state.historyBlocks[0]?.id === 'unknown-folder' && EvolvMemV2.state.historyBlocks[0]?._turnsLoaded);
+    assert.match(await page.locator('.detail-panel').innerText(), /工作文件夹：未归属/);
+    await page.locator('#hist-q').fill('目录信息');
+    await page.waitForFunction(() => EvolvMemV2.state.historyBlocks[0]?.id === 'unknown-folder' && EvolvMemV2.state.historyBlocks[0]?._turnsLoaded);
+    await page.waitForTimeout(350);
+    assert.equal(historyRequests.some(q => { const p = new URLSearchParams(q); return p.get('view') === 'search' && p.get('scope') === 'unassigned' && p.get('q') === '目录信息'; }), true);
+    await page.locator('#hist-q').fill('');
+    await page.locator('[data-act="hist-scope"][data-val="projects"]').click();
+    await page.waitForFunction(() => EvolvMemV2.state.historyBlocks[0]?.project === 'tk-daily' && EvolvMemV2.state.historyBlocks[0]?._turnsLoaded);
+    checks.push('workspace paths disambiguate same-name folders; unassigned text search retains workspace scope');
     await page.locator('#hist-proj-toggle').click(); await page.locator('#hist-proj-search').fill('资金');
     await page.selectOption('#ctx-lib-sel', 'peer');
     await page.waitForFunction(() => EvolvMemV2.session.dataReady && EvolvMemV2.state.libraryCtx === 'peer' && EvolvMemV2.state.historyProjects[0]?.key === 'peer-project');

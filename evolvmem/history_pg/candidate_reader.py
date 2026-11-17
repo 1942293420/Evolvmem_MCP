@@ -14,7 +14,7 @@ import uuid
 from evolvmem.history_pg.config import PgHistoryConfig, load_pg_history_config
 
 _TRASH_PROJ_SQL = "COALESCE(NULLIF(tp.project, ''), tp.key)"
-_VISIBLE_BLOCK_SQL = (
+_LEGACY_VISIBLE_BLOCK_SQL = (
     "NOT EXISTS (SELECT 1 FROM em_history.management_trash t WHERE t.kind = 'block' AND t.key = b.block_id) "
     "AND NOT ("
     "  EXISTS (SELECT 1 FROM em_history.block_projects bp WHERE bp.block_id = b.block_id) "
@@ -25,6 +25,13 @@ _VISIBLE_BLOCK_SQL = (
     "      AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tpb WHERE tpb.kind = 'project_block' AND tpb.project = bp.project AND tpb.key = b.block_id)"
     "  )"
     ")"
+)
+_VISIBLE_BLOCK_SQL = (
+    _LEGACY_VISIBLE_BLOCK_SQL +
+    " AND NOT EXISTS (SELECT 1 FROM em_history.candidate_meta wf "
+    "JOIN em_history.management_trash wt ON wt.kind = 'workspace' "
+    "AND wt.key = wf.value WHERE wf.key = 'workspace_projection:v1:folder:' || b.block_id "
+    "AND wf.value <> '')"
 )
 
 
@@ -90,7 +97,7 @@ class PgHistoryCandidateReader:
             vis_rows = conn.execute(
                 "SELECT bp.project, COUNT(*), COALESCE(SUM(b.message_count), 0), COALESCE(SUM(b.turn_count), 0) "
                 "FROM em_history.block_projects bp JOIN em_history.blocks b ON b.block_id = bp.block_id "
-                "WHERE NOT EXISTS (SELECT 1 FROM em_history.management_trash t WHERE t.kind = 'block' AND t.key = b.block_id) "
+                f"WHERE {_VISIBLE_BLOCK_SQL} "
                 "AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tpb WHERE tpb.kind = 'project_block' AND tpb.project = bp.project AND tpb.key = b.block_id) "
                 "GROUP BY bp.project"
             ).fetchall()
@@ -120,8 +127,7 @@ class PgHistoryCandidateReader:
                 "SELECT b.block_id, b.title, b.adapter, b.message_count, b.observed_first_at, b.observed_last_at "
                 "FROM em_history.blocks b WHERE NOT EXISTS ("
                 "SELECT 1 FROM em_history.block_projects bp WHERE bp.block_id = b.block_id) "
-                "AND NOT EXISTS ("
-                "SELECT 1 FROM em_history.management_trash t WHERE t.kind = 'block' AND t.key = b.block_id) "
+                f"AND {_VISIBLE_BLOCK_SQL} "
                 "ORDER BY b.observed_last_at DESC LIMIT 200"
             ).fetchall()
         blocks = [
@@ -148,7 +154,7 @@ class PgHistoryCandidateReader:
                 "SELECT b.block_id, b.title, b.adapter, b.message_count, b.turn_count, b.observed_first_at, b.observed_last_at "
                 "FROM em_history.blocks b JOIN em_history.block_projects bp ON bp.block_id = b.block_id "
                 "WHERE bp.project = %s "
-                "AND NOT EXISTS (SELECT 1 FROM em_history.management_trash t WHERE t.kind = 'block' AND t.key = b.block_id) "
+                f"AND {_VISIBLE_BLOCK_SQL} "
                 "AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tpb WHERE tpb.kind = 'project_block' AND tpb.project = bp.project AND tpb.key = b.block_id) "
                 "ORDER BY b.observed_last_at DESC LIMIT 500",
                 (proj,),
@@ -307,9 +313,12 @@ class PgHistoryCandidateReader:
         query_vec: list[float] | None = None,
         project: str | None = None,
         limit: int = 20,
+        block_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Hybrid search fusing PG tsvector + pg_trgm + pgvector cosine via RRF."""
         q = (query or "").strip()
+        if block_ids is not None and not block_ids:
+            return []
         if query_vec is None and q and self._embedder is not None:
             query_vec = self._embedder.encode_query(q)
         if not q and not query_vec:
@@ -327,6 +336,8 @@ class PgHistoryCandidateReader:
                 entry["snippet"] = snippet
 
         with self._cfg.connect(self._dbname, role_kind="reader") as conn:
+            block_sql = "AND b.block_id = ANY(%s) " if block_ids is not None else ""
+            block_params = (block_ids,) if block_ids is not None else ()
             proj_sql = (
                 "AND EXISTS (SELECT 1 FROM em_history.block_projects bp WHERE bp.block_id = b.block_id AND bp.project = %s "
                 f"AND NOT EXISTS (SELECT 1 FROM em_history.management_trash tp WHERE tp.kind = 'project' AND {_TRASH_PROJ_SQL} = bp.project) "
@@ -338,6 +349,7 @@ class PgHistoryCandidateReader:
                 lex_params: tuple[Any, ...] = (q, q, like_pat, like_pat, q, q, like_pat, like_pat, q, q, q, q)
                 if project:
                     lex_params += (project,)
+                lex_params += block_params
                 lex_params += (top_n * 3,)
                 lex_rows = conn.execute(
                     "SELECT sub.block_id, sub.title, sub.snip, sub.projects, sub.lex_score FROM ("
@@ -354,6 +366,7 @@ class PgHistoryCandidateReader:
                     "OR b.search_tsv @@ plainto_tsquery('simple', %s) "
                     "OR m.search_tsv @@ plainto_tsquery('simple', %s)) "
                     + proj_sql
+                    + block_sql
                     + "ORDER BY b.block_id, lex_score DESC"
                     ") sub ORDER BY sub.lex_score DESC LIMIT %s",
                     lex_params,
@@ -363,24 +376,26 @@ class PgHistoryCandidateReader:
 
             if query_vec:
                 vlit = _vec_literal(query_vec)
-                vec_params: tuple[Any, ...] = (vlit,) + ((project,) if project else ()) + (vlit, top_n * 3)
+                vec_params: tuple[Any, ...] = (vlit,) + ((project,) if project else ()) + block_params + (vlit, top_n * 3)
                 vec_rows = conn.execute(
                     "SELECT b.block_id, b.title, b.projects, 1.0 - (b.embedding <=> %s::vector) AS vsim "
                     "FROM em_history.blocks b "
                     f"WHERE b.embedding IS NOT NULL AND {_VISIBLE_BLOCK_SQL} "
                     + proj_sql
+                    + block_sql
                     + "ORDER BY b.embedding <=> %s::vector LIMIT %s",
                     vec_params,
                 ).fetchall()
                 for r_idx, (bid, title, pjson, _) in enumerate(vec_rows, start=1):
                     _acc(str(bid), str(title or ""), "", str(pjson or "[]"), r_idx, weight=1.0)
-                mvec_params: tuple[Any, ...] = (vlit,) + ((project,) if project else ()) + (vlit, top_n * 3)
+                mvec_params: tuple[Any, ...] = (vlit,) + ((project,) if project else ()) + block_params + (vlit, top_n * 3)
                 mvec_rows = conn.execute(
                     "SELECT sub.block_id, sub.title, sub.content, sub.projects, sub.vsim FROM ("
                     "SELECT DISTINCT ON (b.block_id) b.block_id, b.title, m.content, b.projects, 1.0 - (m.embedding <=> %s::vector) AS vsim "
                     "FROM em_history.messages m JOIN em_history.blocks b ON b.block_id = m.block_id "
                     f"WHERE m.embedding IS NOT NULL AND {_VISIBLE_BLOCK_SQL} "
                     + proj_sql
+                    + block_sql
                     + "ORDER BY b.block_id, m.embedding <=> %s::vector"
                     ") sub ORDER BY sub.vsim DESC LIMIT %s",
                     mvec_params,
