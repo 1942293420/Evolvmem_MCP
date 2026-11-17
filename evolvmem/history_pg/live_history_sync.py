@@ -4,10 +4,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any
 
+from evolvmem.archive_storage import ArchiveStorage, MAGIC as ARCHIVE_MAGIC
+from evolvmem.config import Config
 from evolvmem.history_pg.config import PgHistoryConfig, PgHistoryPool
 from evolvmem.transcript_formats import CODEX_FORMAT, adapter_name, parse_transcript, source_format, workspace_details
 
@@ -139,19 +142,63 @@ def _refresh_project_stats(conn, proj: str, now_iso: str) -> None:
     )
 
 
+def _resolve_data_dir(data_dir: Path | None) -> Path:
+    base = data_dir or Path(os.environ.get('EVOLVMEM_DATA_DIR') or '~/.claude/evolvmem')
+    return base.expanduser().resolve()
+
+
+def _read_transcript_bytes(payload_path: str, expected_sha256: str, data_dir: Path | None = None) -> tuple[bytes | None, str]:
+    """Resolve plain CAS or encrypted ArchiveStorage .bin payload and verify sha256."""
+    p = Path(payload_path)
+    dd = _resolve_data_dir(data_dir)
+    if not p.is_file() and not p.is_absolute():
+        cand = (dd / p).resolve()
+        if cand.is_relative_to(dd) and cand.is_file():
+            p = cand
+    if not p.is_file():
+        return None, 'missing_cas_payload'
+    raw_disk = p.read_bytes()
+    if raw_disk.startswith(ARCHIVE_MAGIC):
+        key_dir = dd if (dd / 'archive.key').is_file() else next((a for a in p.parents if (a / 'archive.key').is_file()), None)
+        if key_dir is None:
+            return None, 'missing_archive_key'
+        key = (key_dir / 'archive.key').read_bytes()
+        if len(key) != 32:
+            return None, 'invalid_archive_key'
+        try:
+            unpacked = ArchiveStorage(Config(data_dir=key_dir, apply_environment=False), key).unpack(raw_disk)
+        except Exception:
+            return None, 'corrupt_archive'
+        stripped = unpacked.lstrip()
+        if stripped.startswith('{') and '\n' not in unpacked.strip():
+            try:
+                env = json.loads(unpacked)
+            except ValueError:
+                env = None
+            if isinstance(env, dict) and isinstance(env.get('transcript'), str) and env['transcript'].strip():
+                raw = env['transcript'].encode('utf-8')
+            else:
+                raw = unpacked.encode('utf-8')
+        else:
+            raw = unpacked.encode('utf-8')
+    else:
+        raw = raw_disk
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        return None, 'cas_sha256_mismatch'
+    return raw, ''
+
+
 def sync_session_archive_conn(
     conn, *, device_id: str, session_id: str, sha256: str, archive_id: int, payload_path: str,
-    source_format_str: str, project: str = '', declared_project: str = '', attribution_reason: str = '', archive_created_at: str = '',
+    source_format_str: str, project: str = '', declared_project: str = '', attribution_reason: str = '',
+    archive_created_at: str = '', data_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Upsert one CAS session archive into em_history browse tables idempotently."""
     if attribution_reason == 'subagent_session':
         return {'synced': False, 'reason': 'subagent_session'}
-    cas_file = Path(payload_path)
-    if not cas_file.is_file():
-        return {'synced': False, 'reason': 'missing_cas_payload'}
-    raw = cas_file.read_bytes()
-    if hashlib.sha256(raw).hexdigest() != sha256:
-        return {'synced': False, 'reason': 'cas_sha256_mismatch'}
+    raw, err_reason = _read_transcript_bytes(payload_path, sha256, data_dir=data_dir)
+    if raw is None:
+        return {'synced': False, 'reason': err_reason}
 
     cut_row = conn.execute(
         "SELECT COALESCE(MAX(observed_last_at), '') FROM em_history.blocks WHERE native_session_id = %s AND block_id NOT LIKE 'live-%%'",
@@ -236,6 +283,7 @@ def sync_single_head(pool: PgHistoryPool, dbname: str, *, device_id: str, sessio
 
 def sync_pending_live_history(
     cfg: PgHistoryConfig, user_id: str = 'jiangli', *, limit: int = 300, pool: PgHistoryPool | None = None,
+    data_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Backfill/reconcile pending uploaded session heads since 2026-11-07 into em_history."""
     pg_pool = pool or PgHistoryPool(cfg)
@@ -264,7 +312,7 @@ def sync_pending_live_history(
                         conn, device_id=str(r[0]), session_id=str(r[1]), sha256=str(r[2]),
                         archive_id=int(r[3]), payload_path=str(r[4]), source_format_str=str(r[5] or CODEX_FORMAT),
                         project=str(r[6] or ''), declared_project=str(r[7] or ''),
-                        attribution_reason=str(r[8] or ''), archive_created_at=str(r[9] or ''),
+                        attribution_reason=str(r[8] or ''), archive_created_at=str(r[9] or ''), data_dir=data_dir,
                     )
                 synced += 1 if res.get('synced') else 0
                 skipped += 0 if res.get('synced') else 1
