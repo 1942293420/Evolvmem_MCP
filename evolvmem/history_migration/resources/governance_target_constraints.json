@@ -1,0 +1,828 @@
+{
+  "aliases": {
+    "corrections": "id",
+    "governance_source_enrollments": "archive_id",
+    "organization_guidance": "id",
+    "organization_settings": "id",
+    "organization_task_upgrades": "task_id",
+    "project_module_audit": "audit_id",
+    "project_module_bindings": "binding_id"
+  },
+  "auto": {
+    "corrections": "id",
+    "organization_guidance": "id",
+    "project_module_audit": "audit_id",
+    "project_module_bindings": "binding_id"
+  },
+  "checks": {
+    "context_project_rollups": {
+      "status": [
+        "pending",
+        "ready",
+        "failed",
+        "vector_dirty"
+      ]
+    },
+    "context_project_workspace_bindings": {
+      "state": [
+        "candidate",
+        "active",
+        "revoked"
+      ]
+    },
+    "organization_guidance": {
+      "scope": [
+        "batch",
+        "future"
+      ]
+    },
+    "organization_review_feedback": {
+      "verdict": [
+        "correct",
+        "incorrect"
+      ]
+    },
+    "project_module_bindings": {
+      "decision": [
+        "auto",
+        "manual",
+        "review"
+      ],
+      "source_kind": [
+        "unit",
+        "capability_source"
+      ],
+      "status": [
+        "active",
+        "inactive"
+      ]
+    },
+    "project_modules": {
+      "status": [
+        "pending",
+        "active",
+        "inactive"
+      ]
+    }
+  },
+  "indexes": [
+    [
+      "classification_results",
+      "hg_idx_0",
+      false,
+      [
+        "library_id",
+        "reviewed",
+        "reviewed_correct"
+      ],
+      null
+    ],
+    [
+      "classification_results",
+      "hg_idx_1",
+      false,
+      [
+        "library_id",
+        "batch_id",
+        "predicted_project"
+      ],
+      null
+    ],
+    [
+      "classification_results",
+      "hg_idx_2",
+      false,
+      [
+        "library_id",
+        "batch_id"
+      ],
+      null
+    ],
+    [
+      "context_project_workspace_bindings",
+      "hg_active_default",
+      true,
+      [
+        "library_id",
+        "workspace_fingerprint"
+      ],
+      "((state = 'active'::text) AND (is_default = 1))"
+    ],
+    [
+      "corrections",
+      "hg_idx_4",
+      false,
+      [
+        "library_id",
+        "round"
+      ],
+      null
+    ],
+    [
+      "organization_guidance",
+      "hg_idx_5",
+      false,
+      [
+        "library_id",
+        "enabled",
+        "scope"
+      ],
+      null
+    ],
+    [
+      "project_module_bindings",
+      "hg_idx_6",
+      false,
+      [
+        "library_id",
+        "source_key"
+      ],
+      null
+    ]
+  ],
+  "keys_and_fks": [
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_0_0",
+      "ref": null,
+      "table": "capability_provenance_repairs",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "plan_sha256"
+      ],
+      "name": "hg_0_1",
+      "ref": null,
+      "table": "capability_provenance_repairs",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_1_2",
+      "ref": null,
+      "table": "classification_results",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "batch_id",
+        "task_id",
+        "ordinal"
+      ],
+      "name": "hg_1_3",
+      "ref": null,
+      "table": "classification_results",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_2_4",
+      "ref": null,
+      "table": "context_project_aliases",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "alias"
+      ],
+      "name": "hg_2_5",
+      "ref": null,
+      "table": "context_project_aliases",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "project"
+      ],
+      "name": "hg_2_6",
+      "ref": [
+        "context_project_registry",
+        [
+          "library_id",
+          "project"
+        ]
+      ],
+      "table": "context_project_aliases",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_3_7",
+      "ref": null,
+      "table": "context_project_rollups",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "project"
+      ],
+      "name": "hg_3_8",
+      "ref": null,
+      "table": "context_project_rollups",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "current_context_id"
+      ],
+      "name": "hg_3_9",
+      "ref": [
+        "context_items",
+        [
+          "library_id",
+          "id"
+        ]
+      ],
+      "table": "context_project_rollups",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_4_10",
+      "ref": null,
+      "table": "context_project_workspace_bindings",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "workspace_fingerprint",
+        "project"
+      ],
+      "name": "hg_4_11",
+      "ref": null,
+      "table": "context_project_workspace_bindings",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "project"
+      ],
+      "name": "hg_4_12",
+      "ref": [
+        "context_project_registry",
+        [
+          "library_id",
+          "project"
+        ]
+      ],
+      "table": "context_project_workspace_bindings",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_5_13",
+      "ref": null,
+      "table": "corrections",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "id"
+      ],
+      "name": "hg_5_14",
+      "ref": null,
+      "table": "corrections",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_6_15",
+      "ref": null,
+      "table": "extraction_receipts",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "input_key"
+      ],
+      "name": "hg_6_16",
+      "ref": null,
+      "table": "extraction_receipts",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_7_17",
+      "ref": null,
+      "table": "governance_migration_audit",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "plan_sha256",
+        "operation",
+        "source_key"
+      ],
+      "name": "hg_7_18",
+      "ref": null,
+      "table": "governance_migration_audit",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_8_19",
+      "ref": null,
+      "table": "governance_module_backfill_runs",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "plan_sha256",
+        "task_id"
+      ],
+      "name": "hg_8_20",
+      "ref": null,
+      "table": "governance_module_backfill_runs",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_9_21",
+      "ref": null,
+      "table": "governance_module_seed_runs",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "plan_sha256",
+        "project",
+        "name_key"
+      ],
+      "name": "hg_9_22",
+      "ref": null,
+      "table": "governance_module_seed_runs",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_10_23",
+      "ref": null,
+      "table": "governance_source_enrollment_audit",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "plan_sha256",
+        "archive_id"
+      ],
+      "name": "hg_10_24",
+      "ref": null,
+      "table": "governance_source_enrollment_audit",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_11_25",
+      "ref": null,
+      "table": "governance_source_enrollments",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "archive_id"
+      ],
+      "name": "hg_11_26",
+      "ref": null,
+      "table": "governance_source_enrollments",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "archive_id"
+      ],
+      "name": "hg_11_27",
+      "ref": [
+        "session_archives",
+        [
+          "library_id",
+          "id"
+        ]
+      ],
+      "table": "governance_source_enrollments",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_12_28",
+      "ref": null,
+      "table": "organization_guidance",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "id"
+      ],
+      "name": "hg_12_29",
+      "ref": null,
+      "table": "organization_guidance",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_13_30",
+      "ref": null,
+      "table": "organization_review_feedback",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "task_id",
+        "digest"
+      ],
+      "name": "hg_13_31",
+      "ref": null,
+      "table": "organization_review_feedback",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_14_32",
+      "ref": null,
+      "table": "organization_review_jobs",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "id"
+      ],
+      "name": "hg_14_33",
+      "ref": null,
+      "table": "organization_review_jobs",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_15_34",
+      "ref": null,
+      "table": "organization_scope_exclusions",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_key",
+        "digest",
+        "scope_key"
+      ],
+      "name": "hg_15_35",
+      "ref": null,
+      "table": "organization_scope_exclusions",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_16_36",
+      "ref": null,
+      "table": "organization_settings",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "id"
+      ],
+      "name": "hg_16_37",
+      "ref": null,
+      "table": "organization_settings",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_17_38",
+      "ref": null,
+      "table": "organization_task_upgrades",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "task_id"
+      ],
+      "name": "hg_17_39",
+      "ref": null,
+      "table": "organization_task_upgrades",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "task_id"
+      ],
+      "name": "hg_17_40",
+      "ref": [
+        "organization_tasks",
+        [
+          "library_id",
+          "id"
+        ]
+      ],
+      "table": "organization_task_upgrades",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_18_41",
+      "ref": null,
+      "table": "private_governance_empty_terminals",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "plan_sha256"
+      ],
+      "name": "hg_18_42",
+      "ref": null,
+      "table": "private_governance_empty_terminals",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_19_43",
+      "ref": null,
+      "table": "private_governance_empty_terminals_v2",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "plan_sha256"
+      ],
+      "name": "hg_19_44",
+      "ref": null,
+      "table": "private_governance_empty_terminals_v2",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_20_45",
+      "ref": null,
+      "table": "private_governance_source_upgrades",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "plan_sha256"
+      ],
+      "name": "hg_20_46",
+      "ref": null,
+      "table": "private_governance_source_upgrades",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_21_47",
+      "ref": null,
+      "table": "project_module_audit",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "audit_id"
+      ],
+      "name": "hg_21_48",
+      "ref": null,
+      "table": "project_module_audit",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_22_49",
+      "ref": null,
+      "table": "project_modules",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "project",
+        "name_key"
+      ],
+      "name": "hg_22_50",
+      "ref": null,
+      "table": "project_modules",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "module_id"
+      ],
+      "name": "hg_22_51",
+      "ref": null,
+      "table": "project_modules",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "project"
+      ],
+      "name": "hg_22_52",
+      "ref": [
+        "context_project_registry",
+        [
+          "library_id",
+          "project"
+        ]
+      ],
+      "table": "project_modules",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_23_53",
+      "ref": null,
+      "table": "project_module_bindings",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "binding_id"
+      ],
+      "name": "hg_23_54",
+      "ref": null,
+      "table": "project_module_bindings",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "module_id",
+        "source_key"
+      ],
+      "name": "hg_23_55",
+      "ref": null,
+      "table": "project_module_bindings",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "module_id"
+      ],
+      "name": "hg_23_56",
+      "ref": [
+        "project_modules",
+        [
+          "library_id",
+          "module_id"
+        ]
+      ],
+      "table": "project_module_bindings",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_24_57",
+      "ref": null,
+      "table": "project_module_names",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "project",
+        "name_key"
+      ],
+      "name": "hg_24_58",
+      "ref": null,
+      "table": "project_module_names",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "library_id",
+        "module_id"
+      ],
+      "name": "hg_24_59",
+      "ref": [
+        "project_modules",
+        [
+          "library_id",
+          "module_id"
+        ]
+      ],
+      "table": "project_module_names",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "library_id",
+        "source_rowid"
+      ],
+      "name": "hg_25_60",
+      "ref": null,
+      "table": "typed_ownership_repairs",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "library_id",
+        "plan_sha256"
+      ],
+      "name": "hg_25_61",
+      "ref": null,
+      "table": "typed_ownership_repairs",
+      "type": "u"
+    }
+  ]
+}

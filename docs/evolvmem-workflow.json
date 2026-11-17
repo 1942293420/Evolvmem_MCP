@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "EvolvMem 如何工作",
+    "subtitle": "Agent 主动查经验，执行后凭证据更新；未完成的任务另存断点。点击节点可查看关系。",
+    "animation": "none",
+    "visual_preset": "classic",
+    "quality_profile": "showcase",
+    "viewBox": [
+      720,
+      730
+    ],
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "backend": {
+          "label": "Agent 处理"
+        },
+        "database": {
+          "label": "经验与断点"
+        },
+        "external": {
+          "label": "用户与结果"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "intake-lane",
+      "label": "任务触发"
+    },
+    {
+      "id": "recall-lane",
+      "label": "召回与判断"
+    },
+    {
+      "id": "learn-lane",
+      "label": "执行与验证"
+    },
+    {
+      "id": "evidence-lane",
+      "label": "经验反馈与任务断点"
+    },
+    {
+      "id": "continuity-lane",
+      "label": "下一次任务"
+    }
+  ],
+  "mainPath": [
+    "matter",
+    "agent-recall",
+    "scoped-recall",
+    "fit-and-adapt",
+    "do-work",
+    "observe-result",
+    "update-evidence",
+    "next-recall"
+  ],
+  "nodes": [
+    {
+      "id": "matter",
+      "lane": "intake-lane",
+      "col": 0,
+      "type": "external",
+      "label": "用户描述事情",
+      "sublabel": "新任务或新失败"
+    },
+    {
+      "id": "agent-recall",
+      "lane": "intake-lane",
+      "col": 1,
+      "type": "backend",
+      "label": "Agent 主动查",
+      "sublabel": "发起经验召回"
+    },
+    {
+      "id": "scoped-recall",
+      "lane": "recall-lane",
+      "col": 1,
+      "type": "backend",
+      "label": "按当前范围召回",
+      "sublabel": "问题·项目·已知条件"
+    },
+    {
+      "id": "fit-and-adapt",
+      "lane": "recall-lane",
+      "col": 3,
+      "type": "backend",
+      "label": "核对并调整",
+      "sublabel": "机制·条件·状态·证据"
+    },
+    {
+      "id": "do-work",
+      "lane": "learn-lane",
+      "col": 3,
+      "type": "backend",
+      "label": "执行任务",
+      "sublabel": "记录实际采用"
+    },
+    {
+      "id": "observe-result",
+      "lane": "learn-lane",
+      "col": 5,
+      "type": "external",
+      "label": "观察结果",
+      "sublabel": "工具验证或明确反馈"
+    },
+    {
+      "id": "update-evidence",
+      "lane": "evidence-lane",
+      "col": 5,
+      "type": "database",
+      "label": "保存结果证据",
+      "sublabel": "更新状态与适用范围"
+    },
+    {
+      "id": "next-recall",
+      "lane": "continuity-lane",
+      "col": 5,
+      "type": "backend",
+      "label": "影响下次召回",
+      "sublabel": "按新证据重新筛选"
+    },
+    {
+      "id": "save-checkpoint",
+      "lane": "evidence-lane",
+      "col": 3,
+      "type": "database",
+      "label": "保存任务断点",
+      "sublabel": "进度·阻塞·下一步"
+    },
+    {
+      "id": "resume-focus",
+      "lane": "continuity-lane",
+      "col": 3,
+      "type": "backend",
+      "label": "下次说「继续」",
+      "sublabel": "按当前焦点恢复任务"
+    }
+  ],
+  "edges": [
+    {
+      "id": "matter-triggers-agent",
+      "from": "matter",
+      "to": "agent-recall",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "agent-builds-scope",
+      "from": "agent-recall",
+      "to": "scoped-recall",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "scope-finds-cases",
+      "from": "scoped-recall",
+      "to": "fit-and-adapt",
+      "role": "main",
+      "variant": "emphasis",
+      "label": "词法与语义检索"
+    },
+    {
+      "id": "adoption-to-work",
+      "from": "fit-and-adapt",
+      "to": "do-work",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "work-produces-result",
+      "from": "do-work",
+      "to": "observe-result",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "result-needs-proof",
+      "from": "observe-result",
+      "to": "update-evidence",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "evidence-changes-recall",
+      "from": "update-evidence",
+      "to": "next-recall",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "work-checkpoint",
+      "from": "do-work",
+      "to": "save-checkpoint",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "checkpoint-resumes",
+      "from": "save-checkpoint",
+      "to": "resume-focus",
+      "role": "branch",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "slate",
+      "title": "由 Agent 发起，按需召回",
+      "items": [
+        "首次会话先读取当前项目上下文；实质新任务、切换项目或出现新失败时再查经验。",
+        "同一任务可复用已查结果。工具不可用时，仍按当前证据推进任务。"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "查到、采用、成功分别记录",
+      "items": [
+        "候选须有可核验的成功证据且状态可用；跨项目只考虑标记为可迁移的方法。",
+        "Agent 仍需核对新场景；无适用案例就正常处理。仅命中或采用，不增加成功数。"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "结果必须有出处",
+      "items": [
+        "成功与失败只反馈给实际采用且得到相关验证的方法；无结论保留未知。",
+        "用户明确指出已参考案例不适用时，记录原话和当前条件；不计为执行失败。",
+        "条件或步骤改变时派生新案例并保留父案例；同一验证事件去重，修订保留版本。"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "续接与运行条件",
+      "items": [
+        "断点记录任务进度，恢复按工作区与焦点定位，并检查是否过期；断点更新不替代经验反馈。",
+        "结构化召回取决于客户端接入、shadow / primary 模式及服务就绪；主动指令由就绪的 primary 提供。",
+        "compat 可保留独立的断点续接能力，但不开放结构化经验召回。会话钩子的注入与提取依客户端配置运行。"
+      ]
+    }
+  ]
+}

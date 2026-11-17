@@ -1,0 +1,174 @@
+const assert = require('node:assert/strict');
+const {spawn} = require('node:child_process');
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const task = process.argv.includes('--task') ? process.argv[process.argv.indexOf('--task') + 1] : 'all';
+
+(async () => {
+  const remote = process.env.EVOLVMEM_TEST_URL ? null : spawn('ssh', ['-L','39480:127.0.0.1:39479','codex-linux',
+    'cd /home/jiangli/.local/share/evolvmem-worktrees/frontend-refresh && PYTHONPATH=.tools/site exec python3 tests/browser/capability_archives_fixture.py'],
+    {stdio:['ignore','pipe','pipe']});
+  let browser;
+  const errors = [];
+  try {
+    let ready = false;
+    for (let i = 0; i < 50 && !ready; i++) {
+      try { ready = (await fetch((process.env.EVOLVMEM_TEST_URL||'http://127.0.0.1:39480')+'/api/capabilities')).ok; }
+      catch { await sleep(200); }
+    }
+    assert.ok(ready, 'disposable web fixture did not start');
+    browser = await chromium.launch({channel:process.env.BROWSER_CHANNEL||undefined,headless:true,args:['--no-sandbox']});
+    const page = await browser.newPage();
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto((process.env.EVOLVMEM_TEST_URL||'http://127.0.0.1:39480')+'/#knowledge/capabilities');
+    await page.waitForTimeout(1500);
+    const base = process.env.EVOLVMEM_TEST_URL||'http://127.0.0.1:39480';
+
+    if (task === 'home' || task === 'all') {
+      await page.setViewportSize({width:1440,height:900});
+      await page.goto(base + '/#home');
+      await page.waitForSelector('[data-overview-capabilities]');
+      for (const selector of ['.flow-summary','.flow-pipeline','.flow-boundaries']) {
+        assert.ok(!(await page.locator(selector).isVisible()), `redundant home section remains visible: ${selector}`);
+      }
+      assert.ok(await page.locator('[data-flow-health]').isVisible(), 'system health must remain accessible');
+      const results = await page.locator('.home-results-grid').boundingBox();
+      assert.ok(results.y < 600, `project archives start below the primary view: y=${results.y}`);
+      await page.locator('.home-results-grid a[data-page-link]').first().click();
+      assert.equal(new URL(page.url()).hash, '#knowledge/archives');
+      await page.goto(base + '/#home');
+      await page.waitForSelector('[data-slot=project-list] [data-project]');
+      await page.locator('[data-slot=project-list] [data-project]').first().click();
+      await page.waitForSelector('[data-archive-summary]');
+      assert.equal(new URL(page.url()).hash, '#knowledge/archives?project=bluewhale');
+      assert.equal(await page.locator('#project-archive-form [name=project]').inputValue(), 'bluewhale');
+    }
+
+    if (task === 'navigation' || task === 'all') {
+      const labels = await page.locator('[data-page-link]').allTextContents();
+      for (const label of ['总览','开发能力','项目存档','任务断点','自动整理']) {
+        assert.ok(labels.some(text => text.includes(label)), `missing navigation: ${label}`);
+      }
+      assert.equal(await page.locator('[data-more-toggle]').count(),0);
+      assert.equal(await page.locator('.nav-preview-link').count(),11);
+      await page.locator('.signal-nav [data-knowledge-view="projects"]').click();
+      await page.goto(base + '/#knowledge/projects');
+      assert.ok(await page.locator('.refresh-topnav').count());
+      assert.equal(await page.locator('.refresh-duplicate-title').count(), 0);
+      for (const width of [390,768,1024,1178,1440]) {
+        await page.setViewportSize({width,height:1000});
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+        const navItems = await page.locator('.refresh-topnav .nav-preview-link').evaluateAll(elements => elements.map(element => ({
+          height: element.getBoundingClientRect().height,
+          whiteSpace: getComputedStyle(element).whiteSpace,
+        })));
+        assert.ok(navItems.every(item => item.height <= 62 && item.whiteSpace === 'nowrap'), `navigation wraps at ${width}px: ${JSON.stringify(navItems)}`);
+        const navigation = await page.evaluate(() => {
+          const header = document.querySelector('.refresh-topnav');
+          header.scrollLeft = 0;
+          const elements = [document.querySelector('.signal-brand'),...document.querySelectorAll('.nav-preview-link')];
+          return {
+            clientWidth: header.clientWidth,
+            scrollWidth: header.scrollWidth,
+            items: elements.map(element => {
+              const rect = element.getBoundingClientRect();
+              const hit = document.elementFromPoint(rect.x + rect.width / 2,rect.y + rect.height / 2);
+              return {text:element.textContent.trim(),left:rect.left,right:rect.right,hit:element === hit || element.contains(hit)};
+            }),
+          };
+        });
+        assert.ok(navigation.scrollWidth <= navigation.clientWidth + 1, `navigation requires horizontal scrolling at ${width}px: ${JSON.stringify(navigation)}`);
+        assert.ok(navigation.items.every(item => item.left >= 0 && item.right <= width + 1 && item.hit), `navigation is hidden or covered at ${width}px: ${JSON.stringify(navigation.items)}`);
+      }
+    }
+
+    if (task === 'capabilities' || task === 'all') {
+      await page.goto(base + '/#knowledge/capabilities');
+      await page.waitForTimeout(500);
+      await page.locator('[data-memory-query]').fill('Vue表单');
+      await page.locator('[data-memory-search]').click();
+      await page.waitForTimeout(1500);
+      assert.equal(await page.locator('[data-memory-card]').count(), 1);
+      await page.locator('[data-memory-card]').click();
+      assert.ok(await page.locator('[data-memory-source-detail]').count());
+
+      await page.locator('[data-memory-query]').fill('');
+      await page.locator('[data-memory-search]').click();
+      await page.waitForTimeout(1500);
+      assert.equal(await page.locator('[data-memory-card]').count(), 20);
+      await page.locator('[data-page="next"]').click();
+      await page.waitForTimeout(500);
+      assert.match(await page.locator('[data-page-status]').innerText(), /第 2 \/ 2 页/);
+
+      await page.locator('[data-memory-source]').selectOption('integration');
+      await page.waitForTimeout(1000);
+      const cards = await page.locator('[data-memory-card]').allTextContents();
+      assert.ok(cards.length > 0 && cards.every(text => text.includes('integration')));
+
+      await page.locator('[data-tab="intake"]').click();
+      await page.locator('[data-assign="1"]').click();
+      await page.waitForTimeout(700);
+      assert.match(await page.locator('.refresh-notice').innerText(), /正式能力记忆/);
+      await page.locator('[data-tab="suggestions"]').click();
+      await page.locator('[data-suggestion="accept"]').click();
+      await page.waitForTimeout(700);
+      assert.match(await page.locator('.refresh-notice').innerText(), /创建新分类/);
+      for (const width of [390,768,1024,1440]) {
+        await page.setViewportSize({width,height:1000});
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+      }
+    }
+    if (task === 'archives' || task === 'all') {
+      await page.goto(base + '/#knowledge/archives');
+      await page.locator('[name=project]').fill('蓝鲸');
+      await page.locator('#project-archive-form button').click();
+      await page.waitForTimeout(1500);
+      console.log('ARCHIVE_BODY', (await page.locator('body').innerText()).slice(0,1500));
+      assert.equal(await page.locator('pre.project-archive-summary').count(), 0);
+      assert.ok(await page.locator('[data-project-event]').count() > 0);
+      await page.locator('[data-project-event]').first().click();
+      assert.ok(await page.locator('[data-event-source]').count());
+      await page.locator('[name=project]').fill('不存在的项目');
+      await page.locator('#project-archive-form button').click();
+      await page.waitForTimeout(1000);
+      assert.match(await page.locator('#project-archive-result').innerText(), /project_not_registered|未找到/);
+      assert.equal(await page.locator('[name=project]').inputValue(), '不存在的项目');
+      for (const width of [390,768,1024,1440]) {
+        await page.setViewportSize({width,height:1000});
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+      }
+    }
+    if (task === 'consistency' || task === 'all') {
+      await page.goto(base + '/#home');
+      await page.waitForSelector('[data-overview-capabilities]');
+      assert.ok(await page.locator('[data-overview-archives]').count());
+      await page.goto(base + '/#knowledge/capabilities');
+      await page.route('**/api/capabilities?*', async route => {
+        const query = new URL(route.request().url()).searchParams.get('q');
+        if (query === '旧查询') await sleep(1500);
+        await route.continue();
+      });
+      await page.locator('[data-memory-query]').fill('旧查询');
+      await page.locator('[data-memory-search]').click();
+      await page.locator('[data-memory-query]').fill('Vue表单');
+      await page.locator('[data-memory-search]').click();
+      await sleep(1800);
+      assert.equal(await page.locator('[data-memory-card]').count(), 1);
+      await page.route('**/api/capabilities?*', route => route.fulfill({status:500,json:{error:'读取暂时失败'}}));
+      await page.locator('[data-memory-search]').click();
+      await sleep(500);
+      assert.match(await page.locator('.refresh-notice').innerText(), /读取失败/);
+      assert.equal(await page.locator('[data-memory-query]').inputValue(), 'Vue表单');
+      await page.unroute('**/api/capabilities?*');
+      for (const width of [390,768,1024,1440]) {
+        await page.setViewportSize({width,height:1000});
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+      }
+    }
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({task, errors}));
+  } finally {
+    if (browser) await browser.close();
+    remote?.kill('SIGTERM');
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });

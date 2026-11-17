@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EvolvMem Neural Matrix · 多智能体记忆同步与进化中枢</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230284c7'/%3E%3Ctext x='32' y='45' fill='%23fff' font-size='38' font-family='Consolas,monospace' font-weight='bold' text-anchor='middle'%3EE%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="./styles/tokens-and-layout.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-main">
+      <a class="brand" href="#overview" data-act="goto-tab" data-route="overview">
+        <span class="brand-mark" aria-hidden="true">E</span>
+        <span class="brand-title">
+          <strong>EVOLVMEM <span class="badge badge-brand mono" style="padding:1px 7px">v2.0</span></strong>
+          <span>多智能体记忆同步与进化中枢</span>
+        </span>
+      </a>
+
+      <nav id="top-nav" class="nav-tabs" aria-label="主导航"></nav>
+
+      <div class="topbar-actions">
+        <div id="auth-controls" class="auth-controls" aria-label="当前登录" hidden>
+          <span id="auth-name" class="auth-name">正在核对登录…</span>
+          <a id="auth-login" class="btn btn-sm" href="/auth/login" hidden>飞书登录</a>
+          <button id="auth-logout" type="button" class="btn btn-ghost btn-sm" data-act="auth-logout" hidden>退出</button>
+          <a id="auth-console" class="btn btn-sm" href="http://192.168.1.135:9600">总控台</a>
+        </div>
+        <select id="ctx-lib-sel" class="compact-select" aria-label="当前库权限视角" title="切换知识库访问视角">
+          <option value="owner_main">个人主库 (可读写)</option>
+          <option value="shared_public">共享项目库 (可读写)</option>
+          <option value="peer_readonly">他人授权库 (只读)</option>
+        </select>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="open-cmd" title="全局搜索跳转 (Ctrl+K)">🔍 搜索 <kbd class="kbd">⌘K</kbd></button>
+        <select id="theme-preset" class="compact-select" aria-label="视觉风格切换">
+          <option value="light" selected>❄️ 冰川白昼</option>
+          <option value="dark">🌌 深空星链</option>
+          <option value="matrix">💠 极光矩阵</option>
+        </select>
+        <button type="button" class="btn btn-sm" data-act="open-diag" title="打开系统诊断、底层遥测与演练面板">
+          <span class="dot dot-ok"></span> 诊断与演练
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="workspace-main" class="workspace" tabindex="-1">
+    <div class="panel">正在初始化 EvolvMem 记忆与进化控制台…</div>
+  </main>
+
+  <div id="drawer-backdrop" class="drawer-backdrop">
+    <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+      <div class="drawer-head">
+        <div>
+          <div id="drawer-sub" class="drawer-sub">三级溯源 · 技术明细</div>
+          <h2 id="drawer-title" class="drawer-title">详情抽屉</h2>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="close-drawer">✕ 关闭</button>
+      </div>
+      <div id="drawer-body" class="drawer-body"></div>
+    </aside>
+  </div>
+
+  <div id="modal-backdrop" class="modal-backdrop">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-head">
+        <h2 id="modal-title" class="drawer-title">操作窗口</h2>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="close-modal">✕ 关闭</button>
+      </div>
+      <div id="modal-body" class="drawer-body"></div>
+    </div>
+  </div>
+
+  <div id="toast-box" class="toast-box" aria-live="polite"></div>
+
+  <script src="./js/state-and-data.js"></script>
+  <script src="./js/sso-session.js"></script>
+  <script src="./js/api-adapter.js"></script>
+  <script src="./js/l3-drawers.js"></script>
+  <script src="./js/render-overview-and-core.js"></script>
+  <script src="./js/render-interceptions.js"></script>
+  <script src="./js/render-pipeline-and-history.js"></script>
+  <script src="./js/render-evolution-and-control.js"></script>
+  <script src="./js/app-shell.js"></script>
+  <template data-page-panel="principles"></template>
+</body>
+</html>

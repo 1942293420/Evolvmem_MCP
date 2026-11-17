@@ -1,0 +1,3513 @@
+{
+  "source_receipt": "artifacts\\pg-schema-metadata-v3-20261101\\schema-metadata-live-v3.json",
+  "source_receipt_sha256": "f36051b843be978baa56b78c2ca7fee98a8d10bdfc4442832cb4dc711f6eb924",
+  "namespaces": {
+    "owner": {
+      "archive_source_exclusions": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "verified_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "verified_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE archive_source_exclusions (\n        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id),\n        payload_sha256 TEXT NOT NULL, reason TEXT NOT NULL, verified_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "c99bb0777b6a011c59f48f3a6f924b783f10b1ad65d48ae0c980b9839ac3a331",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "archive_source_exclusions"
+      },
+      "context_evidence": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "outcome",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "name": "note",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "observed_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "name": "event_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "name": "task_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "name": "verification_level",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'{}'",
+            "name": "conditions_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "1",
+            "name": "experience_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "outcome",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "note",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "observed_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "event_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "task_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "verification_level",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'{}'",
+            "hidden": 0,
+            "name": "conditions_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "experience_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE context_evidence (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,\n        source_id INTEGER REFERENCES context_sources(id),\n        outcome TEXT NOT NULL,\n        note TEXT NOT NULL DEFAULT '',\n        observed_at TEXT NOT NULL,\n        created_at TEXT NOT NULL\n    , event_key TEXT NOT NULL DEFAULT '', task_id TEXT NOT NULL DEFAULT '', verification_level TEXT NOT NULL DEFAULT '', conditions_json TEXT NOT NULL DEFAULT '{}', revision INTEGER NOT NULL DEFAULT 1, experience_version INTEGER NOT NULL DEFAULT 1)",
+        "ddl_sha256": "f695d98d467ced79d34a94d8700d578edd7fc41631fc1bbe8fa1a1d4154d197b",
+        "foreign_keys": [
+          {
+            "from_column": "source_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_sources",
+            "to_column": "id"
+          },
+          {
+            "from_column": "item_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "CASCADE",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              },
+              {
+                "cid": 7,
+                "name": "event_key",
+                "sequence": 1
+              },
+              {
+                "cid": 11,
+                "name": "revision",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE UNIQUE INDEX idx_experience_event ON context_evidence(item_id,event_key,revision) WHERE event_key != ''",
+            "ddl_sha256": "0580ad037d07d307d54b443ad0f329bd331867f669d34b040a3c8d6c1d4a411f",
+            "name": "idx_experience_event",
+            "origin": "c",
+            "partial": true,
+            "sequence": 0,
+            "unique": true
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_context_evidence_item\n        ON context_evidence(item_id)\n    ",
+            "ddl_sha256": "ae8ab38162ddd4b5a08984611cc31995505b4a8dcd3788000948706b597c059e",
+            "name": "idx_context_evidence_item",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          }
+        ],
+        "name": "context_evidence"
+      },
+      "context_sources": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "extraction_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "extraction_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE context_sources (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,\n        archive_id INTEGER REFERENCES session_archives(id),\n        source_kind TEXT NOT NULL,\n        source_ref TEXT NOT NULL DEFAULT '',\n        extraction_version TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        UNIQUE(item_id, source_kind, source_ref)\n    )",
+        "ddl_sha256": "1c24f2549b8bde6aca2d9dd5217093e002a81706534b56467693a98c949482c0",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          },
+          {
+            "from_column": "item_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "CASCADE",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "archive_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 1
+              },
+              {
+                "cid": 3,
+                "name": "source_kind",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_context_sources_archive_item\n        ON context_sources(archive_id, item_id, source_kind)\n    ",
+            "ddl_sha256": "b61a2c22b1fc01e091cf873446ad0c69522a2029e843f4f984c2b05e13ff62e3",
+            "name": "idx_context_sources_archive_item",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_context_sources_item\n        ON context_sources(item_id)\n    ",
+            "ddl_sha256": "3ee2fbd857833f060efe1d5326bc5c5e1a0ed2df15b3dd4fa3ea5eedfc937b24",
+            "name": "idx_context_sources_item",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              },
+              {
+                "cid": 3,
+                "name": "source_kind",
+                "sequence": 1
+              },
+              {
+                "cid": 4,
+                "name": "source_ref",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_context_sources_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "context_sources"
+      },
+      "conversation_history": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "messages",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "content_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "cleaned_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "messages",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "cleaned_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE conversation_history (\n        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id),\n        messages TEXT NOT NULL, body TEXT NOT NULL, content_hash TEXT NOT NULL,\n        cleaned_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "3e831cb1ffb64fec03664fa90a8a52ce8158f8b75eda8b45289b89139173a71e",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "conversation_history"
+      },
+      "session_archive_holds": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "source_context_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_context_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE session_archive_holds(\n        archive_id INTEGER NOT NULL REFERENCES session_archives(id),\n        source_context_id INTEGER NOT NULL REFERENCES context_items(id),\n        reason TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(archive_id, source_context_id)\n    )",
+        "ddl_sha256": "78e160f6653b41ddbfc1ae2a78fb45ae2de39f3d4b07ef2c5cdf62e12f9588f7",
+        "foreign_keys": [
+          {
+            "from_column": "source_context_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          },
+          {
+            "from_column": "archive_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "archive_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "source_context_id",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_session_archive_holds_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "session_archive_holds"
+      },
+      "session_archive_storage": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "manifest_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "content_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "logical_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "manifest_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "logical_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE session_archive_storage (\n        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id) ON DELETE CASCADE,\n        manifest_sha256 TEXT NOT NULL,\n        content_sha256 TEXT NOT NULL,\n        logical_bytes INTEGER NOT NULL\n    )",
+        "ddl_sha256": "e7f8b4712ab49676fe56f4c167073e1ca068851883b7bbbb127cccbd940845e5",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "CASCADE",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "session_archive_storage"
+      },
+      "session_archives": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "adapter",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "external_session_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "payload_path",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'available'",
+            "name": "state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "expires_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "purged_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "adapter",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "external_session_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_path",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'available'",
+            "hidden": 0,
+            "name": "state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "expires_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "purged_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE session_archives (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        project TEXT NOT NULL,\n        adapter TEXT NOT NULL,\n        external_session_id TEXT NOT NULL,\n        payload_path TEXT NOT NULL,\n        payload_sha256 TEXT NOT NULL,\n        state TEXT NOT NULL DEFAULT 'available',\n        expires_at TEXT NOT NULL,\n        purged_at TEXT,\n        created_at TEXT NOT NULL,\n        UNIQUE(adapter, external_session_id)\n    )",
+        "ddl_sha256": "98dcc4946ca4f3a8ebd944bf0ed3e26cc40ba236996c99bc4e3321e2e5c2b253",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 6,
+                "name": "state",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_session_archives_state ON session_archives(state)",
+            "ddl_sha256": "99b4bf4e4b6f7a527dd86e7e12a99a436407ebe27ae189d46bc51fb6429171ba",
+            "name": "idx_session_archives_state",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "project",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_session_archives_project ON session_archives(project)",
+            "ddl_sha256": "145e21177b1a8caf65c452f945f23aa51129a179fe039251c1b6b6d6f50226cf",
+            "name": "idx_session_archives_project",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "adapter",
+                "sequence": 0
+              },
+              {
+                "cid": 3,
+                "name": "external_session_id",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_session_archives_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "session_archives"
+      }
+    },
+    "kane": {
+      "archive_source_exclusions": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "verified_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "verified_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE archive_source_exclusions (\n        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id),\n        payload_sha256 TEXT NOT NULL, reason TEXT NOT NULL, verified_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "c99bb0777b6a011c59f48f3a6f924b783f10b1ad65d48ae0c980b9839ac3a331",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "archive_source_exclusions"
+      },
+      "context_evidence": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "outcome",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "name": "note",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "observed_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "name": "event_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "name": "task_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "name": "verification_level",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'{}'",
+            "name": "conditions_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "1",
+            "name": "experience_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "outcome",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "note",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "observed_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "event_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "task_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "verification_level",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'{}'",
+            "hidden": 0,
+            "name": "conditions_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "experience_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE context_evidence (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,\n        source_id INTEGER REFERENCES context_sources(id),\n        outcome TEXT NOT NULL,\n        note TEXT NOT NULL DEFAULT '',\n        observed_at TEXT NOT NULL,\n        created_at TEXT NOT NULL\n    , event_key TEXT NOT NULL DEFAULT '', task_id TEXT NOT NULL DEFAULT '', verification_level TEXT NOT NULL DEFAULT '', conditions_json TEXT NOT NULL DEFAULT '{}', revision INTEGER NOT NULL DEFAULT 1, experience_version INTEGER NOT NULL DEFAULT 1)",
+        "ddl_sha256": "f695d98d467ced79d34a94d8700d578edd7fc41631fc1bbe8fa1a1d4154d197b",
+        "foreign_keys": [
+          {
+            "from_column": "source_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_sources",
+            "to_column": "id"
+          },
+          {
+            "from_column": "item_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "CASCADE",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              },
+              {
+                "cid": 7,
+                "name": "event_key",
+                "sequence": 1
+              },
+              {
+                "cid": 11,
+                "name": "revision",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE UNIQUE INDEX idx_experience_event ON context_evidence(item_id,event_key,revision) WHERE event_key != ''",
+            "ddl_sha256": "0580ad037d07d307d54b443ad0f329bd331867f669d34b040a3c8d6c1d4a411f",
+            "name": "idx_experience_event",
+            "origin": "c",
+            "partial": true,
+            "sequence": 0,
+            "unique": true
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_context_evidence_item\n        ON context_evidence(item_id)\n    ",
+            "ddl_sha256": "ae8ab38162ddd4b5a08984611cc31995505b4a8dcd3788000948706b597c059e",
+            "name": "idx_context_evidence_item",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          }
+        ],
+        "name": "context_evidence"
+      },
+      "context_sources": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "extraction_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "extraction_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE context_sources (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,\n        archive_id INTEGER REFERENCES session_archives(id),\n        source_kind TEXT NOT NULL,\n        source_ref TEXT NOT NULL DEFAULT '',\n        extraction_version TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        UNIQUE(item_id, source_kind, source_ref)\n    )",
+        "ddl_sha256": "1c24f2549b8bde6aca2d9dd5217093e002a81706534b56467693a98c949482c0",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          },
+          {
+            "from_column": "item_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "CASCADE",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "archive_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 1
+              },
+              {
+                "cid": 3,
+                "name": "source_kind",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_context_sources_archive_item\n        ON context_sources(archive_id, item_id, source_kind)\n    ",
+            "ddl_sha256": "b61a2c22b1fc01e091cf873446ad0c69522a2029e843f4f984c2b05e13ff62e3",
+            "name": "idx_context_sources_archive_item",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_context_sources_item\n        ON context_sources(item_id)\n    ",
+            "ddl_sha256": "3ee2fbd857833f060efe1d5326bc5c5e1a0ed2df15b3dd4fa3ea5eedfc937b24",
+            "name": "idx_context_sources_item",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              },
+              {
+                "cid": 3,
+                "name": "source_kind",
+                "sequence": 1
+              },
+              {
+                "cid": 4,
+                "name": "source_ref",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_context_sources_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "context_sources"
+      },
+      "conversation_history": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "messages",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "content_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "cleaned_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "messages",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "cleaned_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE conversation_history (\n        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id),\n        messages TEXT NOT NULL, body TEXT NOT NULL, content_hash TEXT NOT NULL,\n        cleaned_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "3e831cb1ffb64fec03664fa90a8a52ce8158f8b75eda8b45289b89139173a71e",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "conversation_history"
+      },
+      "session_archive_holds": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "source_context_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_context_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE session_archive_holds(\n        archive_id INTEGER NOT NULL REFERENCES session_archives(id),\n        source_context_id INTEGER NOT NULL REFERENCES context_items(id),\n        reason TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(archive_id, source_context_id)\n    )",
+        "ddl_sha256": "78e160f6653b41ddbfc1ae2a78fb45ae2de39f3d4b07ef2c5cdf62e12f9588f7",
+        "foreign_keys": [
+          {
+            "from_column": "source_context_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          },
+          {
+            "from_column": "archive_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "archive_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "source_context_id",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_session_archive_holds_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "session_archive_holds"
+      },
+      "session_archive_storage": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "manifest_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "content_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "logical_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "manifest_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "logical_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE session_archive_storage (\n        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id) ON DELETE CASCADE,\n        manifest_sha256 TEXT NOT NULL,\n        content_sha256 TEXT NOT NULL,\n        logical_bytes INTEGER NOT NULL\n    )",
+        "ddl_sha256": "e7f8b4712ab49676fe56f4c167073e1ca068851883b7bbbb127cccbd940845e5",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "CASCADE",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "session_archive_storage"
+      },
+      "session_archives": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "adapter",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "external_session_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "payload_path",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'available'",
+            "name": "state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "expires_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "purged_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "adapter",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "external_session_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_path",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'available'",
+            "hidden": 0,
+            "name": "state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "expires_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "purged_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE session_archives (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        project TEXT NOT NULL,\n        adapter TEXT NOT NULL,\n        external_session_id TEXT NOT NULL,\n        payload_path TEXT NOT NULL,\n        payload_sha256 TEXT NOT NULL,\n        state TEXT NOT NULL DEFAULT 'available',\n        expires_at TEXT NOT NULL,\n        purged_at TEXT,\n        created_at TEXT NOT NULL,\n        UNIQUE(adapter, external_session_id)\n    )",
+        "ddl_sha256": "98dcc4946ca4f3a8ebd944bf0ed3e26cc40ba236996c99bc4e3321e2e5c2b253",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 6,
+                "name": "state",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_session_archives_state ON session_archives(state)",
+            "ddl_sha256": "99b4bf4e4b6f7a527dd86e7e12a99a436407ebe27ae189d46bc51fb6429171ba",
+            "name": "idx_session_archives_state",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "project",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_session_archives_project ON session_archives(project)",
+            "ddl_sha256": "145e21177b1a8caf65c452f945f23aa51129a179fe039251c1b6b6d6f50226cf",
+            "name": "idx_session_archives_project",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "adapter",
+                "sequence": 0
+              },
+              {
+                "cid": 3,
+                "name": "external_session_id",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_session_archives_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "session_archives"
+      }
+    },
+    "public": {
+      "archive_source_exclusions": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "verified_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "verified_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE archive_source_exclusions (\n        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id),\n        payload_sha256 TEXT NOT NULL, reason TEXT NOT NULL, verified_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "c99bb0777b6a011c59f48f3a6f924b783f10b1ad65d48ae0c980b9839ac3a331",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "archive_source_exclusions"
+      },
+      "context_evidence": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "outcome",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "name": "note",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "observed_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "name": "event_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "name": "task_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "name": "verification_level",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'{}'",
+            "name": "conditions_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "1",
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "1",
+            "name": "experience_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "outcome",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "note",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "observed_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "event_key",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "task_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "verification_level",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 10,
+            "default_sql": "'{}'",
+            "hidden": 0,
+            "name": "conditions_json",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 11,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "1",
+            "hidden": 0,
+            "name": "experience_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE context_evidence (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,\n        source_id INTEGER REFERENCES context_sources(id),\n        outcome TEXT NOT NULL,\n        note TEXT NOT NULL DEFAULT '',\n        observed_at TEXT NOT NULL,\n        created_at TEXT NOT NULL\n    , event_key TEXT NOT NULL DEFAULT '', task_id TEXT NOT NULL DEFAULT '', verification_level TEXT NOT NULL DEFAULT '', conditions_json TEXT NOT NULL DEFAULT '{}', revision INTEGER NOT NULL DEFAULT 1, experience_version INTEGER NOT NULL DEFAULT 1)",
+        "ddl_sha256": "f695d98d467ced79d34a94d8700d578edd7fc41631fc1bbe8fa1a1d4154d197b",
+        "foreign_keys": [
+          {
+            "from_column": "source_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_sources",
+            "to_column": "id"
+          },
+          {
+            "from_column": "item_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "CASCADE",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              },
+              {
+                "cid": 7,
+                "name": "event_key",
+                "sequence": 1
+              },
+              {
+                "cid": 11,
+                "name": "revision",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE UNIQUE INDEX idx_experience_event ON context_evidence(item_id,event_key,revision) WHERE event_key != ''",
+            "ddl_sha256": "0580ad037d07d307d54b443ad0f329bd331867f669d34b040a3c8d6c1d4a411f",
+            "name": "idx_experience_event",
+            "origin": "c",
+            "partial": true,
+            "sequence": 0,
+            "unique": true
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_context_evidence_item\n        ON context_evidence(item_id)\n    ",
+            "ddl_sha256": "ae8ab38162ddd4b5a08984611cc31995505b4a8dcd3788000948706b597c059e",
+            "name": "idx_context_evidence_item",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          }
+        ],
+        "name": "context_evidence"
+      },
+      "context_sources": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "extraction_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_kind",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "source_ref",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "extraction_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE context_sources (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,\n        archive_id INTEGER REFERENCES session_archives(id),\n        source_kind TEXT NOT NULL,\n        source_ref TEXT NOT NULL DEFAULT '',\n        extraction_version TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        UNIQUE(item_id, source_kind, source_ref)\n    )",
+        "ddl_sha256": "1c24f2549b8bde6aca2d9dd5217093e002a81706534b56467693a98c949482c0",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          },
+          {
+            "from_column": "item_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "CASCADE",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "archive_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 1
+              },
+              {
+                "cid": 3,
+                "name": "source_kind",
+                "sequence": 2
+              }
+            ],
+            "ddl": "CREATE INDEX idx_context_sources_archive_item\n        ON context_sources(archive_id, item_id, source_kind)\n    ",
+            "ddl_sha256": "b61a2c22b1fc01e091cf873446ad0c69522a2029e843f4f984c2b05e13ff62e3",
+            "name": "idx_context_sources_archive_item",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_context_sources_item\n        ON context_sources(item_id)\n    ",
+            "ddl_sha256": "3ee2fbd857833f060efe1d5326bc5c5e1a0ed2df15b3dd4fa3ea5eedfc937b24",
+            "name": "idx_context_sources_item",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "item_id",
+                "sequence": 0
+              },
+              {
+                "cid": 3,
+                "name": "source_kind",
+                "sequence": 1
+              },
+              {
+                "cid": 4,
+                "name": "source_ref",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_context_sources_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "context_sources"
+      },
+      "conversation_history": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "messages",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "content_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "cleaned_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "messages",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "body",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "cleaned_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE conversation_history (\n        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id),\n        messages TEXT NOT NULL, body TEXT NOT NULL, content_hash TEXT NOT NULL,\n        cleaned_at TEXT NOT NULL\n    )",
+        "ddl_sha256": "3e831cb1ffb64fec03664fa90a8a52ce8158f8b75eda8b45289b89139173a71e",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "conversation_history"
+      },
+      "session_archive_holds": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "source_context_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "source_context_id",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "reason",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE session_archive_holds(\n        archive_id INTEGER NOT NULL REFERENCES session_archives(id),\n        source_context_id INTEGER NOT NULL REFERENCES context_items(id),\n        reason TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(archive_id, source_context_id)\n    )",
+        "ddl_sha256": "78e160f6653b41ddbfc1ae2a78fb45ae2de39f3d4b07ef2c5cdf62e12f9588f7",
+        "foreign_keys": [
+          {
+            "from_column": "source_context_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          },
+          {
+            "from_column": "archive_id",
+            "id": 1,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "archive_id",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "source_context_id",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_session_archive_holds_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "session_archive_holds"
+      },
+      "session_archive_storage": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "manifest_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "content_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "logical_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "archive_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "manifest_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "content_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "logical_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE session_archive_storage (\n        archive_id INTEGER PRIMARY KEY REFERENCES session_archives(id) ON DELETE CASCADE,\n        manifest_sha256 TEXT NOT NULL,\n        content_sha256 TEXT NOT NULL,\n        logical_bytes INTEGER NOT NULL\n    )",
+        "ddl_sha256": "e7f8b4712ab49676fe56f4c167073e1ca068851883b7bbbb127cccbd940845e5",
+        "foreign_keys": [
+          {
+            "from_column": "archive_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "CASCADE",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "session_archives",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "session_archive_storage"
+      },
+      "session_archives": {
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "adapter",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "external_session_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "payload_path",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'available'",
+            "name": "state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "expires_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "purged_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "adapter",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "external_session_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_path",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 6,
+            "default_sql": "'available'",
+            "hidden": 0,
+            "name": "state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "expires_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "purged_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "created_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE session_archives (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        project TEXT NOT NULL,\n        adapter TEXT NOT NULL,\n        external_session_id TEXT NOT NULL,\n        payload_path TEXT NOT NULL,\n        payload_sha256 TEXT NOT NULL,\n        state TEXT NOT NULL DEFAULT 'available',\n        expires_at TEXT NOT NULL,\n        purged_at TEXT,\n        created_at TEXT NOT NULL,\n        UNIQUE(adapter, external_session_id)\n    )",
+        "ddl_sha256": "98dcc4946ca4f3a8ebd944bf0ed3e26cc40ba236996c99bc4e3321e2e5c2b253",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 6,
+                "name": "state",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_session_archives_state ON session_archives(state)",
+            "ddl_sha256": "99b4bf4e4b6f7a527dd86e7e12a99a436407ebe27ae189d46bc51fb6429171ba",
+            "name": "idx_session_archives_state",
+            "origin": "c",
+            "partial": false,
+            "sequence": 0,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 1,
+                "name": "project",
+                "sequence": 0
+              }
+            ],
+            "ddl": "CREATE INDEX idx_session_archives_project ON session_archives(project)",
+            "ddl_sha256": "145e21177b1a8caf65c452f945f23aa51129a179fe039251c1b6b6d6f50226cf",
+            "name": "idx_session_archives_project",
+            "origin": "c",
+            "partial": false,
+            "sequence": 1,
+            "unique": false
+          },
+          {
+            "columns": [
+              {
+                "cid": 2,
+                "name": "adapter",
+                "sequence": 0
+              },
+              {
+                "cid": 3,
+                "name": "external_session_id",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_session_archives_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 2,
+            "unique": true
+          }
+        ],
+        "name": "session_archives"
+      }
+    }
+  }
+}

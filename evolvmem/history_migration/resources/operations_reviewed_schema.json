@@ -1,0 +1,1924 @@
+{
+  "format": "reviewed-operations-nine-v1",
+  "namespaces": {
+    "kane": {
+      "context_health_generation": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "generation",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "schema_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "generation",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "schema_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE context_health_generation (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, generation INTEGER NOT NULL CHECK(generation>=0), schema_version INTEGER NOT NULL)",
+        "ddl_sha256": "568efb1cbe9b91d7f89f685511f7f5629cee32ca6fc803bed19e195fc5ce5dc8",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "context_health_generation",
+        "rowid_alias": "id"
+      },
+      "lan_memory_revision": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_memory_revision(id INTEGER PRIMARY KEY, revision INTEGER NOT NULL)",
+        "ddl_sha256": "ee8b2ed00cf5987da05a8a191c8e7cfd7e4f017fa827809bbf15cae9c9650196",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "lan_memory_revision",
+        "rowid_alias": "id"
+      },
+      "lan_workspace_bindings": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "remote_key",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "workstream_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "remote_key",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workstream_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_workspace_bindings (\n            remote_key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, workstream_id TEXT NOT NULL)",
+        "ddl_sha256": "872cf133738c1b47be969ef3cfef1f4ce5d4370a5e1b311ff2682297b095ef49",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "remote_key",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_lan_workspace_bindings_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "lan_workspace_bindings",
+        "rowid_alias": null
+      },
+      "lan_write_requests": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "user",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "tool",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "request_id",
+            "not_null": true,
+            "pk_position": 3,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "payload_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "result",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "user",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "tool",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "request_id",
+            "not_null": true,
+            "pk_position": 3,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "result",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_write_requests (\n                user TEXT NOT NULL, tool TEXT NOT NULL, request_id TEXT NOT NULL,\n                payload_hash TEXT NOT NULL, result TEXT,\n                PRIMARY KEY(user, tool, request_id))",
+        "ddl_sha256": "bbdcc8a960986a89b6157f319943fcba3ce06b04208eef878721a5c9ff5ac0e8",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "user",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "tool",
+                "sequence": 1
+              },
+              {
+                "cid": 2,
+                "name": "request_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_lan_write_requests_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "lan_write_requests",
+        "rowid_alias": null
+      }
+    },
+    "owner": {
+      "context_health_generation": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "generation",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "schema_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "generation",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "schema_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE context_health_generation (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, generation INTEGER NOT NULL CHECK(generation>=0), schema_version INTEGER NOT NULL)",
+        "ddl_sha256": "568efb1cbe9b91d7f89f685511f7f5629cee32ca6fc803bed19e195fc5ce5dc8",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "context_health_generation",
+        "rowid_alias": "id"
+      },
+      "lan_memory_revision": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_memory_revision(id INTEGER PRIMARY KEY, revision INTEGER NOT NULL)",
+        "ddl_sha256": "ee8b2ed00cf5987da05a8a191c8e7cfd7e4f017fa827809bbf15cae9c9650196",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "lan_memory_revision",
+        "rowid_alias": "id"
+      },
+      "lan_workspace_bindings": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "remote_key",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "workstream_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "remote_key",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "fingerprint",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "workstream_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_workspace_bindings (\n            remote_key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, workstream_id TEXT NOT NULL)",
+        "ddl_sha256": "872cf133738c1b47be969ef3cfef1f4ce5d4370a5e1b311ff2682297b095ef49",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "remote_key",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_lan_workspace_bindings_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "lan_workspace_bindings",
+        "rowid_alias": null
+      },
+      "lan_write_requests": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "user",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "tool",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "request_id",
+            "not_null": true,
+            "pk_position": 3,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "payload_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "result",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "user",
+            "not_null": true,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "tool",
+            "not_null": true,
+            "pk_position": 2,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "request_id",
+            "not_null": true,
+            "pk_position": 3,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "payload_hash",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "result",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_write_requests (\n                user TEXT NOT NULL, tool TEXT NOT NULL, request_id TEXT NOT NULL,\n                payload_hash TEXT NOT NULL, result TEXT,\n                PRIMARY KEY(user, tool, request_id))",
+        "ddl_sha256": "bbdcc8a960986a89b6157f319943fcba3ce06b04208eef878721a5c9ff5ac0e8",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "user",
+                "sequence": 0
+              },
+              {
+                "cid": 1,
+                "name": "tool",
+                "sequence": 1
+              },
+              {
+                "cid": 2,
+                "name": "request_id",
+                "sequence": 2
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_lan_write_requests_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "lan_write_requests",
+        "rowid_alias": null
+      },
+      "local_capture_files": {
+        "autoincrement": true,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "path",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "0",
+            "name": "device",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": "0",
+            "name": "inode",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": "0",
+            "name": "scanned_offset_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": "0",
+            "name": "scanned_line",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "name": "pending_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "0",
+            "name": "since_floor",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 9,
+            "default_sql": "0",
+            "name": "file_size",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "0",
+            "name": "file_mtime",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 11,
+            "default_sql": "0",
+            "name": "anchor_offset",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "0",
+            "name": "anchor_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 13,
+            "default_sql": "''",
+            "name": "anchor_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": "'advancing'",
+            "name": "file_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "0",
+            "name": "blocked_cap_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 16,
+            "default_sql": "0",
+            "name": "archived_offset_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 17,
+            "default_sql": "0",
+            "name": "archived_line",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 18,
+            "default_sql": "0",
+            "name": "archived_batches",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 19,
+            "default_sql": "0",
+            "name": "archived_events",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 20,
+            "default_sql": "0",
+            "name": "filtered_events",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 21,
+            "default_sql": "0",
+            "name": "failed_batches",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 22,
+            "default_sql": "0",
+            "name": "rewrite_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 23,
+            "default_sql": "''",
+            "name": "last_error",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 24,
+            "default_sql": "''",
+            "name": "last_success_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 25,
+            "default_sql": "''",
+            "name": "last_error_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 26,
+            "default_sql": "''",
+            "name": "first_seen_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 27,
+            "default_sql": "''",
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "session_id",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "path",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "device",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "inode",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "scanned_offset_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "scanned_line",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "pending_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "since_floor",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 9,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "file_size",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "file_mtime",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 11,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "anchor_offset",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "anchor_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 13,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "anchor_sha256",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 14,
+            "default_sql": "'advancing'",
+            "hidden": 0,
+            "name": "file_state",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 15,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "blocked_cap_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 16,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "archived_offset_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 17,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "archived_line",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 18,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "archived_batches",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 19,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "archived_events",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 20,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "filtered_events",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 21,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "failed_batches",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 22,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "rewrite_count",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 23,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "last_error",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 24,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "last_success_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 25,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "last_error_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 26,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "first_seen_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 27,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "updated_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE local_capture_files (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        session_id TEXT NOT NULL,\n        path TEXT NOT NULL,\n        device INTEGER NOT NULL DEFAULT 0,\n        inode INTEGER NOT NULL DEFAULT 0,\n        scanned_offset_bytes INTEGER NOT NULL DEFAULT 0,\n        scanned_line INTEGER NOT NULL DEFAULT 0,\n        pending_bytes INTEGER NOT NULL DEFAULT 0,\n        since_floor REAL NOT NULL DEFAULT 0,\n        file_size INTEGER NOT NULL DEFAULT 0,\n        file_mtime REAL NOT NULL DEFAULT 0,\n        anchor_offset INTEGER NOT NULL DEFAULT 0,\n        anchor_bytes INTEGER NOT NULL DEFAULT 0,\n        anchor_sha256 TEXT NOT NULL DEFAULT '',\n        file_state TEXT NOT NULL DEFAULT 'advancing',\n        blocked_cap_bytes INTEGER NOT NULL DEFAULT 0,\n        archived_offset_bytes INTEGER NOT NULL DEFAULT 0,\n        archived_line INTEGER NOT NULL DEFAULT 0,\n        archived_batches INTEGER NOT NULL DEFAULT 0,\n        archived_events INTEGER NOT NULL DEFAULT 0,\n        filtered_events INTEGER NOT NULL DEFAULT 0,\n        failed_batches INTEGER NOT NULL DEFAULT 0,\n        rewrite_count INTEGER NOT NULL DEFAULT 0,\n        last_error TEXT NOT NULL DEFAULT '',\n        last_success_at TEXT NOT NULL DEFAULT '',\n        last_error_at TEXT NOT NULL DEFAULT '',\n        first_seen_at TEXT NOT NULL DEFAULT '',\n        updated_at TEXT NOT NULL DEFAULT '',\n        UNIQUE(device, inode)\n    )",
+        "ddl_sha256": "8bb5fc0148121a87a79e1e6dda0df19c4d70bf1341f946d0b1655e709a69f78c",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 3,
+                "name": "device",
+                "sequence": 0
+              },
+              {
+                "cid": 4,
+                "name": "inode",
+                "sequence": 1
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_local_capture_files_1",
+            "origin": "u",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "local_capture_files",
+        "rowid_alias": "id"
+      },
+      "local_capture_scans": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": "''",
+            "name": "last_scan_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "''",
+            "name": "last_success_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "''",
+            "name": "last_error",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "0",
+            "name": "scans",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": "0",
+            "name": "scanned_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": "0",
+            "name": "archived_batches",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "name": "archived_events",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "0",
+            "name": "filtered_events",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "last_scan_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "last_success_at",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "default_sql": "''",
+            "hidden": 0,
+            "name": "last_error",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "scans",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 5,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "scanned_bytes",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 6,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "archived_batches",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 7,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "archived_events",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 8,
+            "default_sql": "0",
+            "hidden": 0,
+            "name": "filtered_events",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE local_capture_scans (\n        id INTEGER PRIMARY KEY CHECK (id=1),\n        last_scan_at TEXT NOT NULL DEFAULT '',\n        last_success_at TEXT NOT NULL DEFAULT '',\n        last_error TEXT NOT NULL DEFAULT '',\n        scans INTEGER NOT NULL DEFAULT 0,\n        scanned_bytes INTEGER NOT NULL DEFAULT 0,\n        archived_batches INTEGER NOT NULL DEFAULT 0,\n        archived_events INTEGER NOT NULL DEFAULT 0,\n        filtered_events INTEGER NOT NULL DEFAULT 0\n    )",
+        "ddl_sha256": "0b35ea741246175524a7afdbee0ec5a0811496ae8f723a20ce29051fa1094d96",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "local_capture_scans",
+        "rowid_alias": "id"
+      },
+      "organization_review_vectors": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "cache_key",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "vector",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "BLOB"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "cache_key",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "vector",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "BLOB"
+          }
+        ],
+        "ddl": "CREATE TABLE organization_review_vectors(cache_key TEXT PRIMARY KEY, vector BLOB NOT NULL)",
+        "ddl_sha256": "c7d754397b070be9a889b18807cdef93dad52369de1da5680e0d3c09cee05f24",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [
+          {
+            "columns": [
+              {
+                "cid": 0,
+                "name": "cache_key",
+                "sequence": 0
+              }
+            ],
+            "ddl": null,
+            "ddl_sha256": null,
+            "name": "sqlite_autoindex_organization_review_vectors_1",
+            "origin": "pk",
+            "partial": false,
+            "sequence": 0,
+            "unique": true
+          }
+        ],
+        "name": "organization_review_vectors",
+        "rowid_alias": null
+      },
+      "round_metrics": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "round",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "batch_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "m1_valid_rate",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "m1_samples",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "m2_reuse_rate",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "m3_per_project",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "name": "m3_items_per_correction",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "name": "m4_auto_rate",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "name": "m4_samples",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "name": "pending_count",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "name": "candidate_count",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "name": "auto_named_count",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "name": "measured_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "round",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "batch_id",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "m1_valid_rate",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "m1_samples",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "m2_reuse_rate",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "m3_per_project",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 6,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "m3_items_per_correction",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 7,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "m4_auto_rate",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "REAL"
+          },
+          {
+            "cid": 8,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "m4_samples",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 9,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "pending_count",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 10,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "candidate_count",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 11,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "auto_named_count",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 12,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "measured_at",
+            "not_null": false,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE round_metrics (\n    round                   INTEGER PRIMARY KEY,\n    batch_id                TEXT,\n    m1_valid_rate           REAL,\n    m1_samples              INTEGER,\n    m2_reuse_rate           REAL,\n    m3_per_project          REAL,\n    m3_items_per_correction REAL,\n    m4_auto_rate            REAL,\n    m4_samples              INTEGER,\n    pending_count           INTEGER,\n    candidate_count         INTEGER,\n    auto_named_count        INTEGER,\n    measured_at             TEXT\n)",
+        "ddl_sha256": "a030d3381b189c9d652001a5e4930d4cff806bf67c8e2dd016c80c3ec63c5d5c",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "round_metrics",
+        "rowid_alias": "round"
+      }
+    },
+    "public": {
+      "context_health_generation": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "generation",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "schema_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "generation",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "schema_version",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE context_health_generation (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, generation INTEGER NOT NULL CHECK(generation>=0), schema_version INTEGER NOT NULL)",
+        "ddl_sha256": "568efb1cbe9b91d7f89f685511f7f5629cee32ca6fc803bed19e195fc5ce5dc8",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "context_health_generation",
+        "rowid_alias": "id"
+      },
+      "lan_memory_revision": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "revision",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_memory_revision(id INTEGER PRIMARY KEY, revision INTEGER NOT NULL)",
+        "ddl_sha256": "ee8b2ed00cf5987da05a8a191c8e7cfd7e4f017fa827809bbf15cae9c9650196",
+        "foreign_keys": [],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "lan_memory_revision",
+        "rowid_alias": "id"
+      },
+      "lan_publications": {
+        "autoincrement": false,
+        "columns": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "name": "context_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "name": "author",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "name": "active",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "columns_xinfo": [
+          {
+            "cid": 0,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "context_id",
+            "not_null": false,
+            "pk_position": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "author",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 2,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "active",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 3,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "title",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "summary",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 5,
+            "default_sql": null,
+            "hidden": 0,
+            "name": "project",
+            "not_null": true,
+            "pk_position": 0,
+            "type": "TEXT"
+          }
+        ],
+        "ddl": "CREATE TABLE lan_publications (\n                context_id INTEGER PRIMARY KEY REFERENCES context_items(id),\n                author TEXT NOT NULL CHECK(author IN ('jiangli','kane')),\n                active INTEGER NOT NULL CHECK(active IN (0,1)),\n                title TEXT NOT NULL, summary TEXT NOT NULL, project TEXT NOT NULL)",
+        "ddl_sha256": "e97f23e60055fae0a4646687f5988c08eaa6f806b59e7e03e05f72cc58036e2e",
+        "foreign_keys": [
+          {
+            "from_column": "context_id",
+            "id": 0,
+            "match": "NONE",
+            "on_delete": "NO ACTION",
+            "on_update": "NO ACTION",
+            "sequence": 0,
+            "target_table": "context_items",
+            "to_column": "id"
+          }
+        ],
+        "index_metadata": "collected",
+        "indexes": [],
+        "name": "lan_publications",
+        "rowid_alias": "context_id"
+      }
+    }
+  },
+  "source_sha256": "f36051b843be978baa56b78c2ca7fee98a8d10bdfc4442832cb4dc711f6eb924"
+}

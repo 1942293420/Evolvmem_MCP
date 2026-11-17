@@ -1,0 +1,197 @@
+"""VectorIndex 测试。"""
+
+import numpy as np
+import pytest
+from evolvmem import kimi_hooks as hooks
+from evolvmem.memory_store import MemoryStore
+from evolvmem.vector_index import VectorIndex
+
+
+def make_embedding(dim=512):
+    """生成随机归一化向量。"""
+    v = np.random.randn(dim).astype(np.float32)
+    return v / np.linalg.norm(v)
+
+
+class TestVectorIndex:
+    def test_custom_path_uses_its_own_dirty_marker(self, test_config, temp_dir):
+        """A Context Core index must not mark the legacy index as unsynchronized."""
+        custom_path = temp_dir / "context_vectors.usearch"
+        idx = VectorIndex(test_config, path=custom_path)
+        idx.initialize(dim=2)
+
+        idx.add(1, np.array([1.0, 0.0], dtype=np.float32))
+
+        assert idx.path == custom_path.resolve()
+        assert custom_path.with_suffix(".usearch.dirty").exists()
+        assert not test_config.vector_path.with_suffix(".usearch.dirty").exists()
+        idx.close()
+
+    def test_initialize_creates_index(self, test_config):
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+        assert idx.count() == 0
+        idx.close()
+
+    def test_add_and_search(self, test_config):
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+
+        # 添加 3 条向量
+        v1 = np.ones(512, dtype=np.float32) / np.sqrt(512)
+        v2 = np.zeros(512, dtype=np.float32)
+        v2[0] = 1.0
+        v3 = -np.ones(512, dtype=np.float32) / np.sqrt(512)
+
+        idx.add(1, v1)
+        idx.add(2, v2)
+        idx.add(3, v3)
+        idx.save()
+
+        # 搜索
+        results = idx.search(v1, k=3)
+        ids = [r["id"] for r in results]
+        assert ids[0] == 1  # v1 最接近自己
+        idx.close()
+
+    def test_remove_keeps_count_in_sync(self, test_config):
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+        v = np.ones(512, dtype=np.float32) / np.sqrt(512)
+
+        idx.add(1, v)
+        idx.add(2, v)
+        assert idx.count() == 2
+
+        assert idx.remove(1) is True
+        assert idx.remove(999) is False  # 不存在的 id 不抛异常
+        idx.save()
+
+        assert idx.count() == 1
+        results = idx.search(v, k=2)
+        assert [r["id"] for r in results] == [2]
+        idx.close()
+
+    def test_persistence_survives_reopen(self, test_config):
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+        v = np.ones(512, dtype=np.float32) / np.sqrt(512)
+        idx.add(42, v)
+        idx.save()
+        idx.close()
+
+        # 重新打开
+        idx2 = VectorIndex(test_config)
+        idx2.initialize(dim=512)
+        assert idx2.count() == 1
+        results = idx2.search(v, k=1)
+        assert results[0]["id"] == 42
+        idx2.close()
+
+    def test_rebuild_from_ids(self, test_config):
+        """模拟崩溃后从 SQLite 重建。"""
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+
+        ids = [1, 2, 3]
+        embeddings = [make_embedding() for _ in range(3)]
+        idx.add_batch(ids, embeddings)
+        idx.save()
+
+        # 模拟重建：用不同 ID 和不同向量替换全部数据
+        new_ids = [4, 5]
+        new_embeddings = [make_embedding() for _ in range(2)]
+        idx2 = VectorIndex(test_config)
+        idx2.initialize(dim=512)
+        idx2.rebuild(new_ids, new_embeddings)  # 全量替换
+        assert idx2.count() == 2
+
+        # 确认旧 ID 不再存在，新 ID 可检索
+        results = idx2.search(new_embeddings[0], k=2)
+        found_ids = [r["id"] for r in results]
+        assert 4 in found_ids and 5 in found_ids
+        assert 1 not in found_ids and 2 not in found_ids and 3 not in found_ids
+        idx2.close()
+
+    def test_sync_consistency(self, test_config):
+        """检测 USearch 与 SQLite 记录数是否一致。"""
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+        # 初始状态：一致
+        assert idx.check_consistency(expected_count=0)
+
+        idx.add(1, make_embedding())
+        idx.save()
+        assert idx.check_consistency(expected_count=1)
+        assert not idx.check_consistency(expected_count=2)  # 不一致
+        idx.close()
+
+    def test_dirty_marker_detects_equal_cardinality_drift_and_rebuild_clears_it(
+            self, test_config):
+        embedding = make_embedding()
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+        idx.add(1, embedding)
+        idx.save()
+        idx.mark_dirty()
+
+        assert idx.count() == 1
+        assert idx.is_dirty() is True
+        assert idx.check_consistency(expected_count=1) is False
+        idx.close()
+
+        reopened = VectorIndex(test_config)
+        reopened.initialize(dim=512)
+        assert reopened.count() == 1
+        assert reopened.is_dirty() is True
+        assert reopened.check_consistency(expected_count=1) is False
+        reopened.save()
+        assert reopened.is_dirty() is True
+
+        reopened.rebuild([2], [embedding])
+
+        assert reopened.is_dirty() is False
+        assert reopened.check_consistency(expected_count=1) is True
+        reopened.close()
+
+    def test_failed_post_commit_sync_leaves_durable_dirty_marker(
+            self, monkeypatch, test_config):
+        class FailingEngine:
+            is_loaded = True
+
+            def encode_document(self, _value):
+                raise RuntimeError("synthetic vector failure")
+
+        logs = []
+        monkeypatch.setattr(hooks, "_log", logs.append)
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+        idx.add(999, make_embedding())
+        idx.save()
+        with MemoryStore(test_config) as store:
+            memory_id = store.add(
+                "project:test:decision:vector",
+                "采用长期向量同步方案，因为它能够支持语义检索。",
+            )
+
+            hooks._sync_candidate_vectors(
+                store,
+                idx,
+                FailingEngine(),
+                [memory_id],
+            )
+
+            assert store.get_by_id(memory_id)["status"] == "active"
+        assert idx.is_dirty() is True
+        assert idx.check_consistency(expected_count=1) is False
+        assert logs == ["vector sync skipped: RuntimeError"]
+        idx.save()
+        assert idx.is_dirty() is True
+        idx.close()
+
+    def test_empty_search_returns_empty(self, test_config):
+        idx = VectorIndex(test_config)
+        idx.initialize(dim=512)
+        results = idx.search(make_embedding(), k=10)
+        assert results == []
+        idx.close()

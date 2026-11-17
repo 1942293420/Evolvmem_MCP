@@ -1,0 +1,871 @@
+{
+  "organization_tasks": {
+    "column_count": 21,
+    "columns": [
+      {
+        "cid": 0,
+        "default_sql": null,
+        "name": "id",
+        "not_null": false,
+        "pk_position": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "default_sql": null,
+        "name": "source_key",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "default_sql": null,
+        "name": "source_revision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "default_sql": null,
+        "name": "rule_revision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "default_sql": "''",
+        "name": "source_snapshot",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "default_sql": "''",
+        "name": "source_title",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "default_sql": "'queued'",
+        "name": "stage",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "default_sql": "'pending'",
+        "name": "status",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "default_sql": "0",
+        "name": "attempts",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 9,
+        "default_sql": "''",
+        "name": "error_code",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 10,
+        "default_sql": "''",
+        "name": "error_detail",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 11,
+        "default_sql": "0",
+        "name": "unit_count",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 12,
+        "default_sql": "0",
+        "name": "review_count",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 13,
+        "default_sql": null,
+        "name": "superseded_by",
+        "not_null": false,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 14,
+        "default_sql": null,
+        "name": "created_at",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 15,
+        "default_sql": null,
+        "name": "updated_at",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 16,
+        "default_sql": null,
+        "name": "started_at",
+        "not_null": false,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 17,
+        "default_sql": null,
+        "name": "finished_at",
+        "not_null": false,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 18,
+        "default_sql": "''",
+        "name": "context_basis",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 19,
+        "default_sql": "'[]'",
+        "name": "task_draft",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 20,
+        "default_sql": "'{}'",
+        "name": "segmentation_progress",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      }
+    ],
+    "ddl": "CREATE TABLE organization_tasks (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        source_key TEXT NOT NULL,\n        source_revision TEXT NOT NULL,\n        rule_revision TEXT NOT NULL,\n        source_snapshot TEXT NOT NULL DEFAULT '',\n        source_title TEXT NOT NULL DEFAULT '',\n        stage TEXT NOT NULL DEFAULT 'queued',\n        status TEXT NOT NULL DEFAULT 'pending',\n        attempts INTEGER NOT NULL DEFAULT 0,\n        error_code TEXT NOT NULL DEFAULT '',\n        error_detail TEXT NOT NULL DEFAULT '',\n        unit_count INTEGER NOT NULL DEFAULT 0,\n        review_count INTEGER NOT NULL DEFAULT 0,\n        superseded_by INTEGER,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        started_at TEXT,\n        finished_at TEXT, context_basis TEXT NOT NULL DEFAULT '', task_draft TEXT NOT NULL DEFAULT '[]', segmentation_progress TEXT NOT NULL DEFAULT '{}',\n        UNIQUE(source_key, source_revision, rule_revision)\n    )",
+    "foreign_keys": [],
+    "same_column_contract_namespaces": [
+      "owner",
+      "kane",
+      "public"
+    ]
+  },
+  "organization_units": {
+    "column_count": 34,
+    "columns": [
+      {
+        "cid": 0,
+        "default_sql": null,
+        "name": "task_id",
+        "not_null": true,
+        "pk_position": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "default_sql": null,
+        "name": "ordinal",
+        "not_null": true,
+        "pk_position": 2,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "default_sql": null,
+        "name": "digest",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "default_sql": null,
+        "name": "title",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "default_sql": null,
+        "name": "text",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "default_sql": null,
+        "name": "source_start",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 6,
+        "default_sql": null,
+        "name": "source_end",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 7,
+        "default_sql": "'reference'",
+        "name": "category",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "default_sql": "''",
+        "name": "role",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 9,
+        "default_sql": "''",
+        "name": "cleaned_text",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 10,
+        "default_sql": "'keep'",
+        "name": "disposition",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 11,
+        "default_sql": "''",
+        "name": "disposition_reason",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 12,
+        "default_sql": "'pending'",
+        "name": "extraction_stage",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 13,
+        "default_sql": "''",
+        "name": "extraction_error",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 14,
+        "default_sql": "''",
+        "name": "extraction_signature",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 15,
+        "default_sql": "''",
+        "name": "project_hint",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 16,
+        "default_sql": "''",
+        "name": "project",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 17,
+        "default_sql": "'review'",
+        "name": "decision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 18,
+        "default_sql": "''",
+        "name": "reason",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 19,
+        "default_sql": "''",
+        "name": "evidence_quote",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 20,
+        "default_sql": "1",
+        "name": "revision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 21,
+        "default_sql": null,
+        "name": "item_id",
+        "not_null": false,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 22,
+        "default_sql": null,
+        "name": "created_at",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 23,
+        "default_sql": null,
+        "name": "updated_at",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 24,
+        "default_sql": "0",
+        "name": "continues_context",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 25,
+        "default_sql": "''",
+        "name": "context_basis",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 26,
+        "default_sql": "0",
+        "name": "applied_guidance_id",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 27,
+        "default_sql": "''",
+        "name": "extraction_diagnostic",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 28,
+        "default_sql": "'[]'",
+        "name": "projects",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 29,
+        "default_sql": "'project'",
+        "name": "knowledge_scope",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 30,
+        "default_sql": "'{}'",
+        "name": "ownership_analysis",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 31,
+        "default_sql": "'[]'",
+        "name": "source_ranges",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 32,
+        "default_sql": "'{}'",
+        "name": "task_record",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 33,
+        "default_sql": "''",
+        "name": "knowledge_id",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      }
+    ],
+    "ddl": "CREATE TABLE organization_units (\n        task_id INTEGER NOT NULL REFERENCES organization_tasks(id) ON DELETE CASCADE,\n        ordinal INTEGER NOT NULL,\n        digest TEXT NOT NULL,\n        title TEXT NOT NULL,\n        text TEXT NOT NULL,\n        source_start INTEGER NOT NULL,\n        source_end INTEGER NOT NULL,\n        category TEXT NOT NULL DEFAULT 'reference',\n        role TEXT NOT NULL DEFAULT '',\n        cleaned_text TEXT NOT NULL DEFAULT '',\n        disposition TEXT NOT NULL DEFAULT 'keep',\n        disposition_reason TEXT NOT NULL DEFAULT '',\n        extraction_stage TEXT NOT NULL DEFAULT 'pending',\n        extraction_error TEXT NOT NULL DEFAULT '',\n        extraction_signature TEXT NOT NULL DEFAULT '',\n        project_hint TEXT NOT NULL DEFAULT '',\n        project TEXT NOT NULL DEFAULT '',\n        decision TEXT NOT NULL DEFAULT 'review',\n        reason TEXT NOT NULL DEFAULT '',\n        evidence_quote TEXT NOT NULL DEFAULT '',\n        revision INTEGER NOT NULL DEFAULT 1,\n        item_id INTEGER,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL, continues_context INTEGER NOT NULL DEFAULT 0, context_basis TEXT NOT NULL DEFAULT '', applied_guidance_id INTEGER NOT NULL DEFAULT 0, extraction_diagnostic TEXT NOT NULL DEFAULT '', projects TEXT NOT NULL DEFAULT '[]', knowledge_scope TEXT NOT NULL DEFAULT 'project', ownership_analysis TEXT NOT NULL DEFAULT '{}', source_ranges TEXT NOT NULL DEFAULT '[]', task_record TEXT NOT NULL DEFAULT '{}', knowledge_id TEXT NOT NULL DEFAULT '',\n        PRIMARY KEY(task_id, ordinal)\n    )",
+    "foreign_keys": [
+      {
+        "from_column": "task_id",
+        "id": 0,
+        "match": "NONE",
+        "on_delete": "CASCADE",
+        "on_update": "NO ACTION",
+        "sequence": 0,
+        "target_table": "organization_tasks",
+        "to_column": "id"
+      }
+    ],
+    "same_column_contract_namespaces": [
+      "owner",
+      "kane",
+      "public"
+    ]
+  },
+  "organization_conversations": {
+    "column_count": 4,
+    "columns": [
+      {
+        "cid": 0,
+        "default_sql": null,
+        "name": "source_key",
+        "not_null": false,
+        "pk_position": 1,
+        "type": "TEXT"
+      },
+      {
+        "cid": 1,
+        "default_sql": null,
+        "name": "identity",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "default_sql": null,
+        "name": "members",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "default_sql": null,
+        "name": "updated_at",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      }
+    ],
+    "ddl": "CREATE TABLE organization_conversations (\n        source_key TEXT PRIMARY KEY, identity TEXT NOT NULL,\n        members TEXT NOT NULL, updated_at TEXT NOT NULL\n    )",
+    "foreign_keys": [],
+    "same_column_contract_namespaces": [
+      "owner",
+      "kane",
+      "public"
+    ]
+  },
+  "organization_context_basis": {
+    "column_count": 16,
+    "columns": [
+      {
+        "cid": 0,
+        "default_sql": null,
+        "name": "unit_task_id",
+        "not_null": true,
+        "pk_position": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "default_sql": null,
+        "name": "unit_digest",
+        "not_null": true,
+        "pk_position": 2,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "default_sql": null,
+        "name": "prior_task_id",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "default_sql": null,
+        "name": "prior_digest",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "default_sql": "''",
+        "name": "prior_source_key",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "default_sql": "0",
+        "name": "prior_archive_id",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 6,
+        "default_sql": "0",
+        "name": "prior_start_line",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 7,
+        "default_sql": "0",
+        "name": "prior_end_line",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 8,
+        "default_sql": "0",
+        "name": "prior_revision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 9,
+        "default_sql": "''",
+        "name": "prior_source_revision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 10,
+        "default_sql": "''",
+        "name": "prior_payload_sha256",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 11,
+        "default_sql": "0",
+        "name": "prior_cleaning_revision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 12,
+        "default_sql": "''",
+        "name": "project",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 13,
+        "default_sql": "'active'",
+        "name": "state",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 14,
+        "default_sql": null,
+        "name": "created_at",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 15,
+        "default_sql": null,
+        "name": "updated_at",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      }
+    ],
+    "ddl": "CREATE TABLE organization_context_basis (\n        unit_task_id INTEGER NOT NULL,\n        unit_digest TEXT NOT NULL,\n        prior_task_id INTEGER NOT NULL,\n        prior_digest TEXT NOT NULL,\n        prior_source_key TEXT NOT NULL DEFAULT '',\n        prior_archive_id INTEGER NOT NULL DEFAULT 0,\n        prior_start_line INTEGER NOT NULL DEFAULT 0,\n        prior_end_line INTEGER NOT NULL DEFAULT 0,\n        prior_revision INTEGER NOT NULL DEFAULT 0,\n        prior_source_revision TEXT NOT NULL DEFAULT '',\n        prior_payload_sha256 TEXT NOT NULL DEFAULT '',\n        prior_cleaning_revision INTEGER NOT NULL DEFAULT 0,\n        project TEXT NOT NULL DEFAULT '',\n        state TEXT NOT NULL DEFAULT 'active',\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        PRIMARY KEY(unit_task_id, unit_digest)\n    )",
+    "foreign_keys": [],
+    "same_column_contract_namespaces": [
+      "owner",
+      "kane",
+      "public"
+    ]
+  },
+  "unit_derivations": {
+    "column_count": 6,
+    "columns": [
+      {
+        "cid": 0,
+        "default_sql": null,
+        "name": "unit_task_id",
+        "not_null": true,
+        "pk_position": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "default_sql": null,
+        "name": "unit_digest",
+        "not_null": true,
+        "pk_position": 2,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "default_sql": null,
+        "name": "item_id",
+        "not_null": true,
+        "pk_position": 3,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "default_sql": "''",
+        "name": "kind",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "default_sql": "''",
+        "name": "project",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "default_sql": null,
+        "name": "created_at",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      }
+    ],
+    "ddl": "CREATE TABLE unit_derivations (\n        unit_task_id INTEGER NOT NULL,\n        unit_digest TEXT NOT NULL,\n        item_id INTEGER NOT NULL REFERENCES context_items(id) ON DELETE CASCADE,\n        kind TEXT NOT NULL DEFAULT '',\n        project TEXT NOT NULL DEFAULT '',\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(unit_task_id, unit_digest, item_id)\n    )",
+    "foreign_keys": [
+      {
+        "from_column": "item_id",
+        "id": 0,
+        "match": "NONE",
+        "on_delete": "CASCADE",
+        "on_update": "NO ACTION",
+        "sequence": 0,
+        "target_table": "context_items",
+        "to_column": "id"
+      }
+    ],
+    "same_column_contract_namespaces": [
+      "owner",
+      "kane",
+      "public"
+    ]
+  },
+  "learning_memories": {
+    "column_count": 4,
+    "columns": [
+      {
+        "cid": 0,
+        "default_sql": null,
+        "name": "item_id",
+        "not_null": false,
+        "pk_position": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "default_sql": null,
+        "name": "category",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "default_sql": null,
+        "name": "payload",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "default_sql": "1",
+        "name": "revision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      }
+    ],
+    "ddl": "CREATE TABLE learning_memories (\n        item_id INTEGER PRIMARY KEY REFERENCES context_items(id) ON DELETE CASCADE,\n        category TEXT NOT NULL, payload TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1\n    )",
+    "foreign_keys": [
+      {
+        "from_column": "item_id",
+        "id": 0,
+        "match": "NONE",
+        "on_delete": "CASCADE",
+        "on_update": "NO ACTION",
+        "sequence": 0,
+        "target_table": "context_items",
+        "to_column": "id"
+      }
+    ],
+    "same_column_contract_namespaces": [
+      "owner",
+      "kane",
+      "public"
+    ]
+  },
+  "knowledge_cleaning_reviews": {
+    "column_count": 9,
+    "columns": [
+      {
+        "cid": 0,
+        "default_sql": null,
+        "name": "source_key",
+        "not_null": false,
+        "pk_position": 1,
+        "type": "TEXT"
+      },
+      {
+        "cid": 1,
+        "default_sql": null,
+        "name": "source_revision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "default_sql": null,
+        "name": "source_text",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "default_sql": null,
+        "name": "cleaned_text",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "default_sql": "'reference'",
+        "name": "category",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "default_sql": null,
+        "name": "rule_revision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "default_sql": "1",
+        "name": "revision",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 7,
+        "default_sql": "'ready'",
+        "name": "state",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "default_sql": null,
+        "name": "updated_at",
+        "not_null": true,
+        "pk_position": 0,
+        "type": "TEXT"
+      }
+    ],
+    "ddl": "CREATE TABLE knowledge_cleaning_reviews (\n        source_key TEXT PRIMARY KEY, source_revision TEXT NOT NULL,\n        source_text TEXT NOT NULL, cleaned_text TEXT NOT NULL,\n        category TEXT NOT NULL DEFAULT 'reference', rule_revision TEXT NOT NULL,\n        revision INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL DEFAULT 'ready',\n        updated_at TEXT NOT NULL\n    )",
+    "foreign_keys": [],
+    "same_column_contract_namespaces": [
+      "owner",
+      "kane",
+      "public"
+    ]
+  }
+}

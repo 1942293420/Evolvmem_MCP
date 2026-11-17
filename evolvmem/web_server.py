@@ -1,0 +1,2158 @@
+"""Local web memory management console: stdlib-only HTTP server + JSON API.
+
+Serves the Signal workspace, a working-principle flowchart, and a JSON
+API on top of a ContextService + legacy compatibility facade — no third-party
+dependencies. Every lifecycle mutation (importance/tier/attribute/tags
+update, archive, restore, soft delete, hard delete) routes through the typed
+facade so compat/shadow/primary modes mirror it onto the mapped Context side
+in one transaction; list/read keep returning legacy rows through the facade.
+
+Project attribution and the resolution review queue are served from the
+ContextStore owned by the service: attribution reads enrich legacy rows with
+``context_items.project`` through the migration mapping, and review writes
+(accept/reject/register) go through ``ProjectStore`` inside the store's own
+transaction — the same path as ``evolvmem.project_cli``, revision CAS
+included. Unlike the operator CLI this console already serves full memory
+content to its local user, so review rows carry key/value previews; evidence
+stays limited to the resolver's bounded public rows (no paths, no raw text).
+
+Run:
+    PYTHONPATH=. .venv/bin/python -m evolvmem.web_server --port 9377
+"""
+
+import argparse
+import json
+import logging
+import os
+import re
+import threading
+import time
+from functools import wraps
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs, unquote
+
+from evolvmem.config import Config
+from evolvmem.context_models import (
+    ContextMode,
+    ContextServiceError,
+    ContextValidationError,
+    parse_context_mode,
+)
+from evolvmem.context_service import ContextService
+from evolvmem.context_store import ContextStore
+from evolvmem.legacy_compat import LegacyCompatibilityFacade
+from evolvmem.project_store import ProjectStore, ProjectStoreError
+from evolvmem.trust_views import TrustViews
+from evolvmem.web_auth import AuthSettings, WebAuth
+
+_BUSINESS_WAIT_SECONDS = 5
+_LOG = logging.getLogger(__name__)
+
+# --- 只读接口短缓存：首页三个聚合接口原来每次 15-25s，命中缓存后毫秒级 ---
+import threading as _threading
+import time as _time
+
+_READ_CACHE: dict = {}
+_READ_CACHE_LOCK = _threading.Lock()
+_READ_CACHE_TTL = 60.0
+_READ_CACHE_MAX = 96
+
+
+def _read_cache_get(key):
+    now = _time.time()
+    with _READ_CACHE_LOCK:
+        item = _READ_CACHE.get(key)
+        if item is None:
+            return None
+        stamp, value, ttl = item
+        if now - stamp > ttl:
+            _READ_CACHE.pop(key, None)
+            return None
+        return value
+
+
+def _read_cache_put(key, value, ttl=None):
+    with _READ_CACHE_LOCK:
+        if len(_READ_CACHE) >= _READ_CACHE_MAX:
+            for stale in list(_READ_CACHE)[: max(1, _READ_CACHE_MAX // 3)]:
+                _READ_CACHE.pop(stale, None)
+        _READ_CACHE[key] = (_time.time(), value, _READ_CACHE_TTL if ttl is None else ttl)
+
+
+def _read_cache_clear():
+    with _READ_CACHE_LOCK:
+        _READ_CACHE.clear()
+
+_READ_REFRESHING = set()
+
+
+def _read_cache_swr(key, compute, ttl):
+    """先返回旧值，再在后台刷新：命中过期数据时请求不被 20s 的聚合拖住。"""
+    now = _time.time()
+    with _READ_CACHE_LOCK:
+        item = _READ_CACHE.get(key)
+        if item is not None:
+            stamp, value, item_ttl = item
+            if now - stamp <= item_ttl:
+                return value
+            if key not in _READ_REFRESHING:
+                _READ_REFRESHING.add(key)
+
+                def _refresh():
+                    try:
+                        _read_cache_put(key, compute(), ttl)
+                    except Exception:
+                        pass
+                    finally:
+                        with _READ_CACHE_LOCK:
+                            _READ_REFRESHING.discard(key)
+
+                _threading.Thread(target=_refresh, daemon=True).start()
+            return value
+    value = compute()
+    _read_cache_put(key, value, ttl)
+    return value
+
+
+
+_STATIC_INDEX = Path(__file__).parent / "web_static" / "index.html"
+_STATIC_SIGNAL = _STATIC_INDEX.parent / "designs" / "signal.html"
+_STATIC_ARCH = Path(__file__).parent / "web_static" / "architecture.html"
+_STATIC_TRUST = _STATIC_INDEX.parent / "designs" / "trust.html"
+_INSIGHT_ASSETS = {'/insights.js': 'text/javascript', '/insights.css': 'text/css',
+                   '/auth.js': 'text/javascript', '/trust.js': 'text/javascript',
+                   '/trust.css': 'text/css'}
+_DESIGN_NAMES = ('orbit', 'atlas', 'halo', 'signal', 'nocturne')
+_DESIGN_ASSETS = {
+    'index.html': 'text/html', 'common.css': 'text/css',
+    'app.js': 'text/javascript', 'galaxy.js': 'text/javascript',
+    'organizer.js': 'text/javascript',
+    **{f'{name}.{ext}': mime for name in _DESIGN_NAMES
+       for ext, mime in (('html', 'text/html'), ('css', 'text/css'), ('png', 'image/png'))},
+}
+
+_SORT_COLUMNS = {
+    "access_count": "access_count",
+    "last_accessed": "last_accessed",
+    "importance": "importance",
+    "created_at": "created_at",
+}
+_VALID_TIERS = ("pinned", "normal", "reference")
+_VALID_STATUSES = ("active", "archived", "superseded", "deleted")
+
+# The exact column set/order of the old list query; extra projection columns
+# (supersedes/superseded_by) never leak into the JSON shape.
+_MEMORY_FIELDS = (
+    "id", "key", "value", "attribute", "tags", "tier", "importance",
+    "access_count", "last_accessed", "created_at", "updated_at",
+    "expires_at", "status",
+)
+
+
+def _bounded_error(exc: Exception) -> str:
+    """Bounded, content-free HTTP 500 surface: stable code or class name only."""
+    if isinstance(exc, ContextServiceError):
+        return f"context_error:{exc.code}"
+    return type(exc).__name__
+
+
+def _context_mode(config: Config) -> ContextMode:
+    """Parse the configured mode; unknown values fail closed to legacy serving.
+
+    mcp_server 对非法 mode 置 None 并关闭 Context 功能；Web 控制台本质是
+    legacy 管理界面，按 legacy 继续服务（Core 不写不读）。
+    """
+    return parse_context_mode(config.context_mode) or ContextMode.LEGACY
+
+
+# ---- API logic (plain functions over the facade, unit-testable) ----
+
+def _today_bounds_utc() -> tuple[str, str]:
+    """本机自然日 [00:00, 次日00:00) 换算成库里 UTC 时间串（%Y-%m-%d %H:%M:%S）。"""
+    from datetime import datetime, timedelta, timezone
+
+    now_local = datetime.now().astimezone()
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    fmt = "%Y-%m-%d %H:%M:%S"
+    return (
+        start_local.astimezone(timezone.utc).strftime(fmt),
+        end_local.astimezone(timezone.utc).strftime(fmt),
+    )
+
+
+def api_stats(
+    facade: LegacyCompatibilityFacade,
+    store: ContextStore | None = None,
+    config: Config | None = None,
+) -> dict:
+    """Aggregate stats over active memories.
+
+    Semantics preserved from the SQL version: total_active counts active and
+    unexpired rows; the breakdowns scan status='active' rows (including
+    not-yet-archived expired ones). When the Context store is available the
+    payload also carries project-attribution counters and the pending review
+    queue depth; with a config it additionally reports the daily-overview
+    counters (today's new memories, forgetting candidates, skill candidates).
+    """
+    total_active = facade.count_active()
+    all_rows = facade.get_by_ids(facade.all_ids())
+    rows = [r for r in all_rows if r["status"] == "active"]
+
+    by_tier: dict[str, int] = {}
+    for r in rows:
+        by_tier[r["tier"]] = by_tier.get(r["tier"], 0) + 1
+    for t in _VALID_TIERS:
+        by_tier.setdefault(t, 0)
+
+    by_attribute: dict[str, int] = {}
+    for r in rows:
+        cat = r["attribute"] or "(未分类)"
+        by_attribute[cat] = by_attribute.get(cat, 0) + 1
+
+    never_accessed = sum(1 for r in rows if r["access_count"] == 0)
+
+    # 分类分布：tags 里以 "分类:" 开头的标签
+    by_project: dict[str, int] = {}
+    for r in rows:
+        if "分类:" not in (r["tags"] or ""):
+            continue
+        for t in r["tags"].split(","):
+            t = t.strip()
+            if t.startswith("分类:"):
+                by_project[t] = by_project.get(t, 0) + 1
+
+    top = sorted(
+        rows,
+        key=lambda r: (-(r["importance"] * (r["access_count"] + 1)), r["id"]),
+    )[:10]
+    top_accessed = [
+        {"id": r["id"], "key": r["key"], "access_count": r["access_count"],
+         "importance": r["importance"]}
+        for r in top
+    ]
+
+    # 项目归属：经迁移映射把 context_items.project 挂到 legacy 行上
+    by_attribution: dict[str, int] = {}
+    attributed_active = 0
+    pending_review = 0
+    if store is not None:
+        proj_map = _legacy_project_map(store)
+        for r in rows:
+            project = proj_map.get(r["id"], "")
+            if project:
+                attributed_active += 1
+                by_attribution[project] = by_attribution.get(project, 0) + 1
+        pending_review = _count_pending_resolutions(store)
+
+    # 今日概览：今日新增（含非 active，按本机自然日）、skill 候选（高频命中）、
+    # 待归档候选（遗忘引擎同口径：久未访问 + 低命中 + 非 pinned + 限速窗口外）
+    day_start, day_end = _today_bounds_utc()
+    today_new = sum(
+        1 for r in all_rows
+        if r["created_at"] and day_start <= r["created_at"] < day_end
+    )
+    skill_candidates = sum(1 for r in rows if r["access_count"] >= 3)
+    forgetting_candidates = 0
+    if config is not None:
+        forgetting_candidates = len(facade.get_forgetting_candidates(
+            days_threshold=config.forget_days_threshold,
+            access_threshold=config.forget_access_count_threshold,
+            rate_limit_days=config.forget_rate_limit_days,
+        ))
+
+    return {
+        "total_active": total_active,
+        "by_tier": by_tier,
+        "by_attribute": by_attribute,
+        "by_project": by_project,
+        "by_attribution": by_attribution,
+        "attributed_active": attributed_active,
+        "unattributed_active": len(rows) - attributed_active,
+        "pending_review": pending_review,
+        "never_accessed": never_accessed,
+        "top_accessed": top_accessed,
+        "today_new": today_new,
+        "skill_candidates": skill_candidates,
+        "forgetting_candidates": forgetting_candidates,
+    }
+
+
+# ---- 项目归属与审核队列 ----
+
+_REVIEW_STATES = ("pending", "accepted", "rejected", "not_required")
+_BATCH_ACCEPT_MAX = 500
+
+
+def _legacy_attribution_map(store: ContextStore) -> dict[int, dict]:
+    """legacy_memory_id -> attribution/review metadata via the migration mapping.
+
+    Each entry carries the context ``item_id``, the attributed ``project``
+    ("" when unattributed), and the resolution row's revision/state/proposal
+    (None/"" fields when the item has no resolution row) so the console's
+    single organizing list can drive both remapping and review through the
+    same revision-CAS paths. Evidence stays the resolver's bounded public rows.
+    """
+    rows = store._connection().execute(
+        "SELECT m.legacy_memory_id AS legacy_id, i.id AS item_id,"
+        " i.project AS project, r.revision AS resolution_revision,"
+        " r.resolution_state, r.review_state, r.proposed_project,"
+        " r.confidence, r.evidence_json "
+        "FROM legacy_memory_migrations m "
+        "JOIN context_items i ON i.id = m.context_item_id "
+        "LEFT JOIN context_project_resolutions r ON r.item_id = i.id"
+    ).fetchall()
+    out = {}
+    for row in rows:
+        try:
+            evidence = json.loads(row["evidence_json"] or "[]")
+        except ValueError:
+            evidence = []
+        out[row["legacy_id"]] = {
+            "item_id": row["item_id"],
+            "project": row["project"],
+            "resolution_revision": row["resolution_revision"],
+            "resolution_state": row["resolution_state"],
+            "review_state": row["review_state"],
+            "proposed_project": row["proposed_project"],
+            "confidence": row["confidence"],
+            "evidence": evidence,
+        }
+    return out
+
+
+def _legacy_project_map(store: ContextStore) -> dict[int, str]:
+    """legacy_memory_id -> attributed project via the migration mapping."""
+    return {
+        legacy_id: meta["project"]
+        for legacy_id, meta in _legacy_attribution_map(store).items()
+    }
+
+
+def _count_pending_resolutions(store: ContextStore) -> int:
+    row = store._connection().execute(
+        "SELECT COUNT(*) AS c FROM context_project_resolutions "
+        "WHERE review_state='pending'"
+    ).fetchone()
+    return int(row["c"])
+
+
+def _project_store(service: ContextService) -> ProjectStore:
+    """Fresh ProjectStore borrowing the service store's connection.
+
+    Like the operator CLI the console never resolves projects, so the
+    resolver's generic-name list is satisfied with an empty tuple.
+    """
+    store = service.store
+    return ProjectStore(
+        store._connection(),
+        store._require_transaction,
+        generic_names=(),
+    )
+
+
+def api_projects(
+    facade: LegacyCompatibilityFacade, store: ContextStore
+) -> dict:
+    """Registry projects with active-item counts plus the review queue depth.
+
+    Counts are computed over the same facade-active, attribution-enriched row
+    set the memory list shows, so a dropdown count matches the filtered list.
+    Each project carries its Chinese ``display_name`` ("" when unset) and the
+    registry row revision for display-name CAS edits.
+    """
+    registry = store._connection().execute(
+        "SELECT project, status, display_name, revision "
+        "FROM context_project_registry ORDER BY project"
+    ).fetchall()
+    proj_map = _legacy_project_map(store)
+    active_rows = [
+        r for r in facade.get_by_ids(facade.all_ids())
+        if r["status"] == "active"
+    ]
+    active_counts: dict[str, int] = {}
+    for r in active_rows:
+        project = proj_map.get(r["id"], "")
+        if project:
+            active_counts[project] = active_counts.get(project, 0) + 1
+    return {
+        "projects": [
+            {
+                "project": row["project"],
+                "status": row["status"],
+                "display_name": row["display_name"],
+                "revision": row["revision"],
+                "active_items": active_counts.get(row["project"], 0),
+            }
+            for row in registry
+        ],
+        "pending_review": _count_pending_resolutions(store),
+    }
+
+
+def api_resolutions(
+    facade: LegacyCompatibilityFacade, store: ContextStore, params: dict
+) -> list[dict]:
+    """List resolution review rows with a content preview for human triage.
+
+    params: state (pending|accepted|rejected|not_required|all|unreviewed;
+    default pending), limit (default 500, capped at 1000). Key/value come from
+    the mapped legacy projection row — the shape the console user recognises —
+    with the Context identity key and l0 layer as fallback for unmapped rows.
+    Evidence is the resolver's bounded public projection only.
+
+    ``state=unreviewed`` lists workstream rows that have no resolution row at
+    all: without it those rows could never be reached by the review API the
+    ownership gate trusts.
+    """
+    state = params.get("state", "pending")
+    try:
+        limit = int(params.get("limit", 500))
+    except (TypeError, ValueError):
+        limit = 500
+    limit = max(1, min(limit, 1000))
+
+    if state == "unreviewed":
+        return _unreviewed_resolution_payload(store, limit)
+
+    where = "WHERE r.review_state=?" if state in _REVIEW_STATES else ""
+    args: tuple = (state,) if state in _REVIEW_STATES else ()
+    rows = store._connection().execute(
+        "SELECT r.item_id, r.resolution_state, r.review_state,"
+        " r.proposed_project, r.resolved_project, r.confidence, r.method,"
+        " r.evidence_json, r.revision, r.reviewed_at, r.created_at,"
+        " i.identity_key, i.status AS item_status, i.project AS current_project,"
+        " m.legacy_memory_id AS legacy_id "
+        "FROM context_project_resolutions r "
+        "JOIN context_items i ON i.id = r.item_id "
+        "LEFT JOIN legacy_memory_migrations m ON m.context_item_id = r.item_id "
+        f"{where} ORDER BY r.item_id LIMIT ?",
+        (*args, limit),
+    ).fetchall()
+
+    legacy_ids = [row["legacy_id"] for row in rows if row["legacy_id"] is not None]
+    legacy_by_id = {r["id"]: r for r in facade.get_by_ids(legacy_ids)}
+
+    # 没有可用 legacy 行（未映射或已删除）的条目回退到 l0 层内容做预览
+    missing = [
+        row["item_id"]
+        for row in rows
+        if row["legacy_id"] is None
+        or legacy_by_id.get(row["legacy_id"]) is None
+    ]
+    l0_by_item: dict[int, str] = {}
+    if missing:
+        marks = ",".join("?" for _ in missing)
+        for layer_row in store._connection().execute(
+            "SELECT item_id, content FROM context_layers "
+            f"WHERE layer='l0' AND item_id IN ({marks})",
+            tuple(missing),
+        ).fetchall():
+            l0_by_item[layer_row["item_id"]] = layer_row["content"]
+
+    out = []
+    for row in rows:
+        legacy = (
+            legacy_by_id.get(row["legacy_id"])
+            if row["legacy_id"] is not None
+            else None
+        )
+        try:
+            evidence = json.loads(row["evidence_json"] or "[]")
+        except ValueError:
+            evidence = []
+        out.append({
+            "item_id": row["item_id"],
+            "legacy_id": row["legacy_id"],
+            "legacy_available": legacy is not None,
+            "key": legacy["key"] if legacy else row["identity_key"],
+            "value": legacy["value"] if legacy else l0_by_item.get(row["item_id"], ""),
+            "item_status": row["item_status"],
+            "current_project": row["current_project"],
+            "resolution_state": row["resolution_state"],
+            "review_state": row["review_state"],
+            "proposed_project": row["proposed_project"],
+            "resolved_project": row["resolved_project"],
+            "confidence": row["confidence"],
+            "method": row["method"],
+            "evidence": evidence,
+            "revision": row["revision"],
+            "reviewed_at": row["reviewed_at"],
+            "created_at": row["created_at"],
+        })
+    return out
+
+
+def _unreviewed_resolution_payload(store: ContextStore, limit: int) -> list[dict]:
+    """Non-deleted project claims with no resolution row, shaped as review entries.
+
+    These are exactly the rows the ownership gate must treat as unverified until
+    a human reviews them, and the gate does not care about content type: every
+    project-owned row without a resolution is held. The standalone review API
+    therefore lists them all (not only workstream checkpoints) so it agrees with
+    the knowledge page's queue; the same payload shape keeps the console's
+    accept/reject controls usable. Nothing here writes or reclassifies a row.
+    """
+    rows = store._connection().execute(
+        "SELECT i.id AS item_id, i.identity_key, i.content_type, i.project,"
+        " i.status, i.created_at "
+        "FROM context_items i "
+        "LEFT JOIN context_project_resolutions r ON r.item_id = i.id "
+        "WHERE r.item_id IS NULL AND i.project != '' AND i.status != 'deleted' "
+        "ORDER BY i.id LIMIT ?",
+        (limit,),
+    ).fetchall()
+    if not rows:
+        return []
+    ids = [int(row["item_id"]) for row in rows]
+    marks = ",".join("?" for _ in ids)
+    l0_by_item: dict[int, str] = {}
+    for layer_row in store._connection().execute(
+        "SELECT item_id, content FROM context_layers "
+        f"WHERE layer='l0' AND item_id IN ({marks})",
+        tuple(ids),
+    ).fetchall():
+        l0_by_item[int(layer_row["item_id"])] = layer_row["content"]
+    return [
+        {
+            "item_id": int(row["item_id"]),
+            "legacy_id": None,
+            "legacy_available": False,
+            "key": row["identity_key"],
+            "value": l0_by_item.get(int(row["item_id"]), ""),
+            "item_status": row["status"],
+            "current_project": row["project"],
+            "content_type": row["content_type"],
+            "resolution_state": "none",
+            "review_state": "none",
+            "proposed_project": "",
+            "resolved_project": "",
+            "confidence": "none",
+            "method": "",
+            "evidence": [],
+            "revision": 0,
+            "reviewed_at": None,
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def _parse_expected_revision(body: dict, *, allow_zero: bool = False) -> int | None:
+    expected = body.get("expected_revision")
+    if isinstance(expected, bool) or not isinstance(expected, int):
+        return None
+    if expected == 0:
+        return 0 if allow_zero else None
+    return expected if expected >= 1 else None
+
+
+def api_resolution_accept(
+    service: ContextService, item_id: int, body: dict
+) -> dict:
+    """Human-accept one resolution into a registered project (exact CAS).
+
+    ``expected_revision`` is always honoured: ``0`` means "the unreviewed queue
+    says there is no resolution row yet" and creates exactly one row (a
+    concurrent review loses with ``revision_conflict``); a positive value is the
+    ordinary CAS against the existing row, so a duplicate or stale acceptance
+    fails closed instead of overwriting the first reviewer's decision.
+    """
+    project = str(body.get("project", "")).strip()
+    expected = _parse_expected_revision(body, allow_zero=True)
+    if not project:
+        return {"ok": False, "error": "invalid_project"}
+    if expected is None:
+        return {"ok": False, "error": "invalid_revision"}
+    try:
+        with service.store.transaction():
+            store = _project_store(service)
+            if expected == 0:
+                store.review_item_project(
+                    item_id, project, expected_revision=0
+                )
+            else:
+                store.accept_resolution(
+                    item_id, project, expected_revision=expected
+                )
+    except ProjectStoreError as exc:
+        # Preserve the legacy error contract: a missing item was always
+        # reported as a missing resolution row.
+        code = "resolution_not_found" if exc.code == "item_not_found" else exc.code
+        return {"ok": False, "error": code}
+    return {"ok": True, "item_id": item_id, "resolved_project": project}
+
+
+def api_decision_window_get(service: ContextService, item_id: int) -> dict:
+    """Read-only temporal window for one exact item; never writes.
+
+    The GET route must not accept window fields at all: a read that could
+    mutate data is a defect, so writes only exist on the POST helper below.
+    """
+    if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id < 1:
+        return {"ok": False, "error": "invalid_id"}
+    try:
+        payload = service.decision_window(item_id)
+    except ContextValidationError as exc:
+        return {"ok": False, "error": str(exc)}
+    except ContextServiceError as exc:
+        return {"ok": False, "error": exc.code}
+    if payload is None:
+        return {"ok": False, "error": "item_not_found"}
+    return {"ok": True, **payload}
+
+
+def api_decision_window(service: ContextService, body: dict) -> dict:
+    """Write (and read back) one item's temporal validity; partial updates.
+
+    Only the window fields actually present in ``body`` are touched, so a POST
+    that carries just ``effective_from`` preserves the stored ``effective_until``
+    and ``occurred_at``. Passing a field as ``null`` clears it. Values are
+    normalized to UTC by the service; project, status, and content are never
+    touched.
+    """
+    item_id = body.get("id")
+    if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id < 1:
+        return {"ok": False, "error": "invalid_id"}
+    field_names = ("effective_from", "effective_until", "occurred_at", "mentioned_at")
+    writes = {name: body[name] for name in field_names if name in body}
+    if not writes:
+        try:
+            payload = service.decision_window(item_id)
+        except ContextValidationError as exc:
+            return {"ok": False, "error": str(exc)}
+        except ContextServiceError as exc:
+            return {"ok": False, "error": exc.code}
+    else:
+        try:
+            payload = service.set_decision_window(item_id, **writes)
+        except ContextValidationError as exc:
+            return {"ok": False, "error": str(exc)}
+        except ContextServiceError as exc:
+            return {"ok": False, "error": exc.code}
+    if payload is None:
+        return {"ok": False, "error": "item_not_found"}
+    return {"ok": True, **payload}
+
+
+def api_resolution_reject(
+    service: ContextService, item_id: int, body: dict
+) -> dict:
+    """Human-reject one resolution; the item's project stays put.
+
+    ``expected_revision`` is always honoured: ``0`` means the unreviewed queue
+    reports no resolution row yet, so exactly one rejected row is created (a
+    concurrent confirm/reject loses with ``revision_conflict``); a positive
+    value is the ordinary CAS against the existing row. Rejecting never moves
+    the item, its identity key, or its content, so a mislabeled historical row
+    can be refused in place.
+    """
+    expected = _parse_expected_revision(body, allow_zero=True)
+    if expected is None:
+        return {"ok": False, "error": "invalid_revision"}
+    try:
+        with service.store.transaction():
+            store = _project_store(service)
+            if expected == 0:
+                store.reject_item_project(item_id, expected_revision=0)
+            else:
+                store.reject_resolution(item_id, expected_revision=expected)
+    except ProjectStoreError as exc:
+        # Preserve the legacy error contract: a missing item was always
+        # reported as a missing resolution row.
+        code = "resolution_not_found" if exc.code == "item_not_found" else exc.code
+        return {"ok": False, "error": code}
+    return {"ok": True, "item_id": item_id, "review_state": "rejected"}
+
+
+def api_resolutions_batch_accept(service: ContextService, body: dict) -> dict:
+    """Accept many pending resolutions into one project, per-item CAS.
+
+    Each item commits in its own transaction so one stale revision does not
+    roll back neighbours; the per-item results tell the UI exactly which rows
+    to keep showing as pending.
+    """
+    project = str(body.get("project", "")).strip()
+    items = body.get("items")
+    if not project:
+        return {"ok": False, "error": "invalid_project"}
+    if (
+        not isinstance(items, list)
+        or not 1 <= len(items) <= _BATCH_ACCEPT_MAX
+    ):
+        return {"ok": False, "error": "invalid_items"}
+    parsed = []
+    for entry in items:
+        if not isinstance(entry, dict):
+            return {"ok": False, "error": "invalid_items"}
+        item_id = entry.get("item_id")
+        expected = _parse_expected_revision(entry)
+        if (
+            isinstance(item_id, bool)
+            or not isinstance(item_id, int)
+            or item_id < 1
+            or expected is None
+        ):
+            return {"ok": False, "error": "invalid_items"}
+        parsed.append((item_id, expected))
+
+    store = service.store
+    known = store._connection().execute(
+        "SELECT 1 FROM context_project_registry WHERE project=?", (project,)
+    ).fetchone()
+    if known is None:
+        return {"ok": False, "error": "project_not_found"}
+
+    results = []
+    for item_id, expected in parsed:
+        try:
+            with store.transaction():
+                _project_store(service).accept_resolution(
+                    item_id, project, expected_revision=expected
+                )
+            results.append({"item_id": item_id, "ok": True})
+        except ProjectStoreError as exc:
+            results.append(
+                {"item_id": item_id, "ok": False, "error": exc.code}
+            )
+    accepted = sum(1 for r in results if r["ok"])
+    return {
+        "ok": True,
+        "project": project,
+        "accepted": accepted,
+        "failed": len(results) - accepted,
+        "results": results,
+    }
+
+
+def _valid_display_name(name: object) -> bool:
+    """Display labels: any printable text up to 32 chars, no control chars."""
+    return (
+        isinstance(name, str)
+        and len(name) <= 32
+        and not any(ord(c) < 32 for c in name)
+    )
+
+
+def api_memory_context(
+    facade: LegacyCompatibilityFacade, store: ContextStore, mem_id: int
+) -> dict:
+    """来源上下文：这条记忆出自哪次会话、会话摘要、同会话的兄弟记忆。
+
+    整理归属时单看一条原子记忆往往无法判断项目——会话摘要（这次对话干了
+    什么）+ 同批提取的兄弟记忆（它们的归属）才是可判读的上下文。展示的
+    都是控制台本就有权读取的数据；facade 没有按会话查询的窄接口，这里经
+    共享连接直读 legacy 投影表（与 project_cli 直读安全列同一先例）。
+    """
+    row = facade.get_by_id(mem_id)
+    if row is None:
+        return {"ok": False, "error": "not found"}
+    session = (row.get("source_session") or "").strip()
+    if not session:
+        return {"ok": True, "source_session": "", "session_summary": None,
+                "siblings": []}
+    conn = store._connection()
+    summary_row = conn.execute(
+        "SELECT id, key, value FROM memories "
+        "WHERE source_session=? AND key LIKE '%:progress:log:%' "
+        "ORDER BY id DESC LIMIT 1",
+        (session,),
+    ).fetchone()
+    siblings = conn.execute(
+        "SELECT id, key, substr(value, 1, 121) AS preview, status "
+        "FROM memories WHERE source_session=? AND id<>? "
+        "AND key NOT LIKE '%:progress:log:%' "
+        "ORDER BY id LIMIT 30",
+        (session, mem_id),
+    ).fetchall()
+    proj_map = _legacy_project_map(store)
+    return {
+        "ok": True,
+        "source_session": session,
+        "session_summary": (
+            {"id": summary_row["id"], "key": summary_row["key"],
+             "value": summary_row["value"]}
+            if summary_row is not None else None
+        ),
+        "siblings": [
+            {"id": s["id"], "key": s["key"], "preview": s["preview"],
+             "status": s["status"], "project": proj_map.get(s["id"], "")}
+            for s in siblings
+        ],
+    }
+
+
+def api_project_register(service: ContextService, body: dict) -> dict:
+    """Register a project from the review UI (idempotent)."""
+    name = str(body.get("name", "")).strip()
+    if not name or len(name) > 64 or any(ord(c) < 32 for c in name):
+        return {"ok": False, "error": "invalid_project"}
+    display_name = str(body.get("display_name", "")).strip()
+    if not _valid_display_name(display_name):
+        return {"ok": False, "error": "invalid_display_name"}
+    with service.store.transaction():
+        _project_store(service).register_project(name, display_name)
+    return {"ok": True, "project": name, "display_name": display_name}
+
+
+def api_project_set_display_name(service: ContextService, body: dict) -> dict:
+    """Set or clear a project's Chinese display name (revision CAS)."""
+    project = str(body.get("project", "")).strip()
+    display_name = str(body.get("display_name", "")).strip()
+    expected = _parse_expected_revision(body)
+    if not project:
+        return {"ok": False, "error": "invalid_project"}
+    if not _valid_display_name(display_name):
+        return {"ok": False, "error": "invalid_display_name"}
+    if expected is None:
+        return {"ok": False, "error": "invalid_revision"}
+    try:
+        with service.store.transaction():
+            _project_store(service).set_display_name(
+                project, display_name, expected_revision=expected
+            )
+    except ProjectStoreError as exc:
+        return {"ok": False, "error": exc.code}
+    return {"ok": True, "project": project, "display_name": display_name}
+
+
+_BATCH_DISPLAY_NAME_MAX = 100
+
+
+def api_projects_set_display_names(service: ContextService, body: dict) -> dict:
+    """Batch display-name save; per-item CAS, one failure never rolls back the rest."""
+    items = body.get("items")
+    if not isinstance(items, list) or not 1 <= len(items) <= _BATCH_DISPLAY_NAME_MAX:
+        return {"ok": False, "error": "invalid_items"}
+    parsed = []
+    for entry in items:
+        if not isinstance(entry, dict):
+            return {"ok": False, "error": "invalid_items"}
+        project = str(entry.get("project", "")).strip()
+        display_name = str(entry.get("display_name", "")).strip()
+        expected = _parse_expected_revision(entry)
+        if not project or not _valid_display_name(display_name) or expected is None:
+            return {"ok": False, "error": "invalid_items"}
+        parsed.append((project, display_name, expected))
+    results = []
+    for project, display_name, expected in parsed:
+        try:
+            with service.store.transaction():
+                _project_store(service).set_display_name(
+                    project, display_name, expected_revision=expected
+                )
+            results.append({"project": project, "ok": True})
+        except ProjectStoreError as exc:
+            results.append({"project": project, "ok": False, "error": exc.code})
+    saved = sum(1 for r in results if r["ok"])
+    return {"ok": True, "saved": saved, "failed": len(results) - saved,
+            "results": results}
+
+
+_ORGANIZE_MAX_ITEMS = 100
+_ORGANIZE_VALUE_CHARS = 160
+_NEW_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def api_memories_organize_suggest(
+    service: ContextService, facade: LegacyCompatibilityFacade, body: dict
+) -> dict:
+    """AI 整理：为给定的记忆（legacy ids）建议项目映射。
+
+    key 前缀优先：`project:<已注册slug>:` 的记忆按 canonical_key 强信号直接
+    判定（不过 LLM、无幻觉）；只有 key 看不出来的才交给 deepseek-v4-flash
+    （注册表 slug+中文名 + 每条 key + 截断 value）。AI 可以造新 slug，但
+    必须过 resolver 的 slug 形态校验，保证自动归属链路对新项目仍然有效；
+    空串表示"拿不准，保持未映射"。本端点只给建议不落库，保存走
+    batch_accept。返回里 `via` 标明每条建议来自 key 直判还是 AI。
+    """
+    import time
+
+    from evolvmem.kimi_hooks import _call_llm, _load_llm_config
+    # canonical_key 信号的同一来源，保证控制台与 resolver 判定一致
+    from evolvmem.project_resolver import _CANONICAL_KEY_PATTERN
+
+    legacy_ids = body.get("legacy_ids")
+    if (
+        not isinstance(legacy_ids, list)
+        or not 1 <= len(legacy_ids) <= _ORGANIZE_MAX_ITEMS
+        or any(not isinstance(i, int) or isinstance(i, bool) or i < 1
+               for i in legacy_ids)
+    ):
+        return {"ok": False, "error": "invalid_items"}
+
+    rows = [r for r in facade.get_by_ids(list(legacy_ids)) if r is not None]
+    if not rows:
+        return {"ok": False, "error": "invalid_items"}
+    registry = service.store._connection().execute(
+        "SELECT project, display_name FROM context_project_registry "
+        "WHERE status='active' ORDER BY project"
+    ).fetchall()
+    known = {row["project"] for row in registry}
+
+    # 第一遍：key 前缀直判，不走 AI
+    assignments: dict[str, str] = {}
+    via: dict[str, str] = {}
+    ai_rows = []
+    for r in rows:
+        m = _CANONICAL_KEY_PATTERN.match((r["key"] or "").strip().casefold())
+        if m and m.group(1) in known:
+            assignments[str(r["id"])] = m.group(1)
+            via[str(r["id"])] = "key"
+        else:
+            ai_rows.append(r)
+
+    new_projects: list[str] = []
+    if ai_rows:
+        llm_config = _load_llm_config()
+        if llm_config is None:
+            return {"ok": False, "error": "llm_unavailable",
+                    "assignments": assignments, "via": via}
+        project_lines = "\n".join(
+            f"- {row['project']}"
+            + (f"（{row['display_name']}）" if row["display_name"] else "")
+            for row in registry
+        ) or "（注册表为空）"
+        memory_lines = "\n".join(
+            f"[{r['id']}] key: {r['key']}\n    内容: "
+            f"{(r['value'] or '')[:_ORGANIZE_VALUE_CHARS]}"
+            for r in ai_rows
+        )
+        prompt = (
+            "你是记忆库的图书管理员。下面是一份项目清单（英文 slug，括号内是"
+            "中文显示名）和若干条记忆。请判断每条记忆属于哪个项目：\n"
+            "- 记忆的 key 若以 project:X: 开头，X 是最强信号：X 在项目清单中"
+            "就直接选它；不在清单中但 X 是合法 slug 时，可以把 X 当作新项目"
+            "返回；\n"
+            "- 其余情况优先从现有项目中选择最贴切的一个；\n"
+            "- 确实都不合适时，可以造一个新的英文小写 slug（字母数字开头，"
+            "可含 . _ -，不超过 64 字符）；\n"
+            "- 拿不准就返回空串，宁缺毋滥，不要硬猜。\n"
+            "只输出 JSON，不要任何解释：{\"assignments\": {\"<记忆ID>\": "
+            "\"<项目slug或空串>\"}}。\n\n"
+            f"项目清单：\n{project_lines}\n\n记忆列表：\n{memory_lines}"
+        )
+        raw = _call_llm(prompt, llm_config, deadline=time.monotonic() + 90)
+        try:
+            parsed = json.loads(raw).get("assignments", {})
+        except (ValueError, AttributeError):
+            return {"ok": False, "error": "llm_bad_response"}
+        if not isinstance(parsed, dict):
+            return {"ok": False, "error": "llm_bad_response"}
+
+        valid_ai_ids = {str(r["id"]) for r in ai_rows}
+        for raw_id, raw_slug in parsed.items():
+            slug = str(raw_slug).strip()
+            if str(raw_id) not in valid_ai_ids:
+                continue
+            if slug == "":
+                continue  # 拿不准 = 不给建议
+            if slug not in known and not _NEW_SLUG_RE.match(slug):
+                continue  # 非法新 slug 丢弃
+            assignments[str(raw_id)] = slug
+            via[str(raw_id)] = "ai"
+            if slug not in known and slug not in new_projects:
+                new_projects.append(slug)
+    return {
+        "ok": True,
+        "assignments": assignments,
+        "via": via,
+        "new_projects": new_projects,
+        "key_decided": sum(1 for v in via.values() if v == "key"),
+    }
+
+
+_SUGGEST_MAX_PROJECTS = 50
+_SUGGEST_SAMPLE_KEYS = 3
+
+
+def api_projects_suggest_display_names(service: ContextService) -> dict:
+    """Ask the extraction LLM (deepseek-v4-flash) for Chinese display names.
+
+    Reuses the credential/endpoint channel from ``kimi_hooks``. Each active
+    project is described by its slug plus up to three high-importance identity
+    keys of its active items; suggestions are validated against the same rules
+    as manual entry, and unknown slugs are dropped. Failure modes are honest:
+    ``llm_unavailable`` (no credentials) / ``llm_bad_response`` (unparseable);
+    provider faults surface through the handler's bounded 500.
+    """
+    import time
+
+    from evolvmem.kimi_hooks import _call_llm, _load_llm_config
+
+    llm_config = _load_llm_config()
+    if llm_config is None:
+        return {"ok": False, "error": "llm_unavailable"}
+
+    store = service.store
+    registry = store._connection().execute(
+        "SELECT project FROM context_project_registry "
+        "WHERE status='active' ORDER BY project LIMIT ?",
+        (_SUGGEST_MAX_PROJECTS,),
+    ).fetchall()
+    if not registry:
+        return {"ok": True, "names": {}}
+
+    samples: dict[str, list[str]] = {}
+    for row in registry:
+        keys = store._connection().execute(
+            "SELECT identity_key FROM context_items "
+            "WHERE project=? AND status='active' "
+            "ORDER BY importance DESC, id LIMIT ?",
+            (row["project"], _SUGGEST_SAMPLE_KEYS),
+        ).fetchall()
+        samples[row["project"]] = [k["identity_key"] for k in keys]
+
+    listing = "\n".join(
+        f"- {slug}"
+        + (f"（样本记忆 key: {', '.join(keys)}）" if keys else "（暂无记忆）")
+        for slug, keys in samples.items()
+    )
+    prompt = (
+        "你是记忆库的图书管理员。下面是若干项目的英文规范名（slug）和它们的"
+        "样本记忆 key。请为每个 slug 起一个简短准确的中文显示名（2~10 字，"
+        "可保留常见英文缩写如 AI、EVA），仅依据名称和样本判断，不要编造细节。"
+        "只输出 JSON，不要任何解释：{\"names\": {\"<slug>\": \"<中文名>\"}}。\n\n"
+        f"项目列表：\n{listing}"
+    )
+    raw = _call_llm(prompt, llm_config, deadline=time.monotonic() + 45)
+    try:
+        parsed = json.loads(raw).get("names", {})
+    except (ValueError, AttributeError):
+        return {"ok": False, "error": "llm_bad_response"}
+    if not isinstance(parsed, dict):
+        return {"ok": False, "error": "llm_bad_response"}
+    names = {
+        slug: str(name).strip()
+        for slug, name in parsed.items()
+        if slug in samples and _valid_display_name(str(name).strip())
+        and str(name).strip()
+    }
+    return {"ok": True, "names": names}
+
+
+def api_memories(
+    facade: LegacyCompatibilityFacade,
+    params: dict,
+    store: ContextStore | None = None,
+    config: Config | None = None,
+) -> dict:
+    """List memories with filtering, sorting, and pagination.
+
+    params keys (from query string): status, tier, attribute, project, q,
+    sort, order, page, page_size, plus attribution (project attribution
+    filter; ``__none__`` selects unattributed rows), review (resolution review
+    state: pending|accepted|rejected|not_required|none — 审核队列只是这份
+    列表的一个过滤视图), and preset (``today`` 今日新增 / ``skill``
+    高频候选 / ``forgetting`` 待归档候选，与遗忘引擎同口径). Every row carries
+    ``project``/``item_id``/``resolution_revision``/review metadata when the
+    store is available.
+
+    Returns ``{rows, total, page, page_size}`` — total is the filtered count
+    before slicing. Reads go through the facade, whose surface excludes
+    deleted rows: status='deleted'/'all' therefore no longer list soft-deleted
+    memories.
+    """
+    status = params.get("status", "active")
+    tier = params.get("tier", "")
+    attribute = params.get("attribute", "")
+    project = params.get("project", "").strip()
+    attribution = params.get("attribution", "").strip()
+    review = params.get("review", "").strip()
+    preset = params.get("preset", "").strip()
+    q = params.get("q", "").strip()
+    sort = _SORT_COLUMNS.get(params.get("sort", "access_count"),
+                             "access_count")
+    desc = params.get("order", "desc").lower() != "asc"
+    try:
+        page = max(1, int(params.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(params.get("page_size", 50))
+    except (TypeError, ValueError):
+        page_size = 50
+    page_size = max(1, min(page_size, 200))
+
+    rows = facade.get_by_ids(facade.all_ids())
+    if status in _VALID_STATUSES:
+        rows = [r for r in rows if r["status"] == status]
+    elif status != "all":
+        rows = [r for r in rows if r["status"] == "active"]
+    if tier in _VALID_TIERS:
+        rows = [r for r in rows if r["tier"] == tier]
+    if attribute:
+        rows = [r for r in rows if r["attribute"] == attribute]
+    if project:
+        # tags 是逗号拼接串，用 ",tags," 形式精确匹配单个标签
+        needle = f",{project},"
+        rows = [r for r in rows if needle in f",{r['tags'] or ''},"]
+    if q:
+        # 恢复 SQL LIKE 时代的大小写不敏感语义
+        needle = q.casefold()
+        rows = [
+            r for r in rows
+            if needle in r["key"].casefold() or needle in r["value"].casefold()
+        ]
+
+    attr_map = _legacy_attribution_map(store) if store is not None else {}
+    proj_of = {legacy_id: meta["project"] for legacy_id, meta in attr_map.items()}
+    if attribution == "__none__":
+        rows = [r for r in rows if not proj_of.get(r["id"], "")]
+    elif attribution:
+        rows = [r for r in rows if proj_of.get(r["id"], "") == attribution]
+
+    if review in _REVIEW_STATES:
+        rows = [
+            r for r in rows
+            if attr_map.get(r["id"], {}).get("review_state") == review
+        ]
+    elif review == "none":
+        rows = [
+            r for r in rows
+            if attr_map.get(r["id"], {}).get("review_state") is None
+        ]
+
+    if preset == "skill":
+        rows = [r for r in rows if r["access_count"] >= 3]
+    elif preset == "today":
+        day_start, day_end = _today_bounds_utc()
+        rows = [
+            r for r in rows
+            if r["created_at"] and day_start <= r["created_at"] < day_end
+        ]
+    elif preset == "forgetting" and config is not None:
+        candidate_ids = {
+            c["id"] for c in facade.get_forgetting_candidates(
+                days_threshold=config.forget_days_threshold,
+                access_threshold=config.forget_access_count_threshold,
+                rate_limit_days=config.forget_rate_limit_days,
+            )
+        }
+        rows = [r for r in rows if r["id"] in candidate_ids]
+
+    total = len(rows)
+    rows = _sort_rows(rows, sort, desc)
+    page_rows = rows[(page - 1) * page_size: page * page_size]
+    return {
+        "rows": [
+            {
+                **{field: r.get(field) for field in _MEMORY_FIELDS},
+                "project": proj_of.get(r["id"], ""),
+                "item_id": (meta := attr_map.get(r["id"], {})).get("item_id"),
+                "resolution_revision": meta.get("resolution_revision"),
+                "resolution_state": meta.get("resolution_state"),
+                "review_state": meta.get("review_state"),
+                "proposed_project": meta.get("proposed_project") or "",
+                "confidence": meta.get("confidence") or "",
+                "evidence": meta.get("evidence") or [],
+            }
+            for r in page_rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+def _sort_rows(rows: list[dict], sort: str, desc: bool) -> list[dict]:
+    """Mirror `ORDER BY {sort} IS NULL, {sort} {order}, id {order}` — NULLs last."""
+    present = [r for r in rows if r[sort] is not None]
+    missing = [r for r in rows if r[sort] is None]
+    present.sort(key=lambda r: (r[sort], r["id"]), reverse=desc)
+    missing.sort(key=lambda r: r["id"], reverse=desc)
+    return present + missing
+
+
+def api_update(facade: LegacyCompatibilityFacade, mem_id: int, body: dict) -> dict:
+    """Update importance/tier/attribute/tags in place through the typed facade.
+
+    All four fields share the service's single transaction, which also mirrors
+    the edit onto the mapped ContextItem (content_type/scope/tags re-derive
+    from the new projection row through the migrator's public policy). The
+    legacy row keeps its id/history; the HTTP request/response shape is
+    unchanged.
+    """
+    if facade.get_by_id(mem_id) is None:
+        return {"ok": False, "error": "not found"}
+
+    importance = body.get("importance")
+    tier = body.get("tier")
+    if importance is not None:
+        importance = float(importance)
+        if not 0 <= importance <= 10:
+            return {"ok": False, "error": "importance must be 0-10"}
+    if tier is not None and tier not in _VALID_TIERS:
+        return {"ok": False, "error": "invalid tier"}
+
+    # Web 侧把 JSON 形状换算成类型化边界形状（legacy_models 的边界只进不出）
+    attribute = str(body["attribute"]) if "attribute" in body else None
+    tags = None
+    if "tags" in body:
+        raw_tags = body["tags"]
+        if isinstance(raw_tags, list):
+            tags = tuple(str(tag) for tag in raw_tags)
+        else:
+            tags = tuple(str(raw_tags).split(","))
+
+    if (
+        importance is not None
+        or tier is not None
+        or attribute is not None
+        or tags is not None
+    ):
+        facade.update_metadata(
+            mem_id,
+            importance=importance,
+            tier=tier,
+            attribute=attribute,
+            tags=tags,
+        )
+
+    return {"ok": True, "memory": facade.get_by_id(mem_id)}
+
+
+def api_archive(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
+    if facade.get_by_id(mem_id) is None:
+        return {"ok": False, "error": "not found"}
+    facade.archive(mem_id)
+    return {"ok": True}
+
+
+def api_restore(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
+    """archived -> active."""
+    if facade.get_by_id(mem_id) is None:
+        return {"ok": False, "error": "not found"}
+    facade.restore(mem_id)
+    return {"ok": True}
+
+
+def api_delete(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
+    """Soft delete (status -> deleted)."""
+    if facade.get_by_id(mem_id) is None:
+        return {"ok": False, "error": "not found"}
+    facade.remove(mem_id)
+    return {"ok": True}
+
+
+def api_hard_delete(facade: LegacyCompatibilityFacade, mem_id: int) -> dict:
+    """Physically remove the exact mapping/projection/ContextItem triple —
+    irreversible. Only this explicit console action reaches hard delete;
+    forgetting/consolidation never trigger it. The stale vector entry is
+    dropped on the next index consistency rebuild.
+    """
+    if facade.get_by_id(mem_id) is None:
+        return {"ok": False, "error": "not found"}
+    facade.hard_delete(mem_id)
+    return {"ok": True}
+
+
+# ---- HTTP layer ----
+
+_MEM_ACTION_RE = re.compile(r"^/api/memory/(\d+)/(update|archive|restore|delete|hard_delete)$")
+# Both the legacy singular route and the plural route the /trust UI uses are
+# served by the same handler, so existing callers keep working.
+_RES_ACTION_RE = re.compile(r"^/api/resolutions?/(\d+)/(accept|reject)$")
+_MEM_CONTEXT_RE = re.compile(r"^/api/memory/(\d+)/context$")
+
+_BODY_LIMIT = 512 * 1024
+
+
+def make_handler(service: ContextService):
+    """Build the handler owning a ContextService compatibility facade."""
+    facade = service.legacy_facade()
+    store = service.store
+    company_sso = os.environ.get('EVOLVMEM_COMPANY_SSO', '') == '1'
+    if company_sso:
+        from evolvmem.company_sso import CompanyAuth
+        auth = CompanyAuth(AuthSettings.load(service.config.data_dir))
+    else:
+        auth = WebAuth(AuthSettings.load(service.config.data_dir))
+    views = TrustViews(service)
+    from evolvmem.product_policy import load_policy
+    from evolvmem.console_access import configured_console, configured_session_store, is_pg_control_configured
+    from evolvmem.knowledge_console import ConsoleError, ConsoleService
+    from evolvmem.manual_experience_search import configured_search
+    from evolvmem.web_sessions import PersistentSessions, SessionStoreError
+    import getpass
+    pg_mode = is_pg_control_configured()
+    console_sessions = load_policy().console_enabled
+    if company_sso and (not pg_mode or not console_sessions):
+        raise ValueError('company_sso_requires_pg_console_control')
+    # Browser preconnects may open a socket without sending an HTTP request.
+    # Parse those sockets independently, but retain serialized use of this
+    # service's shared SQLite connections and transaction state.
+    business_lock = threading.RLock()
+    auth_lock = threading.RLock()
+    console = None
+    persistence_ready = company_sso or not auth.enabled
+    enabling_persistence = False
+
+    def ensure_control_plane_ready():
+        nonlocal console, persistence_ready, enabling_persistence
+        if console is not None and (persistence_ready or enabling_persistence):
+            return console
+        with auth_lock:
+            if console is None:
+                try:
+                    if pg_mode:
+                        console = configured_console(
+                            owner_data_dir=service.config.data_dir,
+                            history_environ=dict(os.environ),
+                            experience_search=configured_search(service.config),
+                        )
+                    else:
+                        console = ConsoleService(
+                            os.environ.get('EVOLVMEM_CONSOLE_REGISTRY', str(Path.home()/'.config/evolvmem-console/users.db')),
+                            (os.environ.get('EVOLVMEM_CONSOLE_OWNER_ID') or '').strip() or getpass.getuser(),
+                            service.config.data_dir,
+                            os.environ.get('EVOLVMEM_LAN_DATA_DIR', str(Path.home()/'.local/share/evolvmem-lan')),
+                            dict(os.environ), experience_search=configured_search(service.config))
+                except ConsoleError as exc:
+                    if pg_mode or exc.code == 'pg_control_unavailable':
+                        raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+                    raise
+            if not persistence_ready and not enabling_persistence:
+                enabling_persistence = True
+                try:
+                    store_obj = configured_session_store(
+                        console, auth.persistence_scope(),
+                        console_sessions=console_sessions,
+                        fallback_sqlite_path=service.config.data_dir/'web-sessions.db',
+                    )
+                    auth.enable_persistence(store_obj)
+                    persistence_ready = True
+                except SessionStoreError as exc:
+                    if pg_mode or exc.code == 'pg_control_unavailable':
+                        if pg_mode:
+                            console = None
+                        raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+                    raise
+                finally:
+                    enabling_persistence = False
+            elif pg_mode and load_policy().console_enabled and not enabling_persistence:
+                try:
+                    if not console.registry_ready():
+                        console = None
+                        raise SessionStoreError('pg_control_unavailable', message='PG 不可用')
+                except ConsoleError:
+                    console = None
+                    raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+            return console
+
+    def observe_console_login(open_id, name):
+        if load_policy().console_enabled:
+            ensure_control_plane_ready().observe_login(open_id, name)
+    auth.login_observer = observe_console_login
+    def session_identity_allowed(open_id):
+        try:
+            if load_policy().console_enabled != console_sessions:
+                raise SessionStoreError()
+            return ensure_control_plane_ready().login_allowed(open_id) if console_sessions else True
+        except SessionStoreError:
+            raise
+        except ConsoleError as exc:
+            if pg_mode or exc.code == 'pg_control_unavailable':
+                raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+            raise SessionStoreError() from None
+        except Exception:
+            if pg_mode:
+                raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+            raise SessionStoreError() from None
+    def session_write_allowed(conn, open_id):
+        if load_policy().console_enabled != console_sessions:
+            raise SessionStoreError()
+        return ensure_control_plane_ready().login_allowed_in_transaction(conn, open_id) if console_sessions else True
+    auth.session_validator = session_identity_allowed
+    auth.session_write_validator = session_write_allowed
+    if company_sso:
+        def native_account_status(open_id):
+            try:
+                current = ensure_control_plane_ready()
+                actor = current._pg_store.actor_by_open_id(current._expected_owner_id, open_id)
+                if actor is None:
+                    return 'pending'
+                return 'ready' if actor['enabled'] else 'disabled'
+            except SessionStoreError:
+                raise
+            except Exception:
+                raise SessionStoreError('pg_control_unavailable', message='PG 不可用') from None
+        auth.native_status = native_account_status
+    try:
+        ensure_control_plane_ready()
+    except SessionStoreError as exc:
+        if pg_mode and exc.code == 'pg_control_unavailable':
+            _LOG.warning('PostgreSQL control plane unavailable at startup; requests will fail closed (503) and retry automatically')
+        else:
+            raise
+
+    def serialized(method):
+        @wraps(method)
+        def call(self, *args, **kwargs):
+            self._parsed_body = None
+            self.prepared_extraction = None
+            parsed = urlparse(self.path)
+            if company_sso and auth.admit(self, parsed):
+                return
+            policy = load_policy()
+            if parsed.path == '/v2' or parsed.path.startswith(('/v2/', '/api/console-v2')):
+                from evolvmem.web_v2.http_router import handle_web_v2_request
+                if handle_web_v2_request(
+                    self, parsed=parsed, policy=policy, auth=auth,
+                    auth_lock=auth_lock, ensure_control_plane_ready=ensure_control_plane_ready,
+                ):
+                    return
+            console_path = parsed.path == '/api/knowledge-console' or parsed.path.startswith('/api/knowledge-console/')
+            if console_path:
+                if self.command == 'GET':
+                    with auth_lock:
+                        if auth.handle_get(self, parsed):
+                            return
+                if not policy.console_enabled:
+                    self._send_json({'ok':False,'error':'knowledge_console_disabled'}, 410)
+                    return
+                session = auth.session(self) if auth.enabled else None
+                if not auth.enabled or not session:
+                    self._send_json({'ok':False,'error':'login_required'}, 401)
+                    return
+                if self.command not in ('GET', 'POST'):
+                    self._send_json({'ok':False,'error':'method_not_allowed'}, 405)
+                    return
+                params = {k:v[0] for k,v in parse_qs(parsed.query).items()}
+                if any(len(v)!=1 for v in parse_qs(parsed.query).values()):
+                    self._send_json({'ok':False,'error':'duplicate_query_parameter'}, 400)
+                    return
+                if self.command == 'POST':
+                    if not auth._valid_csrf(self, session):
+                        self._send_json({'ok':False,'error':'invalid_csrf'}, 403)
+                        return
+                    body, failed = self._read_body()
+                    if failed: return
+                    if not isinstance(body, dict):
+                        self._send_json({'ok':False,'error':'invalid_request'}, 400)
+                        return
+                    if params:
+                        if params != {'inspect':'1'}:
+                            self._send_json({'ok':False,'error':'invalid_query'}, 400)
+                            return
+                        body = {**body, 'inspect':'1'}
+                    params = body
+                rel_console_path = unquote(parsed.path[len('/api/knowledge-console'):] or '/')
+                if rel_console_path == '/review-inbox' or rel_console_path.startswith('/review-inbox/'):
+                    from evolvmem.experience_v2.gate.review_http import dispatch_review_inbox
+                    status, content_type, body = dispatch_review_inbox(
+                        ensure_control_plane_ready(), policy, self.command, rel_console_path, params, session)
+                else:
+                    status, content_type, body = ensure_control_plane_ready().dispatch(
+                        self.command, rel_console_path, params, session)
+                if isinstance(body, dict):
+                    if parsed.path.endswith('/me') and status == 200:
+                        body['policy'] = {**body.get('policy', {}), **policy.as_dict()}
+                    self._send_json(body, status)
+                else:
+                    self.send_response(status)
+                    self.send_header('Content-Type', content_type)
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.end_headers()
+                    self.wfile.write(body)
+                return
+            if self.command == 'GET':
+                with auth_lock:
+                    if auth.handle_get(self, parsed): return
+                if policy.console_enabled:
+                    if parsed.path in ('/', '/index.html'):
+                        from evolvmem.web_v2.http_router import serve_v2_index
+                        serve_v2_index(self)
+                        return
+                    if parsed.path in ('/v1', '/v1/', '/designs/signal.html'):
+                        self._send_html((_STATIC_INDEX.parent/'knowledge-console.html').read_text(encoding='utf-8'))
+                        return
+                    if parsed.path in ('/knowledge-console.js','/knowledge-console.css','/history-library.js','/history-library.css','/principles.js','/nebula.js','/review-inbox.js','/review-inbox.css'):
+                        asset=_STATIC_INDEX.parent/parsed.path.lstrip('/')
+                        data=asset.read_bytes()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/css' if asset.suffix=='.css' else 'text/javascript')
+                        self.send_header('Content-Length', str(len(data)))
+                        self.send_header('Cache-Control','no-store')
+                        self.send_header('X-Content-Type-Options','nosniff')
+                        self.end_headers();self.wfile.write(data)
+                        return
+                    if parsed.path in ('/workflow','/workflow/','/workflow-diagram','/architecture','/architecture.html','/history','/history/'):
+                        self.send_response(302)
+                        self.send_header('Location','/#history' if parsed.path.startswith('/history') else '/#principles')
+                        self.send_header('Content-Length','0');self.end_headers()
+                        return
+            if not policy.legacy_web_enabled and not parsed.path.startswith('/auth/'):
+                self._send_json({'ok':False,'error':'legacy_web_disabled'},410)
+                return
+            if self.command == 'GET':
+                # Login and static files do not use the shared database. They
+                # must remain reachable while a business request is working.
+                with auth_lock:
+                    if auth.handle_get(self, parsed):
+                        return
+                if not parsed.path.startswith('/api/'):
+                    return method(self, *args, **kwargs)
+                from evolvmem.web_reads import snapshot
+                started = time.monotonic()
+                try:
+                    with snapshot(service.config, source=service) as reader:
+                        self.read_service = reader
+                        return method(self, *args, **kwargs)
+                finally:
+                    self.read_service = None
+                    elapsed = time.monotonic() - started
+                    if elapsed >= 2:
+                        _LOG.warning('Slow web read %s %.3fs', parsed.path, elapsed)
+            else:
+                with auth_lock:
+                    if self.command == 'POST' and parsed.path == '/auth/logout':
+                        auth.logout(self)
+                        return
+                    if not auth.require_write(self):
+                        return
+            if self.command == 'POST':
+                body, failed = self._read_body()
+                if failed:
+                    return
+                self._parsed_body = (body, False)
+                from evolvmem.web_reads import is_preview, snapshot
+                if is_preview(parsed.path, body):
+                    started = time.monotonic()
+                    try:
+                        with snapshot(service.config, source=service) as reader:
+                            self.read_service = reader
+                            return method(self, *args, **kwargs)
+                    finally:
+                        self.read_service = None
+                        elapsed = time.monotonic() - started
+                        if elapsed >= 2:
+                            _LOG.warning('Slow web preview %s %.3fs', parsed.path, elapsed)
+                if parsed.path == '/api/knowledge/skills/extraction/verify':
+                    # Old combined endpoint: expensive inference first on an
+                    # isolated snapshot, then only persist under the write lock.
+                    from evolvmem.extraction_preview import preview
+                    try:
+                        if not isinstance(body, dict):
+                            raise ValueError('invalid_request')
+                        with snapshot(service.config, source=service) as reader:
+                            self.prepared_extraction = preview(reader, {
+                                'messages': body.get('messages'),
+                                'project': str(body.get('project') or ''),
+                            })
+                    except ValueError as error:
+                        self._send_json({'ok': False, 'error': str(error)}, 400)
+                        return
+                    except Exception as error:
+                        self._send_json({'ok': False, 'error': _bounded_error(error)}, 500)
+                        return
+            if not business_lock.acquire(timeout=_BUSINESS_WAIT_SECONDS):
+                self._send_json({'ok': False, 'error': 'service_busy'}, 503,
+                                headers=(('Retry-After', '5'),))
+                return
+            started = time.monotonic()
+            try:
+                return method(self, *args, **kwargs)
+            finally:
+                business_lock.release()
+                elapsed = time.monotonic() - started
+                if elapsed >= 2:
+                    # Paths and timing only: no query, body or credentials.
+                    _LOG.warning('Slow web request %s %s %.3fs', self.command, parsed.path, elapsed)
+        @wraps(method)
+        def guarded_call(self, *args, **kwargs):
+            try:
+                if pg_mode and not company_sso:
+                    ensure_control_plane_ready()
+                return call(self, *args, **kwargs)
+            except SessionStoreError as exc:
+                self.close_connection = True
+                if exc.code == 'pg_control_unavailable':
+                    self._send_json({'ok': False, 'error': 'pg_control_unavailable', 'message': 'PG 不可用', **({'central_sso': True} if company_sso else {})}, 503)
+                else:
+                    self._send_json({'ok': False, 'error': 'session_store_unavailable', **({'central_sso': True} if company_sso else {})}, 503)
+        return guarded_call
+
+    class MemoryWebHandler(BaseHTTPRequestHandler):
+        server_version = "EvolvMemWeb/1.0"
+        timeout = 10
+
+        def send_header(self, keyword, value):
+            if company_sso and keyword.lower() == 'cache-control':
+                value = 'private, no-store'
+            super().send_header(keyword, value)
+
+        def end_headers(self):
+            self.send_header("Referrer-Policy", "no-referrer")
+            if company_sso:
+                self.send_header('Vary', 'Cookie')
+            super().end_headers()
+
+        def _send_json(self, payload, status=200, headers=()):
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            for name, value in headers:
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _send_html(self, html: str, status=200, headers=()):
+            data = html.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            for name, value in headers:
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _read_body(self):
+            """Parse a bounded JSON body; None means no body was sent.
+
+            A failure response is already sent when the second element is
+            True, so callers just ``return``.
+            """
+            if getattr(self, '_parsed_body', None) is not None:
+                return self._parsed_body
+            lengths = self.headers.get_all('Content-Length', [])
+            if (self.headers.get_all('Transfer-Encoding', []) or len(lengths) > 1
+                    or lengths and (len(lengths[0]) > 20 or not lengths[0].isascii() or not lengths[0].isdigit())):
+                self.close_connection = True
+                self._send_json({'ok': False, 'error': 'invalid_body_length'}, 400)
+                return None, True
+            length = int(lengths[0]) if lengths else 0
+            if length > _BODY_LIMIT:
+                self.close_connection = True
+                self._send_json({"ok": False, "error": "body too large"}, 413)
+                return None, True
+            if not length:
+                return {}, False
+            try:
+                raw = self.rfile.read(length)
+                if len(raw) != length:
+                    self.close_connection = True
+                    self._send_json({'ok': False, 'error': 'incomplete_body'}, 400)
+                    return None, True
+                return json.loads(raw.decode("utf-8")), False
+            except (ValueError, UnicodeDecodeError):
+                self._send_json({"ok": False, "error": "invalid JSON"}, 400)
+                return None, True
+
+        def log_message(self, fmt, *args):  # keep console quiet
+            pass
+
+        @serialized
+        def do_GET(self):
+            read_service = getattr(self, 'read_service', None) or service
+            store = read_service.store
+            facade = read_service.legacy_facade()
+            views = TrustViews(read_service)
+            parsed = urlparse(self.path)
+            path = parsed.path
+            if path.startswith('/api/project-modules'):
+                from evolvmem.project_module_web import dispatch
+                try:
+                    self._send_json(dispatch(read_service, 'GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()}))
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 400)
+                return
+            if path == '/api/overview':
+                from evolvmem.capability_web import overview
+                self._send_json(overview(read_service))
+                return
+            if path in ('/api/capabilities', '/api/project-archives'):
+                from evolvmem.capability_web import capabilities
+                from evolvmem.project_archive_web import project_archives
+                reader = capabilities if path == '/api/capabilities' else project_archives
+                try:
+                    self._send_json(reader(read_service, {k: v[0] for k, v in parse_qs(parsed.query).items()}))
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 400)
+                return
+            archive_match = re.fullmatch(r'/api/project-archives/(.+)', path)
+            if archive_match:
+                from evolvmem.project_archive_web import project_archive
+                try:
+                    self._send_json(project_archive(read_service, unquote(archive_match.group(1)),
+                                                    {k: v[0] for k, v in parse_qs(parsed.query).items()}))
+                except ValueError as exc:
+                    status = 404 if str(exc) == 'project_not_registered' else 409 if str(exc) == 'project_ambiguous' else 400
+                    self._send_json({'ok': False, 'error': str(exc)}, status)
+                return
+            if path.startswith('/api/history-candidate/') or path == '/history' or path.startswith('/history/'):
+                # Additive read-only history candidate: owner-session HTML entry
+                # plus the headless JSON/token fallback. Existing routes and all
+                # write paths are untouched. Fail-closed when auth is disabled.
+                from evolvmem.history_candidate_web import dispatch as history_json_dispatch
+                from evolvmem.history_candidate_view import handle as history_view_handle
+                params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                session = auth.session(self) if auth.enabled else None
+                owner_verified = bool(auth.enabled and session and auth.can_write(session))
+                if path.startswith('/api/history-candidate/'):
+                    try:
+                        status, payload = history_json_dispatch(
+                            'GET', path, params, self.headers, owner_verified=owner_verified)
+                    except Exception:
+                        status, payload = 500, {'ok': False, 'error': 'history_candidate_internal_error'}
+                    self._send_json(payload, status)
+                else:
+                    try:
+                        status, content_type, body = history_view_handle(
+                            'GET', path, params, owner_verified=owner_verified,
+                            auth_enabled=auth.enabled)
+                    except Exception:
+                        status, content_type, body = 500, 'text/html; charset=utf-8', 'history error'
+                    if isinstance(body, dict):
+                        self._send_json(body, status)
+                    else:
+                        data = body.encode('utf-8') if isinstance(body, str) else body
+                        self.send_response(status)
+                        self.send_header('Content-Type', content_type)
+                        self.send_header('Content-Length', str(len(data)))
+                        self.send_header('Cache-Control', 'no-store')
+                        self.end_headers()
+                        self.wfile.write(data)
+                return
+            if path.startswith('/api/knowledge/'):
+                self._knowledge('GET', path, {k: v[0] for k, v in parse_qs(parsed.query).items()})
+                return
+            if path == '/api/local-capture':
+                # Read-only local Codex capture state: counts, timing and error
+                # codes only. Never a payload, a path or any body text.
+                from evolvmem.local_codex_capture import status as capture_status
+                try:
+                    self._send_json(capture_status(read_service.config, store))
+                except Exception as exc:  # bounded surface, no internal detail
+                    self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
+                return
+            if path in ('/ui-feedback.js', '/history-library.js', '/history-library.css', '/knowledge.css', '/knowledge.js', '/learning.js', '/extraction.js', '/memory.js', '/projects.js', '/pipeline.js', '/principles.js', '/history-organization.js', '/cleaning.js', '/organization.js', '/knowledge-facts.js', '/project-knowledge.js', '/review-groups.js', '/knowledge-equivalence.js', '/project-review.js', '/organization-metrics.js', '/workflow.css', '/workflow-overview.js', '/capabilities.js', '/project-archives.js', '/project-library.css', '/refresh.css', '/refresh.js'):
+                asset = _STATIC_INDEX.parent / path.lstrip('/')
+                data = asset.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/css; charset=utf-8' if path.endswith('.css') else 'application/javascript; charset=utf-8')
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if path in ('/designs', '/designs/') or path.startswith('/designs/'):
+                name = 'index.html' if path in ('/designs', '/designs/') else path[len('/designs/'):]
+                asset = _STATIC_INDEX.parent / 'designs' / name
+                if name not in _DESIGN_ASSETS or not asset.is_file():
+                    self._send_json({'ok': False, 'error': 'design asset not found'}, 404)
+                    return
+                data = asset.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', _DESIGN_ASSETS[name])
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if path in ('/redesign', '/redesign/'):
+                asset = _STATIC_INDEX.parent / 'redesign' / 'index.html'
+                if not asset.is_file():
+                    self._send_json({'ok': False, 'error': 'redesign not found'}, 404)
+                    return
+                data = asset.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if path in _INSIGHT_ASSETS:
+                asset = _STATIC_INDEX.parent / path.lstrip('/')
+                if not asset.is_file():
+                    self._send_json({'ok': False, 'error': 'asset missing'}, 404)
+                    return
+                data = asset.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', _INSIGHT_ASSETS[path] + '; charset=utf-8')
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            insight_routes = {
+                '/api/insights': 'overview', '/api/experiences': 'experiences',
+                '/api/project-summaries': 'summaries', '/api/workstreams': 'workstreams',
+            }
+            detail = re.fullmatch(r'/api/(experiences|project-summaries|workstreams)/([\w-]+)', path)
+            if path in insight_routes or detail:
+                try:
+                    model = read_service.insights()
+                    params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                    if detail:
+                        kind, identifier = detail.groups()
+                        if kind == 'workstreams':
+                            result = model.workstream(identifier)
+                        elif identifier.isdigit():
+                            method = model.experience if kind == 'experiences' else model.summary
+                            result = method(int(identifier))
+                        else:
+                            raise LookupError('not found')
+                    else:
+                        method = getattr(model, insight_routes[path])
+                        result = method() if path == '/api/insights' else method(params)
+                    self._send_json(result)
+                except LookupError:
+                    self._send_json({'ok': False, 'error': 'not found'}, 404)
+                except ValueError:
+                    self._send_json({'ok': False, 'error': 'invalid filters'}, 400)
+                except Exception as exc:
+                    self._send_json({'ok': False, 'error': _bounded_error(exc)}, 500)
+                return
+            if path in ("/organize", "/organize/", "/knowledge", "/knowledge/", "/legacy", "/legacy/"):
+                view = parse_qs(parsed.query).get('view', ['projects'])[0]
+                if view not in ('projects', 'library', 'intake', 'rules', 'skill'):
+                    view = 'projects'
+                target = ('/' if path.rstrip('/') == '/legacy' else
+                          '/#knowledge/intake' if path.rstrip('/') == '/organize' else
+                          '/#knowledge/' + view)
+                self.send_response(302)
+                self.send_header('Location', target)
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            if path in ('/workflow', '/workflow/', '/workflow-diagram', '/architecture', '/architecture.html'):
+                self.send_response(302)
+                self.send_header('Location', '/#principles')
+                self.send_header('Content-Length', '0')
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                return
+            pages = {'/': _STATIC_SIGNAL}
+            if path in pages:
+                page = pages[path]
+                try:
+                    self._send_html(page.read_text(encoding="utf-8"))
+                except FileNotFoundError:
+                    self._send_json({"ok": False,
+                                     "error": "page missing"}, 404)
+                return
+            if path in ("/trust", "/trust/"):
+                try:
+                    self._send_html(_STATIC_TRUST.read_text(encoding="utf-8"))
+                except FileNotFoundError:
+                    self._send_json({"ok": False, "error": "trust page missing"}, 404)
+                return
+            if path == "/api/sync-chain":
+                try:
+                    self._send_json(views.sync_chain())
+                except Exception as exc:  # bounded surface; read-only view
+                    self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
+                return
+            if path == "/api/trust/projects":
+                try:
+                    self._send_json({"ok": True, "projects": views.projects()})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
+                return
+            if path == "/api/knowledge":
+                params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                try:
+                    result = views.knowledge(params.get("project", ""))
+                except Exception as exc:  # bounded surface; read-only view
+                    self._send_json({"ok": False, "error": _bounded_error(exc)}, 500)
+                    return
+                self._send_json(result, 200 if result.get("ok") else 400)
+                return
+            if path == "/api/stats":
+                self._send_json(api_stats(facade, store, read_service.config))
+                return
+            if path == "/api/memories":
+                qs = parse_qs(parsed.query)
+                params = {k: v[0] for k, v in qs.items()}
+                self._send_json(api_memories(facade, params, store, read_service.config))
+                return
+            if path == "/api/projects":
+                self._send_json(_read_cache_swr(
+                    ('projects',), lambda: api_projects(facade, store), 300.0))
+                return
+            if path == "/api/resolutions":
+                qs = parse_qs(parsed.query)
+                params = {k: v[0] for k, v in qs.items()}
+                self._send_json(api_resolutions(facade, store, params))
+                return
+            if path == "/api/decision-window":
+                qs = parse_qs(parsed.query)
+                params = {k: v[0] for k, v in qs.items()}
+                # GET is read-only: any window parameter is rejected instead of
+                # being interpreted as a write.
+                if set(params) - {"id"}:
+                    self._send_json(
+                        {"ok": False, "error": "read_only_endpoint"}, 400
+                    )
+                    return
+                if "id" not in params:
+                    self._send_json({"ok": False, "error": "invalid_id"}, 400)
+                    return
+                try:
+                    item_id = int(params["id"])
+                except ValueError:
+                    self._send_json(
+                        {"ok": False, "error": "invalid_id"}, 400
+                    )
+                    return
+                self._send_json(api_decision_window_get(read_service, item_id))
+                return
+            m = _MEM_CONTEXT_RE.match(path)
+            if m:
+                self._send_json(api_memory_context(facade, store,
+                                                   int(m.group(1))))
+                return
+            self._send_json({"ok": False, "error": "unknown endpoint"}, 404)
+
+        @serialized
+        def do_POST(self):
+            read_service = getattr(self, 'read_service', None) or service
+            path = urlparse(self.path).path
+            if path.startswith('/api/history-candidate/') or path == '/history' or path.startswith('/history/'):
+                if path in ('/api/history-candidate/management/delete', '/api/history-candidate/management/restore'):
+                    session = auth.session(self) if auth.enabled else None
+                    if not (auth.enabled and session and auth.can_write(session)):
+                        self._send_json({'ok': False, 'error': 'history_management_forbidden'}, 403)
+                        return
+                    body, failed = self._read_body()
+                    if failed:
+                        return
+                    from evolvmem.history_candidate_web import dispatch as history_dispatch
+                    status, payload = history_dispatch('POST', path, body, self.headers, owner_verified=True)
+                    self._send_json(payload, status)
+                    return
+                self._send_json({'ok': False, 'error': 'history_candidate_method_not_allowed'}, 405)
+                return
+            if path.startswith('/api/knowledge/'):
+                body, failed = self._read_body()
+                if not failed:
+                    self._knowledge('POST', path, body)
+                return
+            if path.startswith('/api/project-modules'):
+                from evolvmem.project_module_web import dispatch
+                body, failed = self._read_body()
+                if failed:
+                    return
+                try:
+                    result = dispatch(service, 'POST', path, body)
+                    self._send_json({'ok': True, **result})
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 409 if str(exc) == 'revision_conflict' else 400)
+                return
+            intake_match = re.fullmatch(r'/api/capabilities/intake/(\d+)/assign', path)
+            suggestion_match = re.fullmatch(r'/api/capability-categories/suggestions/(\d+)/(accept|reject)', path)
+            if intake_match or suggestion_match or path == '/api/capability-categories/suggestions':
+                body, failed = self._read_body()
+                if failed:
+                    return
+                try:
+                    from evolvmem.capability_web import assign_intake, create_category_suggestion, review_category_suggestion
+                    if intake_match:
+                        result = assign_intake(service, int(intake_match.group(1)), body)
+                    elif suggestion_match:
+                        result = review_category_suggestion(service, int(suggestion_match.group(1)), suggestion_match.group(2))
+                    else:
+                        result = {'suggestion_id': create_category_suggestion(service, body), 'status': 'pending'}
+                except ValueError as exc:
+                    self._send_json({'ok': False, 'error': str(exc)}, 400)
+                    return
+                self._send_json({'ok': True, **result})
+                return
+            m = _MEM_ACTION_RE.match(path)
+            if m:
+                self._handle_memory_action(int(m.group(1)), m.group(2))
+                return
+            m = _RES_ACTION_RE.match(path)
+            if m:
+                self._handle_resolution_action(int(m.group(1)), m.group(2))
+                return
+            if path in ("/api/resolutions/batch_accept",
+                        "/api/decision-window",
+                        "/api/projects/register",
+                        "/api/projects/display_name",
+                        "/api/projects/display_names",
+                        "/api/projects/suggest_display_names",
+                        "/api/memories/organize_suggest"):
+                body, failed = self._read_body()
+                if failed:
+                    return
+                try:
+                    if path == "/api/resolutions/batch_accept":
+                        result = api_resolutions_batch_accept(service, body)
+                    elif path == "/api/decision-window":
+                        result = api_decision_window(service, body)
+                    elif path == "/api/projects/register":
+                        result = api_project_register(service, body)
+                    elif path == "/api/projects/display_name":
+                        result = api_project_set_display_name(service, body)
+                    elif path == "/api/projects/display_names":
+                        result = api_projects_set_display_names(service, body)
+                    elif path == "/api/projects/suggest_display_names":
+                        result = api_projects_suggest_display_names(read_service)
+                    else:
+                        result = api_memories_organize_suggest(
+                            read_service, read_service.legacy_facade(), body)
+                except Exception as exc:  # bounded surface; writes roll back
+                    self._send_json({"ok": False, "error": _bounded_error(exc)},
+                                    500)
+                    return
+                if result.get("ok"):
+                    _read_cache_clear()
+                self._send_json(result, 200 if result.get("ok") else 400)
+                return
+            self._send_json({"ok": False,
+                             "error": "unknown endpoint"}, 404)
+
+        @serialized
+        def _unsupported_write(self):
+            self._send_json({"ok": False, "error": "method_not_allowed"}, 405)
+
+        do_PUT = do_PATCH = do_DELETE = _unsupported_write
+
+        if company_sso:
+            do_HEAD = do_OPTIONS = _unsupported_write
+
+        def _handle_memory_action(self, mem_id: int, action: str):
+            body = {}
+            if action == "update":
+                body, failed = self._read_body()
+                if failed:
+                    return
+
+            try:
+                if action == "update":
+                    result = api_update(facade, mem_id, body)
+                elif action == "archive":
+                    result = api_archive(facade, mem_id)
+                elif action == "restore":
+                    result = api_restore(facade, mem_id)
+                elif action == "hard_delete":
+                    result = api_hard_delete(facade, mem_id)
+                else:
+                    result = api_delete(facade, mem_id)
+            except Exception as exc:  # bounded surface; writes roll back whole
+                self._send_json({"ok": False, "error": _bounded_error(exc)},
+                                500)
+                return
+            self._send_json(result,
+                            200 if result.get("ok") else 400)
+
+        def _knowledge(self, method, path, body, *, reader=None):
+            from evolvmem.knowledge_api import dispatch
+            from evolvmem.project_store import ProjectStoreError
+            try:
+                if self.prepared_extraction is not None and path == '/api/knowledge/skills/extraction/verify':
+                    from evolvmem.pipeline_skills import verify
+                    result = verify(service, 'extraction', body, prepared=self.prepared_extraction)
+                else:
+                    if method == 'GET':
+                        _key = ('knowledge', path, tuple(sorted((body or {}).items())))
+                        _target = reader or getattr(self, 'read_service', None) or service
+                        result = _read_cache_swr(
+                            _key, lambda: dispatch(_target, method, path, body), 45.0)
+                    else:
+                        _read_cache_clear()
+                        result = dispatch(reader or getattr(self, 'read_service', None) or service, method, path, body)
+                self._send_json(result)
+            except LookupError:
+                self._send_json({'ok': False, 'error': 'not_found'}, 404)
+            except (ValueError, ProjectStoreError) as error:
+                message = str(error)
+                self._send_json({'ok': False, 'error': message}, 409 if 'conflict' in message else 400)
+            except Exception as error:
+                self._send_json({'ok': False, 'error': _bounded_error(error)}, 500)
+
+        def _handle_resolution_action(self, item_id: int, action: str):
+            body, failed = self._read_body()
+            if failed:
+                return
+            try:
+                if action == "accept":
+                    result = api_resolution_accept(service, item_id, body)
+                else:
+                    result = api_resolution_reject(service, item_id, body)
+            except Exception as exc:  # bounded surface; writes roll back whole
+                self._send_json({"ok": False, "error": _bounded_error(exc)},
+                                500)
+                return
+            if result.get("ok"):
+                _read_cache_clear()
+            self._send_json(result,
+                            200 if result.get("ok") else 400)
+
+    return MemoryWebHandler
+
+
+def make_http_server(service, *, host="127.0.0.1", port=9377):
+    return ThreadingHTTPServer((host, port), make_handler(service))
+
+
+def run(port: int = 9377, data_dir: str | None = None,
+        host: str = "127.0.0.1") -> None:
+    config = Config.from_file()
+    if data_dir:
+        config.data_dir = Path(data_dir)
+    # 生产写入口：ContextService（按配置 mode，非法值 fail-closed 到 legacy）
+    # + 兼容门面；legacy 投影 schema 经服务自有后端幂等引导（与 mcp_server
+    # 相同），本模块不再持有裸 MemoryStore
+    service = ContextService(config)
+    service.initialize(mode=_context_mode(config), adapter=config.adapter or "web")
+    service._legacy_backend()
+    rules = service.knowledge().rules
+    if not rules.path.exists():
+        rules.save({'expected_revision': rules.read()['revision']})
+    # 空闲浏览器连接独立等待；共享 service 的业务处理仍由 handler 串行执行。
+    server = make_http_server(service, host=host, port=port)
+
+    def _warm_read_cache():
+        try:
+            fac = service.legacy_facade()
+            _read_cache_swr(('projects',), lambda: api_projects(fac, service.store), 300.0)
+            from evolvmem.knowledge_api import dispatch as _kd
+            _read_cache_swr(('knowledge', '/api/knowledge/organization', ()),
+                            lambda: _kd(service, 'GET', '/api/knowledge/organization', {}), 45.0)
+        except Exception:
+            pass
+
+    from evolvmem.product_policy import load_policy
+    policy = load_policy()
+    if policy.legacy_web_enabled:
+        _threading.Thread(target=_warm_read_cache, daemon=True).start()
+    # 单个有界后台整理 worker：独立连接、独立线程；中断的任务在启动时回到队列
+    from evolvmem.auto_organization import OrganizationWorker
+    organization = OrganizationWorker(config).start() if policy.legacy_web_enabled and policy.ai_processing_enabled else None
+    print(f"EvolvMem web console: http://{host}:{port} "
+          f"(data: {config.db_path})")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if organization is not None:
+            organization.stop()
+        server.server_close()
+        service.close()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="EvolvMem web console")
+    parser.add_argument("--port", type=int, default=9377)
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="bind address (default: 127.0.0.1; use 0.0.0.0 for LAN)")
+    parser.add_argument("--data-dir", default=None,
+                        help="override data dir (default: ~/.claude/evolvmem)")
+    args = parser.parse_args()
+    run(port=args.port, data_dir=args.data_dir, host=args.host)
+
+
+if __name__ == "__main__":
+    main()

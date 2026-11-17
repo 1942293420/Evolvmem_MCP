@@ -1,0 +1,11 @@
+{
+  "data_dir": "/absolute/private/evolvmem-lan-data",
+  "owner_data_dir": "/absolute/private/evolvmem-owner-data",
+  "token_hashes": {
+    "jiangli": "0000000000000000000000000000000000000000000000000000000000000000",
+    "kane": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "host": "0.0.0.0",
+  "port": 9378,
+  "embedding_enabled": true
+}

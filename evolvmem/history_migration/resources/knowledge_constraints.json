@@ -1,0 +1,506 @@
+[
+  [
+    "knowledge_objects",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_objects",
+    "u",
+    [
+      "knowledge_id"
+    ]
+  ],
+  [
+    "knowledge_fact_groups",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_fact_groups",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "knowledge_fact_versions",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_fact_versions",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "knowledge_decisions",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_decisions",
+    "u",
+    [
+      "knowledge_id",
+      "revision"
+    ]
+  ],
+  [
+    "knowledge_equivalences",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_equivalences",
+    "u",
+    [
+      "source_knowledge_id"
+    ]
+  ],
+  [
+    "knowledge_fact_actions",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_fact_actions",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "knowledge_fact_choices",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_fact_choices",
+    "u",
+    [
+      "group_id",
+      "conditions_json"
+    ]
+  ],
+  [
+    "knowledge_fact_conditions",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_fact_conditions",
+    "u",
+    [
+      "version_id"
+    ]
+  ],
+  [
+    "knowledge_fact_issues",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_fact_issues",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "knowledge_fact_relations",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_fact_relations",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "knowledge_fact_separations",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_fact_separations",
+    "u",
+    [
+      "base_group",
+      "knowledge_id"
+    ]
+  ],
+  [
+    "knowledge_fact_sources",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_fact_sources",
+    "u",
+    [
+      "version_id",
+      "knowledge_id",
+      "source_key",
+      "start",
+      "end"
+    ]
+  ],
+  [
+    "knowledge_metadata",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_metadata",
+    "u",
+    [
+      "item_id"
+    ]
+  ],
+  [
+    "knowledge_qa",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_qa",
+    "u",
+    [
+      "item_id"
+    ]
+  ],
+  [
+    "knowledge_restructure_map",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_restructure_map",
+    "u",
+    [
+      "legacy_item_id"
+    ]
+  ],
+  [
+    "knowledge_restructure_state",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_restructure_state",
+    "u",
+    [
+      "key"
+    ]
+  ],
+  [
+    "knowledge_source_bindings",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "knowledge_source_bindings",
+    "u",
+    [
+      "knowledge_id",
+      "source_key",
+      "source_start",
+      "source_end",
+      "quote_hash"
+    ]
+  ],
+  [
+    "learning_project_types",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "learning_project_types",
+    "u",
+    [
+      "project"
+    ]
+  ],
+  [
+    "learning_rules",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "learning_rules",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "learning_rules",
+    "u",
+    [
+      "fingerprint"
+    ]
+  ],
+  [
+    "learning_runs",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "learning_runs",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "learning_settings",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "learning_settings",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "learning_versions",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "learning_versions",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "skill_proposals",
+    "p",
+    "PRIMARY KEY (library_id, source_rowid)"
+  ],
+  [
+    "skill_proposals",
+    "u",
+    [
+      "id"
+    ]
+  ],
+  [
+    "knowledge_fact_versions",
+    "f",
+    {
+      "from_column": "group_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_fact_groups",
+      "to_column": "id"
+    }
+  ],
+  [
+    "knowledge_decisions",
+    "f",
+    {
+      "from_column": "knowledge_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_objects",
+      "to_column": "knowledge_id"
+    }
+  ],
+  [
+    "knowledge_equivalences",
+    "f",
+    {
+      "from_column": "target_knowledge_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_objects",
+      "to_column": "knowledge_id"
+    }
+  ],
+  [
+    "knowledge_equivalences",
+    "f",
+    {
+      "from_column": "source_knowledge_id",
+      "id": 1,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_objects",
+      "to_column": "knowledge_id"
+    }
+  ],
+  [
+    "knowledge_fact_conditions",
+    "f",
+    {
+      "from_column": "version_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_fact_versions",
+      "to_column": "id"
+    }
+  ],
+  [
+    "knowledge_fact_issues",
+    "f",
+    {
+      "from_column": "group_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_fact_groups",
+      "to_column": "id"
+    }
+  ],
+  [
+    "knowledge_fact_relations",
+    "f",
+    {
+      "from_column": "version_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_fact_versions",
+      "to_column": "id"
+    }
+  ],
+  [
+    "knowledge_fact_relations",
+    "f",
+    {
+      "from_column": "knowledge_id",
+      "id": 1,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_objects",
+      "to_column": "knowledge_id"
+    }
+  ],
+  [
+    "knowledge_fact_separations",
+    "f",
+    {
+      "from_column": "group_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_fact_groups",
+      "to_column": "id"
+    }
+  ],
+  [
+    "knowledge_fact_sources",
+    "f",
+    {
+      "from_column": "knowledge_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_objects",
+      "to_column": "knowledge_id"
+    }
+  ],
+  [
+    "knowledge_fact_sources",
+    "f",
+    {
+      "from_column": "version_id",
+      "id": 1,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_fact_versions",
+      "to_column": "id"
+    }
+  ],
+  [
+    "knowledge_metadata",
+    "f",
+    {
+      "from_column": "item_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "CASCADE",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "context_items",
+      "to_column": "id"
+    }
+  ],
+  [
+    "knowledge_qa",
+    "f",
+    {
+      "from_column": "item_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "CASCADE",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "context_items",
+      "to_column": "id"
+    }
+  ],
+  [
+    "knowledge_source_bindings",
+    "f",
+    {
+      "from_column": "knowledge_id",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "knowledge_objects",
+      "to_column": "knowledge_id"
+    }
+  ],
+  [
+    "learning_project_types",
+    "f",
+    {
+      "from_column": "project",
+      "id": 0,
+      "match": "NONE",
+      "on_delete": "NO ACTION",
+      "on_update": "NO ACTION",
+      "sequence": 0,
+      "target_table": "context_project_registry",
+      "to_column": "project"
+    }
+  ]
+]

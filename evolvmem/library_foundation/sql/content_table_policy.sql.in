@@ -1,0 +1,30 @@
+-- Template, never part of automatic migration discovery. Apply only after a
+-- reviewed domain migration has created the target table and immutable security
+-- columns library_id uuid NOT NULL, project_id uuid (NULL for device/legacy).
+-- The target belongs to em_content. Child rows require (library_id, parent_id)
+-- foreign keys to the corresponding parent (library_id, id), not bare local ids.
+-- Trusted variables: table_name, owner_role. No caller/body supplied identifiers.
+-- Runtime table privileges are deliberately NOT granted by this template.
+\set ON_ERROR_STOP on
+SELECT current_user = :'owner_role' AND EXISTS (
+    SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_catalog.pg_roles r ON r.oid = c.relowner
+    WHERE n.nspname = 'em_content' AND c.relname = :'table_name' AND c.relkind = 'r'
+      AND r.rolname = current_user AND NOT r.rolsuper AND NOT r.rolbypassrls
+      AND NOT r.rolcanlogin AND NOT r.rolcreaterole) AS preflight_ok \gset
+\if :preflight_ok
+\else
+  \echo 'Content policy refused: target owner/table preflight failed.'
+  \quit 3
+\endif
+
+BEGIN;
+REVOKE ALL ON TABLE em_content.:"table_name" FROM PUBLIC;
+ALTER TABLE em_content.:"table_name" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE em_content.:"table_name" FORCE ROW LEVEL SECURITY;
+CREATE POLICY migration_owner ON em_content.:"table_name" TO :"owner_role" USING (true) WITH CHECK (true);
+CREATE POLICY authorized_read ON em_content.:"table_name" FOR SELECT TO PUBLIC USING (em_security.allows(library_id, project_id, 'read'));
+CREATE POLICY authorized_insert ON em_content.:"table_name" FOR INSERT TO PUBLIC WITH CHECK (em_security.allows(library_id, project_id, 'write'));
+CREATE POLICY authorized_update ON em_content.:"table_name" FOR UPDATE TO PUBLIC USING (em_security.allows(library_id, project_id, 'write')) WITH CHECK (em_security.allows(library_id, project_id, 'write'));
+CREATE POLICY authorized_delete ON em_content.:"table_name" FOR DELETE TO PUBLIC USING (em_security.allows(library_id, project_id, 'write'));
+COMMIT;

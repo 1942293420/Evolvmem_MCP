@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EvolvMem Neural Matrix · 多智能体记忆同步与进化中枢</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230284c7'/%3E%3Ctext x='32' y='45' fill='%23ffffff' font-size='38' font-family='Consolas,monospace' font-weight='bold' text-anchor='middle'%3EE%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/history-library.css?v=matrix2">
+  <link rel="stylesheet" href="/knowledge-console.css?v=matrix2">
+  <link rel="stylesheet" href="/review-inbox.css?v=matrix2">
+</head>
+<body data-design="console">
+  <a class="skip" id="skip-to-content" href="#workspace">跳到内容</a>
+
+  <header class="masthead topbar">
+    <div class="topbar-main">
+      <a class="brand" href="#libraries">
+        <span class="brand-mark" aria-hidden="true">E</span>
+        <span class="brand-title">
+          <strong>EVOLVMEM <span class="badge badge-brand mono" style="padding:1px 6px">NEURAL v2.0</span></strong>
+          <span class="brand-caption">MULTI-AGENT MEMORY MATRIX</span>
+        </span>
+      </a>
+
+      <nav class="main-nav nav-tabs" aria-label="主导航">
+        <a href="#libraries" data-nav="libraries" class="nav-tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>
+          态势总览
+        </a>
+        <a href="#sync" data-nav="sync" class="nav-tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.2 7.2L10.8 15.8M15.8 7.2L13.2 15.8M8.5 6h7"/></svg>
+          多智能体同步
+          <span class="nav-count" id="nav-count-sync" hidden></span>
+        </a>
+        <a href="#evolution" data-nav="evolution" class="nav-tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v4m0 10v4M5.6 5.6l2.8 2.8m7.2 7.2l2.8 2.8M3 12h4m10 0h4M5.6 18.4l2.8-2.8m7.2-7.2l2.8-2.8"/><circle cx="12" cy="12" r="3"/></svg>
+          记忆进化工坊
+          <span class="nav-count warn" id="nav-count-evo" hidden></span>
+        </a>
+        <a href="#experiences" data-nav="experiences" class="nav-tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          经验库
+          <span class="nav-count" id="nav-count-exp" hidden></span>
+        </a>
+        <a href="#review-inbox" data-nav="review-inbox" class="nav-tab">审阅箱 <span class="nav-count" id="nav-count-review" hidden></span></a>
+        <a href="#history" data-nav="history" class="nav-tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+          历史会话
+        </a>
+        <a href="/?#skills" data-nav="skills" id="skills-nav" class="nav-tab" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/><path d="M12 11l8-4.5M12 11v9M12 11L4 6.5"/></svg>
+          Skill 库
+          <span class="nav-count" id="nav-count-skills" hidden></span>
+        </a>
+        <a href="#users" data-nav="users" id="admin-nav" class="nav-tab" hidden>用户权限</a>
+        <a href="#principles" data-nav="principles" class="nav-tab">原理</a>
+      </nav>
+
+      <div class="identity topbar-actions">
+        <button type="button" class="btn btn-sm" id="btn-matrix-refresh" title="重新同步实时数据库与星云状态">↻ 刷新态势</button>
+        <span class="badge mono actor-pill">OP // <span id="actor-name">正在登录…</span></span>
+        <button id="logout" class="quiet btn btn-ghost btn-sm" type="button">退出</button>
+      </div>
+    </div>
+
+    <div class="hud-ribbon" aria-label="系统实时遥测状态栏">
+      <div class="hud-ribbon-group">
+        <span class="hud-kv">LAN_BUS: <b>192.168.1.135:9378 [ONLINE]</b></span>
+        <span class="hud-kv">CAS_PROTOCOL: <b>MCP_2025.11 // SHA256_FENCED</b></span>
+        <span class="hud-kv">VECTOR_CORE: <b>USEARCH_2.26.2_HNSW</b></span>
+        <span class="hud-kv">AUTH_GUARD: <b>FEISHU_OAUTH // CSRF_VERIFIED</b></span>
+      </div>
+      <div class="hud-ribbon-group">
+        <span class="hud-kv" id="hud-clock">SYNC_CLOCK: <b>--:--:--</b></span>
+      </div>
+    </div>
+  </header>
+
+  <main id="workspace" class="workspace" tabindex="-1">
+    <section id="library-context" class="library-context" aria-label="当前查看的知识库" hidden>
+      <strong id="library-owner"></strong>
+      <span id="library-access" class="badge"></span>
+      <a class="library-return" href="#libraries">返回态势总览与知识库</a>
+      <span id="runtime-status" class="policy-status"></span>
+    </section>
+    <div id="console-notice" role="status" class="notice" hidden></div>
+    <section id="history-view" data-slot="history-library" hidden></section>
+    <section id="review-inbox-view" data-slot="review-inbox" hidden></section>
+    <section id="console-view"><p class="empty">正在读取你的知识库与神经记忆矩阵…</p></section>
+  </main>
+
+  <dialog id="user-dialog" aria-labelledby="user-dialog-title">
+    <form id="user-form">
+      <div class="section-head">
+        <h2 id="user-dialog-title">添加用户</h2>
+        <button type="button" class="quiet" data-close-user>关闭</button>
+      </div>
+      <p class="muted">账号用于网页登录与访问授权。新账号的数据源和 CLI 接入需单独连接。</p>
+      <label>用户标识<input name="id" required pattern="[a-z][a-z0-9_-]{0,63}" maxlength="64" placeholder="例如：alice"></label>
+      <label>显示名称<input name="display_name" required maxlength="100"></label>
+      <label>飞书登录身份<select name="open_id" id="login-binding"></select></label>
+      <label class="check"><input type="checkbox" name="enabled" checked>启用账号</label>
+      <p id="user-form-error" class="error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" class="secondary" data-close-user>取消</button>
+        <button type="submit" class="primary">保存用户</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="experience-dialog" class="experience-editor" aria-labelledby="experience-dialog-title">
+    <form id="experience-form">
+      <div class="section-head">
+        <h2 id="experience-dialog-title">新增经验</h2>
+        <button type="button" class="quiet" data-close-experience aria-label="关闭经验编辑">关闭</button>
+      </div>
+      <label>经验分类
+        <select name="category" required>
+          <option>前端经验</option>
+          <option>业务经验</option>
+          <option>系统环境经验</option>
+        </select>
+      </label>
+      <label>问题<textarea name="problem" rows="2" maxlength="1000" required placeholder="在什么情况下遇到了什么问题"></textarea></label>
+      <label>解决办法<textarea name="solution" rows="4" maxlength="8000" required placeholder="记录关键做法"></textarea></label>
+      <label>可复用经验<textarea name="reusable_experience" rows="3" maxlength="8000" required placeholder="以后遇到类似情况，应怎样处理"></textarea></label>
+      <div class="experience-discard" id="experience-discard" hidden>
+        <p role="alert">还有未保存的修改。你可以继续编辑后保存，或放弃本次修改。</p>
+        <div class="dialog-actions">
+          <button type="button" id="experience-keep-editing">继续编辑</button>
+          <button type="button" class="danger-quiet" id="experience-discard-confirm">放弃修改</button>
+        </div>
+      </div>
+      <p id="experience-form-error" class="error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" data-close-experience>取消</button>
+        <button type="submit" class="primary">保存经验</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="experience-delete-dialog" aria-labelledby="experience-delete-title">
+    <h2 id="experience-delete-title">移至回收站</h2>
+    <p>将这条经验移至回收站？之后可以恢复。</p>
+    <p id="experience-delete-problem" class="experience-text"></p>
+    <p id="experience-delete-error" class="error" role="alert"></p>
+    <div class="dialog-actions">
+      <button id="experience-delete-cancel" type="button">取消</button>
+      <button id="experience-delete-confirm" type="button" class="danger">移至回收站</button>
+    </div>
+  </dialog>
+
+  <script src="/nebula.js?v=matrix2"></script>
+  <script src="/history-library.js?v=matrix2"></script>
+  <script src="/principles.js?v=matrix2"></script>
+  <script src="/knowledge-console.js?v=matrix2"></script>
+  <script src="/review-inbox.js?v=matrix2"></script>
+</body>
+</html>

@@ -1,0 +1,335 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-10-05",
+  "source": {
+    "sha256": "fa373abe574a5f5946fbea49e9117d99c83081a36da539a1c99f35686dba7ee6",
+    "bytes": 201899
+  },
+  "chapters": [
+    {
+      "chapter": "overview",
+      "type": "architecture",
+      "specification": {
+        "sha256": "06380fa3079a3a2d3d4ef0381a240c50042e5c3da74fa4f4474214b32973fb3d",
+        "bytes": 4751
+      },
+      "artifact": {
+        "sha256": "e7d802c9ad317e778489a35762c54820e723475f409e892f0ef36ca84dd295c8",
+        "bytes": 609536
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "memory-ingestion",
+      "type": "workflow",
+      "specification": {
+        "sha256": "c549e8e74ce590caa86b25fb9d5de891cf52aa5dc11607129f18b8bb93483622",
+        "bytes": 3557
+      },
+      "artifact": {
+        "sha256": "4f0d7146a5d0f8353e46c34f40826f61939943a49b32a93e916ec86987d93893",
+        "bytes": 609674
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "memory-recall",
+      "type": "workflow",
+      "specification": {
+        "sha256": "3ed670468beb23cf39481a140e2b18dabb0483b89bed3cfdc1c5a3a3d5968a97",
+        "bytes": 2844
+      },
+      "artifact": {
+        "sha256": "93b1e79376735695d78548d14e0c774d5d6f9c32db6da37286e8af6d7459065e",
+        "bytes": 605030
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "model",
+      "type": "architecture",
+      "specification": {
+        "sha256": "bec017d5474f57fd64f87c8593ebfa7ddca305692752688b1d4cf5725b333268",
+        "bytes": 4074
+      },
+      "artifact": {
+        "sha256": "806338745f84cd486e7d8232d00dbe536c799495f16df85ffb0e8c6978337a10",
+        "bytes": 607080
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "context-recall",
+      "type": "architecture",
+      "specification": {
+        "sha256": "cb892db0ea0abe118276e38cad19c66f3fcbbb898dd87e0b94ab2a8158e059e3",
+        "bytes": 4423
+      },
+      "artifact": {
+        "sha256": "3a0dc29dc915d9d6186396b8d458b1db6806dd16329e7b5bc64c055c8064d1ad",
+        "bytes": 609220
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "legacy",
+      "type": "architecture",
+      "specification": {
+        "sha256": "de0525804fcd4d727505c988bd1ba6f921664fd3ffc3b87967da1cc6c5fe4005",
+        "bytes": 4636
+      },
+      "artifact": {
+        "sha256": "418e4bf830744b7a4530907480d1e048a8cb78ab05d3f908839f7f74805e5af1",
+        "bytes": 610336
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "experience",
+      "type": "architecture",
+      "specification": {
+        "sha256": "9d2cfb5dabf1397c5883130f514113f0aeb7cf444dc4b451d0bfb67a3fcbf19d",
+        "bytes": 4696
+      },
+      "artifact": {
+        "sha256": "7b100f4f1bfb549a8afeb2b16130f391255e9a6ebcf0bb9681212037f588a56c",
+        "bytes": 610562
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "ingestion",
+      "type": "architecture",
+      "specification": {
+        "sha256": "134916713d29e45cf5bf8d85699f15e463fd8475f929444f247a4eb14f9fa1cd",
+        "bytes": 4637
+      },
+      "artifact": {
+        "sha256": "df51a6daa52f77f941cf11b2d09000a7c905adfc5a7d56edb4adb88c3df972f8",
+        "bytes": 610174
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "storage",
+      "type": "architecture",
+      "specification": {
+        "sha256": "226180270a2f6cc83e22f082f583ab430ae42b4a6be0e0a41a1bfc893e1a074e",
+        "bytes": 4657
+      },
+      "artifact": {
+        "sha256": "34b299b9a1f0dbbf29bc57e94259415f69f0761ef5e2a6ffee8cf9078ebce0eb",
+        "bytes": 610046
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "continuity",
+      "type": "architecture",
+      "specification": {
+        "sha256": "526cb8fae3cddd8cc1cf7c34222dfb2696cd53cdfe7a3f3b8da4cc4c7d3255d4",
+        "bytes": 5637
+      },
+      "artifact": {
+        "sha256": "5becf9661fda427106c38f270c33ed6c9eb154faaca48b2b4b791f6e6883e55c",
+        "bytes": 615280
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "evolution",
+      "type": "architecture",
+      "specification": {
+        "sha256": "e2ce1f5b058ce109e4e569d2348a00048521526a519d741a3e35f17f4b4ef8a3",
+        "bytes": 4697
+      },
+      "artifact": {
+        "sha256": "6fa1151fa73e4421ef6722818789a0379f67dec28cc01d68d61e942de971829f",
+        "bytes": 610668
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "runtime",
+      "type": "architecture",
+      "specification": {
+        "sha256": "148ed81a1e18c173c82c44b96ffaad773a7bf281dfacf9c20870d340ae306575",
+        "bytes": 4405
+      },
+      "artifact": {
+        "sha256": "cc8a82137268b284b0605c63aa132179e46f353c3f5f3b3df017fe3edc9237b9",
+        "bytes": 609961
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "trust-views",
+      "type": "architecture",
+      "specification": {
+        "sha256": "f382787456ee653c23e080b054ffd9309044bdfc5fd8d26ccd3c0baee916b893",
+        "bytes": 3562
+      },
+      "artifact": {
+        "sha256": "64889be5b0863fed723757359bd8d2be287777c46deb2f95bf4394092c1f856f",
+        "bytes": 606881
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "windows-codex",
+      "type": "architecture",
+      "specification": {
+        "sha256": "977c378aeac704242e42f0efe2c663af08fd2a2e8d844ce92906dc65378b5d8d",
+        "bytes": 4879
+      },
+      "artifact": {
+        "sha256": "de0dbf939721e7e1983154153ce47663a31bdd3ad00d6f1d65e05ab3b97ac630",
+        "bytes": 611941
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "knowledge",
+      "type": "architecture",
+      "specification": {
+        "sha256": "0a672fe3cb4e6c24c2ea9d9cd32ce48c91c1b26ddafa39ffe896df7b0ef1d16b",
+        "bytes": 2930
+      },
+      "artifact": {
+        "sha256": "b42e4ceb3d54fd7cec438d20152f1eebf3cce2197927a727cc613354e3b2f6ec",
+        "bytes": 603430
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    },
+    {
+      "chapter": "learning",
+      "type": "architecture",
+      "specification": {
+        "sha256": "e55eae771a2eaf52650de993c2df1f1527a11f7f0b8504d7f3842cb14b1a68d4",
+        "bytes": 3161
+      },
+      "artifact": {
+        "sha256": "9ee661398503894e659a17c14cc894989cb6bc320241a437cda19e5a7801774d",
+        "bytes": 603951
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      }
+    }
+  ],
+  "atlas": {
+    "sha256": "2597e25262e7b864571e1d2d51962d374220b42f53aeb877d5b52c04da71d71b",
+    "bytes": 2436433
+  },
+  "visual_review": "2026-10-05: Chromium inspected both workflow chapters inside the atlas, including switching, SVG rendering and readable main paths; all 16 chapters pass 9/9 artifact checks, 0 errors and 0 warnings."
+}

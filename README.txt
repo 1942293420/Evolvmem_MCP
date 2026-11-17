@@ -1,0 +1,506 @@
+EvolvMem
+
+给编程 Agent 增加可查询、可核对、可续接的本地记忆。
+EvolvMem 保存长期偏好、项目决策、故障经验和任务断点，供下一次会话按需读取。
+它提供 SQLite 存储、中文全文检索、可选本地向量检索、stdio MCP 服务，以及中文 Web 工作台。
+
+“学习”发生在记忆和证据层。 系统不会训练、微调或修改宿主模型权重。
+一次检索命中不是成功经验；助手说“完成”也不是验证。方法需要关联真实工具结果或用户确认，才能形成可追溯的经验。
+
+可以用它做什么
+
+- 保存跨会话仍有价值的偏好、约束和技术决策，避免反复解释背景。
+- 用关键词查中文记忆；装好本地 embedding 后，再补充语义相近的结果。
+- 按条件检索经验，查看适用范围、方法、原始依据与后续反馈。
+- 保存项目摘要和工作断点，让“继续上次任务”有明确的恢复位置。
+- 在 Web 项目知识库中浏览全部资料、编辑正文、批量改归属、管理入库与归档，查看来源。
+- 明确资料自动入库，疑难资料待确认；页面可编辑入库条件和 AI 管理 Skill，并用样例预览。
+- 可选接入 Kimi / DSH 会话提取，把有长期价值的信息整理成候选记忆。
+- Windows 原生 Codex 可安装会话 hooks 和后台采集脚本，经一个 LAN MCP 共用 Linux 的记忆、项目与任务断点。
+
+这些能力分阶段启用：默认 legacy 先提供基础记忆；结构化经验与续接依赖对应的 Context Core 模式、适配器和项目初始化。
+自动调用依赖客户端遵循 MCP instructions 或运行 hooks，不保证每个 Agent 都主动查历史。
+历史内容始终只是参考，不能覆盖当前用户要求或实际代码、测试结果。
+
+图片：项目知识库预览 (evolvmem/web_static/designs/knowledge.png)
+
+界面预览使用演示数据。实际打开后显示自己的本地数据；新目录为空是正常状态。
+
+项目知识库管理
+
+Web 使用全宽工作台：左侧导航按工作台、整理成果和管理调整分组。总览显示系统处理中、待你判断、系统问题和自动完成，直接读取真实任务与同步状态；读取失败显示未知。自动整理提供待你判断、系统问题、已完成、进度历史、我的指导和运行记录。明确资料自动处理，不要求逐层审核；业务例外显示原因、关键原话和当前判断，支持一次指导后复用。系统失败在单独页面重试，自动结果只需按需抽检。旧 /knowledge、/organize 和 /legacy 链接自动进入统一界面；/workflow 与 /architecture 跳转到主界面的工作原理。
+
+页面使用通俗业务文案和正常可读字号，去除重复小字注释；清洗与归属规则按需展开。清洗预览和审核草稿切页保留；历史、问答、方法验证各自保留来源和状态。工作原理图同步展示自动处理与必要人工判断。
+
+支持粘贴或导入文本 / Markdown、搜索全文、维护项目别名、编辑内容、单条与批量改归属、确认入库、归档、恢复和软删除。系统生成的摘要、任务断点和结构化经验可新增补充资料记录更正；任务改归属会整组迁移历史断点与焦点，带父子关联的任务暂保留待处理。
+
+首次启动 Web 后，在数据目录的 knowledge-management/SKILL.md 保存默认规则。默认最低置信度 0.8、正文 10–20000 字且需来源；唯一项目线索的普通资料自动入库，其余进入待确认。规则 JSON 条件由程序执行，说明文字进入 AI 提炼提示词；保存后每次处理读取最新内容。经验入库仍不等于已验证成功。提炼兼容 4–8 段的知识标识，合法的多层主题不再被旧四段校验静默丢弃；标识在答案核验前统一，原有四段标识保持可用。历史资料通过整理预览后应用新规则，已有人工决定不会被自动覆盖。提炼时，只由助手说出、用户尚未明确采纳的建议不生成 active 也不生成候选，只保留在对话历史；用户明确采纳后照常提取，助手的普通事实回答、用户对建议的明确决策、真实冲突和有验证依据的经验不受影响。
+
+本地 AI 与页面使用同一个管理核心。使用项目 Python 环境：
+
+python -m evolvmem.knowledge_cli GET rules
+python -m evolvmem.knowledge_cli GET projects
+python -m evolvmem.knowledge_cli GET items --json '{"project":"evolvmem"}'
+python -m evolvmem.knowledge_cli POST items/123/assign --file request.json
+
+写入请求带详情返回的 expected_revision；改归属文件例如 {"project":"eva","expected_revision":"读取到的版本"}。可将数据目录中的 knowledge-management 链接到本机技能目录；AI 发现和 Web 编辑共用同一份 SKILL.md。当前已打开的聊天需主动读取新规则，新会话按客户端机制发现技能。
+
+「数据清洗」位于「项目历史」之前：编辑并保存清洗 Skill → 勾选资料 → AI 预览 → 核对或修改清洗稿和资料类别 → 批量保存。原文与清洗稿分开保存；AI 按全文分块处理，失败项不进入下一阶段。清洗页及待入库项目支持勾选永久删除，需二次确认；已被知识引用的来源会阻止删除。删除会话时清除本机原始文件、正文和清洗稿，同时清除同一会话的旧快照，避免重新出现。
+
+「项目历史」分为「已整理」和「待入库项目」，后者只接收已经确认的清洗稿。项目整理 Skill 在待入库页面编辑和保存；勾选后 AI 预览项目建议，允许手动修改，再单条或批量保存分类。归属预览每次最多 20 条，每条最多 3,000 字片段；预览不修改归属。批量保存逐条检查版本，失败项保留草稿，来源变化需返回清洗核对。后续会话提炼以确认清洗稿限制主题，原文仍作为引用依据。
+
+「处理 Skill」统一为「经验提取与验证」：AI 提取说明、准入说明和可执行条件一次保存。项目归属、数据清洗、提取与验证分别导出三个有效 Skill；旧入库与协作入口标为停用。样例预览不写入，保存候选不代表验证成功。
+
+已通过的资料自动更新检索索引；暂时不可用时保留资料并重试。索引重建完成后，会补齐期间新增、修改和归档的资料，未变化的内容无需重新计算；核对一致后才更新检索。暂未追上最新资料时，保留原有索引并稍后重试，页面继续显示待同步状态。LAN 服务启动先开放主用检索，待同步索引在后台恢复，不再等待兼容旧索引全量重建。只采集用户主会话，系统检查子会话自动排除，不进入待分类、提炼或历史召回。旧上传可按原生会话身份分批补查（先预览再执行）；仅由这些来源自动生成的资料退出当前召回，原始归档、人工确认和有其他有效来源的知识保留；没有对话内容的空会话无需审核；旧的整份快照退出当前队列，原始归档与回执保留；同一会话的增量批次独立保留。
+
+新增「集中审核」：按同一会话、疑问类型与资料类别汇总，填写归属项目、适用短语和例外后，先预览符合项与排除项，再一次处理最多 100 条；默认仅本次，明确选择以后适用才保存一条后续指导。资料或规则变动后旧预览失效，已有人工决定不进入自动批量覆盖。条件草稿切页保留。
+
+纯助手执行进度可标为「仅留历史」，保留原文、支持搜索与恢复处理；程序核对真实角色和类别，用户要求、重要决策、工具依据与项目冲突不自动进入这条分流。已确认项目的进度写入项目历史，未归属进度保持未归属，可在自动整理页查找。普通助手答复不一律当进度。
+
+索引恢复会核验已有向量对应的内容摘要、模型配置与实际向量摘要，只重新计算变化或缺少依据的资料；首次建立、缺失或损坏的依据会重新计算。期间新增、修改和撤回继续补齐，核对数据库一致后才替换索引；失败保留旧索引与重试标记。
+
+索引同步显示当前覆盖数量、待补数量和上次同步耗时；正常新增资料由后台约每分钟补齐，模型暂不可用与待同步分别报告。慢查询和失败请求记录排队、健康检查、关键词、向量及重排序各阶段耗时、异常类型和代码位置，不记录查询正文、凭据或异常消息。
+
+失败项显示实际阶段、异常类型与时间，不保存完整模型错误正文；重试复用已完成历史。总览和自动整理页显示有明确口径的自动完成比例、待审组数与条目数、仅留历史数量、实际指导复用和索引恢复耗时。逐条「判断正确 / 判断有误」仅记录你明确给出的抽检反馈；没有样本显示未评估，抽检比例不代表全库误判率。
+
+历史与经验是并行成果：历史保留原文、清洗稿、会话摘要和项目摘要；经验保存方法、适用条件、来源和实际验证。向量检索保留历史，并只把有独立验证依据的方法作为正式经验；未验证方法保留供人工检查，不参与正式经验检索。普通事实、要求和参考资料保留原分类，不因归类或人工入库被标记为验证成功。
+
+召回先核对来源资格、项目边界和有效期，再组合关键词与语义候选。自然问题中的错误码也能参与关键词查找。项目与通用约定分别保留语义候选，再合并；扩大查找范围时复用同一份问题向量。可选本地重排序读取摘要与限长正文，按问题与内容的相关程度安排顺序，已有热度、类型和重要度只用于相同相关分数的次序；未达到原语义门槛的新候选还须通过重排序的独立检查。低相似且无词面依据、只靠重排序接纳的候选，还会核对问题中的明确英文名称是否出现在资料或项目中，避免拿另一个对象的数字作答；强语义支持仍允许跨语言名称。模型不可用时恢复原门槛，不拿弱候选填空。问答比较问题、答案和适用条件，历史只使用当前项目的有效摘要，方法经验仍要求真实验证与条件匹配；无关问题返回空，空查询保留浏览用途。完整内容与适用范围都相同的资料只占一个展示位置，各来源记录保留。
+
+派生项目摘要用于当前召回前，逐一核对原始资料的状态、项目、有效期和内容签名。原始资料撤回、改写、移项或过期后，旧摘要仅保留为历史，重新生成时不带入失效旧摘要；来源内容更新即使编号不变也会触发更新。旧自动约定若只有助手或工具推断且无人工确认，退出当前召回并可分批转为待核对；原始资料与人工确认保留。
+
+重排序是可选依赖：安装 pip install '.[reranking]'，将 context_reranker_model_dir 指向本机已下载的 cross-encoder/mmarco-mMiniLMv2-L12-H384-v1 ONNX 目录（含 tokenizer.json 和浮点 onnx/model.onnx）。按资料长度分成小批次处理并恢复原顺序，避免长文把整批短文的填充计算推高。动态量化版本会随批量内容改变绝对评分，不用于当前接纳门槛。程序不会自动下载模型或外发资料；共享 LAN 运行时只驻留一份，并由认证后的 /rerank 供本地客户端复用。它不改变 embedding 模型或已存向量。context_reranker_min_score 默认 0.1，仅用于新增弱候选的接纳，须结合本库正例和无关问题对照验证。检索返回 rerank_score 和 duplicate_ids，知识召回返回实际 recall_channels；缺少重排序时不声称启用。
+
+运行环境
+
+- Linux、macOS 或 Windows 的 WSL2；Python 3.10 及以上。
+- Python 所链接的 SQLite 必须支持 FTS5、JSON 函数和聚合 FILTER，建议 SQLite 3.38 及以上。
+- Python 核心使用 POSIX fcntl，运行在 Linux、macOS 或 WSL2；Windows 原生 Codex 使用下方的 PowerShell 接入包访问 Linux 核心。
+- 基础安装需要 pip 下载依赖；本地检索不需要提取模型的 API key。
+- 默认面向个人和少量可信用户的本机使用；Web 默认监听 127.0.0.1，可选启用飞书登录与只读访问。
+
+查看实际 Python / SQLite 版本：
+
+python3 --version
+python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'
+
+从零开始
+
+1. 获取源码
+
+在 GitHub 仓库 (https://github.com/1942293420/Evolvmem_MCP) 选择 Code → Download ZIP 并解压，或使用 Git 克隆：
+
+git clone https://github.com/1942293420/Evolvmem_MCP.git evolvmem
+cd evolvmem
+
+2. 安装基础功能
+
+bash install.sh
+source .venv/bin/activate
+python -m evolvmem.web_server
+
+脚本在源码目录创建 .venv、检查运行环境、安装基础依赖，并在不存在时生成 config.json。
+默认不下载模型，不安装可选 llama-cpp-python，也不覆盖已有配置或模型文件。
+打开 http://127.0.0.1:9377 即可使用 Signal 工作台；终端按 Ctrl+C 停止服务。
+
+独立协作学习已停用：会话提炼不再生成协作规则，后台不再自动分析或注入旧协作规则。旧框架、规则、版本和原始知识继续保留，处理方式由各环节 Skill 明确维护。旧 collaboration_recall 返回停用状态，规则变更接口拒绝写入；旧资料可通过本地只读接口检查：
+
+python -m evolvmem.knowledge_cli GET learning
+
+MCP 由客户端另起进程，使用 MCP 不要求 Web 同时运行。
+
+需要选择 Python 或虚拟环境目录时：
+
+bash install.sh --python /absolute/path/to/python3 --venv /absolute/path/to/venv
+
+喜欢手工安装，也可以在源码目录执行：
+
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+python -m evolvmem.web_server
+
+手工安装后，运行服务会创建需要的数据目录；未创建 config.json 时使用代码默认值。
+配置样例使用虚拟环境 Python 的绝对路径，避免客户端启动到另一个没有安装 EvolvMem 的解释器。
+
+3. 可选：启用本地语义检索
+
+bash install.sh --with-embedding
+
+这会额外安装 llama-cpp-python 并下载 Nomic GGUF；后端安装可能需要 C/C++ 编译环境。
+默认模型为 nomic-embed-text-v1.5.f16.gguf，维度 768，文件位于数据目录的 models/。
+查询和文档分别加 search_query:  与 search_document:  前缀。
+这些字段共同定义向量空间，不能只随意修改维度；更换模型后需按技术参考重建相应缓存。
+没有模型或加载失败时，基础记忆仍能使用 FTS5/trigram；primary 还受独立的索引健康门禁约束。
+
+数据目录与配置
+
+默认目录是 ~/.claude/evolvmem/。这个历史路径名不要求安装 Claude Code，其他客户端也能共用。
+如需独立目录，先设置环境变量，再安装或启动各个客户端/服务：
+
+export EVOLVMEM_DATA_DIR="$HOME/.local/share/evolvmem"
+bash install.sh
+.venv/bin/python -m evolvmem.web_server
+
+MCP、hooks、补扫 worker 必须指向同一目录；桌面客户端未必继承终端变量，建议写入其 MCP env。
+config.json 的缺失字段使用默认值；EVOLVMEM_CONTEXT_MODE、EVOLVMEM_ADAPTER 优先于其中对应字段。
+修改配置后重启已有服务。Kimi 路径常量在进程导入时解析，运行中改变变量不会切换目录。
+完整的 66 个默认参数见 config.example.json (examples/config.example.json)，其中不含数据路径或凭据。
+初次配置可参考它；已有数据目录只改需要的字段，不要用样例覆盖自己的完整配置。
+
+文件 / 目录 | 用途
+config.json | 模式、检索、注入预算、保留和合并参数
+memory.db | SQLite 内容、索引、项目和任务状态
+vectors.usearch / context_vectors.usearch | 两份独立、可重建的向量缓存
+models/ | 可选本地 GGUF 模型
+llm_credentials.json | 可选提取聊天模型凭据
+hooks.log / live/ | hook 诊断日志和会话心跳
+session_archives/ / session_chunks/ / archive.key | 加密版本目录与共享内容块；密钥权限为 0600
+workspace.key | 工作区指纹密钥，用于项目绑定和续接
+backups/ | 正式切换备份；不会自动清理
+
+会话归档现在采用共享内容块：相同内容压缩加密后只保存一次，新版本只增加变化部分和版本目录，各版原文可逐字还原。知识编号、来源引用和审核依据不变。旧完整副本分批迁移，核对原文完全一致、提交成功后才移除旧文件。
+
+现有 LAN 后台通常每小时维护；有积压时每分钟处理一批（默认最多 20 份、约 32 MiB，单份较大文件允许完成）。只回收超过一小时且没有版本引用的文件，以及可由原文重建、没有业务引用的旧会话缓存。发现归档损坏时停止文件回收。自动维护和 SessionStart 不按年龄删除独有原文；显式 context_sweep 仍按 context_archive_ttl_days 检查，但保护知识来源、审核依据和当前会话。显式项目删除仍是不可逆的删除操作。
+
+context_archive_min_free_mb 默认 1024：归档与上传暂存写入前检查磁盘余量，并额外预留本次写入空间；不足时保留现有资料、拒绝本次写入以便重试。上传暂存同样压缩加密。独有资料仍会增长，此保护不限制其他程序写盘。
+
+本地检查与分批维护（不调用模型，输出只含计数与状态）：
+
+python -m evolvmem.archive_storage_cli status --data-dir ~/.claude/evolvmem
+python -m evolvmem.archive_storage_cli maintain --data-dir ~/.claude/evolvmem
+python -m evolvmem.archive_storage_cli verify --data-dir ~/.claude/evolvmem
+
+备份时将数据库、archive.key、session_archives/ 和 session_chunks/ 作为同一数据集保存；恢复前先停止写入。新格式需使用本版程序读取，不能只回退程序版本后继续写入。上述命令不会生成数据库或归档的完整备份。
+
+开发能力记忆与项目存档
+
+新版知识库把开发记录分成两条独立链路：7 类开发能力记忆用于以后做同类开发，项目摘要与历史事件用于查询项目过去做了什么。能力记忆保留来源项目用于追溯，但不按来源项目限制默认检索，也不在入库时判断是否属于跨项目经验。
+
+knowledge_structure_mode 默认为 legacy，新 schema 不改变现有行为；dual 新旧双写，primary 使用新结构。项目摘要不参与开发能力召回，项目续接和原始会话归档保持独立。分类建议只有经用户接受才创建新类，未分类内容留在待分类暂存。
+
+迁移必须先备份并在副本预演，之后才能双写、校验和切主读。命令、回退和验收见 Context Core 的开发能力与项目存档章节 (docs/context-core.md#development-capability-memories-and-project-archives-2026-10-28)。
+
+前端采用阅读优先布局：顶部 5 个主导航与“更多”、科技清新视觉、能力搜索与筛选、每页 20 条、项目摘要卡片和事件时间线。移动端与键盘操作、错误保留和迟到响应保护见 阅读优先前端说明 (docs/context-core.md#reading-first-frontend-2026-10-29)。
+
+原始 Kimi 会话仍从 ~/.kimi-code/sessions 读取，数据目录变量不会移动宿主的会话来源。
+现有 project_cli / maintenance_cli 的 --data-dir 选择操作库，但不会同步传给共享 LLM 凭据加载器；它们还会在执行期间清除目录环境覆盖。
+因此不能用该参数承诺凭据也随之切换。自定义库的模型提取建议从设置好环境变量的 hook/MCP 流程启用；手工 CLI 需单独核对凭据来源。
+
+三种“模型”各做什么
+
+角色 | 谁负责配置 | 是否必需
+宿主模型 | Codex / Claude / Kimi / DSH 自己的设置 | 使用对应 Agent 时需要；EvolvMem 不替它登录或选模型
+提取聊天 LLM | llm_credentials.json | 可选，用于会话提取、滚动摘要、合资格的方法生成等
+本地 embedding | config.json 和 models/ | 可选，将文本编码为向量用于语义检索，不负责聊天
+
+未配置提取 LLM 时，已有记忆读取、手工写入、全文检索、页面浏览和已就绪的续接功能仍可用。
+未配置 embedding 时，缺少语义检索、向量近重复合并等能力；结构化工具是否可用还取决于运行模式。
+页面的部分整理建议先采用确定性规则，规则足够时未必调用 LLM。点击页面或看到建议不等于已经发出模型请求。
+缺少 LLM 时，提取返回待重试，滚动摘要和方法生成报告降级，不会假装生成成功。
+
+配置提取聊天模型
+
+选择一个样例，复制到实际数据目录并填写自己的 key：
+
+EVOLVMEM_ROOT="${EVOLVMEM_DATA_DIR:-$HOME/.claude/evolvmem}"
+mkdir -p "$EVOLVMEM_ROOT"
+# 仅首次创建；文件已存在时直接编辑，不覆盖它。
+test -e "$EVOLVMEM_ROOT/llm_credentials.json" || \
+  cp examples/llm_credentials.deepseek.example.json "$EVOLVMEM_ROOT/llm_credentials.json"
+chmod 600 "$EVOLVMEM_ROOT/llm_credentials.json"
+
+DeepSeek 示例（文件 (examples/llm_credentials.deepseek.example.json)）：
+
+{
+  "provider": "deepseek",
+  "api_key": "REPLACE_WITH_YOUR_DEEPSEEK_API_KEY",
+  "base_url": "https://api.deepseek.com/chat/completions",
+  "model": "deepseek-v4-flash"
+}
+
+Kimi 示例见 llm_credentials.kimi.example.json (examples/llm_credentials.kimi.example.json)：
+provider="kimi"，endpoint 为 https://api.kimi.com/coding/v1/chat/completions，模型为 kimi-for-coding。
+api_key 必填；provider 缺省为 DeepSeek，model / base_url 缺省使用该 provider 的代码默认值。
+模型是否对自己的账号开放，仍以供应商为准；DeepSeek 请求格式见 官方接口文档 (https://api-docs.deepseek.com/api/create-chat-completion/)。
+
+base_url 必须是完整请求 endpoint，代码直接 POST 到该地址，不会自动补 /v1 或 /chat/completions。
+目前 provider 仅接受 deepseek 和 kimi；自定义 endpoint 也必须兼容所选 provider 的请求体，不能理解为任意 OpenAI-compatible 服务都受支持。
+不会自动读取宿主登录 key，也没有 OPENAI_API_KEY 等凭据环境变量 fallback；不会自动在两个 provider 间切换。
+
+启用提取后，经过脱敏的会话副本会发送给配置的供应商；脱敏不等于删除所有业务机密，启用前应确认会话内容适合发送。
+原始会话归档保留在本地并加密，和发给模型的副本不同。提取、摘要、方法生成及重试可能分别产生请求和费用。
+超长会话仅在明确的上下文窗口错误后分块；认证、配额、网络或无效结果等错误不会记为提取成功。
+
+接入编程客户端
+
+所有样例都从 legacy 开始。先替换样例中的 /absolute/path/evolvmem 和 /absolute/path/evolvmem-data，分别对应源码/环境位置和数据目录。
+样例是需要合并的片段，不要覆盖客户端现有配置；修改后创建新会话，确认 EvolvMem 工具已经连接。
+
+Codex
+
+把 codex.example.toml (examples/codex.example.toml) 合并到 ~/.codex/config.toml：
+
+[mcp_servers.evolvmem]
+command = "/absolute/path/evolvmem/.venv/bin/python"
+args = ["-m", "evolvmem.mcp_server"]
+
+[mcp_servers.evolvmem.env]
+EVOLVMEM_DATA_DIR = "/absolute/path/evolvmem-data"
+EVOLVMEM_ADAPTER = "codex"
+EVOLVMEM_CONTEXT_MODE = "legacy"
+
+用 codex mcp list 查看注册状态，codex mcp get evolvmem 查看该条目；新会话里先调用 context_status，确认可用后使用 knowledge_recall / experience_recall；原始对话使用 conversation_read。
+配置格式以 Codex 官方 MCP 文档 (https://developers.openai.com/codex/mcp/) 为准。
+升级到 Core 后，可按项目需要合并 AGENTS.memory.md (examples/AGENTS.memory.md)，帮助 Agent 规范查询、保存断点与记录证据。
+
+Linux 本机 Codex 增量采集
+
+Linux Codex 每个会话会持续写入 ~/.codex/sessions/**/rollout-*.jsonl；只注册 MCP 不会自动归档这些文件。
+需要让本机 Codex 对话进入自动整理时，在数据目录写一份 local_codex_capture.json，由现有后台整理 worker 增量采集，不需要新增服务、模型或依赖：
+
+{
+  "enabled": true,
+  "sessions_roots": ["/home/you/.codex/sessions"],
+  "since": "2026-10-01T00:00:00Z"
+}
+
+enabled、sessions_roots（绝对路径）与 since 是必填项：缺少配置、路径不是绝对路径、或没有 since 时都会停止采集并在状态里报 config_error。since 是对齐正式启用的时间界线（可用自动整理页记录的 activation_at），不能省略，否则首次采集会把全部历史日志一并导入。可选预算项：poll_seconds、batch_bytes、batch_lines、max_files_per_scan、max_lines_per_scan、max_seconds_per_scan、max_line_bytes、restart_changed_files。
+
+- 缺少该文件、enabled 不为 true、或自动整理页的“自动处理新资料”关闭时都不采集；界面会区分“未配置 / 已停用 / 已暂停 / 暂无新对话 / 需处理”。
+- 时间门禁按每条记录自己的时间戳判断，优先取记录根的 timestamp（response_item 也有），其次才是 payload 内的时间；session_meta.payload.timestamp 表示整个会话开始时间。没有时间戳的记录继承本文件已观察到的最新时间；在观察到有效下界之前一律不导入。
+- 只读新增的完整 LF 记录，半行留到下一轮；每轮有字节、行数、文件数、时间与单行上限，不使用整文件读取。单行超过 max_line_bytes（默认 32MiB）时不会伪装成“没有新内容”，而是明确标记该文件需要人工处理，游标停在越界行之前；调大上限后自动从原处继续。
+- 首次采集不会遍历全部旧日志：本采集从未记录过、且文件修改时间早于 since 的会话文件不读取正文，只做元数据枚举（目录遍历不受条数上限截断）。之后旧会话只要再次追加，就会被发现并从时间界线开始归档；启用前的内容仍不导入。
+- 归档复用现有加密会话归档与 save_clean 清洗；同一“会话 + 源范围 + 内容摘要”的批次标识固定，归档成功才推进消费水位，失败保留游标可重试。文件被截断或被原地改写时默认停止在该文件并标记需要人工处理（不静默追尾、不重复导入历史）；只有显式设置 "restart_changed_files": true 才会从文件开头重新扫描，此时内容完全相同的既有批次会被跳过。
+- 同一会话的连续讨论被拆成多个增量批次后，后一批往往不再重复项目名。自动整理只参考同会话最近一份已核实的前批批次：来源必须可读、是本机增量 JSONL 批次、会话标识与批次身份一致、行号严格在前、不是系统子会话，且原始正文仍与批次自己声明的摘要一致。候选在 SQL 里先按“同会话 + 行号在前”筛出最近一份再取窗口，所以再多后续批次也不会遮住真正的前驱；有重叠即视为无法判断。
+- 决定是否沿用不看“前批里有没有出现过项目”，而看前批真正末尾的那个单元：它必须还保留、且已由人工确认或由程序验证正文明确点名得到项目。尾部是未决的新话题、已撤回或没有项目归属时一律断开，绝不会借用更早的项目。满足后模型还要明确判断“本批延续同一项目同一任务”，程序再复核来源有效、项目在册、会话顺序、前文指纹未变且本批没有冲突的项目证据，才自动沿用该项目；模型给出的项目名正好等于已核实前文项目（本批正文没有重复点名）时同样可以采用。
+- 前文依据独立保存，并随任务单元显示来源 archive、行号范围、项目与原话；前文只用于归属判断，不进入提炼提示词，也不能当作本批的项目编号或证据，本批 evidence_quote 仍必须能定位在本批原文里。只出现“交给某个工具执行”“使用某个执行器运行”这类工具提及（按项目显示名与别名同样识别）不改变明确业务项目；真正“现在修改某工具项目”等切换按新项目处理或待确认。
+- 跨会话、整份 Windows 快照、重叠或倒序的批次、不可读取或字节与摘要不符的来源、纯模型建议、模型未声明延续与字符串 "true" 都不会自动继承；没有可靠背景时保留待确认。前批被人工改项目、撤回、清洗或决策 revision 变化、来源版本变化或归档失效时，依赖它的自动单元会退回待确认，两级以上的继承链也会在有界轮次内依次退回；旧派生结果随即从检索、项目历史与经验列表里退出当前使用（共享给其他来源或被人工确认的条目不受伤，原始资料一律不删除）。这段复核有界、不调用模型、不覆盖任何人工决定。同会话批次即使一次性入队也会按行号顺序排队，后一批等前一批落定再整理，不会空耗尝试次数。
+- 采集状态以只读接口 GET /api/local-capture 暴露，自动整理的运行记录中显示“本机采集”的启用、最近成功、已归档批数与错误，便于区分“没有新内容”和“采集失败”。状态只含计数与错误码，不含正文或绝对路径。
+
+
+可信内网的固定双用户 MCP
+
+这是一个小型、单机、可信内网入口，固定支持 jiangli、kane 与显式发布的 public 空间。同一凭据在 Windows 与 Linux 访问同一个个人库；不同用户保持分开。HTTP MCP 提供工具，Windows 接入包另外负责宿主事件注入和本地转写采集。先在 Linux 主机上显式创建新的私有配置和凭据目录；命令只打印路径，绝不把 token 打到终端，也不会覆盖已有凭据：
+
+.venv/bin/python -m evolvmem.lan_provision \
+  --config /absolute/private/evolvmem-lan/lan-server.json \
+  --credentials-dir /absolute/private/evolvmem-lan/clients \
+  --data-dir /absolute/private/evolvmem-lan/data \
+  --owner-data-dir /absolute/private/evolvmem-owner-data \
+  --host 0.0.0.0 --port 9378 --client-host memory.lan
+.venv/bin/python -m evolvmem.lan_server --config /absolute/private/evolvmem-lan/lan-server.json
+
+--client-host 是 Kane 实际访问的 LAN 主机名或地址，不能填 0.0.0.0；监听地址和客户端 URL 是两回事。配置只存两枚 token 的 SHA-256 值。clients/ 是 0700，每个 token、说明和 owner client JSON 是 0600；交付 Kane 的内容在 kane-client-instructions.txt，不要放进源码、聊天记录或公开导出。参考结构见 lan-server.example.json (examples/lan-server.example.json) 和 evolvmem-lan-mcp.service.example (examples/evolvmem-lan-mcp.service.example)，其中都是占位路径和值。
+
+在 Kane 的 Windows PowerShell 中，从私有说明文件取实际值并持久化到当前用户环境，再登记服务器：
+
+[Environment]::SetEnvironmentVariable('EVOLVMEM_KANE_TOKEN', 'REPLACE_WITH_PRIVATE_TOKEN', 'User')
+codex mcp add evolvmem --url http://memory.lan:9378/mcp --bearer-token-env-var EVOLVMEM_KANE_TOKEN
+
+SetEnvironmentVariable(..., 'User') 不会改变已经打开的 PowerShell。执行后关闭并重新打开 PowerShell，再重启 Codex，才可测试连接；也可以在当前窗口额外设置 $env:EVOLVMEM_KANE_TOKEN。先用 codex mcp get evolvmem 确认条目。新会话先调用 context_status，再验收 knowledge_recall、experience_recall 与 continuity_begin；新增资料通过自动整理和知识库页面处理，并只通过 memory_publish 明确公开经整理的摘要；Kane 看不到 owner 的 personal namespace。远端 workspace 传非空 workspace_path 时必须带稳定 device_id；Git snapshot 是客户端报告值。continuity_bind 不会擅自切换已有 focus，客户端要用返回的当前 revision 显式 continuity_checkpoint(action="switch_focus") 后再恢复其他目标。
+
+没有服务或网络不可用时，owner 的本机 stdio 转发返回凭据安全的 LAN MCP unavailable；不要把它当作写入失败后可自动重试的信号。Kane 端需要检查服务、地址、环境变量和 token；写请求结果不明时先查记录，确实要手动重试则沿用原 request_id，不要生成新 ID。原 Linux 入口可选将 lan_mcp_client_config 指向私有 jiangli-client.json，设置 embedding_http_url 为数值 loopback 基址 http://127.0.0.1:9378、embedding_http_token_file 为 owner token，及 lan_shared_vector_cache=true；完整的四项占位片段见 lan-owner-config.example.json (examples/lan-owner-config.example.json)，不要把它覆盖进通用 config.example.json。改完后重启原生 MCP 和 hooks。LAN runtime 本身不回转发且独占一个可选模型。原本严格的 standalone 向量健康门仍有效，LAN namespace 在共享模型不可用时保留 SQLite/FTS 路径。
+
+现有 Web 控制台如果启用私有 web_auth.json 的 owner_only: true，则只有配置的 owner 能通过飞书登录和读取个人库；这避免 LAN 使用者绕过 MCP 边界。默认未配置登录的 standalone Web 行为保持不变。Codex MCP 配置见 官方说明 (https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
+
+Windows 原生 Codex 桌面版
+
+接入包包含一个 MCP 配置、全局 AGENTS 规则、hooks 和无窗口后台同步程序。Linux 继续保存加密原文、SQLite 索引、会话总结、项目滚动摘要、经验及任务断点；Windows 不需要安装 Python 或向量模型。已验证桌面会话读取项目摘要与任务断点、31 项 MCP 工具、PowerShell 5.1 加密、无窗口补传与跨端任务绑定；恢复、清空、压缩等完整桌面生命周期仍待验收。实测桌面包为 26.908.9136.0，内置核心为 0.154.0-alpha.6.2；新版本须重新核验宿主事件和转写。
+
+1. 下载本仓库并解压，在仓库目录打开 Windows PowerShell。准备个人 MCP URL 与私有 token；要与 Linux 的 jiangli 共用记忆，就使用 jiangli 凭据。身份依据是 EvolvMem 凭据映射，device_id 仅区分设备，Codex 登录账号不会自动成为 EvolvMem 身份。
+2. 输入令牌并写入当前 Windows 用户环境，不把令牌写进命令历史：
+
+$Secret = Read-Host 'EvolvMem token' -AsSecureString
+$Pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
+try {
+  [Environment]::SetEnvironmentVariable('EVOLVMEM_TOKEN',
+    [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Pointer), 'User')
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Pointer)
+}
+
+3. 将下面 URL、用户和项目目录改成实际值后安装。路径和项目标识须明确对应；中文别名可在 Codex 内用 continuity_begin 登记。
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\windows\install-evolvmem.ps1 `
+  -Url 'http://memory.lan:9378/mcp' -ExpectedUser 'jiangli' `
+  -ProjectMapping 'C:\work\my-project=my-project' -RunSelfTest
+
+安装器将 MCP URL 的主机加入用户级 NO_PROXY，保留已有绕过条目，使原生 Codex 与 PowerShell 对内网地址采用一致的直连路径。安装器备份并合并 %USERPROFILE%\.codex\config.toml、hooks.json 与全局 AGENTS.md（已有非空 AGENTS.override.md 时合并到该文件）；设置了 CODEX_HOME 时使用该目录。重复安装保留设备 ID 并更新自身条目，身份不一致时停止。未映射目录只加载通用记忆，归档保持待归属。从已加载新用户环境的进程重新启动 Codex，使 MCP 读取新的凭据及 NO_PROXY；启动器仍持有旧环境时，退出登录后重新登录。桌面版可能不弹出信任提示：实测六个 hooks 配置正确但全部未受信任，因此没有执行。 使用同一 Windows 用户、同一 CODEX_HOME 打开 Codex CLI，在 /hooks 中审阅并信任这六项，再新建桌面会话核验。上述桌面包可使用内置 CLI：
+
+$CodexCli = Join-Path (Get-AppxPackage OpenAI.Codex).InstallLocation 'app\resources\codex.exe'
+& $CodexCli -C 'C:\work\my-project'
+# 在 CLI 内输入 /hooks，审阅并信任 EvolvMem 的六个用户 hooks。
+
+不要以“没有提示”推断已经信任；也不要绕过宿主的信任审阅。宿主事件和输出格式见 Codex Hooks 官方文档 (https://learn.chatgpt.com/docs/hooks)。
+
+4. 执行自检和队列状态检查：
+
+$Client = Join-Path $env:LOCALAPPDATA 'EvolvMem\Codex\evolvmem-codex.ps1'
+Get-AppxPackage | Where-Object Name -Match 'Codex|ChatGPT' | Select-Object Name, Version
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Client -Action self-test
+schtasks.exe /Run /TN 'EvolvMem Codex Sync'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Client -Action status
+Get-ChildItem "$env:LOCALAPPDATA\EvolvMem\Codex\receipts\*.json" |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Get-Content
+
+自检核对连接、authenticated_user、工具清单、MCP/hook 配置及无窗口任务是否启用，明确返回 hook_trust_checked=false；healthy=true 不能证明 hooks 已信任或执行。最后一条命令读取最近的本地加载回执，retrieved_for_hook 表示脚本已取到并输出上下文。PowerShell 接入脚本从原始响应字节按 UTF-8 解码，避免 5.1 在 JSON 未声明 charset 时破坏中文摘要。实际注入须核对宿主转写和桌面会话读回。status.archive_sessions 查询服务端实时归档和提炼状态；顶层提取计数来自上传时的本地回执，可能滞后。离线队列还没得到完整确认时保留加密正文。status.worker 与 status.launcher 分别报告最近采集和启动结果；worker_task_enabled=false 会使自检不健康。
+
+PowerShell 5.1 接入脚本在加解密前加载 System.Security；可运行 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\windows\test-client-dpapi.ps1 -ClientPath $Client 验证中文完整行、残缺末行和两个加密版本。服务端按 LF 分隔 JSONL 记录，保留字符串内 Unicode 分隔符及原始证据行号。另可运行 tests/windows/test-background-sync.ps1 -ClientPath $Client 与 tests/windows/test-sync-launcher.ps1 -SourcePath .\scripts\windows\evolvmem-sync.cs 验证独立发现、加密、跨进程离线重试、字节一致与无控制台窗口；两者只使用临时合成数据。
+
+实机操作 | 应核对的结果
+映射目录中开新会话、恢复、清空、手动与自动压缩 | 无需手动要求查历史，已存摘要或断点随 hook 加载；回执属于本次加载
+保存一条真实项目决定，正常完成一轮后运行计划任务 | archived 与 extracted 分别出现；新会话和 Linux 能读到该决定及项目总结
+中文及空格路径、两个项目、多会话 | 项目不混入；同一凭据读同一用户库，错误身份不上传正文
+断网后继续对话、关闭 Codex，再联网运行计划任务 | 持久化队列补传，半行等待补全，旧版本及重复请求不覆盖新状态
+两端续接同一任务 | 显式 continuity_bind 核对 Git 后绑定；焦点不被抢占，旧 revision 不覆盖新进度
+用真实工具结果反馈经验 | archive:<id>#<行号> 可验证；助手自述不能证明成功，重复事件只计一次
+
+安装时使用 Windows 自带 .NET 编译 evolvmem-sync.exe，计划任务每分钟及用户登录后无窗口启动采集器。它独立扫描 Codex sessions / archived_sessions，发现安装后新建或继续写入的会话，并通过同一个 MCP 上传；不依赖模型记得调用工具，也不依赖 hook 已登记。小版本优先，每版本每轮最多上传 16 块（4 MiB），大历史保留偏移跨轮继续；关闭 Codex 后仍可补传；注销或关机期间暂停，重新登录后继续。服务端复用现有提炼凭据，摘要生成可能产生与 Linux 相同的模型费用。归档与提炼失败分开报告：session_archive_retry 显式重试，session_archive_assign 把待归属会话分配给已登记项目。收到最新归档后至少闲置 30 分钟才尝试保守断点补录；只处理已有唯一目录绑定的单一来源，不把沉默或助手自述当成任务完成。
+
+全局 AGENTS 规则提醒 Codex 保存已确认决定和任务断点，不能保证逐条调用。后台按完整 JSONL 记录归档已落盘且仍可读取的会话；未写完的行等待补齐，未落盘或采集前已删除的数据无法恢复。默认不批量导入长期未使用的旧历史，升级保留首次采集起点。全局规则在下一次启动会话时加载，见 官方 AGENTS.md 说明 (https://learn.chatgpt.com/docs/agent-configuration/agents-md)。完整实现边界见 Windows 对齐说明 (docs/windows-codex.md) 和架构图册的 Windows 专题。卸载时运行安装器加 -Uninstall，保留已有加密队列，移除自身 hooks、MCP 配置、全局文档中的 EvolvMem 段落、启动器与计划任务。
+
+Claude Code
+
+将 claude.mcp.example.json (examples/claude.mcp.example.json) 合并为工作区根目录的 .mcp.json，或用 claude mcp add 注册。
+MCP 不放在旧式 settings.json.mcpServers 位置；客户端配置范围见 Claude 官方 MCP 文档 (https://code.claude.com/docs/en/mcp)。
+若需要 SessionStart 注入，把 claude.hooks.example.json (examples/claude.hooks.example.json) 的 hooks 合并到 .claude/settings.json 或用户级 ~/.claude/settings.json。
+这里使用 SessionStart → hooks 数组 → type=command 结构，命令读取 stdin 的 cwd 并打印上下文；格式见 官方 hooks 文档 (https://code.claude.com/docs/en/hooks)。
+Claude 的 adapter=claude 目前暴露基础 memory 工具，不因为改为 primary 就获得 Core MCP 工具；通用 SessionStart helper 可尝试 Core，失败后回退旧格式。
+本仓库没有用 Claude Stop hook 自动完成提取的成套接线；不要把 Kimi SessionEnd 样例直接当作 Claude 转写读取器。
+
+Kimi Code CLI
+
+把 kimi.mcp.example.json (examples/kimi.mcp.example.json) 合并到 ~/.kimi-code/mcp.json 或工作区 .kimi-code/mcp.json。
+新会话中用 /mcp 检查连接；配置说明见 Kimi 官方 MCP 文档 (https://moonshotai.github.io/kimi-code/en/customization/mcp.html)。
+把 kimi.hooks.example.toml (examples/kimi.hooks.example.toml) 的 [[hooks]] 条目合并到 ~/.kimi-code/config.toml。
+SessionStart 注入已有记忆，SessionEnd 触发可选的付费提取，SessionHeartbeat 为补扫 worker 标记活跃会话。
+当前 Kimi hooks 官方格式 (https://moonshotai.github.io/kimi-code/en/customization/hooks) 直接使用 event、command、可选 matcher / timeout，不要添加 actions 数组。
+只需要读取时可不加入 SessionEnd；需要提取时先配置上面的 llm_credentials.json。
+
+DSH
+
+仓库提供 DSH bundle 接入说明 (dsh/README.md) 和 dsh/cordis.patch.yml，包含 MCP、一次性注入、会话提取和闲置补扫组件。
+它依赖 DSH 宿主的 bundle/profile 机制，不是独立 Node 服务。现有 patch 使用 primary；已有库应先完成迁移及健康验证。
+
+验收第一条记忆
+
+在已连接的客户端里，让 Agent 调用 memory_status，再要求保存下面这条演示偏好：
+
+{
+  "key": "demo:preference:communication:language",
+  "value": "项目沟通默认使用中文，技术标识保留原文。",
+  "attribute": "preference",
+  "tier": "pinned"
+}
+
+这是 memory_add 的参数，不是写入 config.json 的内容。随后用 memory_search 查询“项目沟通”。
+核对返回 ID、内容及 Web 记忆库中的记录；新会话是否自动出现，取决于是否启用了相应注入机制。
+验证后可用该返回 ID 调用 memory_remove 软删除演示记录。基础安装到这一步不需要提取 LLM 或 GGUF。
+
+启用 Context Core、经验和任务续接
+
+模式 | 当前行为
+legacy | 默认基础记忆，六个 memory 工具；不提供结构化 Core/continuity 工具
+compat | Core 成为规范写入层，保持旧投影读取；支持适配器可列出 continuity 工具
+shadow | 显式 Core/经验查询可用，向量可选；不发 primary 自动召回指令
+primary | Core 健康时提供结构化读取及自动召回指令；不变量失败时收紧工具和写入
+
+结构化 MCP 适配器为 codex、kimi、dsh，模式与适配器需要同时配置。
+仅把 context_mode 改成 primary，不会自动迁移历史数据或保证索引健康。
+未知模式 fail-closed；降级 primary 仍可提供诊断和独立续接工具，但不应承诺其他写入成功。
+
+已有库升级请按 Codex Context Core 切换手册 (docs/codex-context-core-runbook.md)，执行 preflight、预览、备份、迁移和验收。
+该流程会区分持久化 compat 与单个 Codex 进程的 primary；不要跳过检查，直接照抄开关到所有客户端。
+Core 的 L0 是检索摘要，L1 是有预算的注入详情，L2 是通过精确 ID 读取的完整内容；详见 技术参考 (docs/context-core.md)。
+
+为项目建立工作区绑定
+
+需要项目归属或续接前，先使用实际工作区绝对路径完成以下步骤：
+
+python -m evolvmem.project_cli bootstrap-key
+python -m evolvmem.project_cli projects register demo
+python -m evolvmem.project_cli fingerprint /absolute/path/to/workspace
+# 将上一条输出的 fingerprint 填在下一条命令中。
+python -m evolvmem.project_cli bindings bind FINGERPRINT_FROM_PREVIOUS_COMMAND demo --default
+
+这些命令登记项目和工作区指纹；不能单靠项目名猜出绑定，workspace.key 也不能随意重新生成。
+在支持的模式中，让 Agent 先 context_session_start 或 continuity_resume 获取当前状态，再按最新 revision 创建/更新 checkpoint。
+“继续”读取精确的工作流指针；没有绑定、没有焦点或工作区变化时，先处理返回状态，不把相似记忆冒充原任务。
+
+已有项目需要同步开发进展时，在 EvolvMem 数据目录创建仅属主可读的
+project_board.json（文件模式 0600）：
+
+{"base_url":"https://your-app.example","api_key":"replace-locally","enabled":true}
+
+也可用 EVOLVMEM_PROJECT_BOARD_CONFIG 指向另一份私有配置。成功的
+continuity_checkpoint 更新、暂停、恢复、阻塞、解除阻塞、完成或取消后，
+会在断点提交后尝试同步；创建任务、读取和切换焦点不会触发。同步只更新目标端
+已经绑定的项目，不会自动立项或绑定。网络或目标服务失败时，最新快照保留为
+pending，可在当前 MCP 进程尚未重载时用本地命令补同步或查看状态：
+
+python -m evolvmem.project_board_sync status /absolute/path/to/workspace
+python -m evolvmem.project_board_sync sync /absolute/path/to/workspace
+
+两条命令都支持 --project-hint NAME 和 --workstream-id ws_...；全局
+--data-dir DIR 放在 status / sync 前。回执状态为 synced、
+unchanged、not_bound、pending 或 disabled，不会回显 API key、原始
+HTTP 错误、断点正文或本地路径。
+
+工具速查
+
+工具 | 用途
+memory_search / memory_status | 基础查询与运行状态
+memory_add / memory_replace / memory_remove | 手工新增、替换、软删除
+memory_consolidate | 向量近重复整理，默认 dry-run
+context_session_start / context_search / context_read | 有预算的历史块、L0 搜索、按 ID 读 L1/L2
+context_status | Core 就绪状态、投影和向量诊断
+experience_recall / experience_record | 按条件找经验，保存有来源的方法
+context_confirm / context_record_outcome | 候选确认及使用、成功、失败、不适用等反馈
+continuity_resume / continuity_checkpoint / continuity_list | 恢复、保存、列出工作断点
+project_board_sync / project_board_status | 手动补同步已提交进展、查看本地待同步状态
+context_archive_project / context_sweep | 项目原始归档清理和 TTL 扫描
+
+工具是否列出由当前 mode、adapter 和健康状态决定，以客户端实际 tools/list 为准。
+写操作是否要求确认（write approval）由客户端策略决定；工具注解不会替用户批准变更。
+候选经验需确认或满足证据规则后才生效；查看页面、检索到案例、引用案例都不自动算成功。
+向量缓存是派生数据，SQLite 是内容依据；原始归档清理和 Web 硬删除具有不可逆影响，详情见技术参考。
+
+Web 工作台与运行维护
+
+默认首页 Signal 包含总览、记忆库、经验案例和项目进展，可查看项目星图、筛选记录、核对来源和复制续接提示。
+记忆整理支持编辑元信息、归档/恢复/删除、项目归属建议与人工确认；经验/进展页需要实际 Core 数据，空列表不代表安装失败。
+首页导航的“信任视图”（/trust）只读展示同步状态与项目知识：服务端能证明的归档/提炼回执、项目摘要覆盖与刷新需求、当前生效规则、进行中任务断点、待确认归属与待确认来源；无法观测的本机采集、钩子投递与桌面模型采纳会明确标为未知或未验证。它不新增遥测或后台服务，GET /api/sync-chain、GET /api/knowledge?project=...、GET /api/trust/projects 均为只读，归属确认/拒绝仍走既有评审 CAS。
+/workflow 展示记忆如何写入、检索、验证和续接；它是说明页面，不会因为打开页面就自动执行图中的步骤。
+自定义监听端口可用 python -m evolvmem.web_server --port 9379；需要可信内网访问时可显式加 --host 0.0.0.0。启用登录并暴露 LAN 前，私有 web_auth.json 必须设置 owner_only: true，让个人 Web 库只保留给 owner。
+飞书登录配置方法见飞书登录 (docs/feishu-login.md)；本次内网部署仅保留 owner 访问个人库。
+
+Kimi 异常退出未触发 SessionEnd 时，可以另行运行 python scripts/extract_stale_sessions.py 补扫。
+它使用相同凭据和提取规则，默认检查闲置至少 30 分钟的会话，每轮最多处理 3 个；不属于纯离线、无模型费用的整理。
+未成功的会话版本保持待重试；配置定时任务时同时指定解释器、数据目录、日志和避免重叠执行的锁。
+
+现象 | 先检查
+客户端找不到模块 | MCP command 是否指向安装本项目的 .venv/bin/python；路径是否替换完整
+只有 memory 工具 | 默认 legacy 正常如此；Core 还需模式、支持的 adapter 和健康状态
+显示 FTS-only | 基础安装正常；需要语义检索再安装 embedding 后端及 GGUF
+degraded_legacy | 看 context_status 的映射、层、投影、dirty/count 等原因，按切换手册处理
+continuity_not_ready / project_unresolved | 核对 workspace.key、schema、工作区指纹和项目绑定
+提取不写入 | 检查会话是否过短、凭据文件位置、provider、完整 endpoint、配额及 hooks.log
+摘要未更新 | 查看 llm_unavailable / unchanged / no_sources 等原因；原摘要会在失败时保留
+
+开发、分享与许可
+
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+python -m pytest -q
+python scripts/sync_readme.py
+python scripts/sync_readme.py --check
+
+README.md 是唯一编辑源，README.txt 是同内容纯文本版；同步脚本保留链接地址和代码，不需要额外 Markdown 依赖。
+普通测试不调用收费模型；需要实模/真实客户端的验收请单独阅读相应测试或脚本说明。
+公开导出可运行 python scripts/export_source.py --output dist/evolvmem-github，生成目录和 ZIP；操作步骤见 GitHub 分享说明 (docs/github-sharing.md)。
+不要把自己的数据库、会话、密钥、凭据或本地运行日志加入源码分享包；样例中的 key 和绝对路径均为待替换占位值。
+
+目前尚未指定覆盖全项目的许可证，不能把公开源码理解为已授予 MIT 等通用授权。
+DSH 子包与第三方资源保留各自声明；来源和许可见 THIRD_PARTY_NOTICES.md (THIRD_PARTY_NOTICES.md)。

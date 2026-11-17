@@ -1,0 +1,228 @@
+"""Clean dialogue stored in SQLite; encrypted transport evidence is separate."""
+from __future__ import annotations
+
+import hashlib
+import json
+
+from evolvmem import knowledge_scope as ks
+from evolvmem.conversation import from_payload, render
+from evolvmem.context_store import _now_iso
+from evolvmem.extraction_policy import redact_messages
+from evolvmem.project_ownership import load_ownership, UNREVIEWED_FACT
+from evolvmem.session_identity import identity_key
+
+
+def save_clean(store, archive_id, payload, *, policy=None):
+    """Called in the archive transaction. Unknown technical payloads stay technical."""
+    try:
+        messages, _ = redact_messages(from_payload(payload, policy=policy))
+    except (ValueError, KeyError, TypeError):
+        return False
+    body = render(messages)
+    encoded = json.dumps(messages, ensure_ascii=False)
+    store._connection().execute(
+        'INSERT INTO conversation_history VALUES(?,?,?,?,?) ON CONFLICT(archive_id) DO UPDATE SET '
+        'messages=excluded.messages,body=excluded.body,content_hash=excluded.content_hash,cleaned_at=excluded.cleaned_at',
+        (archive_id, encoded, body, hashlib.sha256(encoded.encode()).hexdigest(), _now_iso()))
+    return True
+
+
+def read(service, project, archive_id):
+    result = _read_original(service, project, archive_id)
+    from evolvmem.knowledge_cleaning import review
+    cleaned = review(service, f'archive:{archive_id}')
+    # A mixed-source project read shows only its own units, so the whole-source
+    # cleaning draft would leak other projects' text; omit it there.
+    if cleaned and cleaned['state'] in ('ready', 'assigned') and cleaned['cleaned_text'] \
+            and result.get('storage') != 'per_project_units':
+        result['cleaning'] = {'text': cleaned['cleaned_text'], 'category': cleaned['category'],
+                              'updated_at': cleaned['updated_at']}
+    return result
+
+
+def _unit_archive(archive_sql):
+    # Each link is bound to the exact task digest, including disjoint tasks
+    # from one conversation. A shared archive alone cannot claim another unit.
+    return ("(t.source_key='archive:'||"+archive_sql+" OR EXISTS(SELECT 1 FROM context_sources us "
+            "WHERE us.item_id=u.item_id AND us.archive_id="+archive_sql+" AND us.source_kind='organization' "
+            "AND us.source_ref LIKE t.source_key||'#'||u.digest||'@%'))")
+
+
+def project_units(service, project, archive_id):
+    """Range-exact organization units attributed to one project for one archive.
+
+    A multi-project archive is never forced into a single project, so the read
+    path returns only the units that really belong to the requested project.
+    """
+    conn = service.store._connection()
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='organization_units'").fetchone():
+        return []
+    rows = conn.execute(
+        'SELECT u.text,u.cleaned_text,u.source_start,u.source_end,u.role,u.category,u.project,u.digest,'
+        'u.task_id,i.id AS item_id FROM organization_units u '
+        'JOIN organization_tasks t ON t.id=u.task_id '
+        'LEFT JOIN context_items i ON i.id=u.item_id '
+        "WHERE "+_unit_archive("?")+" AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
+        "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' AND i.status='active' "
+        'ORDER BY u.source_start,u.ordinal',
+        (archive_id,archive_id,project)).fetchall()
+    from evolvmem.auto_organization import task_view
+    current = {row['task_id']: task_view(service, row['task_id'])['source_current'] for row in rows}
+    return [dict(row) for row in rows if current[row['task_id']]]
+
+
+def _read_original(service, project, archive_id):
+    archive = service.store.get_session_archive(archive_id)
+    if not archive or not project:
+        raise ValueError('conversation_not_in_project')
+    if archive['project'] and archive['project'] != project:
+        raise ValueError('conversation_not_in_project')
+    if not archive['project']:
+        # Unbound multi-project source: only the requested project's units.
+        units = project_units(service, project, archive_id)
+        if not units:
+            raise ValueError('conversation_not_in_project')
+        return {'archive_id': archive_id, 'project': project, 'available': True,
+                'messages': [{'role': unit['role'] or 'unknown',
+                              'content': unit['cleaned_text'] or unit['text']} for unit in units],
+                'text': '\n\n'.join(unit['cleaned_text'] or unit['text'] for unit in units),
+                'revision': hashlib.sha256(json.dumps(
+                    [[unit['digest'], unit['source_start'], unit['source_end']] for unit in units]).encode()).hexdigest(),
+                'storage': 'per_project_units', 'units': units}
+    row = service.store._connection().execute('SELECT * FROM conversation_history WHERE archive_id=?', (archive_id,)).fetchone()
+    if row:
+        return {'archive_id': archive_id, 'project': project, 'available': True,
+                'messages': json.loads(row['messages']), 'text': row['body'],
+                'revision': row['content_hash'], 'storage': 'database',
+                'units': project_units(service, project, archive_id)}
+    # Backward compatible read does not silently mutate old archives.
+    from evolvmem.session_archive import SessionArchiver
+    payload = SessionArchiver(service.config, service.store).read_payload(archive_id)
+    if payload is not None:
+        try:
+            messages, _ = redact_messages(from_payload(payload, policy=service.knowledge().rules.read()))
+            return {'archive_id': archive_id, 'project': project, 'available': True,
+                    'messages': messages, 'text': render(messages), 'storage': 'legacy_clean_view'}
+        except (ValueError, KeyError, TypeError):
+            pass
+    return {'archive_id': archive_id, 'available': False, 'messages': [],
+            'text': '来源已过期或暂不可读取，尚无可恢复的清洗后正文。', 'storage': 'unavailable'}
+
+
+def migrate(service, options):
+    """Bounded, local, idempotent conversion. No provider calls or source deletions."""
+    project = str(options.get('project') or '')
+    limit = min(100, max(1, int(options.get('limit', 50))))
+    after = max(0, int(options.get('after_id', 0)))
+    conn = service.store._connection()
+    where, args = ['h.archive_id IS NULL', 'a.id>?', "a.project!=''"], [after]
+    if project:
+        where.append('a.project=?'); args.append(project)
+    rows = conn.execute('SELECT a.id FROM session_archives a LEFT JOIN conversation_history h ON h.archive_id=a.id WHERE '
+                        + ' AND '.join(where) + ' ORDER BY a.id', args).fetchall()
+    # The reader exposes one current snapshot per logical conversation. Migrate
+    # that same set, never all transport versions or unassigned generic logs.
+    projects = [project] if project else [r[0] for r in conn.execute("SELECT DISTINCT project FROM session_archives WHERE project!=''")]
+    visible = {row['id'] for name in projects for row in sessions(service, name)}
+    rows = [row for row in rows if row['id'] in visible][:limit]
+    from evolvmem.session_archive import SessionArchiver
+    archiver = SessionArchiver(service.config, service.store)
+    result = {'migrated': 0, 'unavailable': [], 'after_id': after, 'processed': len(rows)}
+    for row in rows:
+        payload = archiver.read_payload(row['id'])
+        result['after_id'] = row['id']
+        if payload is None:
+            result['unavailable'].append(row['id'])
+            continue
+        with service.store.transaction():
+            saved = save_clean(service.store, row['id'], payload, policy=service.knowledge().rules.read())
+        if saved:
+            result['migrated'] += 1
+        else:
+            result['unavailable'].append(row['id'])
+    result['has_more'] = len(rows) == limit
+    return result
+
+
+def sessions(service, project):
+    conn = service.store._connection()
+    rows = conn.execute('SELECT a.*,h.content_hash,h.cleaned_at FROM session_archives a '
+                        'LEFT JOIN conversation_history h ON h.archive_id=a.id WHERE a.project=? '
+                        'ORDER BY a.created_at DESC,a.id DESC', (project,)).fetchall()
+    # A multi-project source stays unbound, but its units for this project still
+    # belong in this project's history listing.
+    has_units = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='organization_units'").fetchone() is not None
+    if has_units:
+        extra = conn.execute(
+            'SELECT a.*,h.content_hash,h.cleaned_at FROM session_archives a '
+            'LEFT JOIN conversation_history h ON h.archive_id=a.id '
+            "WHERE a.project='' AND EXISTS(SELECT 1 FROM organization_units u "
+            'JOIN organization_tasks t ON t.id=u.task_id '
+            "WHERE "+_unit_archive("a.id")+" AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
+            "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' AND u.item_id IS NOT NULL) "
+            'ORDER BY a.created_at DESC,a.id DESC', (project,)).fetchall()
+        rows = list(rows) + [row for row in extra if row['id'] not in {r['id'] for r in rows}]
+    jobs = {}
+    from evolvmem.history_organization import _excluded_archive_ids
+    ignored = _excluded_archive_ids(service)
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='lan_session_uploads'").fetchone():
+        jobs = {r['archive_id']: r['extraction_status'] for r in conn.execute('SELECT archive_id,extraction_status FROM lan_session_uploads WHERE archive_id IS NOT NULL')}
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='lan_session_heads'").fetchone():
+            ignored |= {r[0] for r in conn.execute('SELECT u.archive_id FROM lan_session_uploads u '
+                'JOIN lan_session_heads h ON h.device_id=u.device_id AND h.session_id=u.session_id '
+                'WHERE h.sha256!=u.sha256 AND u.archive_id IS NOT NULL')}
+    result, seen = [], set()
+    from evolvmem.unit_derivations import current_item_ids
+    for row in rows:
+        if row['id'] in ignored:
+            continue
+        if not row['project'] and not project_units(service, project, row['id']):
+            continue
+        key = identity_key(row['adapter'], row['external_session_id'])
+        if key in seen:
+            continue
+        seen.add(key)
+        linked = conn.execute("SELECT DISTINCT i.id,l.content FROM context_sources s JOIN context_items i ON i.id=s.item_id "
+            "JOIN context_layers l ON l.item_id=i.id AND l.layer='l1' WHERE s.archive_id=? AND ? IN (SELECT i.project UNION SELECT value FROM json_each(i.projects)) "
+            "AND i.status='active' AND i.content_type='session_summary'", (row['id'], project)).fetchall()
+        facts = load_ownership(service.store, [r['id'] for r in linked])
+        linked = [r for r in linked if not facts.get(r['id'], UNREVIEWED_FACT).excluded]
+        # A re-segmentation, set-aside or corrected project move leaves the old
+        # summary active but without a current unit. Keep only summaries a
+        # current source still backs (ordinary history has no unit link at all).
+        current = set(current_item_ids(service.store, [r['id'] for r in linked]))
+        linked = [r for r in linked if r['id'] in current]
+        # A project correction can leave the same unit summary under two
+        # identities. Show it once, preferring the item the current unit points
+        # at, so the listing and its source ids stay a single current source.
+        unit_items = set()
+        if has_units:
+            unit_items = {item[0] for item in conn.execute(
+                'SELECT DISTINCT u.item_id FROM organization_units u '
+                'JOIN organization_tasks t ON t.id=u.task_id '
+                "WHERE "+_unit_archive("?")+" AND ? IN (SELECT u.project UNION SELECT value FROM json_each(u.projects)) AND t.status!='superseded' "
+                "AND u.decision IN ('auto','manual') AND u.disposition!='set_aside' "
+                'AND u.item_id IS NOT NULL', (row['id'],row['id'],project))}
+        kept, contents = [], set()
+        for item in sorted(linked, key=lambda r: (r['id'] not in unit_items, r['id'])):
+            if item['content'] in contents:
+                continue
+            contents.add(item['content'])
+            kept.append(item)
+        linked = kept
+        summary = '\n'.join(r['content'] for r in linked)
+        stage = '已入库' if summary else {
+            'pending': '等待清洗提炼', 'processing': '清洗提炼中', 'unassigned': '归属待确认',
+            'failed': '提炼失败 · 待重试', 'not_requested': '已同步 · 尚未提炼',
+            'extracted': '已提炼 · 尚无入库摘要', 'superseded': '历史快照',
+        }.get(jobs.get(row['id']), '已同步 · 尚无入库摘要')
+        from evolvmem.knowledge_cleaning import review
+        cleaned = review(service, f"archive:{row['id']}")
+        if not summary and cleaned and cleaned['state'] == 'assigned':
+            stage = {'pending': '清洗已确认 · 待提炼', 'processing': '清洗已确认 · 提炼中'}.get(jobs.get(row['id']), stage)
+        result.append({'id': row['id'], 'adapter': row['adapter'], 'created_at': row['created_at'],
+                       'state': row['state'], 'summary': summary, 'stage': stage,
+                       'source_ids': [r['id'] for r in linked],
+                       'storage': 'database' if row['content_hash'] else 'pending_migration'})
+    return result

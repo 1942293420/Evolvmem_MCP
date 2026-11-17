@@ -1,0 +1,90 @@
+/* Project history and concise Q&A share one workbench and source links. */
+window.EvolvMemory = {async render({mount, doc, projects, api, esc, toast, lane='overview', onLane, onBusy, onChanged, onSource, onDirty=()=>{}, filters={}, onFilters=()=>{}, standalone=false,onDirectory=null}) {
+  const labels={habit:'长期习惯',project_convention:'项目约定',task_requirement:'任务要求',environment:'环境配置',decision:'决策依据',experience:'技术经验',reference:'参考知识'};
+  const state={project:doc.project||'__global__',lane,category:'',status:'',q:'',reason:'',page:1,...filters,editing:null,busy:false,dirty:false};
+  let scopePicker=null;
+  const $=s=>mount.querySelector(s);
+  const params=()=>new URLSearchParams({project:state.project,category:state.category,state:state.status,q:state.q,reason_code:state.reason,page:state.page});
+  const options=(entries,value)=>Object.entries(entries).map(([k,v])=>`<option value="${esc(k)}" ${k===value?'selected':''}>${esc(v)}</option>`).join('');
+  const reasonLabels={conflict:'冲突待确认',evidence:'依据不足',relation:'关联待核对',source:'来源待确认',verification:'有效性未验证',format:'问答待整理',other:'其他待确认'};
+  const reasonOptions=r=>{const counts=r.review_reason_counts||{};const entries=Object.entries(counts).map(([code,v])=>[code,`${v.label||reasonLabels[code]||code}（${v.count}）`]);if(state.reason&&!counts[state.reason])entries.push([state.reason,`${reasonLabels[state.reason]||state.reason}（0）`]);return options(Object.fromEntries([['','全部原因'],...entries]),state.reason);};
+  const reasonLines=row=>{const reasons=row.review_reasons&&row.review_reasons.length?row.review_reasons:(row.review_reason?[row.review_reason]:[]);if(!reasons.length)return row.effective?'':`<p class="reason">${esc(row.reason)}</p>`;return reasons.map(x=>`<p class="reason">${esc(x.label)}：${esc(x.detail)}</p>`).join('')+(reasons.length>1?`<p class="hint">这一组有 ${reasons.length} 种待确认原因，按任一原因都能筛到。</p>`:'');};
+  mount.innerHTML=`<header class="memory-heading"><div><a class="hint" href="#knowledge/projects" data-view="projects">← 所有项目</a><h2>${esc(doc.name)}</h2></div></header>
+    <nav class="memory-lanes" aria-label="项目记忆类型"><button data-memory-lane="overview">项目知识</button>${doc.project?'<button data-memory-lane="summary">历史摘要</button>':''}${doc.project?'<button data-memory-lane="history">历史记录</button>':''}<button data-memory-lane="qa">经验问答</button></nav><div class="memory-pane"></div>
+    <dialog class="memory-dialog" aria-label="记忆详情"><div class="memory-dialog-content"></div></dialog>`;
+  if(standalone){$('.memory-heading').hidden=true;$('.memory-lanes').hidden=true;}
+  const modal=(title,body,footer='')=>{$('.memory-dialog-content').innerHTML=`<div class="dialog-header"><h2>${title}</h2><button data-memory-action="close" aria-label="关闭记忆详情">✕</button></div><div class="dialog-body">${body}</div><div class="dialog-footer">${footer||'<button data-memory-action="close">关闭</button>'}</div>`;if(!$('.memory-dialog').open)$('.memory-dialog').showModal();};
+  function overview(){
+    $('.memory-pane').innerHTML=`<section class="panel project-document"><h3>项目摘要</h3><pre class="project-memory-text">${esc(doc.summary||'尚无已入库的历史摘要。可以先查看同步的历史记录，或整理经验问答。')}</pre>${doc.project_summary?`<details class="project-fulltext"><summary>AI 项目摘要 · ${esc(({ready:"已生成",failed:"更新失败，保留上次结果",pending:"等待生成",vector_dirty:"待同步"})[doc.project_summary.status]||doc.project_summary.status)}</summary><p class="hint">历史汇总，来源截至 ${esc(doc.project_summary.covered_through||"尚未记录")}；最新要求以当前资料为准。</p><pre class="project-memory-text">${esc(doc.project_summary.l1||"尚未生成")}</pre><details><summary>详细汇总及来源</summary><pre class="project-memory-text">${esc(doc.project_summary.l2)}</pre>${doc.project_summary.sources.map(s=>`<p class="hint">${esc(s.summary||s.source_ref)}</p>`).join("")}</details></details>`:""}<details class="project-fulltext"><summary>总记忆正文 · ${doc.source_ids.length} 份来源</summary><pre class="project-memory-text">${esc(doc.body||'暂无历史正文摘要')}</pre></details><div class="memory-shortcuts">${doc.project?`<button data-memory-lane="history">历史记录 · ${doc.sessions.length} 次</button>`:''}<button data-memory-lane="qa">可用经验问答 · ${doc.qa_count}</button></div></section>`;
+  }
+  function history(){
+    const pending=doc.sessions.filter(a=>a.storage!=='database'&&a.state==='available').length;
+    $('.memory-pane').innerHTML=`<section class="panel"><div class="section-head"><div><h3>历史记录</h3></div>${pending?`<button class="write" data-memory-action="migrate">清洗旧对话入库 · ${pending} 次</button>`:''}</div><div class="project-conversations">${doc.sessions.map(a=>`<article class="conversation-row"><div><strong>${esc(a.adapter)} · ${esc(a.created_at)}</strong><span class="badge">${esc(a.stage)}</span> <span class="badge">${a.storage==='database'?'清洗正文已入库':a.state==='available'?'旧对话待迁移':'来源已过期'}</span></div><p>${esc(a.summary||'该次对话尚无已入库摘要。')}</p><button data-memory-action="conversation" data-id="${a.id}" data-project="${esc(doc.project)}">查看整理后的对话</button></article>`).join('')||'<div class="empty">尚无关联的历史对话。</div>'}</div></section>`;
+  }
+  let qaRequest=0;
+  async function qa(){
+    onFilters({project:state.project,category:state.category,status:state.status,q:state.q,reason:state.reason,page:state.page});
+    const request=++qaRequest;onBusy(true);const pane=$('.memory-pane');pane.setAttribute('aria-busy','true');const loading=document.createElement('p');loading.className='ui-loading';loading.setAttribute('role','status');loading.textContent='正在加载问答…';pane.prepend(loading);
+    try{
+    let r=await api('qa?'+params());
+    if(request!==qaRequest||!mount.isConnected)return;
+    if(state.page>1&&!r.items.length){state.page=Math.max(1,Math.ceil(r.total/r.page_size));r=await api('qa?'+params());onFilters({project:state.project,category:state.category,status:state.status,q:state.q,reason:state.reason,page:state.page});}
+    if(request!==qaRequest||!mount.isConnected)return;
+    $('.memory-pane').innerHTML=`<section class="panel"><div class="section-head"><div><h3>经验问答</h3></div><div class="actions"><a href="#experiences">经验案例与验证记录 →</a><button class="primary write" data-memory-action="new">＋ 新增问答</button></div></div>
+      <div class="toolbar qa-filters"><input id="qa-search" type="search" aria-label="搜索问答" placeholder="搜索问题、答案或来源" value="${esc(state.q)}">${standalone?`<select id="qa-project-filter" aria-label="问答项目">${options({'__all__':'所有项目','__global__':'个人通用',...Object.fromEntries(projects.filter(p=>p.status==='active').map(p=>{const name=p.display_name||p.project;return [p.project,name===p.project?name:`${name}（${p.project}）`];}))},state.project)}</select>`:''}<select id="qa-category-filter" aria-label="问答分类">${options({'':'全部分类',...labels},state.category)}</select><select id="qa-state-filter" aria-label="问答状态">${options({'':'全部状态',active:'可用问答',pending:'待确认 / 待整理',unformatted:'旧资料待整理'},state.status)}</select><select id="qa-reason-filter" aria-label="待确认原因">${reasonOptions(r)}</select><button data-memory-action="search">搜索</button></div>
+      <p class="hint">${r.total} 组 · ${r.record_count} 份来源资料</p><div class="qa-cards">${r.items.map(row=>`<article class="qa-card"><div class="meta-line"><span class="badge">${esc(EvolvProjects.scopeLabel(row,projects))}</span><span class="badge">${esc(labels[row.category])}</span><span class="badge ${row.effective?'green':'amber'}">${row.effective?'可用问答':row.status==='unformatted'?'旧资料待整理':'待确认'}</span>${row.source_ids.length>1?`<span class="badge">同文 ${row.source_ids.length} 份</span>`:''}</div><h4>${esc(row.question?'问：'+row.question:row.source_title)}</h4><p>${esc(row.answer?'答：'+row.answer:row.source_body.slice(0,160))}</p>${row.trigger?`<p class="hint">适用：${esc(row.trigger)}</p>`:''}${reasonLines(row)}<button data-memory-action="context" data-id="${row.id}">核查记忆</button><button data-memory-action="edit" data-id="${row.id}">${row.question?'查看 / 编辑问答':row.managed_content?'提炼为独立问答':'整理成简洁问答'}</button>${row.source_ids.length>1?`<details><summary>查看重复来源</summary>${row.source_ids.map(id=>`<button data-memory-action="source" data-id="${id}">资料 #${id}</button>`).join('')}</details>`:''}</article>`).join('')||'<div class="empty">没有符合筛选条件的问答。旧资料可在“待确认 / 待整理”中整理。</div>'}</div>
+      <div class="pagination"><span>第 ${r.page} / ${Math.max(1,Math.ceil(r.total/r.page_size))} 页</span><div><button data-memory-action="prev" ${r.page<=1?'disabled':''}>上一页</button><button data-memory-action="next" ${r.page*r.page_size>=r.total?'disabled':''}>下一页</button></div></div></section>`;
+    }finally{loading.remove();if(request===qaRequest&&mount.isConnected){onBusy(false);pane.setAttribute('aria-busy','false');}}
+  }
+  async function draw(){
+    mount.querySelectorAll('.memory-lanes button').forEach(b=>{b.classList.toggle('active',b.dataset.memoryLane===state.lane);b.setAttribute('aria-pressed',String(b.dataset.memoryLane===state.lane));});
+    if(state.lane==='overview'&&doc.project&&onDirectory)await onDirectory($('.memory-pane'));else if(state.lane==='history'&&doc.project)history();else if(state.lane==='qa')await qa();else overview();
+  }
+  const dirty=value=>{state.dirty=value;onDirty(value);};
+  const discard=()=>{if(state.dirty&&!confirm('问答有未保存的修改，放弃修改？'))return false;dirty(false);return true;};
+  $('.memory-dialog').addEventListener('cancel',e=>{if(state.busy||!discard())e.preventDefault();});
+  mount.oninput=e=>{if(e.target.closest('.memory-dialog'))dirty(true);};
+  async function edit(id){
+    dirty(false);
+    const r=id?await api('qa/'+id):null;state.editing=r;
+    const project=r?.project??(state.project.startsWith('__')?'':state.project);
+    modal(r?'整理 / 编辑经验问答':'新增经验问答',`<p class="hint">${r?.managed_content?'将新建独立问答，原方法案例及验证记录保留。':''}保留关键适用条件。确认入库表示这条知识可供参考，不等于方法已经验证成功。</p>
+      <div class="field"><label for="qa-question">问题 · 最多 160 字</label><input id="qa-question" maxlength="160" value="${esc(r?.question||'')}" placeholder="遇到什么情况，需要知道什么？"></div>
+      <div class="field"><label for="qa-answer">简洁答案 · 最多 400 字</label><textarea id="qa-answer" maxlength="400" placeholder="一句话说明做法，保留必要条件">${esc(r?.answer||(r?.source_body.length<=400?r.source_body:''))}</textarea></div>
+      <div class="form-grid"><div class="field"><button type="button" class="write quiet" data-memory-action="project-new">＋ 新增项目</button><div data-qa-scope></div></div><div class="field"><label for="qa-category">知识分类</label><select id="qa-category">${options(labels,r?.category||'reference')}</select></div></div>
+      <div class="field"><label for="qa-trigger">适用条件</label><input id="qa-trigger" maxlength="500" value="${esc(r?.trigger||'')}" placeholder="例如：修改业务行为时；仅用于本次任务"></div>
+      <label class="extraction-choice"><input type="checkbox" id="qa-replace">确认入库时，归档适用范围重叠、同分类、同条件下该问题的旧答案（共用知识在所有关联项目中一起归档）</label>
+      ${r?EvolvExtraction.process(r.learning,esc):''}${r?EvolvExtraction.support(r.learning,esc):''}${r?`<details><summary>核对原资料与来源</summary><pre class="project-memory-text">${esc(r.source_body)}</pre><button data-memory-action="source" data-id="${r.id}">查看资料 #${r.id}</button>${r.sources.filter(s=>s.archive_id&&s.source_project).map(s=>`<button data-memory-action="conversation" data-id="${s.archive_id}" data-project="${esc(s.source_project)}">整理后的对话 #${s.archive_id}</button>`).join('')}</details>`:''}`,
+      `${r?'<button class="write" data-memory-action="archive">归档资料</button>':''}<button data-memory-action="close">取消</button><button class="write" data-memory-action="draft">保存待确认</button><button class="primary write" data-memory-action="publish">确认入库</button>`);
+    scopePicker=EvolvProjects.scopePicker({mount:$('[data-qa-scope]'),projects,esc,value:r||{project,scope:project?'project':'global'}});
+  }
+  async function act(action,b){
+    if(action==='close'){if(discard())$('.memory-dialog').close();return;}
+    if(action==='context'){if(!discard())return;modal('核查记忆 · 原始任务上下文','<div data-memory-context></div>','<button data-memory-action="close">关闭</button>');await EvolvTaskContext.render({mount:$('[data-memory-context]'),api,esc,query:'items/'+b.dataset.id+'/context'});return;}
+    if(action==='conversation'){if(!discard())return;const r=await api('conversations/'+b.dataset.id+'?'+new URLSearchParams({project:b.dataset.project}));modal('整理后的历史对话',`<p class="hint">${r.storage==='database'?'正文保存在数据库中。':'旧来源读取时清洗；可在历史记录页迁移入库。'}需求、回复、纠正与决定按顺序保留。</p>${r.cleaning?`<h3>已确认清洗稿</h3><pre class="project-memory-text">${esc(r.cleaning.text)}</pre><h3>原始对话 · 核对依据</h3>`:""}<pre class="project-memory-text">${esc(r.text)}</pre>`);return;}
+    if(action==='source'){if(!discard())return;$('.memory-dialog').close();await onSource(Number(b.dataset.id));return;}
+    if(action==='project-new'){await EvolvProjects.create({api,esc,onSaved:async project=>{projects=(await api('projects')).projects;const selected=scopePicker.read();scopePicker=EvolvProjects.scopePicker({mount:$('[data-qa-scope]'),projects,esc,value:{knowledge_scope:'project',projects:[...selected.projects,project]}});dirty(true);}});return;}
+    if(action==='new'){await edit();return;}
+    if(action==='edit'){await edit(Number(b.dataset.id));return;}
+    if(action==='search'){state.q=$('#qa-search').value;state.page=1;await qa();return;}
+    if(action==='prev'||action==='next'){state.page+=action==='prev'?-1:1;await qa();return;}
+    if(action==='migrate'){
+      let after=0,total=0,missing=0,r;
+      do{r=await api('history/migrate',{project:doc.project,after_id:after,limit:50});after=r.after_id;total+=r.migrated;missing+=r.unavailable.length;}while(r.has_more);
+      toast(`已清洗入库 ${total} 次对话${missing?`；${missing} 份来源不可恢复`:''}。全程本机处理。`);await onChanged();return;
+    }
+    if(action==='publish'||action==='draft'){
+      const r=state.editing;await api(r?'qa/'+r.id:'qa',{expected_revision:r?.revision,question:$('#qa-question').value,answer:$('#qa-answer').value,...scopePicker.read(),category:$('#qa-category').value,trigger:$('#qa-trigger').value,action:action==='publish'?'publish':'draft',replace_conflicts:$('#qa-replace').checked});
+      dirty(false);$('.memory-dialog').close();await EvolvUI.saved(action==='publish'?'问答已确认入库。':'问答已保存到待确认。',onChanged,toast);return;
+    }
+    if(action==='archive'){if(!discard())return;const r=await api('items/'+state.editing.id);await api('items/'+r.id+'/transition',{expected_revision:r.revision,action:'archive'});$('.memory-dialog').close();await EvolvUI.saved('资料已归档，对应问答停止使用。',onChanged,toast);}
+  }
+  mount.onclick=async e=>{
+    const b=e.target.closest('[data-memory-action],[data-memory-lane]');if(!b||state.busy)return;
+    e.preventDefault();state.busy=true;const finish=EvolvUI.busy(b);onBusy(true);
+    try{if(b.dataset.memoryLane){state.lane=b.dataset.memoryLane;onLane(state.lane);await draw();}else await act(b.dataset.memoryAction,b);}catch(error){toast(error.message);}finally{state.busy=false;finish();onBusy(false);}
+  };
+  mount.onchange=async e=>{if(e.target.closest('.memory-dialog'))dirty(true);const keys={'qa-project-filter':'project','qa-category-filter':'category','qa-state-filter':'status','qa-reason-filter':'reason'};const key=keys[e.target.id];if(key){state[key]=e.target.value;state.page=1;try{await qa();}catch(error){toast(error.message);}}};
+  mount.onkeydown=e=>{if(e.key==='Enter'&&e.target.id==='qa-search'){e.preventDefault();act('search').catch(error=>toast(error.message));}};
+  await draw();
+}};

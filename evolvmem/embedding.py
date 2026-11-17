@@ -1,0 +1,158 @@
+"""GGUF local embedding engine — loads quantized models via llama-cpp-python."""
+
+from pathlib import Path
+from evolvmem.config import Config
+from evolvmem.runtime_contract import EMBEDDING_INPUT_TOKENS
+
+
+class RuntimeConfigurationError(RuntimeError, FileNotFoundError):
+    """An invalid optional embedding runtime, compatible with legacy callers."""
+
+
+class EmbeddingEngine:
+    """Local embedding engine.
+
+    Uses llama-cpp-python to load GGUF-format embedding models (e.g., bge-small-zh).
+    Loads once at startup, stays resident in process memory.
+    """
+
+    def __init__(self, config: Config):
+        self.config = config
+        self._model = None
+        self._http = None
+        self._reranker = None
+        self._dim: int | None = None
+
+    # ---- lifecycle ----
+
+    def initialize(self) -> None:
+        """Load the GGUF embedding model."""
+        if self.config.embedding_http_url:
+            from evolvmem.embedding_client import HttpEmbeddingProvider
+            self.close()
+            provider = HttpEmbeddingProvider(self.config)
+            provider.initialize()
+            self._http = provider
+            self._dim = provider.dim
+            return
+        diagnostics = self.config.validate_runtime(require_model=True)
+        if diagnostics:
+            raise RuntimeConfigurationError("\n".join(diagnostics))
+
+        model_path = self.config.model_path
+        # Lazy import to avoid crashing the whole module if llama-cpp-python is not installed
+        from llama_cpp import Llama
+
+        model = Llama(
+            model_path=str(model_path),
+            embedding=True,
+            n_ctx=EMBEDDING_INPUT_TOKENS,
+            n_batch=EMBEDDING_INPUT_TOKENS,
+            verbose=False,
+        )
+        self._model = model
+        try:
+            probe = self._normalize_embedding(
+                model.embed(self.config.embedding_doc_prefix + "evolvmem dimension probe")
+            )
+            observed_dim = len(probe)
+            if observed_dim != self.config.embedding_dim:
+                raise RuntimeError(
+                    f"embedding_dim mismatch: configured {self.config.embedding_dim}, "
+                    f"model returned {observed_dim}"
+                )
+            self._dim = observed_dim
+        except Exception:
+            self.close()
+            raise
+        if self.config.context_reranker_model_dir:
+            try:
+                from evolvmem.reranking import Reranker
+                self._reranker = Reranker(self.config.context_reranker_model_dir)
+            except Exception:
+                # Optional model failure leaves the existing vector leg intact.
+                self._reranker = None
+
+    def close(self) -> None:
+        if self._http is not None:
+            self._http.close()
+            self._http = None
+        model = self._model
+        self._model = None
+        self._dim = None
+        self._reranker = None
+        if model is not None:
+            model.close()
+
+    def __enter__(self):
+        self.initialize()
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._model is not None or (self._http is not None and self._http.is_loaded)
+
+    @property
+    def dim(self) -> int:
+        if self._dim is None:
+            raise RuntimeError("EmbeddingEngine not initialized")
+        return self._dim
+
+    @property
+    def reranker_loaded(self):
+        return self._http.reranker_loaded if self._http is not None else self._reranker is not None
+
+    def rerank(self, query, documents):
+        if self._http is not None:
+            return self._http.rerank(query, documents)
+        if self._reranker is None:
+            raise RuntimeError('reranker_unavailable')
+        return self._reranker.score(query, documents)
+
+    # ---- encoding ----
+
+    def encode(self, text: str) -> list[float]:
+        """Encode a single text to an embedding vector."""
+        self._ensure_loaded()
+        if self._http is not None:
+            return self._http.encode(text, "raw")
+        return self._normalize_embedding(self._model.embed(text))
+
+    @staticmethod
+    def _normalize_embedding(result) -> list[float]:
+        """Normalize llama-cpp's single-embedding response shape."""
+        # llama-cpp-python returns embeddings as list of lists, take the first
+        if isinstance(result, list) and len(result) > 0:
+            if isinstance(result[0], list):
+                return result[0]
+            return result
+        return result
+
+    def encode_query(self, text: str) -> list[float]:
+        """Encode a search query, applying the configured query task prefix."""
+        if self._http is not None:
+            return self._http.encode(text, "query")
+        return self.encode(self.config.embedding_query_prefix + text)
+
+    def encode_document(self, text: str) -> list[float]:
+        """Encode a document for indexing, applying the configured document prefix."""
+        if self._http is not None:
+            return self._http.encode(text, "document")
+        return self.encode(self.config.embedding_doc_prefix + text)
+
+    def encode_batch(self, texts: list[str]) -> list[list[float]]:
+        """Batch encode multiple texts."""
+        self._ensure_loaded()
+        embeddings = []
+        for text in texts:
+            embeddings.append(self.encode(text))
+        return embeddings
+
+    def _ensure_loaded(self):
+        if not self.is_loaded:
+            raise RuntimeError(
+                "EmbeddingEngine not initialized, call initialize() first"
+            )

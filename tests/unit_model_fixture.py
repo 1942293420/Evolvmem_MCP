@@ -1,0 +1,258 @@
+"""Deterministic provider for the numbered segmentation protocol and real extraction.
+
+All data is synthetic. The provider speaks the same contracts the product uses:
+the segmentation request returns record ids (never a copy of the source text),
+and the extraction request returns the existing memory contract with a
+SESSION_SUMMARY plus atomic knowledge (short question/answer, quote evidence).
+"""
+from __future__ import annotations
+
+import json
+import re
+import time
+
+ENVELOPE = re.compile(r'^\[(\d+)\] ([\w]+)：(.*)$', re.M)
+EXTRACTION_LINE = re.compile(r'^\[(user|assistant|tool|unknown)\]: (.*)$', re.M)
+# The bounded, explicitly-labelled same-session background block.
+CONTEXT_MARKER = '同会话前文'
+TOPICS = [
+    ('用户要求', 'evo', 'task_requirement'),
+    ('中间这段', 'dsh', 'project_convention'),
+    ('最后用户确认', '', 'habit'),
+]
+MIXED_TEXT = ('用户要求：Evo 演示项目先明确验收条件。\n'
+              '中间这段是 DSH 项目导出的要求，不能只看开头结尾。\n'
+              '最后用户确认：批量删除必须逐条确认。')
+
+
+class UnitProvider:
+    """Handles both provider contracts used by the organization worker."""
+
+    def __init__(self, *, projects=('evo', 'dsh'), topics=None, summary=None,
+                 answer_chars=200, fail_extraction=None, extraction=None):
+        self.projects = set(projects)
+        self.topics = topics or TOPICS
+        self.summary = summary or '本次对话围绕整理与验收条件展开，供项目历史核对。'
+        self.answer_chars = answer_chars
+        self.fail_extraction = fail_extraction
+        self.extraction = extraction
+        self.calls = []
+        self.extract_calls = []
+        self.review_calls = []
+
+    # -- segmentation --
+
+    def segment(self, prompt):
+        records = [(int(pos), role, content) for pos, role, content in ENVELOPE.findall(prompt)]
+        if not records:
+            raise AssertionError('segmentation prompt has no numbered records')
+        units, current = [], None
+        for pos, role, content in records:
+            # A 4th element, when present, marks a same-session continuation.
+            marker = next((item for item in self.topics if item[0] in content), None)
+            if marker is not None:
+                if current:
+                    units.append(current)
+                current = {'start_id': pos, 'end_id': pos, 'title': content[:40],
+                           'cleaned_summary': content[:180], 'category': marker[2],
+                           'project_hint': marker[1] if marker[1] in self.projects else '',
+                           'evidence_quote': marker[0], 'disposition': 'keep',
+                           'disposition_reason': '',
+                           'continues_context': bool(marker[3]) if len(marker) > 3 else False}
+            elif current is None:
+                current = {'start_id': pos, 'end_id': pos, 'title': content[:40],
+                           'cleaned_summary': content[:180], 'category': 'reference',
+                           'project_hint': '', 'evidence_quote': '', 'disposition': 'keep',
+                           'disposition_reason': '', 'continues_context': False}
+            else:
+                current['end_id'] = pos
+        if current:
+            units.append(current)
+        return json.dumps({'units': units}, ensure_ascii=False)
+
+    # -- extraction --
+
+    def extract(self, prompt):
+        if self.fail_extraction:
+            raise RuntimeError(self.fail_extraction)
+        lines = [(role, content.strip()) for role, content in EXTRACTION_LINE.findall(prompt)]
+        user_lines = [content for role, content in lines if role == 'user']
+        tool_lines = [content for role, content in lines if role == 'tool']
+        source = (user_lines or [content for _, content in lines] or [''])[0]
+        value = source[:self.answer_chars].strip() or '资料内容不足，保留待核对。'
+        if len(value) < 10:
+            value = (value + '：这是一段需要整理的业务资料。')[:self.answer_chars]
+        learning = {'category': 'task_requirement', 'basis': 'explicit', 'quote': value,
+                    'question': '这段对话明确了什么要求？', 'answer': value, 'trigger': '',
+                    'rationale': '提炼自本次对话', 'topic': 'auto', 'instruction': '按对话内容执行'}
+        memories = [{'key': 'SESSION_SUMMARY', 'value': self.summary},
+                    {'key': 'project:x:request:auto', 'value': value, 'confidence': .9,
+                     'attribute': 'constraint', 'learning': learning}]
+        if tool_lines:
+            proof = tool_lines[0][:self.answer_chars]
+            case = {'project': 'x', 'problem': '工具结果说明了什么？', 'conditions': {},
+                    'steps': ['在原始对话中核对工具结果'], 'rationale': '直接读取工具结果',
+                    'result': proof, 'applicability': [], 'exclusions': [], 'transferable': False}
+            memories.append({'key': 'project:x:experience:auto', 'value': proof, 'attribute': 'experience',
+                             'confidence': .9, 'case': case,
+                             'learning': {'category': 'experience', 'basis': 'explicit', 'quote': proof,
+                                          'question': '工具结果验证了什么？', 'answer': proof,
+                                          'trigger': '出现同类工具结果时', 'rationale': '来自工具结果',
+                                          'topic': 'evidence'}})
+        if self.extraction is not None:
+            memories = self.extraction(prompt, memories) or memories
+        return json.dumps({'memories': memories}, ensure_ascii=False)
+
+    def review(self, prompt):
+        """Answer the independent answer-scope review for every numbered candidate.
+
+        A candidate whose quote is not verbatim in the prompt is answered with
+        ``review`` so a broken fixture cannot silently promote unreviewed text.
+        """
+        found = re.findall(r'"编号": (\d+),\n\s+"引用": "([^"]*)"', prompt)
+        out = []
+        for number, quote in found:
+            verdict = 'supported' if quote and quote in prompt else 'review'
+            out.append({'id': int(number), 'verdict': verdict,
+                        'reason': '与本条用户原话一致' if verdict == 'supported' else '引用无法在消息中核对',
+                        'quote': quote})
+        self.review_calls.append(prompt)
+        return json.dumps(out, ensure_ascii=False)
+
+    def classify(self, prompt):
+        rows=json.loads(prompt.split('待判断资料：',1)[1])
+        target=json.loads(prompt.split('目标范围：',1)[1].split('归类依据：',1)[0])
+        registry=json.loads(prompt.split('已登记项目：',1)[1].split('项目归属说明：',1)[0])
+        exceptions=prompt.split('不适用情况：',1)[1].split('待判断资料：',1)[0]
+        out=[]
+        for r in rows:
+            excluded=any(t in r['text'] and t in exceptions for t in ('跨平台条件','其他平台'))
+            context=r.get('context',{}).get('predecessor',{})
+            continued=False
+            if target is not None:
+                selected=target.get('projects') or ([target['project']] if target.get('project') else [])
+            else:
+                selected=[]
+                for p in registry:
+                    names=[p['project'],p.get('display_name') or '',*(p.get('aliases') or [])]
+                    if any(n and re.search(r'(?<![a-z0-9_-])'+re.escape(n)+r'(?![a-z0-9_-])',r['text'],re.I) for n in names):
+                        if not any((re.search(r'(?:使用|交给|用|让)\s*'+re.escape(n),r['text'],re.I)) for n in names if n):
+                            selected.append(p['project'])
+                marker=next((x for x in sorted(self.topics,key=lambda x:len(x[0]),reverse=True) if x[0] in r['text']),None)
+                if not selected and context and marker and len(marker)>3 and marker[3] is True:
+                    selected=[context['basis']['project']];continued=True
+                if not selected and r.get('context',{}).get('same_source') and '继续细化' in r['text']:
+                    before=r['context']['same_source']['before']
+                    selected=[p['project'] for p in registry if re.search(r'(?<![a-z0-9_-])'+re.escape(p['project'])+r'(?![a-z0-9_-])',before,re.I)]
+                if len(selected)>1:selected=[]
+            out.append({'id':r['id'],'decision':'exclude' if excluded else 'include' if selected or target and target.get('knowledge_scope')=='global' else 'uncertain',
+                'reason':'模拟核对：按本条要求与业务对象判断适用范围；不明确的由人工核对。', 'quote':r['text'][:1000],
+                'chain':{'need':r['text'][:1000]},'continues_context':continued,
+                'knowledge_scope':target.get('knowledge_scope','project') if target else 'project',
+                'general_quote':r['text'][:1000] if target and target.get('knowledge_scope')=='global' else '',
+                'targets':[{'project':p,'role':'applicable' if target is not None and len(selected)>1 else 'owner','quote':context['basis']['quote'] if continued else r['text'][:1000]} for p in selected]})
+        return json.dumps({'items':out},ensure_ascii=False)
+
+    def __call__(self, prompt, *args, **kwargs):
+        self.calls.append(prompt)
+        if '完整任务识别员' in prompt:
+            records=json.loads(prompt.split('本批原文：',1)[1])
+            catalog=json.loads(prompt.split('已识别任务：',1)[1].split('本批原文：',1)[0].split('上一回复（待修正）：',1)[0].strip())
+            units=[];current=None
+            for r in records:
+                marker=next((x for x in sorted(self.topics,key=lambda x:len(x[0]),reverse=True) if x[0] in r['text']),None)
+                if marker and len(marker)>3 and marker[3] is True and current is not None:
+                    current['end_id']=r['id'];continue
+                if marker or current is None:
+                    if current:units.append(current)
+                    title=marker[0] if marker else (catalog[-1]['title'] if catalog else '完整任务演示')
+                    ref=next((x['task'] for x in catalog if x['title']==title),'new')
+                    current={'task':ref,'start_id':r['id'],'end_id':r['id'],'title':title,
+                             'need_quote':re.sub(r'^用户：','',r['text'])[:100] if r['role']=='user' else ''}
+                else:current['end_id']=r['id']
+            if current:units.append(current)
+            return json.dumps({'segments':units},ensure_ascii=False)
+        if '任务资料整理员' in prompt:
+            records=json.loads(prompt.split('本批原文：',1)[1])
+            def entry(r):return {'text':r['content'][:100],'evidence':[{'message':r['id'],'quote':r['content'][:100]}]}
+            return json.dumps({'requirement':entry(records[0]),'analysis':None,
+                'steps':[entry(r) for r in records[1:-1]],'result':entry(records[-1]),
+                'outstanding':[],'state':'unknown'},ensure_ascii=False)
+        if '你是业务资料归类核对员' in prompt:
+            return self.classify(prompt)
+        if '独立核对员' in prompt:
+            return self.review(prompt)
+        if '整理分段助手' in prompt:
+            return self.segment(prompt)
+        if '编号消息' not in prompt and EXTRACTION_LINE.search(prompt):
+            self.extract_calls.append(prompt)
+            return self.extract(prompt)
+        raise AssertionError('unexpected prompt: ' + prompt[:120])
+
+
+def many_topic_archive(service, session='auto-session', text=None):
+    """Archive one synthetic multi-topic source and confirm its cleaning draft."""
+    from tests.test_history_qa_memory import archive
+    from tests.test_knowledge_cleaning import ready
+    source = archive(service, session=session, project='', text=text or MIXED_TEXT)
+    ready(service)
+    return source
+
+
+def long_topic_archive(service, session='long-session'):
+    """Confirm the FULL cleaning draft: the list preview is truncated on purpose."""
+    from tests.test_history_qa_memory import archive
+    from evolvmem.knowledge_api import dispatch
+    head = '甲' * 200 + '开头要求：Evo 演示项目先明确验收条件。\n'
+    middle = '中段要求：DSH 导出必须保留来源版本，并核对缓存。\n'
+    tail = '收尾要求：批量删除必须逐条确认。\n' + '乙' * 14000
+    source = archive(service, session=session, project='', text=head + middle + tail)
+    full = dispatch(service, 'GET', 'cleaning/detail', {'key': f'archive:{source.id}'})
+    dispatch(service, 'POST', 'cleaning/save', {'items': [
+        {'key': full['key'], 'expected_revision': full['expected_revision'],
+         'cleaned_text': full['body'], 'category': 'reference'}]})
+    return source
+
+
+def model_for(service, *, projects=None, topics=None, **kwargs):
+    return UnitProvider(projects=projects or ('evo', 'dsh'), topics=topics, **kwargs)
+
+
+def use_model(monkeypatch, model):
+    from evolvmem import kimi_hooks
+    monkeypatch.setattr(kimi_hooks, '_load_llm_config', lambda **kw: object())
+    monkeypatch.setattr(kimi_hooks, '_call_llm_with_retry', model)
+
+
+def save_suggestions_as_user(service, task_ids=None):
+    """Explicit human saves for tests that start at the extraction boundary."""
+    from evolvmem import auto_organization as org
+    from evolvmem.organization_review_decisions import archive_one
+    tasks = task_ids if task_ids is not None else org.list_tasks(service, {})['current_task_ids']
+    for task_id in tasks:
+        for unit in org.unit_views(service, task_id):
+            target = unit['business_analysis']
+            if unit['decision'] == 'review' and unit['disposition'] == 'keep' and target.get('decision') == 'include':
+                archive_one(service, {'task_id': task_id, 'digest': unit['digest'],
+                    'expected_revision': unit['revision'], 'action': 'include',
+                    'projects': target.get('projects', []), 'knowledge_scope': target.get('knowledge_scope', 'project')})
+
+
+def run_worker(service, monkeypatch, model, *, timeout=15):
+    from evolvmem.auto_organization import OrganizationWorker
+    from evolvmem.context_models import ContextMode
+    use_model(monkeypatch, model)
+    worker = OrganizationWorker(service.config, mode=ContextMode.SHADOW)
+    worker.start()
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            tasks = worker.tasks()
+            if tasks and all(t['status'] in ('completed', 'review', 'failed', 'superseded') for t in tasks):
+                break
+            time.sleep(.05)
+        else:
+            raise AssertionError('organization worker did not settle: ' + str(worker.tasks()))
+        return worker.tasks()
+    finally:
+        worker.stop()
