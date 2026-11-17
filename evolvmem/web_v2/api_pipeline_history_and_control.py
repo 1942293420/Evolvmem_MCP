@@ -519,10 +519,28 @@ def get_control(console: Any, policy: Any, session: Any, params: dict[str, Any])
 
 
 def post_control_action(console: Any, session: Any, body: dict[str, Any]) -> dict[str, Any]:
-    actor, _owner_id, _is_owner, _lib, _me = resolve_actor_and_library(console, session, None)
+    actor, owner_id, _is_owner, _lib, _me = resolve_actor_and_library(console, session, None)
     if not actor.get('is_admin'):
         raise V2ApiError('admin_required', 403)
     action = str(body.get('action') or '').strip()
+    if action == 'reset_circuit':
+        track = str(body.get('track') or 'live').strip()
+        if track not in ('live', 'backfill'):
+            raise V2ApiError('invalid_track', 400)
+        with open_exp_pg(role='coordinator') as (_settings, conn):
+            conn.execute(
+                """
+                INSERT INTO pipeline_circuit_state(
+                    owner_id, track, paused, pause_reason, consecutive_bad_days, metrics_json, updated_at
+                ) VALUES (%s, %s, false, '', 0, jsonb_build_object('reset_at', now()::text), now())
+                ON CONFLICT (owner_id, track) DO UPDATE SET
+                    paused = false, pause_reason = '', consecutive_bad_days = 0,
+                    metrics_json = jsonb_set(COALESCE(pipeline_circuit_state.metrics_json, '{}'::jsonb), '{reset_at}', to_jsonb(now()::text), true),
+                    updated_at = now()
+                """,
+                (owner_id, track),
+            )
+        return {'http_status': 200, 'ok': True, 'track': track, 'paused': False}
     if action == 'set_grant':
         payload = {
             'viewer_id': body.get('viewer_id'),

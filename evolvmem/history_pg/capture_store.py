@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import threading
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -18,6 +19,7 @@ from psycopg.rows import dict_row
 
 from evolvmem.archive_storage import ArchiveStorage, MAGIC as ARCHIVE_MAGIC
 from evolvmem.history_pg.config import PgHistoryConfig, PgHistoryPool
+from evolvmem.history_pg.live_history_sync import sync_single_head
 from evolvmem.lan_sharing import LanError, validate_request_id
 from evolvmem.product_policy import load_policy
 from evolvmem.transcript_formats import CODEX_FORMAT, adapter_name, parse_transcript, source_format, workspace_details
@@ -396,7 +398,21 @@ class PgCaptureStore:
             )
         if unlink_stage is not None:
             unlink_stage.unlink(missing_ok=True)
+        if promote and archive_id is not None and reason not in _EXCLUDED_REASONS:
+            self._sync_live_history_best_effort(dbname, dev_id, sess_id, digest, total)
         return receipt
+
+    def _sync_live_history_best_effort(self, dbname: str, dev_id: str, sess_id: str, digest: str, total: int) -> None:
+        """Best-effort materialization into em_history browse tables after CAS archive upload."""
+        def _run() -> None:
+            try:
+                sync_single_head(self.pool, dbname, device_id=dev_id, session_id=sess_id, sha256=digest)
+            except Exception:
+                pass
+        if total <= 8 * 1024 * 1024:
+            _run()
+        else:
+            threading.Thread(target=_run, daemon=True, name='live-history-sync').start()
 
     def _build_status(self, conn: psycopg.Connection, dev_id: str, sess_id: str, handoff: Any = None) -> dict[str, Any]:
         head = conn.execute("SELECT * FROM em_runtime.lan_session_heads WHERE device_id=%s AND session_id=%s", (dev_id, sess_id)).fetchone()

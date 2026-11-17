@@ -42,9 +42,9 @@
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;font-size:13.5px">
             <span class="muted">无时刻跳过率：<b style="color:var(--ok)">70%–80%（零花费）</b></span>
-            <button type="button" class="btn ${s.r9Tripped ? "btn-ok" : "btn-danger"} btn-sm" data-act="toggle-r9" ${w ? "" : "disabled"}>
+            ${s.r9Tripped || s.apiMode !== "live" ? `<button type="button" class="btn ${s.r9Tripped ? "btn-ok" : "btn-danger"} btn-sm" data-act="toggle-r9" ${w ? "" : "disabled"}>
               ${s.r9Tripped ? "恢复调度运行" : "⚠ 模拟触发 R9 熔断"}
-            </button>
+            </button>` : `<span class="badge badge-ok">R9 成本守卫正常</span>`}
           </div>
         </section>
 
