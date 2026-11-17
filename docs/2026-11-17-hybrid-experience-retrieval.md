@@ -41,7 +41,7 @@ flowchart LR
 
 ## 验证记录
 
-- 隔离 PostgreSQL 55434 回归 222 passed / 1 optional real-model test skipped；随后分页修复新增两项、MCP HTTP 联合测试新增一项，相关检索 39 项及 Web 3 项重新通过。真实双 GGUF 另行 34 项通过。
+- 隔离 PostgreSQL 55434 最终回归 225 passed / 1 optional real-model test skipped，包含分页修复与实际 HTTP MCP 创建/编辑/重放/冲突/编码故障原子性联合测试。真实双 GGUF 另行 34 项通过。
 - Node 前端/SSO/历史 37 项通过；真实 Chrome 的语义结果、查询竞争、登录态、1440/390 页面通过。
 - Windows PowerShell 5.1：挂起 1894ms、slow-drip 1873ms、临界预算 1886ms；这些是隔离故障 fixture。实装 Hook 最小更新，保留其与源码不同的历史逻辑。
 - 生产补算 362 条 active 经验后：legacy_missing=0、retrieval_missing=0、invalid=0。补算前为两条手工经验缺 768 向量、362 条均无新增 1024 投影。
@@ -50,4 +50,10 @@ flowchart LR
 - Web 分页由完整 filtered SQL 匹配集合稳定排序，350/370 条同分与混合命中分页无重复遗漏。HNSW 先行，Hook 过滤后短取可在同一 deadline 内精确 SQL 补查，诊断注明 fallback。
 - 指定旧 product_modules.e2e 在隔离 /v1 仍因导航 actual9/expected6 的旧断言失败；未修改产品迁就此断言。独立工作原理页面图文截图、390/1440 无溢出与无 pageerror 通过。
 
-服务切换和完整性强制策略的最终线上回执将在完成后补充。仅在 55434 构造测试数据；55432 的写操作仅为已授权迁移、真实经验投影修复及完整性策略。
+已完成 Web/MCP/流水线/回填运行包切换；常驻编码服务就绪，Web/MCP/编码服务均 active，central_sso=true。完整性强制策略已在最终锁表核查后启用：362 active、768 缺失0、1024缺失0、契约/正文hash异常0。
+
+Windows 实际 MCP 改写问题请求 334ms、关键词与向量同命中1条、cosine=0.728489；无关问题162ms、0条。已安装 Hook 完整 prompt-submit 实测1404ms、目标经验进入上下文。该实测还发现 OS 环境变量缺失会导致旧平台识别失效，现改用真实 OSVersion.Platform；最终实装 SHA256 `eb472a77108473686325d7370664970b152532bbd7afcb1fc3f41a01a3e96779`。平台修正后 PS5.1 故障 fixture 再测挂起1863ms、slow-drip1853ms、临界1857ms，全部通过。
+
+生产 EXPLAIN ANALYZE 确认 idx_experience_notes_retrieval_hnsw 被使用，临时规划设置已恢复。Hook 仅传已知项目；constraints 必须由调用者提供已观察到的事实，不臆测目标环境，返回条件仍须核对。
+
+私有备份/回执保存在服务器 `evolvmem-governance-backups/20261117-hybrid-retrieval/`，本地验收回执在工作区 artifacts/hybrid-recall-20261117；均不进入公开源码。仅在 55434 构造测试数据；55432 的写操作仅为已授权迁移、真实经验投影修复及完整性策略。
