@@ -168,6 +168,7 @@
         else E.renderAll();
         return false;
       }
+      this.syncLibrarySelect();
       if (E.session) { E.session.dataReady=true; E.session.syncHeader(); }
       E.renderAll();
       if (E.session) E.session.restoreDraft();

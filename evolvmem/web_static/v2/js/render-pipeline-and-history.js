@@ -165,11 +165,12 @@
           <p>${E.isProduction() ? "读取已归档的原始对话，支持项目浏览、检索与原文阅读；完整覆盖需另行核验。" : "离线演示：以下会话、同步状态与附件为示例，不代表现网数据。"}</p>
         </div>
         <div class="topbar-actions">
+          ${E.isProduction() ? '<div class="history-source-note"><span class="badge">当前读取所选用户历史库</span><span class="muted">设备库切换未接入</span></div>' : `
           <select id="hist-db-sel" aria-label="选择设备历史库">
             ${Object.keys(E.HIST_DB_ZH).map(function (k) {
               return `<option value="${esc(k)}" ${s.histDb === k ? "selected" : ""}>${esc(E.HIST_DB_ZH[k])}</option>`;
             }).join("")}
-          </select>
+          </select>`}
         </div>
       </div>
       ${!w ? `<div class="banner banner-warn">当前处于他人授权只读视角：支持检索与阅读对话原文，移入回收站或恢复项目操作已禁用。</div>` : ""}
@@ -218,11 +219,7 @@
       <div class="panel" style="padding:14px 18px">
         <div class="filter-bar">
           ${s.histScope === "projects" && !q && s.historyProjects.some(function (p) { return !p.deleted; }) ? `
-            <select id="hist-proj-sel" aria-label="选择项目" style="max-width:240px">
-              ${s.historyProjects.filter(function (p) { return !p.deleted; }).map(function (p) {
-                return `<option value="${esc(p.key)}" ${s.selectedProjectKey === p.key ? "selected" : ""}>${esc(p.title)} (${p.blocks})</option>`;
-              }).join("")}
-            </select>` : ""}
+            ${E.renderHistoryProjectPicker()}` : ""}
           <input type="search" id="hist-q" value="${esc(s.histQuery)}" placeholder="三路混合搜索历史会话标题、命令或对话正文…" style="flex:1;min-width:220px" />
           <div class="cat-pills">
             <button type="button" class="cat-pill ${s.histScope === "projects" ? "active" : ""}" data-act="hist-scope" data-val="projects"><span>项目会话</span><strong>${s.historyProjects.filter(function (p) { return !p.deleted; }).length}</strong></button>
@@ -231,6 +228,8 @@
           </div>
         </div>
       </div>
+
+      <p class="muted history-project-help">项目来自已归档会话的项目归属；括号数字为可见历史片段数。点击项目选择框可输入名称查找。</p>
 
       ${s.histScope === "trash" ? `
         <section class="panel">

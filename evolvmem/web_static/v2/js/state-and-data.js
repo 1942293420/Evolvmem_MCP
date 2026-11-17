@@ -275,6 +275,9 @@
       histSubtab: "browse",
       histScope: "projects",
       histQuery: "",
+      histProjectQuery: "",
+      histProjectOpen: false,
+      histProjectActiveIndex: -1,
       selectedBlockId: "blk-23863",
       evoSubtab: "metrics",
       dormantSlider: 0.45,
@@ -487,6 +490,7 @@
   E.state = E.createInitialState();
   E.clearLiveData = function () {
     const s = E.state;
+    s.histProjectQuery = ""; s.histProjectOpen = false; s.histProjectActiveIndex = -1;
     Object.keys(s).forEach(function (key) { if (Array.isArray(s[key]) && key !== "availableLibraries") s[key] = []; });
     ["liveMetrics", "liveEvolution", "livePipeline", "liveHistory", "liveControl"].forEach(function (key) { s[key] = null; });
     s.trackAgreement = { live: {}, backfill: {} };
