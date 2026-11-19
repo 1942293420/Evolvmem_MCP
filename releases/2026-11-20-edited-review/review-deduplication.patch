@@ -1,0 +1,828 @@
+diff --git a/docs/2026-11-17-console-data-truth.md b/docs/2026-11-17-console-data-truth.md
+index 85ef4444103382e8ed3b284dc9ea30ecaca1406c..14b83433d40ff50e2b9e8a5537ea7f33920d99db 100644
+--- a/docs/2026-11-17-console-data-truth.md
++++ b/docs/2026-11-17-console-data-truth.md
+@@ -9 +9 @@
+-审阅箱仅列出门控已转人工且尚未裁决的项。顶栏与两条轨道共用统计条件，分页查看当前轨道。看过的人工裁决可在已处理记录追溯，系统拦截与救回另有入口。提取先识别实际对话与证据位置，跨分类相似候选仍需核对适用范围、动作及例外。同一规则的一次裁决保留各次来源，历史积压单独预览并待确认。
++审阅箱仅列出门控已转人工且尚未裁决的项。顶栏与两条轨道共用统计条件，分页查看当前轨道。看过的人工裁决可在已处理记录追溯，系统拦截与救回另有入口。提取先识别实际对话与证据位置，跨分类相似候选仍需核对适用范围、动作及例外。同一规则的一次裁决保留各次来源。编辑采纳按提交时的最终文字重新比对正式经验与新候选；只把能证实等价的规则归到同一条，历史积压单独预览并待确认。
+diff --git a/evolvmem/experience_v2/gate/review_deduplication.py b/evolvmem/experience_v2/gate/review_deduplication.py
+index fe5d0abe57f96d675dcb1cc82bc5627cf5bc0b85..a2ba8fb98ecb84f1b4129fd7baba490e6e0b2dad 100644
+--- a/evolvmem/experience_v2/gate/review_deduplication.py
++++ b/evolvmem/experience_v2/gate/review_deduplication.py
+@@ -169,2 +169,3 @@
+-def peers(conn, owner, uid, key, historical=False):
+-    return conn.execute(f"""SELECT p.uid,p.source_kind,p.agent_client,p.model,p.evidence_json,m.evidence_source
++def peers(conn, owner, uid, key, historical=False, direct_only=False):
++    rows = conn.execute(f"""SELECT p.uid,p.source_kind,p.agent_client,p.model,p.evidence_json,m.evidence_source,
++        p.problem,p.solution,p.reusable_experience,p.scope,p.kind,p.misbelief
+@@ -177 +178,4 @@
+-        ORDER BY p.uid FOR UPDATE OF p""", (owner, uid, key, uid, historical, uid)).fetchall()
++        AND (NOT %s OR (m.historical_anchor IS NULL AND m.content_key=m.rule_key AND p.op='add'
++              AND p.source_kind IN ('pipeline','agent') AND NOT p.pinned AND p.importance<8 AND p.kind<>'habit'))
++        ORDER BY p.uid FOR UPDATE OF p""", (owner, uid, key, uid, historical, uid, direct_only)).fetchall()
++    return [row[:6] for row in rows if not direct_only or rule_key(*row[6:])==key]
+@@ -334 +338,10 @@
+-def prepare_review(conn, owner, uid, edits):
++def edited_fields(row, edits):
++    p,s,r,scope,kind,misbelief,category,source_kind = row
++    fields = tuple(str(edits.get(k,v)).strip() for k,v in (('problem',p),('solution',s),('reusable_experience',r)))
++    if source_kind == 'agent' or (edits.get('category',category),*fields) != (category,p,s,r):
++        from evolvmem.experience_v2.pitfall_trigger import without_signature
++        scope = without_signature(scope)
++    return (*fields,scope,kind,misbelief)
++
++
++def prepare_review(conn, owner, uid, edits, *, additional_keys=(), edited_source_key=None):
+@@ -343 +356,3 @@
+-        lock_keys(conn,owner,[key])
++        lock_keys(conn,owner,[key,edited_source_key,*additional_keys])
++        if edited_source_key:
++            return None,edited_source_key
+@@ -354,7 +369,2 @@
+-        p,s,r,scope,kind,misbelief,category,source_kind = row
+-        fields = tuple(str(edits.get(k,v)).strip() for k,v in (('problem',p),('solution',s),('reusable_experience',r)))
+-        if source_kind == 'agent' or (edits.get('category',category),*fields) != (category,p,s,r):
+-            from evolvmem.experience_v2.pitfall_trigger import without_signature
+-            scope = without_signature(scope)
+-        edited_key = rule_key(*fields,scope,kind,misbelief)
+-        if edited_key != rule_key(p,s,r,row[3],kind,misbelief):
++        edited_key = rule_key(*edited_fields(row, edits))
++        if edited_key != rule_key(*row[:6]):
+@@ -362 +372 @@
+-    lock_keys(conn,owner,[mark[0],effective_key])
++    lock_keys(conn,owner,[mark[0],effective_key,*additional_keys])
+@@ -366 +376 @@
+-def close_equivalents(conn, owner, reviewer, uid, key, note_id, review_id, issuer, writer, historical=False):
++def close_equivalents(conn, owner, reviewer, uid, key, note_id, review_id, issuer, writer, historical=False, direct_only=False):
+@@ -370 +380 @@
+-    for peer, source_kind, client, model, evidence, source in peers(conn,owner,uid,key,historical):
++    for peer, source_kind, client, model, evidence, source in peers(conn,owner,uid,key,historical,direct_only):
+diff --git a/evolvmem/experience_v2/gate/review_edit.py b/evolvmem/experience_v2/gate/review_edit.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..2f47da3db7841d12f12ccd668e400344770ee024
+--- /dev/null
++++ b/evolvmem/experience_v2/gate/review_edit.py
+@@ -0,0 +1,180 @@
++"""Check an edited human decision against fresh independent cards and active notes."""
++from __future__ import annotations
++
++from dataclasses import dataclass
++import json
++import time
++
++from evolvmem.experience_v2.embedding_client import EmbeddingClient, EmbeddingFailure, note_text
++from evolvmem.experience_v2.gate import review_deduplication as groups, review_equivalence, review_guidance
++from evolvmem.experience_v2.llm_meter import default_http_transport, load_llm_endpoints_from_file
++from evolvmem.experience_v2.writer import CATEGORIES
++
++
++def _independent():
++    return f"""m.historical_anchor IS NULL AND m.closed_with IS NULL AND p.op='add'
++        AND p.source_kind IN ('agent','pipeline') AND NOT p.pinned AND p.importance<8
++        AND p.kind<>'habit' AND {groups._eligible('p')}"""
++
++
++class PreparedProjection:
++    """The writer still validates the exact final content digest, contracts and dimensions."""
++    def __init__(self, client, note, deadline):
++        self.client = client
++        self.note = note
++        self.deadline = deadline
++        self.retrieval_contract_id = client.retrieval_contract_id
++        self.legacy_contract_id = client.legacy_contract_id
++        self.result = None
++        self.failure = None
++
++    def prepare(self, text):
++        try:
++            self.result = self.client.encode_note(self.note, deadline=self.deadline)
++            return self.result.legacy_embedding
++        except EmbeddingFailure as exc:
++            self.failure = exc
++            raise
++
++    def encode_note(self, note):
++        if self.failure:
++            raise self.failure
++        if note != self.note or self.result is None:
++            raise EmbeddingFailure('experience_embedding_projection_invalid')
++        return self.result
++
++
++def _resources(note, deadline, source_kind, track):
++    client = EmbeddingClient.from_environment()
++    if not client:
++        return None, None, None
++    encode = PreparedProjection(client, note, min(deadline,time.monotonic()+2.0)).prepare
++    from evolvmem.product_policy import load_policy
++    policy = load_policy()
++    enabled = (policy.ai_processing_enabled if source_kind=='agent' else
++               policy.experience_backfill_enabled if track=='backfill' else policy.experience_pipeline_enabled)
++    if not (policy.valid and policy.experience_v2_enabled and enabled):
++        return encode, None, None
++    try:
++        from evolvmem.experience_v2.pipeline.live_worker import DEFAULT_JUDGE_MODEL, select_endpoint
++        endpoint = select_endpoint(load_llm_endpoints_from_file(),DEFAULT_JUDGE_MODEL,('strong','primary','fallback'))
++    except (OSError, ValueError):
++        endpoint = None
++    if not endpoint:
++        return encode, None, None
++
++    def send(model, messages, limit):
++        from evolvmem.experience_v2.llm_meter import LlmTransportError
++        remaining = deadline-time.monotonic()
++        if remaining <= 0:
++            raise LlmTransportError('edit_review_deadline')
++        return default_http_transport(endpoint, timeout_seconds=min(remaining, 15.0))(model, messages, limit)
++
++    return encode, DEFAULT_JUDGE_MODEL, send
++
++
++@dataclass
++class EditCheck:
++    original: tuple
++    final_key: str
++    note: dict | None = None
++    proposal: dict | None = None
++    projection: PreparedProjection | None = None
++
++    def keys(self):
++        return [cert['key'] for cert in (self.note, self.proposal) if cert]
++
++
++def _source(conn, owner, uid):
++    return conn.execute(f"""SELECT p.problem,p.solution,p.reusable_experience,p.scope,p.kind,p.misbelief,
++        p.category,p.source_kind,p.importance,m.rule_key,m.content_key,p.source_track,p.session_id,p.model
++        FROM experience_proposals p LEFT JOIN experience_review_members m ON m.owner_id=p.owner_id AND m.proposal_uid=p.uid
++        WHERE p.owner_id=%s AND p.uid=%s AND {_independent()}""", (owner,uid)).fetchone()
++
++
++def _nearby(conn, owner, uid, vector, final_key):
++    from evolvmem.experience_v2.gate.dedupe import DEFAULT_DEDUPE_THRESHOLD
++    proposals = conn.execute(f"""SELECT p.uid,1-(p.embedding <=> %s::vector)
++        FROM experience_proposals p JOIN experience_review_members m ON m.proposal_uid=p.uid AND m.owner_id=p.owner_id
++        WHERE p.owner_id=%s AND p.uid<>%s AND p.embedding IS NOT NULL AND m.content_key=m.rule_key
++          AND m.rule_key<>%s AND {_independent()} AND {groups.representative_filter('p')}
++        ORDER BY p.embedding <=> %s::vector,p.uid LIMIT 5""",(vector,owner,uid,final_key,vector)).fetchall()
++    notes = conn.execute("""SELECT id,1-(embedding <=> %s::vector) FROM experience_notes
++        WHERE owner_id=%s AND status='active' AND deleted_at IS NULL AND NOT pinned AND importance<8
++          AND embedding IS NOT NULL ORDER BY embedding <=> %s::vector,id LIMIT 5""",(vector,owner,vector)).fetchall()
++    return [[dict(uid=k,similarity=float(s)) for k,s in rows if s>=DEFAULT_DEDUPE_THRESHOLD]
++            for rows in (proposals,notes)]
++
++
++def prepare(conn, owner, uid, edits):
++    if not edits:
++        return None
++    source = _source(conn,owner,uid)
++    if not source or any(r.get("needs_check") for r in review_guidance.for_proposal(conn,owner,uid)):
++        return None
++    final = groups.edited_fields(source[:8],edits)
++    final_key = groups.rule_key(*final)
++    category = edits.get('category',source[6])
++    if (not all(final[:3]) or category not in CATEGORIES or int(edits.get('importance',source[8]))>=8
++            or (source[9] is not None and final_key == groups.rule_key(*source[:6]))):
++        return None
++    check = EditCheck(source,final_key)
++    note = dict(zip(('category','problem','solution','reusable_experience'),(category,*final[:3])))
++    deadline = time.monotonic()+25.0
++    from evolvmem.experience_v2.gate.dedupe import to_unit_vec768_literal
++    try:
++        encode, model, transport = _resources(note,deadline,source[7],source[11])
++        if not encode:
++            return check
++        client = getattr(encode,'__self__',None)
++        if isinstance(client,PreparedProjection):
++            check.projection = client
++        vector = to_unit_vec768_literal(encode(note_text(note)))
++    except (EmbeddingFailure, ValueError):
++        return check
++    nearby, notes = _nearby(conn,owner,uid,vector,final_key)
++    nearby = [p for p in nearby if not any(r.get('needs_check')
++              for r in review_guidance.for_proposal(conn,owner,p['uid']))]
++    track,session,proposer = source[-3:]
++    args = dict(track=track,session=session,proposer=proposer,model=model,transport=transport,budget=None,require_result=True)
++    if notes:
++        exact = groups.matching_notes(conn,owner,final_key,final,vector)
++        if exact and not exact[2] and exact[3]<8:
++            check.note = dict(target_kind='note',representative=exact[0],key=final_key,
++                              challenger_key=final_key,similarity=1.0,method='exact_final_rule')
++        elif not exact:
++            check.note = review_equivalence.certify(conn,uid,owner,final,[],notes=notes,**args)
++    if nearby:
++        proof = review_equivalence.certify(conn,uid,owner,final,nearby,**args)
++        if proof and proof['target_kind']=='proposal':
++            check.proposal = proof
++    return check
++
++
++def current_source(conn,owner,uid,edits,effective_key,check):
++    source = _source(conn,owner,uid)
++    return (source == check.original and effective_key==check.final_key
++            and groups.rule_key(*groups.edited_fields(source[:8],edits))==check.final_key)
++
++
++def lock_proposal(conn, owner, check):
++    proof = check.proposal
++    if not proof or proof['challenger_key']!=check.final_key:
++        return None
++    anchor = conn.execute(f"""SELECT p.problem,p.solution,p.reusable_experience,p.scope,p.kind,p.misbelief
++        FROM experience_proposals p JOIN experience_review_members m ON m.proposal_uid=p.uid AND m.owner_id=p.owner_id
++        WHERE p.uid=%s AND p.owner_id=%s AND m.content_key=m.rule_key AND m.rule_key=%s
++          AND {_independent()} AND {groups.representative_filter('p')} FOR UPDATE OF p,m SKIP LOCKED""",
++        (proof['representative'],owner,proof['key'])).fetchone()
++    if (anchor and groups.rule_key(*anchor)==proof['key'] and not any(r.get('needs_check')
++            for r in review_guidance.for_proposal(conn,owner,proof['representative'],freeze=True))):
++        return proof['representative']
++    return None
++
++
++
++def record_receipts(conn, decision_id, proofs):
++    if proofs:
++        conn.execute("""UPDATE proposal_decisions SET meta_json=COALESCE(meta_json,'{}'::jsonb)
++            || jsonb_build_object('edit_equivalence',%s::jsonb) WHERE decision_id=%s""",
++            (json.dumps(proofs,ensure_ascii=False),decision_id))
+diff --git a/evolvmem/experience_v2/gate/review_equivalence.py b/evolvmem/experience_v2/gate/review_equivalence.py
+index 5f11cbd2ab4a65021d004f58af733b539fe11916..dbc07976ce90f3f5192a57b51b85d5bc3f4938cc 100644
+--- a/evolvmem/experience_v2/gate/review_equivalence.py
++++ b/evolvmem/experience_v2/gate/review_equivalence.py
+@@ -22,0 +23,4 @@
++class VerificationUnavailable(RuntimeError):
++    """A human edit with a plausible candidate could not be verified."""
++
++
+@@ -24,2 +28,3 @@
+-            notes=(),vector=None,threshold=0.88):
+-    if not transport or not model or normalize_model_name(model) == normalize_model_name(proposer):
++            notes=(),vector=None,threshold=0.88,require_result=False):
++    can_judge = bool(transport and model and normalize_model_name(model) != normalize_model_name(proposer))
++    if not can_judge and not require_result:
+@@ -85,0 +91,2 @@
++        if not can_judge:
++            raise VerificationUnavailable()
+@@ -96 +103,3 @@
+-        except (BudgetDeferred,LlmTransportError,ValueError,TypeError):
++        except (BudgetDeferred,LlmTransportError,ValueError,TypeError) as exc:
++            if require_result:
++                raise VerificationUnavailable() from exc
+@@ -97,0 +107,2 @@
++        if require_result and (not isinstance(obj,dict) or any(type(obj.get(k)) is not bool for k in FACETS)):
++            raise VerificationUnavailable()
+@@ -101,0 +113,2 @@
++            if require_result:
++                raise VerificationUnavailable()
+diff --git a/evolvmem/experience_v2/gate/review_inbox.py b/evolvmem/experience_v2/gate/review_inbox.py
+index aa07d0e1a0e9472717d970a201e3d4c6ae40dab8..ce232476d4c93591e94b4245e1c7228d1fbfff7a 100644
+--- a/evolvmem/experience_v2/gate/review_inbox.py
++++ b/evolvmem/experience_v2/gate/review_inbox.py
+@@ -9 +9 @@
+-from evolvmem.experience_v2.gate import category_policy, review_guidance, review_deduplication as groups
++from evolvmem.experience_v2.gate import category_policy, review_edit, review_guidance, review_deduplication as groups
+@@ -266 +266,6 @@
+-        mark, effective_key = groups.prepare_review(conn, owner_id, proposal_uid, edited_payload)
++        try:
++            edit_check = review_edit.prepare(conn,owner_id,proposal_uid,edited_payload) if user_verdict=='edit_accept' else None
++        except review_edit.review_equivalence.VerificationUnavailable:
++            raise ReviewInboxError('review_edit_verification_unavailable',503) from None
++        mark, effective_key = groups.prepare_review(conn, owner_id, proposal_uid, edited_payload,
++            additional_keys=edit_check.keys() if edit_check else (), edited_source_key=edit_check.final_key if edit_check else None)
+@@ -308,0 +314,12 @@
++        edit_peer = None
++        edit_receipts = []
++        writer = self._writer
++        if edit_check:
++            if not group_ok or not review_edit.current_source(conn,owner_id,proposal_uid,edited_payload,effective_key,edit_check):
++                raise ReviewInboxError('review_edit_changed',409)
++            if edit_check.projection is not None:
++                writer = ExperienceWriter(self._secret,embedding_client=edit_check.projection)
++            if edit_check.proposal:
++                edit_peer = review_edit.lock_proposal(conn,owner_id,edit_check)
++                if not edit_peer:
++                    raise ReviewInboxError('review_edit_changed',409)
+@@ -321 +338 @@
+-        if mark and user_verdict in ADMITTING_VERDICTS and prop_op == 'add' and not merge:
++        if (mark or edit_check) and user_verdict in ADMITTING_VERDICTS and prop_op == 'add' and not merge:
+@@ -328 +345 @@
+-            if not match:
++            if not match and mark:
+@@ -331,0 +349,6 @@
++            if not match and edit_check and edit_check.note:
++                final_fields = groups.edited_fields((problem,solution,reusable_experience,scope,kind,misbelief,category,source_kind),edits)
++                match = groups.certified_note(conn,owner_id,edit_check.note,final_fields,for_write=True)
++                if not match:
++                    raise ReviewInboxError('review_edit_changed',409)
++                edit_receipts.append(edit_check.note)
+@@ -359,2 +382,2 @@
+-                if mark:
+-                    evidence_json = groups.fresh_evidence(conn,owner_id,merge[0],evidence_json,mark[1])
++                if mark or edit_check:
++                    evidence_json = groups.fresh_evidence(conn,owner_id,merge[0],evidence_json,mark[1] if mark else '')
+@@ -430 +453 @@
+-                if mark and merge:
++                if (mark or edit_check) and merge:
+@@ -433 +456 @@
+-                    applied_note = self._writer.apply(conn, ticket, write_op)['experience']
++                    applied_note = writer.apply(conn, ticket, write_op)['experience']
+@@ -475 +498,9 @@
+-                                     review_id,self._issuer,self._writer,historical=not mark)
++                                     review_id,self._issuer,self._writer,historical=not mark and not edit_check,
++                                     direct_only=bool(edit_check and not mark))
++        if edit_peer:
++            groups.close_equivalents(conn,owner_id,reviewer_id,proposal_uid,edit_check.proposal['key'],
++                applied_note['id'],review_id,self._issuer,self._writer,direct_only=True)
++            closed = groups.member(conn,owner_id,edit_peer)
++            if closed and closed[2]==proposal_uid:
++                edit_receipts.append(edit_check.proposal)
++        review_edit.record_receipts(conn,decision_id,edit_receipts)
+diff --git a/evolvmem/experience_v2/pipeline/live_worker.py b/evolvmem/experience_v2/pipeline/live_worker.py
+index 83edab3102663f48282c39eb2abc3ea49fc84690..ed0eabe13e04c19026bcefefb2e2cabaa6416f3f 100644
+--- a/evolvmem/experience_v2/pipeline/live_worker.py
++++ b/evolvmem/experience_v2/pipeline/live_worker.py
+@@ -94,0 +95,26 @@
++DEFAULT_JUDGE_MODEL = 'deepseek-chat'
++
++
++def select_endpoint(endpoints, model: str, fallbacks: tuple[str, ...]) -> LlmEndpoint | None:
++    pool = [ep for ep in endpoints.values() if ep is not None]
++    prefix = model.split('-', 1)[0].casefold()
++    for slot in fallbacks:
++        ep = endpoints.get(slot)
++        if ep is not None and ep.model == model:
++            return ep
++    for ep in pool:
++        if ep.model == model:
++            return ep
++    for slot in fallbacks:
++        ep = endpoints.get(slot)
++        if ep is not None and ep.provider.casefold() == prefix:
++            return ep
++    for ep in pool:
++        if ep.provider.casefold() == prefix:
++            return ep
++    for slot in fallbacks:
++        if slot in endpoints:
++            return endpoints[slot]
++    return pool[0] if pool else None
++
++
+@@ -104,24 +130 @@
+-    pool = [ep for ep in endpoints.values() if ep is not None]
+-
+-    def pick(model: str, fallbacks: tuple[str, ...]) -> LlmEndpoint | None:
+-        prefix = model.split('-', 1)[0].casefold()
+-        for slot in fallbacks:
+-            ep = endpoints.get(slot)
+-            if ep is not None and ep.model == model:
+-                return ep
+-        for ep in pool:
+-            if ep.model == model:
+-                return ep
+-        for slot in fallbacks:
+-            ep = endpoints.get(slot)
+-            if ep is not None and ep.provider.casefold() == prefix:
+-                return ep
+-        for ep in pool:
+-            if ep.provider.casefold() == prefix:
+-                return ep
+-        for slot in fallbacks:
+-            if slot in endpoints:
+-                return endpoints[slot]
+-        return pool[0] if pool else None
+-
+-    f_ep = pick(flash_model, ('flash', 'primary', 'fallback'))
++    f_ep = select_endpoint(endpoints, flash_model, ('flash', 'primary', 'fallback'))
+@@ -131,2 +134,2 @@
+-    s_ep = pick(strong_model, ('strong', 'primary', 'fallback'))
+-    j_ep = pick(judge_model, ('strong', 'primary', 'fallback'))
++    s_ep = select_endpoint(endpoints, strong_model, ('strong', 'primary', 'fallback'))
++    j_ep = select_endpoint(endpoints, judge_model, ('strong', 'primary', 'fallback'))
+@@ -235 +238 @@
+-    flash_model: str = 'deepseek-v4-flash', strong_model: str = 'deepseek-chat', judge_model: str = 'deepseek-chat',
++    flash_model: str = 'deepseek-v4-flash', strong_model: str = 'deepseek-chat', judge_model: str = DEFAULT_JUDGE_MODEL,
+diff --git a/evolvmem/web_static/principles.js b/evolvmem/web_static/principles.js
+index 725f446274e797ad835ccd7ed3b704205a015c5e..2b82dd356948352cb0bcd8670b38767fb7a5feff 100644
+--- a/evolvmem/web_static/principles.js
++++ b/evolvmem/web_static/principles.js
+@@ -79 +79 @@
+-      <div class="diagram-node"><strong>人工作决定</strong><small>审阅箱只列需要你判断的规则。按组查看依据，采纳、编辑采纳或驳回。系统拦截项可单独查看和救回。</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
++      <div class="diagram-node"><strong>人工作决定</strong><small>审阅箱只列需要你判断的规则。按组查看依据，采纳、编辑采纳或驳回。编辑采纳时以最终文字核对已有经验和新候选，条件不同的规则分别保留。系统拦截项可单独查看和救回。</small></div><span class="diagram-arrow" aria-hidden="true">→</span>
+diff --git a/evolvmem/web_static/v2/js/api-adapter.js b/evolvmem/web_static/v2/js/api-adapter.js
+index c7638ef6ef66153b0d4d76c8e6c19a147d0d6cac..9a63b66589c3be8ef62c8140a6add0cb35684282 100644
+--- a/evolvmem/web_static/v2/js/api-adapter.js
++++ b/evolvmem/web_static/v2/js/api-adapter.js
+@@ -23,0 +24 @@
++  const reviewSubmissions = new Map();
+@@ -320 +320,0 @@
+-      const drafts = new Map(s.proposals.map(p => [p.uid, p.reasonDraft || ""]));
+@@ -328,0 +329 @@
++        const old = new Map(s.proposals.map(p => [p.uid, p]));
+@@ -329,0 +331,7 @@
++        for (const p of s.proposals) {
++          const draft = old.get(p.uid);
++          if (draft && p.status === "pending") {
++            p.reasonDraft = draft.reasonDraft || p.reasonDraft;
++            if (draft._edited) Object.assign(p, {problem:draft.problem, solution:draft.solution, reusable:draft.reusable, _edited:true});
++          }
++        }
+@@ -338 +345,0 @@
+-        s.proposals.forEach(p => { p.reasonDraft = p.reasonDraft || drafts.get(p.uid) || ""; });
+@@ -768,0 +776,5 @@
++    reviewSubmitting(uid) {
++      const active = reviewSubmissions.get(uid);
++      return !!active && currentRequest(active);
++    },
++
+@@ -770,9 +782,31 @@
+-      const requestScope=requestContext();
+-      const res = await req("POST", "/review-inbox/decide", { proposal_uid: uid, user_verdict: verdict, user_reason: reason, edited_payload: edits, note: note });
+-      if(!currentRequest(requestScope))return null;
+-      if (res.status !== 200 || !res.data.ok) {
+-        const message = res.data.error === "equivalent_note_edit_conflict"
+-          ? "已有相同经验，分类或重要性与本次编辑不同。请在经验库修改正式条目后再采纳，或调整本次编辑。"
+-          : "提交失败：" + (res.data.error || res.status);
+-        E.toast(message, "danger");
+-        return false;
++      if (this.reviewSubmitting(uid)) return false;
++      const scope = requestContext();
++      const onCard = () => currentRequest(scope) && E.state.route === "review-inbox" && E.state.selectedProposalUid === uid;
++      reviewSubmissions.set(uid, scope);
++      let updated = false;
++      try {
++        if (onCard()) E.renderAll({onlyDetail:true});
++        const res = await req("POST", "/review-inbox/decide", { proposal_uid: uid, user_verdict: verdict, user_reason: reason, edited_payload: edits, note: note });
++        if (!currentRequest(scope)) return null;
++        if (res.status !== 200 || !res.data.ok) {
++          const messages = {
++            equivalent_note_edit_conflict: "已有相同经验，分类或重要性与本次编辑不同。请在经验库修改正式条目后再采纳，或调整本次编辑。",
++            review_edit_verification_unavailable: "暂时无法核对修订稿与相似经验。本次未采纳，修订内容已保留，请稍后重试。",
++            review_edit_changed: "核对期间，提案或参照经验已更新。本次未采纳，修订内容已保留，请重新核对后再提交。",
++            review_decision_busy: "这条规则正在处理，请稍后重试。"
++          };
++          const noReceipt = res.data.error === "network_unavailable" || [502,504].includes(res.status);
++          const message = messages[res.data.error] || (noReceipt
++            ? "未收到审核结果。请先查看已处理记录，确认是否还需要重试。"
++            : "提交失败：" + (res.data.error || res.status));
++          if (E.state.route !== "review-inbox" || onCard()) E.toast(message, "danger");
++          return false;
++        }
++        await this.loadInbox();
++        if (!currentRequest(scope)) return null;
++        updated = true;
++        return true;
++      } finally {
++        if (reviewSubmissions.get(uid) === scope) reviewSubmissions.delete(uid);
++        if (currentRequest(scope) && updated) E.renderAll({preserveReviewEditor:true});
++        else if (onCard()) E.renderAll({onlyDetail:true});
+@@ -780,4 +813,0 @@
+-      await this.loadInbox();
+-      if(!currentRequest(requestScope))return null;
+-      E.renderAll();
+-      return true;
+diff --git a/evolvmem/web_static/v2/js/app-shell.js b/evolvmem/web_static/v2/js/app-shell.js
+index d9db98ed9b8896409ae6828dfb9484af3b3c2deb..413f4b10dcb6e949fb36b3101152e29bef0b5571 100644
+--- a/evolvmem/web_static/v2/js/app-shell.js
++++ b/evolvmem/web_static/v2/js/app-shell.js
+@@ -375,0 +376 @@
++        const editor = o.preserveReviewEditor && s.route === "review-inbox" && mainEl.querySelector("[data-review-editor]");
+@@ -376,0 +378,4 @@
++        if (editor) {
++          const nextEditor = mainEl.querySelector("[data-review-editor]");
++          if (nextEditor && nextEditor.dataset.reviewEditor === editor.dataset.reviewEditor) nextEditor.replaceWith(editor);
++        }
+diff --git a/evolvmem/web_static/v2/js/render-overview-and-core.js b/evolvmem/web_static/v2/js/render-overview-and-core.js
+index cd009cc28bcfa0967575c899a46914fd70efdae0..1ea864ff20f9bf99b52e64b42ce1e60565b76ca8 100644
+--- a/evolvmem/web_static/v2/js/render-overview-and-core.js
++++ b/evolvmem/web_static/v2/js/render-overview-and-core.js
+@@ -230,0 +231 @@
++    const submitting = sel && E.api?.reviewSubmitting?.(sel.uid);
+@@ -309 +310 @@
+-              <div style="display:flex;flex-direction:column;gap:12px">
++              <div data-review-editor="${esc(sel.uid)}" style="display:flex;flex-direction:column;gap:12px">
+@@ -348,0 +350 @@
++              <fieldset ${submitting ? "disabled" : ""} style="display:grid;gap:12px;min-width:0;border:0;margin:0;padding:0">
+@@ -365,0 +368,2 @@
++              </fieldset>
++              ${submitting ? '<span role="status">正在提交…</span>' : ""}
+diff --git a/evolvmem/web_static/v2/js/sso-session.js b/evolvmem/web_static/v2/js/sso-session.js
+index 1e7856f161da942701b6000b8cdfb50d0ad2a6ab..22e690d0363b006200012fc47715527a615b26a2 100644
+--- a/evolvmem/web_static/v2/js/sso-session.js
++++ b/evolvmem/web_static/v2/js/sso-session.js
+@@ -180,0 +181 @@
++    const reviewDecision = method==='POST' && path==='/api/console-v2/review-inbox/decide';
+@@ -191,2 +192,2 @@
+-      if(encoderFailure || refreshFailure){await S.check({resume:false});}
+-      if([401,403,503].includes(resp.status) && !encoderFailure && !refreshFailure){
++      if(encoderFailure || refreshFailure || (reviewDecision && resp.status===503)){await S.check({resume:false});}
++      if([401,403,503].includes(resp.status) && !encoderFailure && !refreshFailure && !(reviewDecision && resp.status===503)){
+@@ -197 +198 @@
+-    } catch(_){if(valid && !valid())return {status:409,data:{ok:false,error:'stale_response'}};if(epoch===S.epoch){if((method==='POST' && path==='/api/console-v2/experiences/write') || (method==='GET' && options?.preserveOnError))await S.check({resume:false});else S.block('unavailable');}return {status:503,data:{ok:false,error:'network_unavailable'}};}
++    } catch(_){if(valid && !valid())return {status:409,data:{ok:false,error:'stale_response'}};if(epoch===S.epoch){if(reviewDecision || (method==='POST' && path==='/api/console-v2/experiences/write') || (method==='GET' && options?.preserveOnError))await S.check({resume:false});else S.block('unavailable');}return {status:503,data:{ok:false,error:'network_unavailable'}};}
+diff --git a/tests/browser/console_truth.e2e.cjs b/tests/browser/console_truth.e2e.cjs
+index 56d018b582919c4b65d59020f6ba56dd58916169..42abb09ccf77e4cd2e2719a8d94b13a8c67ee9ec 100644
+--- a/tests/browser/console_truth.e2e.cjs
++++ b/tests/browser/console_truth.e2e.cjs
+@@ -347,3 +347,47 @@
+-    await Promise.all([page.waitForResponse(r=>r.url().includes('/review-inbox?')),
+-      page.getByRole('button',{name:'通过并正式入库',exact:false}).click()]);
+-    assert.equal(lastReview.user_verdict,'accept'); assert.equal(lastReview.note,'已注明平台并复核运费');
++
++    await page.getByRole('button',{name:'编辑措辞',exact:false}).click();
++    await page.locator('#edit-sol-second').fill('保留并核对审核修订');
++    await page.getByRole('button',{name:'保存修订'}).click();
++    const approve=page.locator('[data-act="approve-prop"][data-uid="second"]');
++    let finishPost, startedPost, decisionRequests=0;
++    const waitingPost=new Promise(resolve=>{startedPost=resolve;});
++    const releasePost=new Promise(resolve=>{finishPost=resolve;});
++    let startedRetry, releaseRetry;
++    const retryStarted=new Promise(resolve=>{startedRetry=resolve;});
++    const finishRetry=new Promise(resolve=>{releaseRetry=resolve;});
++    await page.route('**/api/console-v2/review-inbox/decide', async route=>{
++      decisionRequests++;
++      if(decisionRequests===1){
++        startedPost(); await releasePost;
++        return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({ok:false,error:'review_edit_verification_unavailable'})});
++      }
++      if(decisionRequests===2){startedRetry();await finishRetry;}
++      return route.continue();
++    });
++    const btnBox=await approve.boundingBox();
++    await page.mouse.dblclick(btnBox.x+btnBox.width/2,btnBox.y+btnBox.height/2);
++    await waitingPost;
++    try {
++      await page.getByRole('status').filter({hasText:'正在提交'}).waitFor({timeout:3000});
++      assert.equal(await approve.isDisabled(),true);
++      assert.equal(decisionRequests,1);
++    } finally { finishPost(); }
++    await page.getByText('暂时无法核对修订稿与相似经验。本次未采纳，修订内容已保留，请稍后重试。').waitFor();
++    assert.equal(await approve.isEnabled(),true);
++    assert.equal(await noteField.inputValue(),'已注明平台并复核运费');
++    await page.getByText('保留并核对审核修订',{exact:true}).waitFor();
++    await approve.click(); await retryStarted;
++    try {
++      await page.locator('#proposal-open-first').click();
++      await page.getByRole('button',{name:'编辑措辞',exact:false}).click();
++      await page.locator('#edit-sol-first').fill('正在编辑另一张卡');
++      const refreshed=page.waitForResponse(r=>r.url().includes('/review-inbox?'));
++      releaseRetry(); await refreshed;
++      await page.getByRole('button',{name:'新会话队列 (2)',exact:true}).waitFor();
++      assert.equal(await page.locator('#edit-sol-first').inputValue(),'正在编辑另一张卡');
++      await page.getByRole('button',{name:'取消',exact:true}).click();
++    } finally { releaseRetry(); }
++    checks.push('double-click sends one edited decision, retry preserves edits and a delayed response preserves the next open editor');
++    assert.equal(decisionRequests,2); assert.equal(lastReview.user_verdict,'edit_accept');
++    assert.equal(lastReview.edited_payload.solution,'保留并核对审核修订'); assert.equal(lastReview.note,'已注明平台并复核运费');
++    await page.unroute('**/api/console-v2/review-inbox/decide');
+diff --git a/tests/browser/console_truth.test.cjs b/tests/browser/console_truth.test.cjs
+index b31b9c02c341f0cabb281ec4b9605c884e69656b..96586d2ac7c10f05391e580976fd4122a8aa5ef5 100644
+--- a/tests/browser/console_truth.test.cjs
++++ b/tests/browser/console_truth.test.cjs
+@@ -250,0 +251,37 @@
++
++
++test('one in-flight decision per proposal, and an old library response cannot change the new view', async () => {
++  let release, posts=0, refreshes=0, renders=0, notices=0;
++  const E=client(async () => { posts++; return new Promise(resolve=>{release=resolve;}); });
++  Object.assign(E.state, {apiMode:'live', route:'review-inbox', ownerId:'owner', libraryCtx:'owner', selectedProposalUid:'p'});
++  E.state.proposals=[{uid:'p',status:'pending',_edited:true,problem:'edited',reasonDraft:'keep'}];
++  E.renderAll=()=>{renders++;}; E.toast=()=>{notices++;};
++  E.api.loadInbox=async()=>{refreshes++;};
++  const first=E.api.decideProposal('p','edit_accept',null,{problem:'edited'},'keep');
++  const again=E.api.decideProposal('p','accept');
++  assert.equal(posts,1);
++  assert.equal(E.api.reviewSubmitting('p'),true);
++  E.state.libraryCtx='peer'; E.state.libraryEpoch++;
++  const before=renders;
++  release(response(200,{ok:true}));
++  await Promise.all([first,again]);
++  assert.equal(E.api.reviewSubmitting('p'),false);
++  assert.deepEqual([refreshes,notices,renders-before],[0,0,0]);
++});
++
++
++for(const [error,code,expected] of [
++  ['review_edit_changed',409,'核对期间，提案或参照经验已更新'],
++  ['review_edit_verification_unavailable',503,'本次未采纳，修订内容已保留，请稍后重试'],
++  ['network_unavailable',503,'未收到审核结果'],
++  ['invalid_json',504,'未收到审核结果']
++])test('decision feedback preserves edits for '+error+' '+code, async()=>{
++  const E=client(async()=>response(code,{ok:false,error}));
++  Object.assign(E.state,{apiMode:'live',route:'review-inbox',selectedProposalUid:'p',ownerId:'owner',libraryCtx:'owner'});
++  const p={uid:'p',_edited:true,solution:'edited',reasonDraft:'reason'};
++  E.state.proposals=[p];
++  let notice;E.toast=text=>{notice=text;};
++  assert.equal(await E.api.decideProposal('p','edit_accept',null,{solution:'edited'},'reason'),false);
++  assert.ok(notice.includes(expected));assert.equal(p.solution,'edited');
++  assert.equal(p.reasonDraft,'reason');assert.equal(E.api.reviewSubmitting('p'),false);
++});
+diff --git a/tests/stage2/test_edit_semantic_review.py b/tests/stage2/test_edit_semantic_review.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..410b292c4c8dd36f210293960cdfdacf204109a0
+--- /dev/null
++++ b/tests/stage2/test_edit_semantic_review.py
+@@ -0,0 +1,205 @@
++"""A human edit must be checked against the final supplied rule text, outside row/group locks."""
++from types import SimpleNamespace
++import json
++
++import psycopg
++import pytest
++
++from evolvmem.experience_v2.gate import review_deduplication as groups
++from evolvmem.experience_v2.gate import review_equivalence
++from evolvmem.experience_v2.gate.dedupe import to_unit_vec768_literal
++from evolvmem.experience_v2.schema import apply_experience_migrations
++from evolvmem.experience_v2.writer import ExperienceWriter, Op, TicketIssuer
++from tests.stage2.test_review_rule_groups import SECRET, add, decide
++
++
++ORIGINAL = '实验收尾前保存测量表'
++ORIGINAL_RULE = '须保存本轮记录'
++TARGET = '实验结束后关闭本轮启用的工位灯'
++TARGET_RULE = '仅关闭这一轮实验中使用的工位灯'
++EDIT = '这次实验结束时将当轮开启的工位灯关掉'
++EDIT_RULE = '关灯的范围限定在本轮实验实际启用的工位'
++
++
++def make_review(c):
++    start = add(c,'edit-source',solution=ORIGINAL,rule=ORIGINAL_RULE)
++    old_peer = add(c,'edit-source-peer',solution=ORIGINAL,rule=ORIGINAL_RULE)
++    return start,old_peer
++
++
++def pending(c, tag='edit-target', *, platform='DemoLab'):
++    uid = add(c,tag,category='系统环境经验',solution=TARGET,rule=TARGET_RULE,
++              source='archive:98',session='other')
++    vec = to_unit_vec768_literal([1.0,0.0,0.0])
++    scope = {'platform':platform}
++    c.execute('UPDATE experience_proposals SET embedding=%s::vector,scope=%s::jsonb WHERE uid=%s',
++              (vec,json.dumps(scope),uid))
++    key = groups.rule_key('如何收尾',TARGET,TARGET_RULE,scope,'preference','')
++    c.execute('UPDATE experience_review_members SET rule_key=%s,content_key=%s WHERE proposal_uid=%s',
++              (key,key,uid))
++    return uid
++
++
++def formal(c):
++    issuer = TicketIssuer(SECRET,gate_id='seed-human')
++    ticket = issuer.issue(proposal_uid='manual:edit-fixture',decision_id='dec:edit-fixture',lane='user_fast')
++    return ExperienceWriter(SECRET).apply(c,ticket,Op(action='create',owner_id='test-u',actor_id='test-u',
++        request_id='edit-fixture',category='系统环境经验',kind='preference',scope={'platform':'DemoLab'},
++        problem='如何收尾',solution=TARGET,reusable_experience=TARGET_RULE,origin='manual',
++        embedding=[1.0]+[0.0]*767,evidence=[{'source':'archive:98','event':11}]))['experience']['id']
++
++
++def resources(monkeypatch,c,schema,dsn,uids,note_ids=(),*,expected=EDIT,allowed=True,on_judge=None,failure=None):
++    from evolvmem.experience_v2.gate import review_edit
++    backend=c.info.backend_pid
++    log=[]
++    def observe(phase):
++        # An independent client can immediately lock every input and target row while the
++        # slow external work runs. Transaction-ID/advisory locks cannot be hidden by a savepoint.
++        with psycopg.connect(dsn,options=f'-c search_path={schema},public -c lock_timeout=300ms') as observer:
++            advisory=observer.execute("""SELECT count(*) FROM pg_locks WHERE pid=%s
++                AND locktype='advisory' AND granted""",(backend,)).fetchone()[0]
++            assert advisory==0,phase
++            assert len(observer.execute('SELECT uid FROM experience_proposals WHERE uid=ANY(%s) FOR UPDATE NOWAIT',
++                                        (list(uids),)).fetchall())==len(uids)
++            assert len(observer.execute('SELECT id FROM experience_notes WHERE id=ANY(%s) FOR UPDATE NOWAIT',
++                                        (list(note_ids),)).fetchall())==len(note_ids)
++        log.append(phase)
++    def encode(text):
++        observe('embed')
++        assert expected in text and ORIGINAL not in text
++        return [1.0,0.0,0.0]
++    def judge(**kw):
++        observe('judge')
++        prompt = kw['messages'][-1]['content']
++        assert expected in prompt and TARGET in prompt and ORIGINAL not in prompt
++        if on_judge:
++            on_judge()
++        if failure=='budget':
++            from evolvmem.experience_v2.llm_meter import BudgetDeferred
++            raise BudgetDeferred('session','synthetic blocked budget')
++        if failure=='timeout':
++            from evolvmem.experience_v2.llm_meter import LlmTransportError
++            raise LlmTransportError('synthetic_timeout')
++        return SimpleNamespace(text=json.dumps({**dict.fromkeys(review_equivalence.FACETS,allowed),
++                                               'confidence':.99,'reason':'两边范围与动作一致'}),
++                               total_tokens=12,call_id=151)
++    monkeypatch.setattr(review_edit,'_resources',lambda *args,**kwargs:(encode,'independent-judge',object()))
++    monkeypatch.setattr(review_equivalence,'metered_llm',judge)
++    return log
++
++
++def test_edit_exact_still_closes_final_rule_only(pg_exp_schema):
++    c,_,_=pg_exp_schema
++    apply_experience_migrations(c)
++    edited,old_peer=make_review(c)
++    target=pending(c)
++    c.commit()
++    result=decide(c,edited,'edit_accept',{'solution':TARGET,'reusable_experience':TARGET_RULE})
++    states=dict(c.execute('SELECT uid,state FROM experience_proposals'))
++    assert result['state']=='accepted' and states[old_peer]=='review' and states[target]=='merged'
++
++
++@pytest.mark.parametrize('where',['queue','formal'])
++def test_edit_semantic_compares_final_text_without_holding_proposal_or_rule_locks(pg_exp_schema,monkeypatch,where):
++    c,schema,dsn=pg_exp_schema
++    apply_experience_migrations(c)
++    edited,old_peer=make_review(c)
++    target=pending(c) if where=='queue' else formal(c)
++    c.commit()
++    uids=(edited,old_peer,target) if where=='queue' else (edited,old_peer)
++    calls=resources(monkeypatch,c,schema,dsn,uids,(target,) if where=='formal' else ())
++    result=decide(c,edited,'edit_accept',{'solution':EDIT,'reusable_experience':EDIT_RULE})
++    assert {'embed','judge'}<=set(calls)
++    assert c.execute('SELECT state FROM experience_proposals WHERE uid=%s',(old_peer,)).fetchone()[0]=='review'
++    if where=='formal':
++        assert result['state']=='merged' and result['note']['id']==target
++    else:
++        assert result['note']['solution']==EDIT
++        assert c.execute('SELECT state,merged_into_uid FROM experience_proposals WHERE uid=%s',
++                         (target,)).fetchone()==('merged',result['note']['id'])
++    assert c.execute('SELECT count(*) FROM experience_notes').fetchone()[0]==1
++
++
++def test_edit_keeps_similar_rules_with_different_platforms_separate(pg_exp_schema,monkeypatch):
++    c,schema,dsn=pg_exp_schema
++    apply_experience_migrations(c)
++    edited,old_peer=make_review(c)
++    target=pending(c,platform='AnotherLab')
++    c.commit()
++    resources(monkeypatch,c,schema,dsn,(edited,old_peer,target))
++    result=decide(c,edited,'edit_accept',{'solution':EDIT,'reusable_experience':EDIT_RULE})
++    assert result['state']=='accepted'
++    assert c.execute('SELECT state FROM experience_proposals WHERE uid=%s',(target,)).fetchone()[0]=='review'
++
++
++@pytest.mark.parametrize('case',['opposite','budget','timeout','protected_while_judging','both_targets'])
++def test_edit_semantic_safety_and_joint_targets(pg_exp_schema,monkeypatch,case):
++    c,schema,dsn=pg_exp_schema
++    apply_experience_migrations(c)
++    edited,old_peer=make_review(c)
++    target=pending(c)
++    existing=formal(c) if case=='both_targets' else None
++    c.commit()
++    final_text='实验结束后将本轮使用的工位灯继续点亮' if case=='opposite' else EDIT
++    def protect():
++        with psycopg.connect(dsn,options=f'-c search_path={schema},public -c lock_timeout=300ms') as worker:
++            worker.execute('UPDATE experience_proposals SET pinned=true WHERE uid=%s',(target,))
++    calls=resources(monkeypatch,c,schema,dsn,(edited,old_peer,target),(existing,) if existing else (),
++                    expected=final_text,allowed=case!='opposite',on_judge=protect if case=='protected_while_judging' else None,
++                    failure=case)
++    try:
++        result=decide(c,edited,'edit_accept',{'solution':final_text,'reusable_experience':
++                        '保持本轮启用工位的照明' if case=='opposite' else EDIT_RULE})
++    except Exception as exc:
++        from evolvmem.experience_v2.gate.review_inbox import ReviewInboxError
++        assert isinstance(exc,ReviewInboxError)
++        if case in ('budget','timeout'):
++            assert exc.code=='review_edit_verification_unavailable'
++        else:
++            assert exc.status==409 and case=='protected_while_judging'
++        c.rollback()
++        assert dict(c.execute('SELECT uid,state FROM experience_proposals'))=={
++            edited:'review',old_peer:'review',target:'review'}
++        assert 'judge' in calls
++        return
++    assert case not in ('budget','timeout')
++    state,target_note=c.execute('SELECT state,merged_into_uid FROM experience_proposals WHERE uid=%s',(target,)).fetchone()
++    assert c.execute('SELECT state FROM experience_proposals WHERE uid=%s',(old_peer,)).fetchone()[0]=='review'
++    if case=='both_targets':
++        assert result['state']=='merged' and result['note']['id']==existing and (state,target_note)==('merged',existing)
++        assert c.execute('SELECT count(*) FROM experience_notes').fetchone()[0]==1
++    else:
++        assert (state,target_note)==('review',None) and result['note']['solution']==final_text
++        if case=='protected_while_judging':
++            assert 'judge' in calls
++
++
++def test_explicit_edit_of_preexisting_proposal_can_match_note_without_registering_other_old_cards(pg_exp_schema,monkeypatch):
++    c,schema,dsn=pg_exp_schema
++    apply_experience_migrations(c)
++    edited=add(c,'historical-edited',register=False,solution=ORIGINAL,rule=ORIGINAL_RULE)
++    untouched=add(c,'historical-untouched',register=False,solution=TARGET,rule=TARGET_RULE)
++    existing=formal(c)
++    c.commit()
++    calls=resources(monkeypatch,c,schema,dsn,(edited,untouched),(existing,))
++    result=decide(c,edited,'edit_accept',{'solution':EDIT,'reusable_experience':EDIT_RULE})
++    assert 'judge' in calls and result['state']=='merged' and result['note']['id']==existing
++    assert c.execute('SELECT count(*) FROM experience_notes').fetchone()[0]==1
++    assert c.execute('SELECT state FROM experience_proposals WHERE uid=%s',(untouched,)).fetchone()==('review',)
++    assert groups.member(c,'test-u',untouched) is None
++
++
++def test_all_three_normalized_fields_reuse_vector_found_exact_note(pg_exp_schema, monkeypatch):
++    from evolvmem.experience_v2.gate import review_edit
++    c,_,_=pg_exp_schema
++    apply_experience_migrations(c)
++    edited,old_peer=make_review(c)
++    existing=formal(c)
++    c.commit()
++    monkeypatch.setattr(review_edit,'_resources',lambda *args:(lambda _: [1,0,0], 'independent', None))
++    result=decide(c,edited,'edit_accept',{'problem':'如何收尾。','solution':TARGET+'。',
++                                          'reusable_experience':TARGET_RULE+'。'})
++    assert result['state']=='merged' and result['note']['id']==existing
++    assert c.execute('SELECT count(*) FROM experience_notes').fetchone()==(1,)
++    assert c.execute('SELECT state FROM experience_proposals WHERE uid=%s',(old_peer,)).fetchone()==('review',)
